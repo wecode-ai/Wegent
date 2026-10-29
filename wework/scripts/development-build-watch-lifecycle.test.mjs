@@ -30,6 +30,40 @@ afterEach(async () => {
   await rm(temporary, { recursive: true, force: true })
 })
 
+test('rescans the watched root when a directory-self notification reports an input edit', async () => {
+  const source = path.join(temporary, 'entry.js')
+  await writeFile(source, 'one')
+  const rebuilt = Promise.withResolvers()
+  let published
+  const build = vi.fn(async () => {
+    published = await readFile(source, 'utf8')
+    if (published === 'two') rebuilt.resolve()
+  })
+  const onError = vi.fn()
+  const ready = watchDevelopmentBuild({
+    directories: [temporary],
+    files: [],
+    build,
+    onError,
+    debounceMs: 20,
+  })
+  observers[0].observer.emit('ready')
+  const watcher = await ready
+  try {
+    expect(published).toBe('one')
+    await writeFile(source, 'two')
+    observers[0].observer.emit('all', 'addDir', temporary)
+    await vi.advanceTimersByTimeAsync(20)
+    await rebuilt.promise
+    expect(published).toBe('two')
+    expect(build).toHaveBeenCalledTimes(2)
+    expect(watch).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  } finally {
+    await watcher.close()
+  }
+})
+
 test('waits for every observer before the initial build and reads edits made during readiness', async () => {
   const first = path.join(temporary, 'first')
   const second = path.join(temporary, 'second')

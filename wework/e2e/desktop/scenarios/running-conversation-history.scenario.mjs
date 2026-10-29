@@ -1,3 +1,7 @@
+import {
+  waitForTranscriptState,
+  waitForRestoredTranscript,
+} from '../modules/transcript-restoration.mjs'
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -343,19 +347,6 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
   )
 }
 
-async function waitForTranscriptState(control, predicate, description, timeoutMs, recordSample) {
-  const startedAt = Date.now()
-  let latest = null
-  while (Date.now() - startedAt < timeoutMs) {
-    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const matched = predicate(latest)
-    await recordSample?.({ matched, snapshot: latest })
-    if (matched) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
-}
-
 function transcriptRaceRecorder(resultDir) {
   const path = join(resultDir, 'running-conversation-history-race.jsonl')
   return async (stage, details = {}) => {
@@ -401,24 +392,11 @@ async function reloadWorkbench(control) {
   )
 }
 
-async function waitForRestoredConversation(control, taskId) {
-  // Restoring the deliberately delayed native transcript precedes ordinary UI interactions.
-  return waitForTranscriptState(
-    control,
-    snapshot =>
-      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
-      snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
-      snapshot.pane?.transcript?.loading === false,
-    'The conversation did not finish restoration',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-}
-
 async function restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs }) {
   await reloadWorkbench(control)
   await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
   await control.command('click', `[data-testid="${taskRowId}"]`)
-  const restored = await waitForRestoredConversation(control, taskId)
+  const restored = await waitForRestoredTranscript(control, taskId, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(restored.pane.transcript.hasMoreBefore, true)
   await control.command(
     'waitFor',
@@ -504,7 +482,7 @@ export async function verifyRunningConversationRestoration(
   await reloadWorkbench(control)
   await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
   await assertMovedProject(control, projectKey, address, uiTimeoutMs)
-  await waitForRestoredConversation(control, address.taskId)
+  await waitForRestoredTranscript(control, address.taskId, WORKBENCH_READY_TIMEOUT_MS)
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: SECOND_PROMPT,
     timeoutMs: uiTimeoutMs,

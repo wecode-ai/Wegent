@@ -106,9 +106,9 @@ Codex 会从历史 API 中过滤 `<codex_internal_context>`，因此 Wework 发�
 
 桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
 
-Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。用户停留在底部时，虚拟列表使用 `anchorTo: 'end'` 维持末端跟随；用户主动向上滚动后必须切换为 `anchorTo: 'start'`，避免流式消息行增长时 TanStack Virtual 继续改写滚动位置。滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。未挂载富文本的块保留轻量纯文本内容，避免快速滚动时出现只有高度、没有可绘制内容的空白区。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。跟随态和阅读态均使用 `anchorTo: 'end'`；阅读态关闭 `followOnAppend` 和末端容差，导航与滚动条拖动时才切换为 `anchorTo: 'start'`。滚动快照保存距底部距离，阅读态额外保存消息及文字锚点身份。同步布局与共享 `ResizeObserver` 通过同一个 `resizeItem` 入口写入真实行高。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。未挂载富文本的块保留轻量纯文本内容，避免快速滚动时出现只有高度、没有可绘制内容的空白区。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
 
-桌面对话滚动容器使用 DOM 底部原点：位于最新消息时 `scrollTop` 为 `0`，向历史方向滚动时为负值。业务状态、滚动快照、轮次导航和 E2E 断言只使用“距底部距离”或内容坐标，不得直接依赖顶部原点 `scrollTop`。TanStack Virtual 内部仍使用顶部 offset，但这层转换必须集中在 `useBottomOriginVirtualizer`，业务组件不得自行换算顶部坐标。切换任务时，hook 在同一次 layout commit 中按新 `conversationKey` 写入底部距离，避免先渲染顶部位置再在下一帧纠正。
+桌面对话使用正常 DOM 坐标：顶部 `scrollTop = 0`，底部为 `scrollHeight - clientHeight`。TanStack、滚动条和导航共用该范围，不再转换负偏移。`useConversationVirtualizer` 管理虚拟几何，控制器管理跟随、阅读、导航和拖动；行高及 Markdown 缓存按宽度、字体和正文校验，普通滚动不自动启动诊断采集。
 
 非分屏工作台由 pane 栈父容器持有共享内容宽度，并把稳定值传给新任务 Pane；Pane 自身测量只作为首次启动、零宽测量和分屏模式的回退。环境信息栏是否停靠必须在新 Pane 的首帧使用这份共享宽度决定，不能先按宽度 `0` 渲染全宽聊天区，再在下一帧扣除 320px 侧栏，否则消息和 Composer 会出现一次横向闪动。
 
@@ -243,7 +243,7 @@ WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 DevTools 打开后，在卡顿后执行：
 
 ```js
-window.__WEWORK_PERF__.snapshot();
+window.__WEWORK_PERF__.snapshot()
 ```
 
 返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 Chromium XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
@@ -264,7 +264,7 @@ Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/el
 也可以手动打点：
 
 ```js
-window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
+window.__WEWORK_PERF__.mark('before-open-task', { taskId: '...' })
 ```
 
 ## 关闭方式
@@ -272,8 +272,8 @@ window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
 再次按隐藏快捷键打开 Developer Commands 菜单，然后选择 **Disable Performance Diagnostics** 会关闭诊断并刷新应用。也可以在控制台执行：
 
 ```js
-localStorage.removeItem("wework:perf-debug");
-location.reload();
+localStorage.removeItem('wework:perf-debug')
+location.reload()
 ```
 
 关闭后 `window.__WEWORK_PERF__` 不再安装，React Profiler 也不会包裹应用根节点。

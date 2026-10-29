@@ -2707,7 +2707,8 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
-      isModelSelectionReady: modelSelection.isSelectionReady,
+      isModelSelectionReady:
+        modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
       onModelSelectorOpenChange: handleModelSelectorOpenChange,
       input: draftInput,
       composerError,
@@ -2792,6 +2793,7 @@ export function WorkbenchProvider({
       listLocalSkills,
       listLocalApps,
       modelSelection.isSelectionReady,
+      modelSelection.selectedModelAvailable,
       handleModelSelectorOpenChange,
       conversationModels,
       activeModel,

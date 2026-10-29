@@ -42,7 +42,6 @@ function renderPausedReader(prefixCount = 0) {
   render(
     <ScrollableMessageArea
       conversationKey={`anchor-identity-${conversationIndex++}`}
-      scrollOrigin="bottom"
       messages={[
         { id: 'message', role: 'assistant', content: 'Text', status: 'done', createdAt: '' },
       ]}
@@ -52,7 +51,7 @@ function renderPausedReader(prefixCount = 0) {
   const reader = screen.getByTestId('reading-anchor')
   const earlierChunk = screen.getByTestId('earlier-windowed-chunk')
   const laterAnchors = screen.getByTestId('later-anchors')
-  const initialScrollTop = -9_583
+  const initialScrollTop = 2_998
   let scrollHeight = 13_372
   let readerLayoutShift = 0
   Object.defineProperties(scroller, {
@@ -65,8 +64,8 @@ function renderPausedReader(prefixCount = 0) {
     new DOMRect(0, 104.75 + readerLayoutShift - (scroller.scrollTop - initialScrollTop), 736, 24)
   earlierChunk.replaceChildren(...Array.from({ length: prefixCount }, () => semanticAnchor(-1_500)))
   laterAnchors.replaceChildren(semanticAnchor(500), semanticAnchor(600))
-  act(() => virtualLayoutCallback?.())
   fireEvent.wheel(scroller, { deltaY: -56 })
+  act(() => virtualLayoutCallback?.())
   fireEvent.scroll(scroller)
   const sampled = createUserViewportAnchor(scroller, scroller)!
   expect(sampled.element).toBe(reader)
@@ -149,7 +148,7 @@ describe('ScrollableMessageArea anchor node identity', () => {
     setReaderLayoutShift(-40)
     act(() => virtualLayoutCallback!())
 
-    expect(scroller.scrollTop).toBe(-9_623)
+    expect(scroller.scrollTop).toBe(2_958)
     expect(reader.getBoundingClientRect().top).toBe(top)
   })
 
@@ -183,7 +182,7 @@ describe('ScrollableMessageArea anchor node identity', () => {
       expect(findUserViewportAnchor(scroller, sampled)).toBe(reader)
       act(() => virtualLayoutCallback!())
 
-      expect(scroller.scrollTop).toBe(-9_623)
+      expect(scroller.scrollTop).toBe(2_958)
       expect(getTextOffsetRect(reader, sampled.textOffset!)!.top).toBe(textTop)
       expect(sampled.textOffset).toBe(6)
     } finally {

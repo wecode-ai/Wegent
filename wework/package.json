@@ -91,7 +91,7 @@
     "@radix-ui/react-scroll-area": "^1.2.11",
     "@sentry/react": "^8.55.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tanstack/react-virtual": "3.14.2",
+    "@tanstack/react-virtual": "3.14.23",
     "@wegent/chat-core": "workspace:*",
     "@wegent/collaboration": "workspace:*",
     "@wegent/process-explorer": "workspace:*",

@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
-  assertManagedPythonSettings,
+  assertManagedPythonStartup,
   inspectManagedPython,
   managedPythonPath,
 } from '../modules/managed-python.mjs'
@@ -279,7 +279,12 @@ export async function createDesktopScenario({
         isolatedInstanceId,
         'user-data'
       )
-      await assertManagedPythonSettings(control, isolatedUserData, isolatedWindowLabel)
+      await assertManagedPythonStartup(control, {
+        userDataDirectory: isolatedUserData,
+        windowLabel: isolatedWindowLabel,
+        logPath: join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),
+        diagnosticPath: join(resultDir, 'plugin-development-python-startup-failure.json'),
+      })
       const isolatedPython = await inspectManagedPython(isolatedUserData, pluginRoot)
       assert.notEqual(
         isolatedPython.executable,

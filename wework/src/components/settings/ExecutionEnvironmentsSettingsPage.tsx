@@ -125,7 +125,10 @@ export function ExecutionEnvironmentsSettingsPage() {
                     <h2 className="text-sm font-medium text-text-primary">
                       {isNode ? 'Node.js' : 'Python'}
                     </h2>
-                    <span className="text-xs text-text-secondary">
+                    <span
+                      data-testid={`execution-environment-${environment.id}-status`}
+                      className="text-xs text-text-secondary"
+                    >
                       {status}
                       {environment.source === 'electron'
                         ? ` · ${t(

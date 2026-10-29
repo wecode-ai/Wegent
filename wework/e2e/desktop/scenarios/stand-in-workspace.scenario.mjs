@@ -107,26 +107,32 @@ export function createDesktopScenario({
       if (isReplyPredictionRequest(body)) return false
       let events = [assistantMessage('已完成核对。')]
       if (JSON.stringify(body.input ?? []).includes(MARKER)) {
-        const pending = [
+        const [privateReview, nonPersistentEscalation, approvedEscalation, sandboxProbe] = [
           'source-private-review',
           'source-escalation-not-persistent',
           'source-approved-escalation',
           'source-sandbox-probe',
-        ]
-          .map(callId => accountCommandResult(body.input, callId))
-          .find(result => result?.sessionId)
+        ].map(callId => accountCommandResult(body.input, callId))
+        const pending = [
+          privateReview,
+          nonPersistentEscalation,
+          approvedEscalation,
+          sandboxProbe,
+        ].find(result => result?.sessionId)
         if (pending) {
           events = shellCommandPollResponse(body, pending.pollId, pending.sessionId)
-        } else if (requestContainsToolOutput(body, 'source-private-review')) {
-          const output = accountCommandResult(body.input, 'source-private-review')?.output ?? ''
-          assert.ok(!output.includes('SYNTHETIC_SOURCE_PRIVATE_DATA'))
+        } else if (privateReview) {
+          const output = privateReview.output
+          assert.ok(
+            !output.includes('SYNTHETIC_SOURCE_PRIVATE_DATA'),
+            'The denied private read leaked source data'
+          )
           assert.ok(/denied|reject|not authorized|declined/i.test(output), output)
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
           assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
           verifiedSourcePermissions = true
-        } else if (requestContainsToolOutput(body, 'source-escalation-not-persistent')) {
-          const output =
-            accountCommandResult(body.input, 'source-escalation-not-persistent')?.output ?? ''
+        } else if (nonPersistentEscalation) {
+          const output = nonPersistentEscalation.output
           assert.ok(output.includes(outsideWriteMarker), output)
           assert.equal(
             await readFile(elevatedFile, 'utf8'),
@@ -141,9 +147,8 @@ export function createDesktopScenario({
           tool.arguments.justification =
             'REVIEW_PRIVATE_READ: source requests an unrelated private file'
           events = functionCall('source-private-review', tool.name, tool.arguments)
-        } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
-          const output =
-            accountCommandResult(body.input, 'source-approved-escalation')?.output ?? ''
+        } else if (approvedEscalation) {
+          const output = approvedEscalation.output
           assert.ok(output.includes('SOURCE_ESCALATION_SUCCEEDED'), output)
           assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
           const command =
@@ -152,8 +157,8 @@ export function createDesktopScenario({
               : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
           events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
-        } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
-          const output = accountCommandResult(body.input, 'source-sandbox-probe')?.output ?? ''
+        } else if (sandboxProbe) {
+          const output = sandboxProbe.output
           for (const marker of [
             'SOURCE_PLUGIN_RESOURCE_READABLE',
             'SOURCE_GH_CONFIG_READABLE',

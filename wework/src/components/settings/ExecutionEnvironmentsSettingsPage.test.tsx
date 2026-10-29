@@ -80,6 +80,35 @@ describe('ExecutionEnvironmentsSettingsPage', () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
   })
 
+  test('keeps diagnostic status separate from credential-bearing runtime errors', async () => {
+    const sensitiveError =
+      'Failed https://fixture-user:fixture-password@example.invalid/python?token=fixture-token'
+    mocks.list.mockResolvedValue([
+      {
+        id: 'python',
+        managed: true,
+        autoInstall: true,
+        state: 'error',
+        version: '3.12.12',
+        downloadedBytes: 0,
+        totalBytes: 0,
+        installedBytes: 0,
+        path: '/runtime/python3',
+        error: sensitiveError,
+        source: 'managed',
+      },
+    ])
+    render(<ExecutionEnvironmentsSettingsPage />)
+
+    const card = await screen.findByTestId('execution-environment-python')
+    expect(card).toHaveTextContent(sensitiveError)
+    const status = screen.getByTestId('execution-environment-python-status')
+    expect(status).toHaveTextContent('安装失败 · Wework 管理 · 3.12.12')
+    expect(status).not.toHaveTextContent(sensitiveError)
+    expect(status).not.toHaveTextContent('fixture-password')
+    expect(status).not.toHaveTextContent('fixture-token')
+  })
+
   test('selects a custom Node executable', async () => {
     mocks.chooseNode.mockResolvedValue({ path: '/custom/node', version: '24.13.0' })
     const user = userEvent.setup()

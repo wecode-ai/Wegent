@@ -57,7 +57,6 @@ function reader() {
       scrollTopPx: 200,
     },
     userSelfOffset: 0,
-    bottomOrigin: false,
   }
   const readState = vi.fn(() => state)
   return {
@@ -334,23 +333,21 @@ describe('opt-in conversation frame probe', () => {
     expect(current.viewportRect).toHaveBeenCalledTimes(1)
   })
 
-  test('computes bottom-origin range clamping as observation without adopting it into controller state', () => {
+  test('computes range clamping as observation without adopting it into controller state', () => {
     const current = reader()
-    current.state.bottomOrigin = true
-    current.state.anchor!.scrollTopPx = -1_600
-    current.scroller.scrollTop = -1_400
+    current.state.anchor!.scrollTopPx = 1_600
+    current.scroller.scrollTop = 1_400
     setConversationFrameProbeEnabled(true)
     startConversationDiagnosticCapture()
     startConversationFrameProbe(current.scroller, current.readState)
     frame()
     expect(latest().details).toMatchObject({
-      rangeClampOffset: 200,
+      rangeClampOffset: -200,
       readerScrollTop: 0,
       frameShift: 0,
-      bottomOrigin: true,
     })
     expect(current.state.userSelfOffset).toBe(0)
-    expect(current.state.anchor!.scrollTopPx).toBe(-1_600)
+    expect(current.state.anchor!.scrollTopPx).toBe(1_600)
   })
 
   test('keeps the existing 400-event ring bounded during frame capture', () => {

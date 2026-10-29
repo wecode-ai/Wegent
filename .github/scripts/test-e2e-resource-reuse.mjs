@@ -166,6 +166,94 @@ test("without a shared root packaged runtimes are really extracted and validated
   });
 });
 
+test("dependency caches separate host and container workspace paths", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0]))",
+      ".github/actions/setup-node-workspace/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout).runs.steps;
+  const context = steps.find((step) => step.id === "workspace-cache-context");
+  const cache = steps.find((step) => step.id === "workspace-cache");
+  assert(
+    cache.with.key.includes(
+      "${{ steps.workspace-cache-context.outputs.fingerprint }}",
+    ),
+  );
+  const root = mkdtempSync(join(tmpdir(), "workspace-cache-context-"));
+  try {
+    const fingerprint = (cwd) => {
+      const output = join(root, "output");
+      writeFileSync(output, "");
+      const run = spawnSync("bash", ["-eu", "-c", context.run], {
+        cwd,
+        env: { ...process.env, GITHUB_OUTPUT: output },
+        encoding: "utf8",
+      });
+      assert.equal(run.status, 0, run.stderr);
+      const value = readFileSync(output, "utf8").trim();
+      assert.match(value, /^fingerprint=[a-f0-9]{64}$/);
+      return value;
+    };
+    const host = fingerprint(root);
+    const container = fingerprint(tmpdir());
+    assert.notEqual(host, container);
+    assert.equal(fingerprint(root), host);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows desktop shards consume packaged dependencies without reinstalling the workspace", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+      ".github/workflows/wework-e2e.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  assert(
+    !steps.some(
+      (step) => step.uses === "./.github/actions/setup-node-workspace",
+    ),
+  );
+  assert(
+    steps.some(
+      (step) =>
+        step.uses?.startsWith("actions/setup-node@") &&
+        step.with["node-version"] === "24",
+    ),
+  );
+  const pnpm = steps.find((step) =>
+    step.uses?.startsWith("pnpm/action-setup@"),
+  );
+  assert.equal(
+    pnpm.if,
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+  );
+  assert(
+    steps.some(
+      (step) =>
+        step.name ===
+          "Install Electron for native startup and schema verification" &&
+        step.if === pnpm.if,
+    ),
+  );
+});
+
 test("platform sharding preserves four runners and every provider shard", () => {
   const result = spawnSync(
     "ruby",

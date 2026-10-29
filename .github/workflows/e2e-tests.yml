@@ -570,6 +570,7 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           setup-toolchain: "false"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Restore Python dependency cache
         uses: ./.github/actions/setup-python-uv-cache
@@ -1136,6 +1137,8 @@ jobs:
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
       - name: Run E2E tests (Sharded)
+        # The chromium project auto-discovers every browser spec under
+        # frontend/e2e/tests, including skill-management-scope.spec.ts.
         working-directory: ./frontend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1551,7 +1554,8 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
-          ATTACHMENT_S3_ENDPOINT: localhost:9000
+          # Presigned archive URLs are also consumed inside bridge-networked executors.
+          ATTACHMENT_S3_ENDPOINT: ${{ env.E2E_DOCKER_BRIDGE_HOST }}:9000
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
           ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
           ATTACHMENT_S3_USE_SSL: "false"

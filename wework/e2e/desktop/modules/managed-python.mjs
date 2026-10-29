@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { access, readFile } from 'node:fs/promises'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -51,8 +51,12 @@ export async function inspectManagedPython(userDataDirectory, cwd) {
   return details
 }
 
-export async function waitForPythonRuntimeEvent(logPath, event, startOffset = 0) {
-  const deadline = Date.now() + PYTHON_BOOTSTRAP_TIMEOUT_MS
+export async function waitForPythonRuntimeEvent(
+  logPath,
+  event,
+  startOffset = 0,
+  deadline = Date.now() + PYTHON_BOOTSTRAP_TIMEOUT_MS
+) {
   while (Date.now() < deadline) {
     const log = (await readFile(logPath, 'utf8')).slice(startOffset)
     if (event === 'python-runtime-install-completed') {
@@ -79,34 +83,56 @@ export async function collectManagedPythonStatus(control, windowLabel = 'main') 
     await control.commandForWindow(
       windowLabel,
       'waitFor',
-      '[data-testid="execution-environment-python"]'
+      '[data-testid="execution-environment-python-status"]'
     )
     diagnostic.statusText = await control.commandForWindow(
       windowLabel,
       'getText',
-      '[data-testid="execution-environment-python"]'
+      '[data-testid="execution-environment-python-status"]'
     )
-  } catch (error) {
-    diagnostic.captureError = error instanceof Error ? error.message : String(error)
+  } catch {
+    diagnostic.captureError = true
   }
   return diagnostic
+}
+
+export async function assertManagedPythonStartup(
+  control,
+  { userDataDirectory, windowLabel = 'main', logPath, diagnosticPath }
+) {
+  const deadline = Date.now() + PYTHON_BOOTSTRAP_TIMEOUT_MS
+  try {
+    await waitForPythonRuntimeEvent(logPath, 'python-runtime-install-completed', 0, deadline)
+    await assertManagedPythonSettings(control, userDataDirectory, windowLabel, deadline)
+  } catch (error) {
+    try {
+      const diagnostic = await collectManagedPythonStatus(control, windowLabel)
+      await writeFile(diagnosticPath, JSON.stringify(diagnostic, null, 2))
+    } catch {
+      console.error('[desktop-e2e] Python startup diagnostic collection failed')
+    }
+    throw error
+  }
 }
 
 export async function assertManagedPythonSettings(
   control,
   userDataDirectory,
-  windowLabel = 'main'
+  windowLabel = 'main',
+  deadline
 ) {
   await control.commandForWindow(windowLabel, 'navigate', 'body', {
     value: '/settings/execution-environments',
   })
+  const timeoutMs = deadline === undefined ? PYTHON_BOOTSTRAP_TIMEOUT_MS : deadline - Date.now()
+  assert.ok(timeoutMs > 0, 'The managed Python readiness deadline expired before checking settings')
   await control.commandForWindow(
     windowLabel,
     'waitFor',
     '[data-testid="execution-environment-python"]',
     {
       text: `已安装 · Wework 管理 · ${MANAGED_PYTHON_VERSION}`,
-      timeoutMs: PYTHON_BOOTSTRAP_TIMEOUT_MS,
+      timeoutMs,
     }
   )
   const text = await control.commandForWindow(

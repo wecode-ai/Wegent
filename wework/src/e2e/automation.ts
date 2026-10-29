@@ -673,16 +673,6 @@ function desktopControlElementMetrics(selector: string): string {
   )
 }
 
-function desktopControlContentScrollTop(element: HTMLElement): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
-  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
-}
-
-function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
-  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
-}
-
 async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Promise<string> {
   const scroller = findDesktopControlElements(command.selector)[0]
   if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -690,6 +680,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     contentSelector?: string
     framesPerRatio?: number
     ratios?: number[]
+    scrollbarSelector?: string
   }
   const contentSelector = options.contentSelector?.trim()
   if (!contentSelector) {
@@ -706,6 +697,16 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
   if (!Number.isInteger(framesPerRatio) || framesPerRatio < 1 || framesPerRatio > 60) {
     throw new Error('sampleRapidMarkdownWindowing requires framesPerRatio between 1 and 60')
   }
+  const track = options.scrollbarSelector
+    ? findDesktopControlElements(options.scrollbarSelector)[0]
+    : null
+  const thumb = track?.querySelector<HTMLElement>(
+    '[data-testid="desktop-workbench-scrollbar-thumb"]'
+  )
+  if (options.scrollbarSelector && (!track || !thumb))
+    throw new Error('The requested scrollbar is missing')
+  let pointerY: number | null = null
+  let pointerOffset = 0
 
   const nextFrame = () =>
     new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
@@ -780,6 +781,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     }
     maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
     maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    const thumbBounds = thumb?.getBoundingClientRect()
     return {
       ratio,
       frame,
@@ -798,31 +800,60 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
       hasVisibleText,
       maxChunkHeightDelta: frameHeightDelta,
       maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
+      scrollbarPointerY: pointerY,
+      scrollbarGrabOffset: pointerOffset,
+      scrollbarThumbTop: thumbBounds?.top ?? null,
+      scrollbarPointerError:
+        thumbBounds && pointerY !== null
+          ? Math.abs(thumbBounds.top + pointerOffset - pointerY)
+          : null,
     }
   }
 
   startedAt = await nextFrame()
+  // Navigation can move the thumb during that frame; grab its current physical point.
+  const pointer = thumb ? { ...desktopControlEventOptions(thumb), buttons: 1 } : null
+  pointerOffset = thumb && pointer ? pointer.clientY! - thumb.getBoundingClientRect().top : 0
+  pointerY = pointer?.clientY ?? null
   const initial = capture(startedAt, 1, 0)
   const samples: ReturnType<typeof capture>[] = []
-  for (const ratio of ratios) {
-    await nextFrame()
-    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    const nextScrollTop = maximum * ratio
-    const currentScrollTop = desktopControlContentScrollTop(scroller)
-    scroller.dispatchEvent(
-      new WheelEvent('wheel', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
-      })
-    )
-    scroller.scrollTop = desktopControlDomScrollTop(scroller, nextScrollTop)
-    scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
-    // Do not accept synchronous placeholder content in the turn that scrolls.
-    for (let frame = 1; frame <= framesPerRatio; frame += 1) {
-      samples.push(capture(await nextFrame(), ratio, frame))
+  if (thumb && pointer) dispatchDesktopControlPointerEvent(thumb, 'pointerdown', pointer)
+  try {
+    for (const ratio of ratios) {
+      await nextFrame()
+      const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const nextScrollTop = maximum * ratio
+      const currentScrollTop = scroller.scrollTop
+      if (track && thumb && pointer) {
+        const movement = {
+          ...pointer,
+          clientY:
+            track.getBoundingClientRect().top +
+            pointerOffset +
+            ratio * (track.clientHeight - thumb.getBoundingClientRect().height),
+        }
+        pointerY = movement.clientY
+        dispatchDesktopControlPointerEvent(track, 'pointermove', movement)
+      } else {
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      }
+      // Do not accept synchronous placeholder content in the turn that scrolls.
+      for (let frame = 1; frame <= framesPerRatio; frame += 1) {
+        samples.push(capture(await nextFrame(), ratio, frame))
+      }
     }
+  } finally {
+    if (track && pointer)
+      dispatchDesktopControlPointerEvent(track, 'pointerup', { ...pointer, buttons: 0 })
   }
   return JSON.stringify({
     initial,
@@ -2990,10 +3021,7 @@ async function executeDesktopControlCommand(
           deltaY: 120,
         })
       )
-      element.scrollTop =
-        element.dataset.scrollOrigin === 'bottom'
-          ? 0
-          : Math.max(0, element.scrollHeight - element.clientHeight)
+      element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -3014,10 +3042,7 @@ async function executeDesktopControlCommand(
         })
       )
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop =
-        scroller.dataset.scrollOrigin === 'bottom'
-          ? -Math.min(distance, maxScrollTop)
-          : Math.max(0, maxScrollTop - distance)
+      scroller.scrollTop = Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3031,7 +3056,7 @@ async function executeDesktopControlCommand(
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const nextContentScrollTop = maxScrollTop * ratio
-      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+      const currentContentScrollTop = scroller.scrollTop
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
@@ -3040,7 +3065,7 @@ async function executeDesktopControlCommand(
           deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+      scroller.scrollTop = nextContentScrollTop
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3067,7 +3092,7 @@ async function executeDesktopControlCommand(
       const viewport = scroller.getBoundingClientRect()
       const samples = ratios.map(ratio => {
         const nextContentScrollTop = maxScrollTop * ratio
-        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+        const currentContentScrollTop = scroller.scrollTop
         scroller.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
@@ -3076,7 +3101,7 @@ async function executeDesktopControlCommand(
             deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
           })
         )
-        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+        scroller.scrollTop = nextContentScrollTop
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
 
         const hasVisibleContent = Array.from(
@@ -3104,7 +3129,18 @@ async function executeDesktopControlCommand(
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-started',
+        { commandId: command.id, selector: command.selector },
+        'debug'
+      )
       element.click()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-dispatched',
+        { commandId: command.id, elapsedMs: Date.now() - startedAt },
+        'debug'
+      )
       return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {
