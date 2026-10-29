@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { writePhaseChangingMessage, type PhaseChangingMessage } from './mock-responses-phase'
 import { closePreviewFileSource, handlePreviewFileSource } from './preview-file-source'
 import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
 import { MockResponseGate } from './mock-response-gate'
@@ -79,6 +80,7 @@ interface ToolScenarioStep {
   toolCalls?: ToolCallRule[]
   responseContent?: string
   doneDelayMs?: number
+  preamble?: PhaseChangingMessage
 }
 
 type HeaderMatcher = Record<string, string | null>
@@ -533,7 +535,8 @@ function writeResponsesToolCalls(
   res: http.ServerResponse,
   request: ModelRequest | null,
   toolCalls: ToolCallRule[],
-  model: string
+  model: string,
+  preamble?: PhaseChangingMessage
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
@@ -567,31 +570,35 @@ function writeResponsesToolCalls(
     type: 'response.created',
     response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
   })
-  output.forEach((item, outputIndex) => {
-    writeResponsesSseEvent(res, {
-      type: 'response.output_item.done',
-      output_index: outputIndex,
-      item,
+  const finish = (message?: Record<string, unknown>) => {
+    output.forEach((item, outputIndex) => {
+      writeResponsesSseEvent(res, {
+        type: 'response.output_item.done',
+        output_index: outputIndex + (message ? 1 : 0),
+        item,
+      })
     })
-  })
-  writeResponsesSseEvent(res, {
-    type: 'response.completed',
-    response: {
-      id: responseId,
-      object: 'response',
-      status: 'completed',
-      model,
-      output,
-      usage: {
-        input_tokens: 100,
-        input_tokens_details: { cached_tokens: 0 },
-        output_tokens: 1,
-        output_tokens_details: { reasoning_tokens: 0 },
-        total_tokens: 101,
+    writeResponsesSseEvent(res, {
+      type: 'response.completed',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'completed',
+        model,
+        output: message ? [message, ...output] : output,
+        usage: {
+          input_tokens: 100,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 1,
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 101,
+        },
       },
-    },
-  })
-  res.end()
+    })
+    res.end()
+  }
+  if (preamble) writePhaseChangingMessage(res, preamble, finish)
+  else finish()
 }
 
 /**
@@ -730,7 +737,8 @@ const server = http.createServer((req, res) => {
             res,
             parsedBody,
             resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
-            parsedBody?.model || 'mock-codex'
+            parsedBody?.model || 'mock-codex',
+            scenarioStep.preamble
           )
           return
         }

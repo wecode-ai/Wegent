@@ -16,6 +16,9 @@ use serde_json::{Map, Value, json};
 use super::event::ExecutionEvent;
 use super::py_json::{orjson_dumps, python_dumps, utc_isoformat};
 
+#[path = "identified_text.rs"]
+mod identified_text;
+
 /// Unified TTL for all streaming-related data (1 hour).
 pub(crate) const STREAMING_TTL: u64 = 3600;
 const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
@@ -343,6 +346,16 @@ pub(crate) async fn add_block<R: Redis>(
         }
     }
     Ok(())
+}
+
+pub(crate) async fn add_identified_text_content<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    content: &str,
+    block_id: &str,
+    offset: Option<u64>,
+) -> RedisResult<()> {
+    identified_text::append(redis, subtask_id, content, block_id, offset).await
 }
 
 /// `add_text_content`: append streamed text to the current text block,
@@ -727,6 +740,7 @@ fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
         };
         if let Some(Value::String(content_key)) = block.get(BLOCK_CONTENT_KEY_FIELD) {
             keys.push(content_key.clone());
+            keys.push(format!("{content_key}:offset"));
         }
     }
     keys

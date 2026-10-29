@@ -214,6 +214,8 @@ Codex 同一回合可以交错产生推理、助手文本和工具调用。execu
 
 助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
 
+标准云端 executor 的回调链路也必须保留这一 item 身份：正文增量携带 `block_id`（provider item ID）和按 Unicode 码点计数的块内 `block_offset`，全局 `offset` 继续表示正文流的位置。Backend 缓冲只能合并同一块内连续的增量，Redis 按块内偏移原子追加未见过的后缀；同一 ID 的完成块原位更新已存储的文本。这样 phase 从 `final_answer` 变为 `commentary` 时，实时消息、运行中刷新和最终历史都只保留一份内容；不同 ID 的相同文本仍分别保留。
+
 Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
 ### 后端设备对话任务 REST 入口

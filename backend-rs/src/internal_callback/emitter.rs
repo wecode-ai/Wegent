@@ -39,6 +39,13 @@ enum StreamContentType {
     Thinking,
 }
 
+struct BufferedStreamContent {
+    content_type: StreamContentType,
+    content: String,
+    block_id: Option<String>,
+    block_offset: Option<u64>,
+}
+
 /// The wrapper that persists stream state before forwarding to Socket.IO.
 ///
 /// The emitter owns its Redis handle so a response-body stream can retain it
@@ -47,7 +54,7 @@ pub(crate) struct StatusUpdatingEmitter<R: Redis> {
     redis: R,
     task_id: i64,
     subtask_id: i64,
-    buffer: Vec<(StreamContentType, String)>,
+    buffer: Vec<BufferedStreamContent>,
     first_buffered_at: Option<Instant>,
     last_activity_touch: Option<Instant>,
 }
@@ -64,7 +71,13 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         }
     }
 
-    fn buffer_content(&mut self, content_type: StreamContentType, content: &str) {
+    fn buffer_content(
+        &mut self,
+        content_type: StreamContentType,
+        content: &str,
+        block_id: Option<&str>,
+        block_offset: Option<u64>,
+    ) {
         if content.is_empty() {
             return;
         }
@@ -72,10 +85,23 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
             self.first_buffered_at = Some(Instant::now());
         }
         match self.buffer.last_mut() {
-            Some((last_type, buffered)) if *last_type == content_type => {
-                buffered.push_str(content);
+            Some(last)
+                if last.content_type == content_type
+                    && last.block_id.as_deref() == block_id
+                    && block_offset.is_none_or(|offset| {
+                        last.block_offset.and_then(|previous| {
+                            previous.checked_add(last.content.chars().count() as u64)
+                        }) == Some(offset)
+                    }) =>
+            {
+                last.content.push_str(content);
             }
-            _ => self.buffer.push((content_type, content.to_string())),
+            _ => self.buffer.push(BufferedStreamContent {
+                content_type,
+                content: content.to_string(),
+                block_id: block_id.map(str::to_string),
+                block_offset,
+            }),
         }
     }
 
@@ -110,13 +136,25 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         if pending.is_empty() {
             return;
         }
-        for (content_type, content) in pending {
-            let result = match content_type {
-                StreamContentType::Text => {
-                    session::add_text_content(&self.redis, self.subtask_id, &content).await
-                }
+        for item in pending {
+            let result = match item.content_type {
+                StreamContentType::Text => match item.block_id.as_deref() {
+                    Some(block_id) => {
+                        session::add_identified_text_content(
+                            &self.redis,
+                            self.subtask_id,
+                            &item.content,
+                            block_id,
+                            item.block_offset,
+                        )
+                        .await
+                    }
+                    None => {
+                        session::add_text_content(&self.redis, self.subtask_id, &item.content).await
+                    }
+                },
                 StreamContentType::Thinking => {
-                    session::add_thinking_content(&self.redis, self.subtask_id, &content).await
+                    session::add_thinking_content(&self.redis, self.subtask_id, &item.content).await
                 }
             };
             if let Err(error) = result {
@@ -178,9 +216,18 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                 )
                 .await?;
             }
-            "chunk" => self.buffer_content(StreamContentType::Text, &event.content),
+            "chunk" => self.buffer_content(
+                StreamContentType::Text,
+                &event.content,
+                event
+                    .data
+                    .get("block_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty()),
+                event.data.get("block_offset").and_then(Value::as_u64),
+            ),
             "thinking" => {
-                self.buffer_content(StreamContentType::Thinking, &event.content);
+                self.buffer_content(StreamContentType::Thinking, &event.content, None, None);
             }
             kind if STREAM_BOUNDARY_EVENT_TYPES.contains(&kind) => {
                 self.flush_stream_storage().await;
