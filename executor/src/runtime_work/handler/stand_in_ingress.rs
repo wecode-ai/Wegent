@@ -228,14 +228,15 @@ impl RuntimeWorkRpcHandler {
                         json!({"kind":"connection","source":source,"message":message,"roleIds":eligible}),
                     ).map_err(settings_error)?;
                 }
-                continue;
             }
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
-                    connection["enabledAfter"]
-                        .as_str()
-                        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                        .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                    !(settings["processing"]["mode"] == "silent"
+                        && connection["policy"]["automatic"] == true)
+                        && connection["enabledAfter"]
+                            .as_str()
+                            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+                            .is_some_and(|enabled| at >= enabled.timestamp_millis())
                 })
             }) {
                 if let Err(error) = self
@@ -454,6 +455,55 @@ pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn silent_collection_keeps_manual_sources_pending_and_automatic_sources_in_intake() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+        let source = json!({"id":"group","name":"Group","kind":"group","profile":"corp","providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER});
+        let base = settings["roles"][0].clone();
+        settings["roles"] = json!([base.clone(), base]);
+        for (role, automatic) in settings["roles"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip([true, false])
+        {
+            role["id"] = json!(if automatic { "automatic" } else { "manual" });
+            role["enabled"] = json!(true);
+            let mut connection = source.clone();
+            connection["policy"] = json!({"automatic":automatic,"askBeforeAct":true});
+            role["connections"] = json!([connection]);
+        }
+        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let message = json!({"id":"one","text":"New matter","at":"2099-01-01T00:00:00Z"});
+        for _ in 0..2 {
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    &source,
+                    &stand_in_identities(&settings),
+                    (vec![message.clone()], json!({"cursor":"next"})),
+                )
+                .await
+                .unwrap();
+        }
+        let events = store.stand_in_events(7).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["roleIds"], json!(["automatic"]));
+        let works = store.list_stand_in_work(7, None).unwrap();
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0]["roleId"], "manual");
+        assert_eq!(works[0]["status"], "pending");
+        assert_eq!(works[0]["messageCount"], 1);
+        assert!(handler.local_task_links(true).is_empty());
+    }
 
     #[tokio::test]
     async fn silent_collection_persists_shared_events_without_grouping_or_work() {

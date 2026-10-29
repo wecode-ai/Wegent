@@ -34,13 +34,17 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }
             "runtime.stand_in.personal.get" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, false) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, false).await },
+                )
             }
             "runtime.stand_in.personal.agents" => {
                 boxed_rpc(move || async move { self.personal_stand_in_agents(payload).await })
             }
             "runtime.stand_in.personal.save" => {
-                boxed_rpc(move || async move { self.personal_stand_in_settings(payload, true) })
+                boxed_rpc(
+                    move || async move { self.personal_stand_in_settings(payload, true).await },
+                )
             }
             "runtime.stand_in.conversation" => {
                 boxed_rpc(move || async move { self.stand_in_conversation(payload).await })
@@ -61,10 +65,10 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "delete") })
             }
             "runtime.stand_in.proposal.get" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, false) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
             "runtime.stand_in.proposal.resolve" => {
-                boxed_rpc(move || async move { self.stand_in_proposal(payload, true) })
+                boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }
             "runtime.connections.host" => {
                 boxed_rpc(move || async move { self.configure_connection_host(payload) })

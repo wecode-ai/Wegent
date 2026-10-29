@@ -199,7 +199,7 @@ impl RuntimeWorkRpcHandler {
             )
         })
     }
-    pub(super) fn personal_stand_in_settings(
+    pub(super) async fn personal_stand_in_settings(
         &self,
         payload: Value,
         save: bool,
@@ -209,6 +209,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
             store
                 .save_personal_stand_in(user, &self.device_id, payload["settings"].clone())
                 .map_err(settings_error)

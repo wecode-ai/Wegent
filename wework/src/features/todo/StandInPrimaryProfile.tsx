@@ -1,5 +1,5 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { X } from 'lucide-react'
 import { dequal } from 'dequal'
 import {
@@ -61,6 +61,7 @@ export function StandInPrimaryProfile({
     intervalMinutes: 5,
   }
   const [processing, setProcessing] = useState(originalProcessing)
+  const lastValidInterval = useRef(originalProcessing.intervalMinutes)
   const [discard, setDiscard] = useState(false)
   const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
   const [runtimeError, setRuntimeError] = useState<string | null>(null)
@@ -85,9 +86,10 @@ export function StandInPrimaryProfile({
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
   const dirty = !dequal(original, draft) || !dequal(originalProcessing, processing)
   const validProcessing =
-    Number.isInteger(processing.intervalMinutes) &&
-    processing.intervalMinutes >= 1 &&
-    processing.intervalMinutes <= 1440
+    processing.mode === 'immediate' ||
+    (Number.isInteger(processing.intervalMinutes) &&
+      processing.intervalMinutes >= 1 &&
+      processing.intervalMinutes <= 1440)
   const role = {
     ...newStandInRole(settings.executionDeviceId, 'primary'),
     ...draft,
@@ -166,7 +168,20 @@ export function StandInPrimaryProfile({
       <StandInProcessingSettings
         key={`${settings.executionDeviceId}:${settings.processing?.mode ?? 'immediate'}`}
         value={processing}
-        onChange={setProcessing}
+        onChange={value => {
+          if (
+            Number.isInteger(value.intervalMinutes) &&
+            value.intervalMinutes >= 1 &&
+            value.intervalMinutes <= 1440
+          ) {
+            lastValidInterval.current = value.intervalMinutes
+          }
+          setProcessing(
+            value.mode === 'immediate'
+              ? { ...value, intervalMinutes: lastValidInterval.current }
+              : value
+          )
+        }}
         disabled={saving}
         savedSilent={settings.processing?.mode === 'silent'}
         api={api}

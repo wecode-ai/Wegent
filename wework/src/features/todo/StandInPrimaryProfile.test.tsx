@@ -89,6 +89,24 @@ it('saves device-wide processing only on explicit save and rejects invalid inter
   )
 })
 
+it('can save immediate mode after clearing a silent interval and retains its last valid value', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'silent')
+  const interval = screen.getByTestId('stand-in-processing-interval')
+  await user.clear(interval)
+  await user.type(interval, '15')
+  await user.clear(interval)
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'immediate')
+  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({ processing: { mode: 'immediate', intervalMinutes: 15 } })
+  )
+})
+
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
   const props = fixture()
   const user = userEvent.setup()

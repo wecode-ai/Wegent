@@ -22,6 +22,8 @@ One personal document owns stand-in configurations and versions. Legacy project 
 
 ## Silent intake and background coordination
 
+Non-automatic connections retain their existing pending work for manual execution. Settings writes and coordinator dispatch are serialized per user: an operation already dispatching finishes before the save takes effect and cancels remaining commands. Role-scoped settings proposals cannot change the global processing mode or interval.
+
 Automatic event handling is configured per account and Executor. Existing settings default to immediate handling. Silent mode defaults to a five-minute check interval, configurable from 1 to 1440 minutes. After saving, automatic project assignments, DingTalk messages and other connection events enter a durable SQLite intake without creating work or invoking a model. Manual delegation still starts immediately. An offline Executor pauses processing and combines accumulated events after recovery instead of replaying missed ticks.
 
 The primary stand-in coordinates through a separate persistent Runtime conversation using its configured Codex model. This conversation is excluded from ordinary task lists unless awaiting user input or approval and does not alter the user's primary chat. Each round reads an immutable batch, currently eligible roles and stand-in work conversations. It can create concrete work, continue an existing conversation, ignore or defer events, or schedule a progress check. Execution retains existing source confirmations and collaboration authorization. Only roles originally eligible for an event and still authorized may receive it.

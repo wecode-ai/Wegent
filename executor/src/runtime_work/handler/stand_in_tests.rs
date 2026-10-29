@@ -927,8 +927,8 @@ async fn personal_settings_project_view_retains_the_requested_storage_kind() {
     assert_eq!(cloud["projectId"], "future-project");
 }
 
-#[test]
-fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
+#[tokio::test]
+async fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -944,6 +944,7 @@ fn project_scoped_agent_connections_return_actionable_settings_code_without_savi
     }]);
     let error = handler
         .personal_stand_in_settings(json!({"userId":7,"settings":draft}), true)
+        .await
         .unwrap_err();
     assert_eq!(error.code, "stand_in_project_connections");
     assert!(error

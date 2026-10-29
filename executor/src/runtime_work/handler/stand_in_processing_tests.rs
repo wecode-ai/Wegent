@@ -14,9 +14,9 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
 #[tokio::test]
 async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
     let root = tempfile::tempdir().unwrap();
-    let (handler, store, settings) = fixture(root.path());
+    let (handler, store, _) = fixture(root.path());
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     assert!(handler.local_task_links(true).is_empty());
@@ -24,7 +24,7 @@ async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
         .save_stand_in_processing_state(7, &json!({"nextCheckAt":"2000-01-01T00:00:00Z"}))
         .unwrap();
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     let idle = store.stand_in_processing_state(7).unwrap();
@@ -42,20 +42,20 @@ async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
         )
         .unwrap();
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     let state = store.stand_in_processing_state(7).unwrap();
     assert!(state["nextCheckAt"].is_string());
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
     assert!(handler.local_task_links(true).is_empty());
     assert_eq!(
         handler
-            .process_stand_in_user(&store, 7, &settings, true)
+            .process_stand_in_user(&store, 7, true)
             .await
             .unwrap_err()
             .code,
@@ -184,7 +184,7 @@ fn work_changes_are_observed_once_without_waking_for_historical_completion() {
 #[tokio::test]
 async fn events_waiting_on_a_queued_followup_do_not_launch_another_coordinator() {
     let root = tempfile::tempdir().unwrap();
-    let (handler, store, settings) = fixture(root.path());
+    let (handler, store, _) = fixture(root.path());
     handler.upsert_local_task(RuntimeTaskLink {local_task_id:"work".into(),status:"active".into(),interaction_status:Some("waitingForUserInput".into()),runtime_handle:json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),..Default::default()});
     let event = store
         .enqueue_stand_in_event(
@@ -209,7 +209,7 @@ async fn events_waiting_on_a_queued_followup_do_not_launch_another_coordinator()
         )
         .unwrap();
     handler
-        .process_stand_in_user(&store, 7, &settings, true)
+        .process_stand_in_user(&store, 7, true)
         .await
         .unwrap();
     assert!(handler.local_task_link(&task_id(7)).is_none());
@@ -250,7 +250,7 @@ async fn switching_to_immediate_preserves_disabled_intake_and_isolates_source_fa
         store.enqueue_stand_in_event(7,json!([id]),json!({"kind":"connection","source":{"id":id},"message":{"id":id},"roleIds":["default"]})).unwrap();
     }
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     assert!(store
@@ -259,9 +259,9 @@ async fn switching_to_immediate_preserves_disabled_intake_and_isolates_source_fa
         .iter()
         .all(|event| event["status"] == "pending"));
     settings["roles"][0]["enabled"] = json!(true);
-    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
     handler
-        .process_stand_in_user(&store, 7, &settings, false)
+        .process_stand_in_user(&store, 7, false)
         .await
         .unwrap();
     assert!(store
@@ -270,4 +270,76 @@ async fn switching_to_immediate_preserves_disabled_intake_and_isolates_source_fa
         .iter()
         .all(|event| event["status"] == "pending" && event["error"]["code"] == "source_removed"));
     assert!(handler.local_task_links(true).is_empty());
+}
+
+#[tokio::test]
+async fn settings_save_waits_for_dispatch_and_cancelled_commands_stay_cancelled() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let event = store
+        .enqueue_stand_in_event(7, json!(["test"]), json!({"kind":"followup"}))
+        .unwrap();
+    store
+        .save_stand_in_processing_state(7, &json!({"batchId":"batch"}))
+        .unwrap();
+    store
+        .queue_stand_in_action(
+            7,
+            "mac",
+            "batch",
+            "ignore_events",
+            json!({"eventIds":[event["id"]]}),
+        )
+        .unwrap();
+    let gate = handler.task_send_gate("stand-in-processing:7");
+    let guard = gate.lock().await;
+    settings["processing"]["mode"] = json!("immediate");
+    let save = handler.personal_stand_in_settings(json!({"userId":7,"settings":settings}), true);
+    tokio::pin!(save);
+    assert!(tokio::time::timeout(Duration::from_millis(10), &mut save)
+        .await
+        .is_err());
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "pending");
+    drop(guard);
+    save.await.unwrap();
+    handler
+        .process_stand_in_user(&store, 7, false)
+        .await
+        .unwrap();
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "cancelled");
+    assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "pending");
+    assert!(handler.local_task_links(true).is_empty());
+}
+
+#[tokio::test]
+async fn saving_after_failed_processing_clears_old_error_and_uses_new_interval() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    store
+        .enqueue_stand_in_event(7, json!(["test"]), json!({"kind":"followup"}))
+        .unwrap();
+    assert_eq!(
+        handler
+            .process_stand_in_user(&store, 7, true)
+            .await
+            .unwrap_err()
+            .code,
+        "model_unavailable"
+    );
+    assert_eq!(
+        store.stand_in_processing_state(7).unwrap()["error"]["code"],
+        "model_unavailable"
+    );
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["processing"]["intervalMinutes"] = json!(15);
+    handler
+        .personal_stand_in_settings(json!({"userId":7,"settings":settings}), true)
+        .await
+        .unwrap();
+    let state = store.stand_in_processing_state(7).unwrap();
+    assert!(state["error"].is_null());
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(state["nextCheckAt"].as_str().unwrap()).unwrap()
+            > chrono::Utc::now() + chrono::Duration::minutes(14)
+    );
 }

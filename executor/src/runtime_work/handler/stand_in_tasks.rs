@@ -60,6 +60,14 @@ impl RuntimeWorkRpcHandler {
                 "Stand-in session owner changed",
             ));
         }
+        let gate = self.task_send_gate(&format!("stand-in-processing:{}", identity.user));
+        let _processing_guard = if identity.coordinator_batch.is_some()
+            && matches!(name, "create_task" | "continue_task")
+        {
+            Some(gate.lock().await)
+        } else {
+            None
+        };
         if let Some(batch) = identity.coordinator_batch.as_deref() {
             let store = LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(super::stand_in::settings_error)?;
@@ -222,6 +230,47 @@ mod tests {
 #[cfg(test)]
 mod operation_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn coordinator_mutations_wait_for_settings_and_recheck_revoked_batches() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.upsert_local_task(RuntimeTaskLink { local_task_id: "coordinator".into(), runtime_handle: json!({"origin":{"type":"stand_in_coordinator","userId":7},"executionRequest":{"user_id":7}}), ..Default::default() });
+        let identity = StandInMcpIdentity {
+            task_id: "coordinator".into(),
+            user: 7,
+            device: "mac".into(),
+            role: None,
+            work: None,
+            ask_before_act: true,
+            coordinator_batch: Some("batch".into()),
+        };
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        for operation in ["create_task", "continue_task"] {
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+            let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            store
+                .save_stand_in_processing_state(7, &json!({"batchId":"batch"}))
+                .unwrap();
+            let gate = handler.task_send_gate("stand-in-processing:7");
+            let guard = gate.lock().await;
+            let mutation = handler.stand_in_task_operation(identity.clone(), operation, json!({}));
+            tokio::pin!(mutation);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), &mut mutation)
+                    .await
+                    .is_err()
+            );
+            settings["processing"]["mode"] = json!("immediate");
+            store.save_personal_stand_in(7, "mac", settings).unwrap();
+            drop(guard);
+            assert_eq!(mutation.await.unwrap_err().code, "permission_denied");
+        }
+        assert_eq!(handler.local_task_links(true).len(), 1);
+    }
 
     #[tokio::test]
     async fn primary_orchestration_isolates_owners_and_never_answers_pending_interactions() {

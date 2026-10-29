@@ -186,6 +186,27 @@ export function createDesktopScenario({
           value: 'silent',
         })
         await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
+          value: '15',
+        })
+        await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
+          value: '',
+        })
+        await control.command('select', '[data-testid="stand-in-processing-mode"]', {
+          value: 'immediate',
+        })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+          visible: false,
+        })
+        assert.deepEqual(
+          (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).processing,
+          { mode: 'immediate', intervalMinutes: 15 }
+        )
+        await control.command('click', '[data-testid="stand-in-settings-open"]')
+        await control.command('select', '[data-testid="stand-in-processing-mode"]', {
+          value: 'silent',
+        })
+        await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
           value: '1',
         })
         await captureScreenshot(control, 'silent-01-configure-interval.png')

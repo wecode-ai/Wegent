@@ -11,7 +11,7 @@ pub(super) fn conversation_task_id(user: i64, role: Option<&str>) -> String {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn stand_in_proposal(
+    pub(super) async fn stand_in_proposal(
         &self,
         payload: Value,
         resolve: bool,
@@ -22,6 +22,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if resolve {
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
             let id = payload["proposalId"]
                 .as_str()
                 .ok_or_else(|| AppIpcError::new("bad_request", "proposalId is required"))?;

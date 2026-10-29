@@ -79,8 +79,7 @@ impl RuntimeWorkRpcHandler {
                 "Save silent processing settings first",
             ));
         }
-        self.process_stand_in_user(&store, user, &settings, true)
-            .await?;
+        self.process_stand_in_user(&store, user, true).await?;
         self.stand_in_processing_status(json!({"userId":user}))
     }
 
@@ -95,24 +94,11 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?
         {
             let user = settings["userId"].as_i64().unwrap_or_default();
-            if let Err(error) = self
-                .process_stand_in_user(&store, user, &settings, false)
-                .await
-            {
-                let mut state = store
-                    .stand_in_processing_state(user)
-                    .map_err(settings_error)?;
-                state["error"] = json!({"code":error.code,"message":error.message});
-                state["nextCheckAt"] = json!((chrono::Utc::now()
-                    + chrono::Duration::minutes(
-                        settings["processing"]["intervalMinutes"]
-                            .as_i64()
-                            .unwrap_or(5)
-                    ))
-                .to_rfc3339());
-                store
-                    .save_stand_in_processing_state(user, &state)
-                    .map_err(settings_error)?;
+            if let Err(error) = self.process_stand_in_user(&store, user, false).await {
+                log_executor_event(
+                    "Stand-in processing failed",
+                    &[("user_id", user.to_string()), ("error", error.message)],
+                );
             }
         }
         Ok(())
@@ -122,13 +108,44 @@ impl RuntimeWorkRpcHandler {
         &self,
         store: &LocalTaskStore,
         user: i64,
-        settings: &Value,
         force: bool,
     ) -> Result<(), AppIpcError> {
         let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
         let Ok(_guard) = gate.try_lock() else {
             return Ok(());
         };
+        let current_settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let result = self
+            .process_stand_in_user_on(store, user, &current_settings, force)
+            .await;
+        if let Err(error) = &result {
+            let mut state = store
+                .stand_in_processing_state(user)
+                .map_err(settings_error)?;
+            state["error"] = json!({"code":error.code,"message":error.message});
+            state["nextCheckAt"] = json!((chrono::Utc::now()
+                + chrono::Duration::minutes(
+                    current_settings["processing"]["intervalMinutes"]
+                        .as_i64()
+                        .unwrap_or(5)
+                ))
+            .to_rfc3339());
+            store
+                .save_stand_in_processing_state(user, &state)
+                .map_err(settings_error)?;
+        }
+        result
+    }
+
+    async fn process_stand_in_user_on(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        settings: &Value,
+        force: bool,
+    ) -> Result<(), AppIpcError> {
         if settings["processing"]["mode"] != "silent" {
             return self.drain_immediate_intake(store, user, settings).await;
         }
