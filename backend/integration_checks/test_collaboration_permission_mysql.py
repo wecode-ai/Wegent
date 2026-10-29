@@ -220,11 +220,10 @@ def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
     ready = Barrier(2, timeout=10)
 
     def synchronize(_db, _cursor, statement, _params, context, _many) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
         values = context.compiled_parameters[0] if context.compiled_parameters else {}
-        if (
-            statement.startswith("INSERT INTO loop_items")
-            and values.get("resource_type") == "comment"
-        ):
+        if values.get("resource_type") == "comment":
             ready.wait()
 
     def create_issue(project_id: str) -> str:
@@ -236,12 +235,16 @@ def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
             )
             return result.internal_item.id
 
+    # Independent Issues must both reach their first assignment insert without
+    # waiting for a range lock held by the other transaction.
     sa.event.listen(engine, "before_cursor_execute", synchronize)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
                 pool.submit(create_issue, project_id) for project_id in project_ids
             ]
+            errors = [future.exception(timeout=30) for future in futures]
+            assert not any(errors), f"Concurrent first assignments failed: {errors!r}"
             issue_ids = [future.result(timeout=30) for future in futures]
         with Session(engine) as db:
             comments = (
