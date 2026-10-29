@@ -364,3 +364,28 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
+
+it('routes a pending background confirmation to its real Runtime task', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  vi.mocked(api.personalGet).mockResolvedValue({
+    ...settings,
+    processing: { mode: 'silent', intervalMinutes: 5 },
+  })
+  api.processingStatus = vi.fn().mockResolvedValue({
+    pendingCount: 1,
+    running: true,
+    awaitingUser: true,
+    taskId: 'stand-in-coordinator-7',
+    actions: [],
+  })
+  const onOpenTask = vi.fn()
+  render(<StandInOverviewPage {...props} onOpenTask={onOpenTask} />)
+  await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
+  expect(onOpenTask).toHaveBeenCalledWith({
+    taskId: 'stand-in-coordinator-7',
+    deviceId: 'device',
+    runtime: 'codex',
+  })
+})

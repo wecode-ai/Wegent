@@ -105,6 +105,15 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                let processing_handler = handler.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = processing_handler.poll_stand_in_processing().await {
+                        log_executor_event(
+                            "Stand-in coordinator failed",
+                            &[("error", error.message)],
+                        );
+                    }
+                });
                 let due = match handler.automation_store.due(Utc::now()) {
                     Ok(due) => due,
                     Err(error) => {

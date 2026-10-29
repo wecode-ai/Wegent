@@ -43,7 +43,10 @@ impl RuntimeWorkRpcHandler {
                     &thread,
                     &link,
                 );
-                if link.ephemeral {
+                if link.ephemeral
+                    || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                        && link.interaction_status.is_none())
+                {
                     continue;
                 }
                 if self.archived_link_is_deleted(&link) {
@@ -131,7 +134,10 @@ impl RuntimeWorkRpcHandler {
             if self.archived_link_is_deleted(&link) {
                 continue;
             }
-            if link.ephemeral {
+            if link.ephemeral
+                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                    && link.interaction_status.is_none())
+            {
                 continue;
             }
             let link_archived = link.status == "archived";

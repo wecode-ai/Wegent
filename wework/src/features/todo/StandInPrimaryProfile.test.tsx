@@ -70,6 +70,25 @@ function fixture() {
   }
 }
 
+it('saves device-wide processing only on explicit save and rejects invalid intervals', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  expect(screen.getByTestId('stand-in-processing-mode')).toHaveValue('immediate')
+  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'silent')
+  const interval = screen.getByTestId('stand-in-processing-interval')
+  await user.clear(interval)
+  await user.type(interval, '0')
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  expect(props.onSave).not.toHaveBeenCalled()
+  await user.clear(interval)
+  await user.type(interval, '15')
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({ processing: { mode: 'silent', intervalMinutes: 15 } })
+  )
+})
+
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
   const props = fixture()
   const user = userEvent.setup()

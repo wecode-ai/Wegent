@@ -21,6 +21,7 @@ import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
@@ -273,6 +274,22 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
+            {saved?.processing?.mode === 'silent' && deviceId && !profile && (
+              <StandInProcessingNotice
+                key={`${props.userId}:${deviceId}`}
+                api={api}
+                userId={props.userId}
+                deviceId={deviceId}
+                onOpen={() => setProfile('primary')}
+                onOpenTask={
+                  onOpenTask
+                    ? taskId => {
+                        void onOpenTask({ taskId, deviceId, runtime: 'codex' })
+                      }
+                    : undefined
+                }
+              />
+            )}
             {(state.error || proposalError || inbox.error) && (
               <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
                 <span className="flex-1">{state.error || proposalError || inbox.error}</span>

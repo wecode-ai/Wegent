@@ -1691,6 +1691,12 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async processingStatus(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).processingStatus(userId, deviceId)
+      },
+      async checkProcessing(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).checkProcessing(userId, deviceId)
+      },
       async configureTelemetry(userId, deviceId, enabled, enabledSince) {
         return (await standInApiForDevice(deviceId)).configureTelemetry(
           userId,

@@ -46,6 +46,23 @@ export interface StandInSourceError {
   source: StandInSourceConnection
   error: { code: string; message: string }
 }
+
+export interface StandInProcessingStatus {
+  awaitingUser?: boolean
+  taskId?: string
+  pendingCount: number
+  running: boolean
+  nextCheckAt?: string
+  lastCheckAt?: string
+  error?: { code: string; message: string } | null
+  actions: Array<{
+    id: string
+    kind: string
+    status: string
+    createdAt: string
+    error?: { code: string; message: string } | null
+  }>
+}
 import {
   publishPersonalStandIn,
   type PersonalStandInAgent,
@@ -95,6 +112,8 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
     deviceId: string,
@@ -239,6 +258,10 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
     }
   }
   return {
+    processingStatus: (userId, deviceId) =>
+      request('runtime.stand_in.processing.status', { userId }, deviceId),
+    checkProcessing: (userId, deviceId) =>
+      request('runtime.stand_in.processing.check', { userId }, deviceId),
     configureTelemetry: async (userId, deviceId, enabled, enabledSince) => {
       await request(
         'runtime.stand_in.telemetry.configure',

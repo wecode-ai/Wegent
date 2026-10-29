@@ -20,6 +20,20 @@ A role can cover all participating collaboration projects, including future proj
 
 One personal document owns stand-in configurations and versions. Legacy project configurations migrate transactionally into roles preserving project scopes, assignment cutoffs and original project-agent authority. Project-addressed RPCs are projections over this document, with no duplicate project persistence.
 
+## Silent intake and background coordination
+
+Automatic event handling is configured per account and Executor. Existing settings default to immediate handling. Silent mode defaults to a five-minute check interval, configurable from 1 to 1440 minutes. After saving, automatic project assignments, DingTalk messages and other connection events enter a durable SQLite intake without creating work or invoking a model. Manual delegation still starts immediately. An offline Executor pauses processing and combines accumulated events after recovery instead of replaying missed ticks.
+
+The primary stand-in coordinates through a separate persistent Runtime conversation using its configured Codex model. This conversation is excluded from ordinary task lists unless awaiting user input or approval and does not alter the user's primary chat. Each round reads an immutable batch, currently eligible roles and stand-in work conversations. It can create concrete work, continue an existing conversation, ignore or defer events, or schedule a progress check. Execution retains existing source confirmations and collaboration authorization. Only roles originally eligible for an event and still authorized may receive it.
+
+No model runs without new events, work-state changes or due follow-ups. Existing user-input and approval requests are never answered automatically; follow-ups wait for those interactions. Durable commands and Runtime message identities reconcile acceptance after a restart. Failures preserve intake and diagnostic errors. Switching back to immediate mode cancels outstanding coordinator commands and drains source events through the existing grouping and dispatch flow without recreating accepted work.
+
+Settings display pending intake, last and next check times, errors and action history, with a Check now action. Saving does not depend on model readiness. Execution requires an enabled primary stand-in with an available Codex model and never silently selects another model. Dispatch and continuation recheck source connections, role enablement, current assignments and permission revocation.
+
+Personal settings add `processing: { mode: 'immediate' | 'silent', intervalMinutes: number }`. Status and manual checks use `runtime.stand_in.processing.status` and `runtime.stand_in.processing.check`; status reads never resume unrelated persisted model turns. No Backend API is added. The primary and background stand-ins reuse ordinary sessions’ project-space tools, enabled plugins, built-in browser and authorized computer control. Native review guards external-source actions. Additional task tools list, read, create and continue current-user work with host-bound identity and existing model, workspace, session and approval boundaries. Unknown ownership is denied. Pending background approvals appear in the task list and can be opened from the stand-in overview.
+
+The existing CI `stand-in-profile` checkpoint group also invokes `stand-in-processing`. This checkpoint establishes its own local project and settings, then verifies real persistence, MCP dispatch and same-session continuation; only model responses are mocked. Local verification uses focused Rust, component and transport tests. Desktop E2E and `ai:verify` run only when explicitly requested.
+
 ## Model catalog and execution references
 
 Stand-ins and ordinary tasks share the model picker, classification, sorting, and option rules. Cloud models use their original `UnifiedModel` catalog objects directly, without a round trip through execution models or changes to catalog names, labels, or `config.ui`. Native Executor catalogs require only one display adaptation and reuse the common Codex catalog helpers for provider metadata.

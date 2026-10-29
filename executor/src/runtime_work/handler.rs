@@ -153,6 +153,8 @@ mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
+mod stand_in_processing;
+mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
@@ -999,6 +1001,7 @@ impl RuntimeWorkRpcHandler {
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
+        self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
@@ -1168,6 +1171,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
     if method.starts_with("runtime.connections.")
         || method.starts_with("runtime.stand_in.telemetry.")
+        || method == "runtime.stand_in.processing.status"
     {
         return false;
     }

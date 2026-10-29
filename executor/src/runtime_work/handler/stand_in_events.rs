@@ -62,6 +62,48 @@ impl RuntimeWorkRpcHandler {
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
+
+        let user = configs[0]["userId"].as_i64().unwrap_or_default();
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if settings["processing"]["mode"] == "silent" {
+            let assignments = self
+                .stand_in_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/assignments"),
+                    None,
+                )
+                .await?;
+            let Some(active) = assignments["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["id"] == assignment && row["status"] == "active")
+            else {
+                return Ok(());
+            };
+            let roles: Vec<Value> =
+                super::personal_stand_in::matching_personal_roles(&configs, &issue)
+                    .iter()
+                    .filter(|role| {
+                        super::stand_in::assignment_after_enable(active, role)
+                            && self
+                                .local_task_link(
+                                    &self.stand_in_task_id(role, &issue["human_task_binding"]),
+                                )
+                                .is_none()
+                    })
+                    .map(|role| role["id"].clone())
+                    .collect();
+            if roles.is_empty() {
+                return Ok(());
+            }
+            store.enqueue_stand_in_event(user, json!(["assignment","cloud",project,issue_id,assignment]),
+                json!({"kind":"assignment","projectId":project,"projectStore":"cloud","issueId":issue_id,"assignmentId":assignment,"issue":issue,"roleIds":roles})
+            ).map_err(settings_error)?;
+            return Ok(());
+        }
         let result = self.start_cloud_stand_in_with_roles(&configs, &issue).await;
         self.log_stand_in_decision(
             &configs[0],
@@ -173,6 +215,29 @@ mod tests {
         );
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert!(fixture.handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_notifications_are_durable_intake_without_task_dispatch() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        for _ in 0..2 {
+            fixture
+                .handler
+                .handle_runtime_rpc(notification())
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+        assert_eq!(
+            store.stand_in_events(7).unwrap()[0]["assignmentId"],
+            "assignment"
+        );
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
 

@@ -390,6 +390,17 @@ impl LocalTaskStore {
         mut value: Value,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_connections(&mut value)?;
+        if let Some(processing) = value.get("processing") {
+            if !matches!(processing["mode"].as_str(), Some("immediate" | "silent"))
+                || !processing["intervalMinutes"]
+                    .as_u64()
+                    .is_some_and(|minutes| (1..=1440).contains(&minutes))
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "Invalid stand-in processing schedule".into(),
+                ));
+            }
+        }
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("autoSelect");
@@ -457,6 +468,9 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_processing::update_processing_configuration(
+            connection, user, &previous, &value,
+        )?;
         super::stand_in_telemetry::configuration_changes(connection, user, &previous, &value);
         Ok(value)
     }

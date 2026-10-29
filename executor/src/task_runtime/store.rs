@@ -65,6 +65,9 @@ mod stand_in_memories;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
 
+#[path = "stand_in_processing.rs"]
+mod stand_in_processing;
+
 #[path = "stand_in_telemetry.rs"]
 pub(crate) mod stand_in_telemetry;
 

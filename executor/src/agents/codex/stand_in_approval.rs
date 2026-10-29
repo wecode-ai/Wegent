@@ -86,6 +86,27 @@ pub(super) fn stand_in_mcp_approval_overrides(
             ));
         }
     }
+    if request
+        .extra
+        .get("origin")
+        .is_some_and(|origin| origin["type"] == "stand_in_coordinator")
+    {
+        // Batch commands only persist scoped intents; dispatch revalidates every source.
+        // Ordinary task operations and external tools retain native review above.
+        for tool in [
+            "read_intake",
+            "read_work",
+            "create_work",
+            "continue_work",
+            "ignore_events",
+            "defer_events",
+            "schedule_followup",
+        ] {
+            result.push(format!(
+                "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"approve\""
+            ));
+        }
+    }
     Ok(result)
 }
 
@@ -93,6 +114,39 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn coordinator_keeps_external_review_and_only_exempts_batch_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let request: ExecutionRequest = serde_json::from_value(
+            json!({"origin":{"type":"stand_in_coordinator","initiatedBy":"stand_in_coordinator"}}),
+        )
+        .unwrap();
+        let result = stand_in_mcp_approval_overrides(
+            &request,
+            root.path(),
+            &[
+                "mcp_servers.business.command=\"business\"".into(),
+                "mcp_servers.wework_stand_in.url=\"http://localhost\"".into(),
+            ],
+            &Map::new(),
+        )
+        .unwrap();
+        assert!(
+            result.contains(&"mcp_servers.business.default_tools_approval_mode=\"prompt\"".into())
+        );
+        assert!(result.contains(
+            &"mcp_servers.wework_stand_in.default_tools_approval_mode=\"prompt\"".into()
+        ));
+        assert!(result.contains(
+            &"mcp_servers.wework_stand_in.tools.create_work.approval_mode=\"approve\"".into()
+        ));
+        assert!(!result
+            .iter()
+            .any(|entry| entry.contains("tools.create_task")
+                || entry.contains("tools.continue_task")));
+        assert!(super::super::external_work::applies(&request));
+    }
 
     #[test]
     fn collaboration_is_exempt_without_exempting_other_servers_or_tool_policies() {

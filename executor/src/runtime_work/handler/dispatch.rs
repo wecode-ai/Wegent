@@ -45,6 +45,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.conversation" => {
                 boxed_rpc(move || async move { self.stand_in_conversation(payload).await })
             }
+            "runtime.stand_in.processing.status" => {
+                boxed_rpc(move || async move { self.stand_in_processing_status(payload) })
+            }
+            "runtime.stand_in.processing.check" => {
+                boxed_rpc(move || async move { self.check_stand_in_processing(payload).await })
+            }
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
             }

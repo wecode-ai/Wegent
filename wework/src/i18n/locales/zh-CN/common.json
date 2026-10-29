@@ -5603,7 +5603,32 @@
       "work_busy": "该工作正在处理中，请稍后重试。",
       "failed": "分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。",
       "device_offline": "执行设备离线，请连接设备后重试。",
-      "stand_in_project_connections": "该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。"
+      "stand_in_project_connections": "该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。",
+      "coordinator_failed": "后台统筹失败。请检查处理记录和模型配置后重试。"
+    },
+    "processing": {
+      "title": "自动事件处理",
+      "immediate": "即时处理",
+      "silent": "静默处理",
+      "help": "当前设备的所有自动来源先静默归集，由主分身集中决定创建或继续工作。没有新事件、状态变化或到期跟进时不调用模型。手动交办立即执行。",
+      "interval": "检查间隔（分钟）",
+      "save_first": "保存后生效。请为主分身选择可用的 Codex 模型。",
+      "running": "主分身正在集中处理",
+      "pending": "待处理事件：{{count}}",
+      "next": "下次检查：{{time}}",
+      "last": "最近检查：{{time}}",
+      "check": "立即检查",
+      "history": "处理记录",
+      "action_create_work": "创建工作",
+      "action_continue_work": "继续工作",
+      "action_ignore_events": "忽略事件",
+      "action_defer_events": "稍后处理",
+      "action_schedule_followup": "安排跟进",
+      "status_pending": "待处理",
+      "status_sending": "派发中",
+      "status_succeeded": "已处理",
+      "status_failed": "失败",
+      "awaiting_user": "处理后台待确认事项"
     }
   },
   "workbench_error": {

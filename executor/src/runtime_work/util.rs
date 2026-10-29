@@ -252,12 +252,17 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
 }
 
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if let Some(delegation) = runtime_handle.pointer("/executionRequest/standInDelegation") {
+        request
+            .extra
+            .insert("standInDelegation".into(), delegation.clone());
+    }
     if runtime_handle["origin"]["initiatedBy"] == "stand_in"
         || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
         || runtime_handle["origin"]["type"] == "issue_dispatch"
         || matches!(
             runtime_handle["origin"]["type"].as_str(),
-            Some("dingtalk_work" | "connection_work")
+            Some("dingtalk_work" | "connection_work" | "stand_in_coordinator")
         )
     {
         let mut origin = runtime_handle["origin"].clone();
@@ -290,10 +295,13 @@ pub(crate) enum ExternalWorkKind {
 }
 
 pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
+    if request.extra.contains_key("standInDelegation") {
+        return Some(ExternalWorkKind::Message);
+    }
     let origin = request.extra.get("origin")?;
     if matches!(
         origin["type"].as_str(),
-        Some("dingtalk_work" | "connection_work")
+        Some("dingtalk_work" | "connection_work" | "stand_in_coordinator" | "stand_in_task")
     ) {
         Some(ExternalWorkKind::Message)
     } else if origin["type"] == "issue_dispatch" {
@@ -304,10 +312,17 @@ pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalW
 }
 
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
+    if request
+        .extra
+        .get("standInDelegation")
+        .is_some_and(|value| value["askBeforeAct"] == true)
+    {
+        return true;
+    }
     request.extra.get("origin").is_some_and(|origin| {
         matches!(
             origin["initiatedBy"].as_str(),
-            Some("stand_in" | "stand_in_identity")
+            Some("stand_in" | "stand_in_identity" | "stand_in_coordinator")
         ) && origin["askBeforeAct"] == true
     })
 }

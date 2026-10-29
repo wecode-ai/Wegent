@@ -56,6 +56,12 @@ export interface PersonalStandInSettings {
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  processing?: StandInProcessingSettings
+}
+
+export interface StandInProcessingSettings {
+  mode: 'immediate' | 'silent'
+  intervalMinutes: number
 }
 
 export function standInPolicy(

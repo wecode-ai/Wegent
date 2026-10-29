@@ -5606,7 +5606,32 @@
       "work_busy": "This work is being processed. Try again later.",
       "failed": "The stand-in action failed. Try again later. If it persists, check the execution device logs.",
       "device_offline": "The execution device is offline. Connect it and try again.",
-      "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent."
+      "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent.",
+      "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again."
+    },
+    "processing": {
+      "title": "Automatic event handling",
+      "immediate": "Handle immediately",
+      "silent": "Collect silently",
+      "help": "Collect automatic events on this device for the primary stand-in to create or continue work. No model runs without new events, work changes, or due follow-ups. Manual requests start immediately.",
+      "interval": "Check interval (minutes)",
+      "save_first": "Save to apply. Select an available Codex model for the primary stand-in.",
+      "running": "The primary stand-in is coordinating work",
+      "pending": "Pending events: {{count}}",
+      "next": "Next check: {{time}}",
+      "last": "Last check: {{time}}",
+      "check": "Check now",
+      "history": "Handling history",
+      "action_create_work": "Create work",
+      "action_continue_work": "Continue work",
+      "action_ignore_events": "Ignore events",
+      "action_defer_events": "Defer events",
+      "action_schedule_followup": "Schedule follow-up",
+      "status_pending": "Pending",
+      "status_sending": "Sending",
+      "status_succeeded": "Handled",
+      "status_failed": "Failed",
+      "awaiting_user": "Open pending confirmation"
     }
   },
   "workbench_error": {
