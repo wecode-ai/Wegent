@@ -122,6 +122,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
+  'window-background-policy': './scenarios/window-background-policy.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'application-menu': './scenarios/application-menu.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
@@ -337,6 +338,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
+  'window-background-policy',
   'renderer-storage',
   'application-menu',
   'tray-lifecycle',
@@ -484,6 +486,7 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'window-lifecycle' ||
+    checkpoint === 'window-background-policy' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'

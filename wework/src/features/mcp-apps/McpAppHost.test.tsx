@@ -5,6 +5,7 @@ import { McpAppHost } from './McpAppHost'
 
 const translate = vi.hoisted(() => (key: string) => key)
 const native = vi.hoisted(() => ({ invoke: vi.fn() }))
+const connection = vi.hoisted(() => ({ start: vi.fn() }))
 const bridges = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: native.invoke }))
@@ -15,6 +16,7 @@ vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
     }
     oninitialized?: () => void
     async connect() {
+      await connection.start()
       queueMicrotask(() => this.oninitialized?.())
     }
     async sendToolInput() {}
@@ -38,6 +40,7 @@ const running: ToolBlock = {
 
 beforeEach(() => {
   native.invoke.mockClear()
+  connection.start.mockReset().mockResolvedValue(undefined)
   bridges.length = 0
 })
 
@@ -97,6 +100,56 @@ describe('MCP App close completion', () => {
     result: { content: [] },
     arguments: {},
   }
+
+  it('loads the app document only after the message transport is connected', async () => {
+    let finish!: () => void
+    connection.start.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    const url = 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html'
+    native.invoke.mockResolvedValue({ id: 'document', url })
+    render(
+      <McpAppHost
+        block={running}
+        address={address}
+        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+      />
+    )
+    await act(async () => {})
+    expect(connection.start).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', 'about:blank')
+    await act(async () => finish())
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', url)
+  })
+
+  it('does not navigate a removed frame when its connection finishes late', async () => {
+    let finish!: () => void
+    connection.start.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    native.invoke.mockResolvedValue({
+      id: 'document',
+      url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
+    })
+    const view = render(
+      <McpAppHost
+        block={running}
+        address={address}
+        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+      />
+    )
+    await act(async () => {})
+    const frame = screen.getByTestId('mcp-app-frame')
+    view.unmount()
+    await act(async () => finish())
+    expect(frame).toHaveAttribute('src', 'about:blank')
+  })
 
   it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {
     native.invoke.mockImplementation((method: string) => {

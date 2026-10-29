@@ -21,8 +21,11 @@ import asyncio
 import logging
 from typing import Any, List, Optional
 
+from sqlalchemy.orm import Session
+
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
+from app.models.subtask import Subtask
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -41,6 +44,7 @@ from .emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
 )
+from .executor_health import executor_pod_missing
 from .git_credentials import build_device_git_execution_payload
 from .inprocess_chat import dispatch_inprocess_chat
 from .polling_dispatcher import dispatch_polling
@@ -260,8 +264,13 @@ class ExecutionDispatcher:
             current_subtask = subtask
 
             restore_fork_workspace = self._has_fork_workspace_archive(request)
+            executor_missing = False
             if not subtask.executor_deleted_at and not restore_fork_workspace:
-                return
+                executor_missing = await self._mark_missing_executor_deleted(
+                    db, subtask
+                )
+                if not executor_missing:
+                    return
 
             task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
@@ -276,9 +285,11 @@ class ExecutionDispatcher:
                 request.subtask_id,
                 subtask.executor_name,
                 (
-                    "deleted_executor"
-                    if subtask.executor_deleted_at
-                    else "fork_workspace_archive"
+                    "fork_workspace_archive"
+                    if restore_fork_workspace
+                    else (
+                        "missing_executor" if executor_missing else "deleted_executor"
+                    )
                 ),
             )
 
@@ -323,6 +334,39 @@ class ExecutionDispatcher:
             )
         finally:
             db.close()
+
+    async def _mark_missing_executor_deleted(
+        self,
+        db: Session,
+        subtask: Subtask,
+    ) -> bool:
+        """Persist ``executor_deleted_at`` when the bound executor vanished.
+
+        The flag is normally set by the executor cleanup path. Pods can also
+        disappear outside of it (eviction, node drain, manual delete); without
+        this check dispatch would reuse the stale executor name and fail
+        permanently instead of restoring the workspace.
+
+        Returns:
+            True when the executor is confirmed gone and marked for recovery.
+        """
+        executor_name = (subtask.executor_name or "").strip()
+        if not executor_name or executor_name.startswith("device-"):
+            return False
+        if not await executor_pod_missing(executor_name, subtask.executor_namespace):
+            return False
+
+        logger.info(
+            "[ExecutionDispatcher] Executor unavailable, marking deleted: "
+            "task_id=%s, subtask_id=%s, executor=%s/%s",
+            subtask.task_id,
+            subtask.id,
+            subtask.executor_namespace,
+            executor_name,
+        )
+        subtask_store.update_fields(db, subtask=subtask, executor_deleted_at=True)
+        db.commit()
+        return True
 
     @staticmethod
     def _has_fork_workspace_archive(request: ExecutionRequest) -> bool:

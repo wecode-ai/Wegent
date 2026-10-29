@@ -94,11 +94,10 @@ function modelMessageText(message) {
 }
 
 function isReplyPredictionRequest(body) {
-  if (Array.isArray(body.messages)) {
-    const message = body.messages.at(-1)
-    return message?.role === 'user' && modelMessageText(message) === REPLY_PREDICTION_PROMPT
-  }
-  return codexRequestMetadata(body)?.thread_source === 'composer_predictions'
+  if (codexRequestMetadata(body)?.thread_source === 'composer_predictions') return true
+  const messages = body.messages ?? body.input
+  const message = Array.isArray(messages) ? messages.at(-1) : null
+  return message?.role === 'user' && modelMessageText(message) === REPLY_PREDICTION_PROMPT
 }
 
 function isReplyPredictionVisionRequest(body) {
