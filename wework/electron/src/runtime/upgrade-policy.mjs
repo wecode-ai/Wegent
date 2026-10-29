@@ -31,6 +31,8 @@ export function validateUpgradeCatalog(input) {
     compareVersions(release.version, release.minSourceVersion)
     if (
       compareVersions(release.minSourceVersion, release.version) > 0 ||
+      (input.channel === 'stable' &&
+        (release.version.includes('-beta.') || release.minSourceVersion.includes('-beta.'))) ||
       versions.has(release.version) ||
       typeof release.revoked !== 'boolean' ||
       !HASH.test(release.sha256) ||
