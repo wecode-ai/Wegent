@@ -304,9 +304,12 @@ export async function verifyPluginDetailResilience({
   async function expectImageRequest(path, startedAfter, responseStatus, entry, field) {
     return until(
       async () => {
-        const requests = (await imageRequests(path)).filter(
+        const observed = await imageRequests(path)
+        const requests = observed.filter(
           request => request.initiatorType === 'img' && request.startedAt >= startedAfter
         )
+        // Keep the full real timeline so reuse and clock/window errors are distinguishable.
+        entry[`${field}Timeline`] = { startedAfter, observedAt: Date.now(), requests: observed }
         entry[field] = requests
         return requests
       },

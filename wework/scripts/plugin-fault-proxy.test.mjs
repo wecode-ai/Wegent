@@ -3,9 +3,13 @@ import { once } from 'node:events'
 import { createServer, request } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { connect } from 'node:net'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'vitest'
 import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { verifyCatalogDiskGeneration } from '../e2e/desktop/modules/plugin-late-response-resilience.mjs'
 
 async function fixture(t) {
   const received = []
@@ -108,6 +112,163 @@ test(
       'real-upstream-body'
     )
     assert.equal(received.filter(request => request.method === 'DELETE').length, 1)
+  }
+)
+
+test('paused request forwards its original body once after release', { timeout: 5000 }, async t => {
+  const { proxy, received, server } = await fixture(t)
+  server.removeAllListeners('request')
+  server.on('request', (request, response) => {
+    const chunks = []
+    request.on('data', chunk => chunks.push(chunk))
+    request.once('end', () => {
+      received.push({ method: request.method, body: Buffer.concat(chunks).toString() })
+      response.end(received.at(-1).body)
+    })
+  })
+  proxy.rule = () => 'pause-request'
+  const result = fetch(`${proxy.url}/repair`, {
+    method: 'POST',
+    body: 'original-real-repair',
+  }).then(response => response.text())
+  await until(() => proxy.requests[0]?.release, Boolean, 'Request was not paused')
+  assert.deepEqual(received, [])
+  assert.equal(proxy.requests[0].fault, 'pause-request')
+  assert.equal(proxy.requests[0].release(), true)
+  assert.equal(proxy.requests[0].release(), false)
+  assert.equal(await result, 'original-real-repair')
+  assert.deepEqual(received, [{ method: 'POST', body: 'original-real-repair' }])
+  assert.equal(proxy.requests[0].responseCompleted, true)
+  assert.equal(proxy.requests[0].cancel(), false)
+  assert.ok(!JSON.stringify(proxy.requests).includes('original-real-repair'))
+})
+
+test(
+  'stopping the proxy cancels a paused request instead of leaving it pending',
+  { timeout: 5000 },
+  async t => {
+    const { proxy } = await fixture(t)
+    proxy.rule = () => 'pause-request'
+    const pending = assert.rejects(fetch(`${proxy.url}/repair`, { method: 'POST' }))
+    await until(() => proxy.requests[0]?.cancel, Boolean, 'Request was not paused')
+    const [entry] = proxy.requests
+    await proxy.stop()
+    await pending
+    assert.equal(entry.cancelled, true)
+    assert.equal(entry.responseCompleted, undefined)
+    assert.equal(entry.release(), false)
+    // Repeated shutdown from the shared fixture cleanup must stay a no-op.
+    await proxy.stop()
+  }
+)
+
+test.for(['proxy-cancel', 'client-abort'])(
+  'cancelled paused request is never replayed after %s and subsequent requests proceed',
+  { timeout: 5000 },
+  async (kind, t) => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = () => 'pause-request'
+    const controller = new AbortController()
+    const result = assert.rejects(
+      fetch(`${proxy.url}/repair`, { method: 'POST', signal: controller.signal })
+    )
+    await until(() => proxy.requests[0]?.cancel, Boolean, 'Request was not paused')
+    if (kind === 'proxy-cancel') assert.equal(proxy.requests[0].cancel(), true)
+    else controller.abort()
+    await result
+    await until(() => proxy.requests[0].cancelled, Boolean, 'Paused request was not cancelled')
+    assert.equal(proxy.requests[0].release(), false)
+    assert.equal(proxy.requests[0].cancel(), false)
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/healthy`)).text(), 'real-upstream-body')
+    assert.deepEqual(received, [{ method: 'GET', url: '/healthy' }])
+  }
+)
+
+test.for([false, true])(
+  'catalog fault preserves the primary assertion with cleanup failure=%s',
+  async (cleanupFails, t) => {
+    const { proxy } = await fixture(t)
+    const home = await mkdtemp(join(tmpdir(), 'plugin-generation-cleanup-'))
+    t.onTestFinished(() => rm(home, { recursive: true, force: true }))
+    await mkdir(join(home, 'capabilities'))
+    const manifestPath = join(home, 'capabilities/manifest-v2.json')
+    const original = Buffer.from(
+      JSON.stringify({ version: 2, plugins: { tool: { installed_plugin_id: 72 } } })
+    )
+    await writeFile(manifestPath, original)
+    const assertionError = new Error('original concurrency assertion')
+    const cleanupError = new Error('catalog gate cleanup failure')
+    const report = { passed: false }
+    const previousRule = proxy.rule
+    const commands = []
+    const control = {
+      async command(name) {
+        commands.push(name)
+        if (name === 'waitFor') throw assertionError
+        if (name === 'resetRuntimeTransportGates') {
+          if (cleanupFails) throw cleanupError
+          return ''
+        }
+        assert.fail(`Unexpected command ${name}`)
+      },
+    }
+    await assert.rejects(
+      verifyCatalogDiskGeneration({
+        control,
+        executorHome: home,
+        item: { installedId: 72 },
+        apiProxy: proxy,
+        deviceId: 'device-a',
+        report,
+      }),
+      error => {
+        if (cleanupFails) {
+          assert.ok(error instanceof AggregateError)
+          assert.deepEqual(error.errors, [assertionError, cleanupError])
+          assert.equal(error.cause, assertionError)
+        } else assert.equal(error, assertionError)
+        return true
+      }
+    )
+    assert.equal(report.passed, false)
+    assert.match(report.assertionError, /original concurrency assertion/)
+    assert.equal(report.cleanupErrors.length, cleanupFails ? 1 : 0)
+    assert.deepEqual(commands, ['waitFor', 'resetRuntimeTransportGates'])
+    assert.equal(proxy.rule, previousRule)
+    assert.ok((await readFile(manifestPath)).equals(original))
+  }
+)
+
+test(
+  'cleanup can cancel a released pause while its real upstream response is pending',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received, server } = await fixture(t)
+    server.removeAllListeners('request')
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      request.resume()
+      if (request.url === '/healthy') response.end('healthy-after-cancel')
+    })
+    proxy.rule = () => 'pause-request'
+    const result = assert.rejects(fetch(`${proxy.url}/repair`, { method: 'POST' }))
+    await until(() => proxy.requests[0]?.release, Boolean, 'Request was not paused')
+    assert.equal(proxy.requests[0].release(), true)
+    await until(
+      () => received.length,
+      count => count === 1,
+      'Original request was not forwarded'
+    )
+    assert.equal(proxy.requests[0].cancel(), true)
+    await result
+    assert.equal(proxy.requests[0].release(), false)
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/healthy`)).text(), 'healthy-after-cancel')
+    assert.deepEqual(received, [
+      { method: 'POST', url: '/repair' },
+      { method: 'GET', url: '/healthy' },
+    ])
   }
 )
 

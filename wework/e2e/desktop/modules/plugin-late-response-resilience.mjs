@@ -23,7 +23,14 @@ function jsonResponse(delayed) {
 }
 
 /** Delay original catalog bytes while a real disk scan updates only the adapter cache. */
-async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy) {
+export async function verifyCatalogDiskGeneration({
+  control,
+  executorHome,
+  item,
+  apiProxy,
+  deviceId,
+  report,
+}) {
   const gates = runtimeTransportGates(control)
   const gateId = 'plugin-catalog-after-newer-disk'
   const home = await realpath(executorHome)
@@ -54,15 +61,16 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
       await rm(staging, { force: true })
     }
   }
-  const report = { passed: false }
   const previousRule = apiProxy.rule
   const delayedRepairs = []
+  const repairOutcomes = new Map()
+  const failures = []
   try {
     // Keep legitimate automatic repairs from changing the fault before assertions.
     apiProxy.rule = request => {
       if (request.method === 'POST' && request.path.startsWith('/api/plugins/installed/')) {
         delayedRepairs.push(request)
-        return 'hold-request'
+        return 'pause-request'
       }
       return previousRule(request)
     }
@@ -71,6 +79,7 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
       stableMs: 250,
     })
     const before = await inventory(control)
+    report.before = before
     await gates.arm({
       id: gateId,
       kind: 'response',
@@ -79,17 +88,20 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
     })
     await control.command('click', testId('plugins-refresh-button'))
     const capture = await gates.wait(gateId)
+    report.catalogCapture = { capturedAt: capture.capturedAt, deliveries: capture.deliveries }
     assert.equal(capture.deliveries, 0, 'The old real catalog response must still be held')
     const held = await inventory(control)
     assert.equal(held.installedSourceReads.store.status, 'fulfilled')
     assert.ok(held.installedSourceReads.store.pluginKeys.includes(item.slug))
     await replace(injected)
     const disk = JSON.parse(await control.command('readLocalPluginDiskInventory', 'body'))
+    report.disk = disk
     assert.equal(disk.partial, false, 'The newer disk read must succeed completely')
     assert.equal(disk.sourceReads.store.status, 'fulfilled')
     assert.ok(!disk.sourceReads.store.pluginKeys.includes(item.slug))
     assert.ok((await readFile(path)).equals(injected), 'Background work changed the disk fixture')
     const afterDisk = await inventory(control)
+    report.afterDisk = afterDisk
     assert.equal(
       afterDisk.sharedInventory.mutationRevision,
       before.sharedInventory.mutationRevision,
@@ -110,6 +122,7 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
       stableMs: 250,
     })
     const after = await inventory(control)
+    report.afterCatalog = after
     assert.equal(after.installedSourceReads.store.status, 'fulfilled')
     assert.ok(
       !after.installedSourceReads.store.pluginKeys.includes(item.slug),
@@ -136,23 +149,73 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
       'The successful assertion must observe the injected disk state'
     )
     Object.assign(report, {
-      passed: true,
-      disk,
+      assertionsPassed: true,
       flatContainsFixture: otherSourceContains,
       storeOwnershipRemoved: true,
     })
+  } catch (error) {
+    report.assertionError = String(error?.stack ?? error)
+    failures.push(error)
   } finally {
-    try {
-      await replace(original)
-    } finally {
-      apiProxy.rule = previousRule
+    report.cleanupErrors = []
+    const cleanup = async (label, action) => {
       try {
-        await gates.reset()
-      } finally {
-        await Promise.all(delayedRepairs.map(request => request.release()))
+        await action()
+      } catch (error) {
+        report.cleanupErrors.push({ label, error: String(error?.stack ?? error) })
+        failures.push(error)
       }
     }
+    let restored = false
+    await cleanup('restore-manifest', async () => {
+      await replace(original)
+      restored = true
+    })
+    apiProxy.rule = previousRule
+    await cleanup('reset-catalog-gate', () => gates.reset())
+    await cleanup('finish-paused-repairs', async () => {
+      try {
+        for (const request of delayedRepairs) {
+          assert.equal(request.fault, 'pause-request')
+          assert.equal(typeof request.release, 'function')
+          assert.equal(typeof request.cancel, 'function')
+          repairOutcomes.set(request, restored ? request.release() : request.cancel())
+        }
+        await until(
+          () => delayedRepairs,
+          requests => requests.every(request => request.responseCompleted || request.cancelled),
+          'Paused repairs did not complete after restoring the manifest'
+        )
+      } finally {
+        // On timeout, close outstanding real transports so later groups are not poisoned.
+        for (const request of delayedRepairs) request.cancel()
+      }
+    })
+    if (delayedRepairs.length)
+      await cleanup('wait-device-sync-unlocked', async () => {
+        await until(
+          async () =>
+            JSON.parse(
+              await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })
+            ),
+          state => !state.inFlight,
+          'The device synchronization lock remained held after cleanup'
+        )
+      })
+    report.repairs = delayedRepairs.map(request => ({
+      path: request.path,
+      fault: request.fault,
+      releaseAccepted: repairOutcomes.get(request) === true,
+      released: request.released === true,
+      cancelled: request.cancelled === true,
+      responseCompleted: request.responseCompleted === true,
+    }))
   }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'Catalog/disk concurrency assertions and cleanup failed', {
+      cause: failures[0],
+    })
   await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await control.command('waitFor', testId('plugins-refresh-button'), {
     enabled: true,
@@ -163,6 +226,7 @@ async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy
     recovered.installedSourceReads.store.pluginKeys.includes(item.slug),
     'A fresh read must restore the real store source after cleanup'
   )
+  report.passed = true
   return report
 }
 
@@ -303,15 +367,15 @@ export async function verifyPluginLateResponseResilience({
       originalReplyActuallyReleased: true,
     }
     await captureScreenshot(control, 'plugin-late-response-after-release.png', 'body')
-    report.catalogDiskGeneration = await verifyCatalogDiskGeneration(
+    report.catalogDiskGeneration = { passed: false }
+    await verifyCatalogDiskGeneration({
       control,
       executorHome,
-      {
-        ...item,
-        installedId,
-      },
-      apiProxy
-    )
+      item: { ...item, installedId },
+      apiProxy,
+      deviceId,
+      report: report.catalogDiskGeneration,
+    })
     report.passed = true
     return report
   } catch (error) {

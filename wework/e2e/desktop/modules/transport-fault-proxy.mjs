@@ -107,6 +107,7 @@ export class TransportFaultProxy {
     this.requests = []
     this.sockets = new Set()
     this.upstreams = new Set()
+    this.pausedRequests = new Set()
     this.websockets = new Set()
     this.deviceSockets = new Set()
     this.rule = () => null
@@ -115,6 +116,7 @@ export class TransportFaultProxy {
     this.preserveHost = preserveHost
     this.webSocketsDisconnected = false
     this.capabilitySyncGate = null
+    this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
@@ -163,6 +165,41 @@ export class TransportFaultProxy {
       // A canceled destructive request must never be replayed when the fault is lifted.
       return
     }
+    if (fault === 'pause-request') {
+      // Hold the untouched request stream, then forward it exactly once on release.
+      // Unlike hold-request, a paused request is resumable because the real client
+      // is still waiting for a real reply.
+      let forwarded = false
+      this.pausedRequests.add(entry)
+      response.once('close', () => {
+        this.pausedRequests.delete(entry)
+        // A transport that closed without delivering a full reply was cancelled.
+        if (!entry.responseCompleted) entry.cancelled = true
+      })
+      entry.release = () => {
+        if (forwarded || entry.cancelled || response.destroyed || response.writableEnded)
+          return false
+        forwarded = true
+        entry.released = true
+        this.pausedRequests.delete(entry)
+        this.forwardUpstream(request, response, entry, null)
+        return true
+      }
+      entry.cancel = () => {
+        if (entry.cancelled || response.destroyed || response.writableEnded) return false
+        entry.cancelled = true
+        this.pausedRequests.delete(entry)
+        request.resume()
+        response.destroy()
+        return true
+      }
+      // Leave the original request stream paused; release forwards it once unchanged.
+      return
+    }
+    this.forwardUpstream(request, response, entry, fault)
+  }
+
+  forwardUpstream(request, response, entry, fault) {
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
       if (fault === 'hold-response') {
@@ -365,11 +402,16 @@ export class TransportFaultProxy {
   }
 
   async stop() {
-    this.capabilitySyncGate?.release()
-    for (const request of this.upstreams) request.destroy()
-    for (const socket of this.sockets) socket.destroy()
-    await new Promise((resolve, reject) =>
-      this.server.close(error => (error ? reject(error) : resolve()))
-    )
+    this.stopPromise ??= (async () => {
+      this.capabilitySyncGate?.release()
+      // Paused requests have no upstream yet; cancel them so clients settle.
+      for (const entry of [...this.pausedRequests]) entry.cancel?.()
+      for (const request of this.upstreams) request.destroy()
+      for (const socket of this.sockets) socket.destroy()
+      await new Promise((resolve, reject) =>
+        this.server.close(error => (error ? reject(error) : resolve()))
+      )
+    })()
+    return this.stopPromise
   }
 }
