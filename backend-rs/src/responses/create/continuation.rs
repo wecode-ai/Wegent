@@ -18,13 +18,14 @@ use brz_http_server::StatusCode;
 use serde_json::{Map, Value};
 
 use crate::http_compat::FastApiError;
-use crate::responses::responses_repository::get_task_by_states_active_owned;
+use crate::responses::responses_repository::get_task_by_states_active_owned_on;
 use crate::task_store::TaskStore;
 
 /// `f"resp_{setup.task_id}"`.
 const RESPONSE_ID_PREFIX: &str = "resp_";
 
 /// The resumed Task of a `resp_{task_id}` follow-up.
+#[derive(Debug)]
 pub struct Continuation {
     pub task_id: i64,
     /// The Task's stored CRD, marked `PENDING` for this turn.
@@ -51,8 +52,12 @@ pub fn continuation_task_id(previous_response_id: &str) -> Result<Option<i64>, F
 
 /// `get_task_with_access_check` + `check_task_status` for a follow-up, with the
 /// Task's CRD already marked `PENDING`.
+///
+/// The source runs the lookup at `openapi_responses.py:522-547`, before team
+/// and model resolution, on the request's own session; `sql` is that handle.
 pub async fn resolve(
     store: &dyn TaskStore,
+    sql: &mut dyn crate::request_sql::RequestSql,
     previous_response_id: &str,
     owner_user_id: i32,
     now: &str,
@@ -60,7 +65,7 @@ pub async fn resolve(
     let Some(task_id) = continuation_task_id(previous_response_id)? else {
         return Ok(None);
     };
-    let row = get_task_by_states_active_owned(store, task_id, owner_user_id)
+    let row = get_task_by_states_active_owned_on(sql, store, task_id, owner_user_id)
         .await
         .map_err(dependency)?;
     let Some(row) = row else {
@@ -94,7 +99,7 @@ fn ensure_runnable(task_json: &Value) -> Result<(), FastApiError> {
 
 /// `mark_task_pending_payload` -> `_with_status`: `status.status="PENDING"`,
 /// `progress=0`, `errorMessage=""`, `completedAt=null`, `updatedAt=now`.
-fn mark_pending(task_json: &mut Value, now: &str) {
+pub(crate) fn mark_pending(task_json: &mut Value, now: &str) {
     let Value::Object(root) = task_json else {
         return;
     };
@@ -166,6 +171,109 @@ fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records the statements one `RequestSql` handle receives.
+    #[derive(Default)]
+    struct RecordedRequestSql {
+        calls: std::sync::Mutex<Vec<(crate::request_sql::RouteKey, String, usize)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::request_sql::RequestSql for RecordedRequestSql {
+        async fn execute_statement(
+            &mut self,
+            route: crate::request_sql::RouteKey,
+            sql: &str,
+            arguments: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((route, sql.to_string(), arguments.len()));
+            Ok(brz_mysql::MysqlExecution {
+                rows_affected: 1,
+                last_insert_id: 0,
+            })
+        }
+
+        async fn fetch_optional_row(
+            &mut self,
+            route: crate::request_sql::RouteKey,
+            sql: &str,
+            arguments: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((route, sql.to_string(), arguments.len()));
+            Ok(None)
+        }
+
+        async fn fetch_all_rows(
+            &mut self,
+            route: crate::request_sql::RouteKey,
+            sql: &str,
+            arguments: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((route, sql.to_string(), arguments.len()));
+            Ok(Vec::new())
+        }
+    }
+
+    /// `resolve` reads the previous Task through the caller's request handle:
+    /// the `tasks`-shard active-owned statement with `(task_id, owner)`.
+    #[tokio::test]
+    async fn continuation_lookup_uses_the_request_transaction_handle() {
+        let store = crate::task_store::DefaultTaskStore::new(
+            crate::sql_test_support::KindQueryCapture::writing(),
+        );
+        let mut sql = RecordedRequestSql::default();
+        let error = resolve(
+            &store,
+            &mut sql,
+            "resp_893078319907087",
+            6498,
+            "2026-10-27 07:00:42.000000",
+        )
+        .await
+        .expect_err("the recorder returns no row");
+        assert_eq!(error.status(), StatusCode::NOT_FOUND);
+        let calls = sql.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(
+            calls[0].0,
+            crate::request_sql::RouteKey::Task(893_078_319_907_087)
+        );
+        assert_eq!(
+            calls[0].1,
+            crate::task_store::active_task_owned_statement(crate::task_store::TASKS_TABLE)
+        );
+        assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
+    }
+
+    /// A value without the `resp_` prefix keeps the new-task path and issues no
+    /// read on the request handle.
+    #[tokio::test]
+    async fn a_non_response_id_issues_no_statement() {
+        let store = crate::task_store::DefaultTaskStore::new(
+            crate::sql_test_support::KindQueryCapture::writing(),
+        );
+        let mut sql = RecordedRequestSql::default();
+        let resolved = resolve(
+            &store,
+            &mut sql,
+            "task-904623192628201",
+            6498,
+            "2026-10-27 07:00:42.000000",
+        )
+        .await
+        .expect("not a follow-up");
+        assert!(resolved.is_none());
+        assert!(sql.calls.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn a_foreign_prefix_keeps_the_new_task_path() {

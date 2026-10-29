@@ -17,6 +17,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -409,7 +410,10 @@ async def create_loop_item(
             requested_id=values.automation_rule_id,
         )
 
-    created = loop_item_provider_router.create(db, project, current_user, values)
+    # Lock waits must leave the event loop free to finish other transactions.
+    created = await run_in_threadpool(
+        loop_item_provider_router.create, db, project, current_user, values
+    )
     response = LoopItemResponse.model_validate(created.values)
 
     try:

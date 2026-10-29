@@ -453,6 +453,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         json!(["bot-tool"])
     );
     assert_eq!(mcp_config["mcpServers"]["bot-shell"]["env"]["BOT_ENV"], "1");
+    assert_eq!(mcp_config["mcpServers"]["wework_space"]["type"], "http");
     let settings_path = agent_home.join("settings.json");
     let settings = read_json(&settings_path);
     let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
@@ -525,7 +526,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .any(|arg| arg == "--mcp-config"));
     assert_eq!(read_json(&log_path.with_extension("mcp")), merged);
 
-    // A different agent sharing the checkout must not inherit the definitions.
+    // A different agent sharing the checkout must not inherit custom definitions.
     let mut other_agent = authenticated_bot_request(followup);
     other_agent.task_id = "7791".to_owned();
     other_agent.extra.insert("team_id".to_owned(), json!(13));
@@ -535,7 +536,9 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     assert_eq!(engine.run(other_agent).await, outcome);
     assert_eq!(
         read_json(&log_path.with_extension("mcp")),
-        json!({"mcpServers": {}})
+        json!({"mcpServers": {
+            "wework_space": merged["mcpServers"]["wework_space"]
+        }})
     );
 }
 

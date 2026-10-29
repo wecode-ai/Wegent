@@ -1222,9 +1222,15 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugin-detail-get-started"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  // Example cards install (when needed) and open a non-auto-send chat trial — no
-  // separate use-case guide dialog remains in the product.
+  // Unofficial examples require installation consent before opening the chat trial.
   await control.command('click', '[data-testid="plugin-prompt-0"]')
+  await control.command('waitFor', '[data-testid="plugin-install-unofficial-warning"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

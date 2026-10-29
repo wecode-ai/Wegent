@@ -11,6 +11,7 @@ import {
   cacheRuntimeConversationQueuedMessagesByKey,
 } from '@/features/workbench/runtimeConversationCache'
 import { TaskActivityView } from './TaskActivityView'
+import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
@@ -376,6 +377,91 @@ describe('TaskActivityView', () => {
       expect(expectedRead).toHaveBeenCalledOnce()
       expect(location === 'local' ? cloudRead : localRead).not.toHaveBeenCalled()
       expect(markLoopItemRead).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['current assignment', {}, {}, true],
+    ['different Issue', {}, { issueId: 'other' }, false],
+    ['older version', {}, { version: 0 }, false],
+    ['different recipient', {}, { assigneeUserId: 3 }, false],
+    ['unassigned', { action: 'unassign' }, {}, false],
+    ['agent assignment', { to_type: 'agent' }, {}, false],
+    ['different history recipient', { to_id: '3' }, {}, false],
+  ])(
+    'scopes timeline receipts to the latest %s',
+    async (_name, entryOverrides, receiptOverrides, visible) => {
+      const entry = {
+        by_user_id: 1,
+        to_type: 'user',
+        to_id: '2',
+        action: 'assign',
+        at: '2026-10-10T01:00:01Z',
+      }
+      const task = {
+        id: 'WEG-1',
+        title: 'Assignment receipts',
+        status: 'in_progress',
+        version: 1,
+        assignee_user_id: 2,
+        // Deliberately unsorted, with the same recipient assigned more than once.
+        assignment_history: [{ ...entry, ...entryOverrides, at: '2026-10-10T01:00:02Z' }, entry],
+      }
+      const state: IssueAssignmentReceiptState = {
+        issueId: task.id,
+        version: 1,
+        assigneeUserId: 2,
+        error: false,
+        rows: [
+          {
+            id: 'assignment',
+            target_type: 'human',
+            target_id: '2',
+            target_name: 'Grace',
+            receipt_tracking: true,
+            human_read_at: null,
+            stand_in_received_at: null,
+          },
+        ],
+        ...receiptOverrides,
+      }
+      const view = (assignmentReceipts = state) => (
+        <TaskActivityView
+          project={{ id: '11', name: 'Wework' } as never}
+          task={task as never}
+          assignmentReceipts={assignmentReceipts}
+          issueTimeline
+          linear
+        />
+      )
+      const { rerender } = render(view())
+      const latest = await screen.findByTestId('cloud-task-assignment-event-0')
+      expect(
+        within(screen.getByTestId('cloud-task-assignment-event-1')).queryByText('未读')
+      ).toBeNull()
+      if (!visible) {
+        expect(screen.queryByTestId('issue-assignment-activity-receipts')).toBeNull()
+        return
+      }
+      expect(within(latest).getByText('未读')).toBeInTheDocument()
+      rerender(
+        view({
+          ...state,
+          rows: [
+            {
+              ...state.rows[0],
+              human_read_at: '2026-10-27T02:00:00Z',
+              stand_in_received_at: '2026-10-27T02:01:00Z',
+            },
+          ],
+        })
+      )
+      expect(within(latest).getByText(/本人已读/)).toBeInTheDocument()
+      expect(within(latest).getByText(/分身已接收/)).toBeInTheDocument()
+      rerender(view({ ...state, error: true }))
+      expect(within(latest).getByText('回执同步失败')).toBeInTheDocument()
+      rerender(view())
+      expect(within(latest).getByText('未读')).toBeInTheDocument()
     }
   )
 

@@ -12,6 +12,15 @@ const require = createRequire(import.meta.url)
 const macosAppIcon = require('./macos-app-icon.cjs')
 const configPath = require.resolve('../electron-builder.config.cjs')
 const sha256 = data => createHash('sha256').update(data).digest('hex')
+const hasXcodeActool = (() => {
+  if (process.platform !== 'darwin') return false
+  try {
+    execFileSync('xcrun', ['--find', 'actool'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -41,7 +50,8 @@ describe('macOS app icon packaging', () => {
   })
 })
 
-describe.skipIf(process.platform !== 'darwin')('compiled macOS app icon', () => {
+// Native compilation requires full Xcode; Command Line Tools do not include actool.
+describe.skipIf(!hasXcodeActool)('compiled macOS app icon', () => {
   // Native setup exceeded the 30s hook deadline in the full suite. Allow bounded
   // Apple tool startup headroom; parallel builds serialize on the catalog lock.
   const nativeCompilationTimeoutMs = 60_000

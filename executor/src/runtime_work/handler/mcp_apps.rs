@@ -97,11 +97,12 @@ impl RuntimeWorkRpcHandler {
             .as_str()
             .ok_or_else(|| app_error("Source server is unavailable"))?;
         let server_catalog = self.mcp_app_catalog(&thread_id, server).await?;
+        let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
         let catalog: Vec<Value> = server_catalog["tools"]
             .as_object()
             .into_iter()
             .flat_map(|tools| tools.values())
-            .filter(|tool| same_app(source, &server_catalog, tool))
+            .filter(|tool| same_app(source, server_catalog, tool))
             .cloned()
             .collect();
         let origin = catalog.iter().find(|tool| {
@@ -110,18 +111,30 @@ impl RuntimeWorkRpcHandler {
                     && source["appContext"]["resourceUri"]
                         == tool["_meta"]["_codex_apps"]["resource_uri"])
         });
-        if origin.is_none() {
-            return Err(app_error("The source app is no longer available"));
-        }
         let uri = source
             .pointer("/mcpAppUi/resourceUri")
             .and_then(Value::as_str)
             .or_else(|| source["mcpAppResourceUri"].as_str())
             .or_else(|| origin.and_then(|tool| resource_uri(&tool["_meta"])))
             .or_else(|| resource_uri(&source["result"]["_meta"]));
-        let Some(uri) = uri else {
-            return Ok(Value::Null);
+        let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
+            // Discovery is optional for ordinary MCP calls, including historical calls
+            // whose server or tool is no longer in the current catalog.
+            return if payload["method"].is_null() {
+                Ok(Value::Null)
+            } else {
+                Err(app_error("Source invocation has no MCP App resource"))
+            };
         };
+        if server_catalog.is_null() {
+            return Err(app_error("Source MCP server is no longer available"));
+        }
+        if server_catalog["toolsError"].is_string() {
+            return Err(app_error("MCP App tool discovery failed"));
+        }
+        if origin.is_none() {
+            return Err(app_error("The source app is no longer available"));
+        }
         self.codex_app_server
             .set_mcp_app_lease(&thread_id, &call_id, true)
             .await;
@@ -173,10 +186,10 @@ impl RuntimeWorkRpcHandler {
                 Ok(json!({"tools":catalog.into_iter().filter(app_visible).collect::<Vec<_>>()}))
             }
             "resources/list" => {
-                Ok(json!({"resources":app_resources(source, &server_catalog, "resources")}))
+                Ok(json!({"resources":app_resources(source, server_catalog, "resources")}))
             }
             "resources/templates/list" => Ok(
-                json!({"resourceTemplates":app_resources(source, &server_catalog, "resourceTemplates")}),
+                json!({"resourceTemplates":app_resources(source, server_catalog, "resourceTemplates")}),
             ),
             "tools/call" => {
                 let tool = catalog
@@ -204,7 +217,11 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    async fn mcp_app_catalog(&self, thread_id: &str, server: &str) -> Result<Value, AppIpcError> {
+    async fn mcp_app_catalog(
+        &self,
+        thread_id: &str,
+        server: &str,
+    ) -> Result<Option<Value>, AppIpcError> {
         let mut cursor = Value::Null;
         let mut cursors = HashSet::new();
         loop {
@@ -223,14 +240,11 @@ impl RuntimeWorkRpcHandler {
                 .flatten()
                 .find(|entry| entry["name"] == server)
             {
-                if entry["toolsError"].is_string() {
-                    return Err(app_error("MCP App tool discovery failed"));
-                }
-                return Ok(entry.clone());
+                return Ok(Some(entry.clone()));
             }
             cursor = page["nextCursor"].clone();
             if cursor.is_null() {
-                return Err(app_error("Source MCP server is no longer available"));
+                return Ok(None);
             }
             if !cursor.is_string() || !cursors.insert(cursor.to_string()) || cursors.len() >= 100 {
                 return Err(app_error("Invalid MCP App catalog pagination"));
@@ -383,6 +397,77 @@ mod session_tests {
     use super::super::tests::ScalarEnv;
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn ordinary_mcp_discovery_does_not_require_an_app_or_grant_app_authority() {
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let root = tempfile::tempdir().unwrap();
+                let _env: Vec<_> = ["HOME", "CODEX_HOME", "WEGENT_CODEX_HOME",
+                    "WEGENT_EXECUTOR_HOME", "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME"]
+                    .into_iter().map(|key| {
+                        let directory = root.path().join(key);
+                        fs::create_dir_all(&directory).unwrap();
+                        ScalarEnv::set(key, directory.to_str().unwrap())
+                    }).collect();
+                let items = json!([
+                    {"id":"missing-server","type":"mcpToolCall","server":"removed","tool":"plain"},
+                    {"id":"missing-tool","type":"mcpToolCall","server":"counter","tool":"removed"},
+                    {"id":"ordinary","type":"mcpToolCall","server":"counter","tool":"plain"},
+                    {"id":"broken-catalog","type":"mcpToolCall","server":"broken","tool":"plain"},
+                    {"id":"removed-app","type":"mcpToolCall","server":"removed","tool":"show","mcpAppResourceUri":"ui://app"},
+                    {"id":"removed-app-tool","type":"mcpToolCall","server":"counter","tool":"removed","mcpAppResourceUri":"ui://app"},
+                    {"id":"broken-app","type":"mcpToolCall","server":"broken","tool":"show","mcpAppResourceUri":"ui://app"},
+                    {"id":"catalog-app","type":"mcpToolCall","server":"counter","tool":"show"},
+                    {"id":"result-app","type":"mcpToolCall","server":"counter","tool":"plain","result":{"_meta":{"ui":{"resourceUri":"ui://app"}}}}
+                ]);
+                let thread = json!({"thread":{"status":{"type":"idle"},"turns":[{"items":items}]}});
+                let catalog = json!({"data":[
+                    {"name":"counter","tools":{"plain":{"name":"plain"},"show":{"name":"show","_meta":{"ui":{"resourceUri":"ui://app"}}}}},
+                    {"name":"broken","toolsError":"disconnected"}
+                ]});
+                let binary = root.path().join("codex-app.sh");
+                fs::write(&binary, format!(r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/read"'*) result='{thread}';;
+    *'"method":"mcpServerStatus/list"'*) result='{catalog}';;
+    *'"method":"mcpServer/resource/read"'*) result='{{"contents":[{{"uri":"ui://app","mimeType":"text/html;profile=mcp-app","text":"Ready"}}]}}';;
+    *) result='{{}}';;
+  esac
+  printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
+  case "$line" in *'"method":"test/stop"'*) exit 0;; esac
+done
+"#)).unwrap();
+                fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+                let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
+                let mut task = RuntimeTaskLink::new_pending("task".into(),
+                    root.path().join("project").display().to_string(), "MCP".into());
+                task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
+                handler.upsert_local_task(task);
+                for call in ["missing-server", "missing-tool", "ordinary", "broken-catalog"] {
+                    assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap(), Value::Null, "{call}");
+                    for method in ["initialize", "tools/call", "resources/read", "ui/update-model-context"] {
+                        assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":method})).await.is_err(), "{call}: {method}");
+                    }
+                }
+                for call in ["removed-app", "removed-app-tool", "broken-app"] {
+                    assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.is_err(), "{call}");
+                }
+                for call in ["catalog-app", "result-app"] {
+                    let app = handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap();
+                    assert_eq!(app["resourceUri"], "ui://app");
+                    assert_eq!(app["resource"]["contents"][0]["text"], "Ready");
+                }
+                handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
+            });
+    }
 
     #[test]
     fn unloaded_app_session_is_restored_before_accessing_its_mcp_catalog() {

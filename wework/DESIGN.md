@@ -597,19 +597,24 @@ recipe closely:
 - In an active desktop thread, the workbench viewport owns vertical scrolling.
   Its conversation column must be a `min-height: 100%`, non-shrinking flex
   column, with the composer rendered as the sticky footer inside that flow.
-  Short threads therefore fill the viewport while long and virtualized threads
-  grow naturally. Keep bottom following stable across delayed virtual
-  measurements, but stop following immediately after an explicit user scroll.
-- The active-thread viewport uses bottom-origin scrolling and may expose a
-  negative `scrollTop` range. A custom scrollbar must map its track, thumb,
-  pointer, and keyboard positions to that real range instead of assuming the
-  usual `0..max` coordinates. Keep the overlay track at the workbench's outer
-  edge, use the sidebar scrollbar's theme tokens, and treat track clicks and
-  thumb drags as explicit user scrolling.
-- When guidance or another runtime event inserts, removes, or reorders messages
-  inside a virtualized thread, remeasure mounted rows from the first changed
-  index. The virtual container must include every rendered row so no message can
-  appear below or behind the sticky composer.
+  Short threads start at the top, leaving spare space between the messages and
+  the bottom composer. Long and virtualized threads grow naturally. End anchoring
+  controls overflow scrolling, not vertical message alignment. Keep bottom following
+  stable across delayed virtual measurements, but stop following immediately after
+  an explicit user scroll.
+- The active-thread viewport uses normal `0..scrollHeight-clientHeight`
+  coordinates. The overlay scrollbar maps its track, thumb, pointer and keyboard
+  to that same range. Keep it at the workbench's outer edge and reuse sidebar
+  theme tokens. Track clicks and thumb drags are explicit reader input.
+- TanStack owns ordinary prepend/append anchoring. One `resizeItem` writer owns
+  synchronous Markdown and ResizeObserver measurements. The waiting indicator
+  is a virtual row; prefix and footer geometry are counted exactly once.
+  Reading pauses end-follow immediately, including upward movement within the
+  bottom tolerance. Text anchoring corrects only residual reflow after actual
+  virtualizer compensation. Streaming and bottom-button motion share one spring.
+- While the scrollbar is held, its pointer owns the viewport and measured height
+  changes keep the grabbed thumb point under that pointer. Disable both row and
+  text compensation during the drag; release samples the new reading position.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
@@ -765,6 +770,22 @@ long unbroken card title cannot widen or clip the card, and reserve a small
 content inset so card edges do not overlap the vertical thumb.
 
 ## 7. Interaction and state
+
+### Page loading and failure boundaries
+
+页面和标签页按当前可见内容加载数据；同属一个设置入口不构成数据依赖。
+成员、智能体等独立页面分别维护加载、错误和重试状态，一个页面的请求失败
+不能阻塞另一个页面或导航。未打开的弹窗和编辑器按需加载。刷新失败保留当前
+作用域内已成功加载的数据并显示局部错误，不能伪装成空列表；切换作用域时
+不得显示旧作用域数据，迟到响应不得覆盖新页面。
+
+Pages and tabs load data for their active content. A shared settings shell is
+not a data dependency. Independent pages own independent loading, error and
+retry states; one failed catalog cannot block another page or navigation.
+Load unopened dialogs and editors on demand. Refresh failures preserve valid
+same-scope data and show a local error, never an empty-state substitute. Scope
+changes hide old data and reject late responses. Follow the shared
+[implementation contract](../frontend/AGENTS.md#page-data-loading-and-error-isolation).
 
 Every interactive component must account for the applicable states:
 
@@ -938,7 +959,7 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Assistant --> Images[GeneratedImageGallery with host image services]
     Assistant --> Actions[MessageHoverActions with shared clipboard services]
     Content --> Preview[CodeCommentPreview and ImSourceBadge]
-    Content --> Viewport[Shared viewport cache, height estimation and bottom-origin virtualizer]
+    Content --> Viewport[Shared viewport cache, validated height estimates and TanStack virtualizer]
     Tools --> ToolHost[Host file reads, URL opening, settings navigation and telemetry]
     Message --> Markdown[Shared AssistantMarkdown: code, tables, diagrams, links and images]
     Web --> Services[MarkdownServices: links, clipboard, attachments and theme]
@@ -1024,7 +1045,7 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   `ScrollableMessageArea` owns the complete scroll surface, history loading,
   turn navigation, saved reading positions, text anchors during width changes
   and streaming follow. Its controller and geometry helpers preserve the native
-  top/bottom-origin semantics; hosts supply real loaders and explicit rendering
+  normal DOM coordinates and explicit viewport ownership; hosts supply real loaders and explicit rendering
   capabilities. Missing history remains visible but cannot be clicked without
   a loader. Desktop adapters share their visualization and measurement services.
 
@@ -1040,8 +1061,8 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   Full runtime conversation/annotation contracts and live activity projection
   belong to `@wegent/chat-core/runtime-conversation` and related core modules.
   `conversationViewportCache`, `messagePretextLayout` and
-  `useBottomOriginVirtualizer` preserve the native bounded LRU cache, intrinsic
-  height estimates and bottom-origin resize anchoring. Native conversation
+  `useConversationVirtualizer` preserve the bounded LRU cache, typography-aware
+  estimates and standard TanStack chat anchoring. Native conversation
   eviction must also clear the corresponding shared viewport entry.
 
   Runtime RPC transport belongs to `@wegent/chat-core`: both hosts must use the

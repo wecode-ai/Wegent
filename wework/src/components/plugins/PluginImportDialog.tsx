@@ -9,6 +9,7 @@ import type {
 } from '@/api/local/codexPlugins'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
+import { PluginInstallWarning } from './PluginInstallWarning'
 
 function issueGuidance(
   issue: LocalPluginImportIssue,
@@ -346,6 +347,7 @@ export function PluginImportDialog({
 
           {preview?.valid && (
             <div data-testid="plugin-import-preview" className="mt-4 space-y-3">
+              <PluginInstallWarning />
               <div className="rounded-xl bg-surface px-4 py-3">
                 <div className="flex items-start gap-3">
                   <Archive className="mt-0.5 h-5 w-5 text-text-secondary" />

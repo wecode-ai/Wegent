@@ -178,7 +178,11 @@ function snapshotFromConnection(
   if (!stored) return DISCONNECTED_STATE
   let normalizedConfig: CloudConnectionRuntimeConfig
   try {
-    normalizedConfig = resolveCloudRuntimeConfig(stored.backendUrl, stored.socketBaseUrlOverride)
+    normalizedConfig = resolveCloudRuntimeConfig(
+      stored.backendUrl,
+      stored.socketBaseUrlOverride,
+      stored.socketBaseUrl
+    )
   } catch {
     clearStoredCloudConnection()
     return DISCONNECTED_STATE

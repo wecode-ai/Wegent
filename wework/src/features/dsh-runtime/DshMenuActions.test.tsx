@@ -129,6 +129,32 @@ describe('DshMenuActions', () => {
     expect(screen.getByTestId('wework-menu-action-quality.refresh.menu')).toBeDisabled()
   })
 
+  test('resolves menu titles when rendering instead of when registering', () => {
+    context.set('workspace.ready', true)
+    let title = 'Export conversation'
+    window.__WEWORK_DSH_EXTENSIONS__!.menus.list = () => [
+      {
+        command: 'quality.refresh',
+        enabled: true,
+        id: 'quality.refresh.menu',
+        title: () => title,
+      },
+    ]
+
+    render(<DshMenuActions location="conversation.context" showLabels />)
+
+    const button = screen.getByTestId('wework-menu-action-quality.refresh.menu')
+    expect(button).toHaveTextContent('Export conversation')
+
+    act(() => {
+      title = '导出会话'
+      revision += 1
+      for (const listener of [...listeners]) listener()
+    })
+
+    expect(button).toHaveTextContent('导出会话')
+  })
+
   test('passes host surface arguments to the command', async () => {
     context.set('workspace.ready', true)
     const args = { deviceId: 'device-1', taskId: 'task-1' }

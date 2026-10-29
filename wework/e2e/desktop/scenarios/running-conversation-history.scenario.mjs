@@ -1,3 +1,7 @@
+import {
+  waitForTranscriptState,
+  waitForRestoredTranscript,
+} from '../modules/transcript-restoration.mjs'
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -7,6 +11,7 @@ import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import {
   LEGACY_PROMPT,
   LEGACY_ATTACHMENT_PREVIEW,
@@ -321,29 +326,39 @@ async function findRolloutPath(directory, threadId) {
 
 async function waitForLongHistoryHydration(control, timeoutMs) {
   const startedAt = Date.now()
+  let displayItemCount = 0
+  let latestSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
       await control.command('performanceSnapshot', 'body', {
+        value: JSON.stringify({ collectMemory: false }),
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
-    if (snapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+    latestSnapshot = snapshot
+    displayItemCount = snapshot.runtimeAssistantDisplayItemCount
+    if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('Timed out waiting for the long running transcript to hydrate')
+  throw new Error(
+    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
+  )
 }
 
-async function waitForTranscriptState(control, predicate, description, timeoutMs) {
-  const startedAt = Date.now()
-  let latest = null
-  while (Date.now() - startedAt < timeoutMs) {
-    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (predicate(latest)) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
+function transcriptRaceRecorder(resultDir) {
+  const path = join(resultDir, 'running-conversation-history-race.jsonl')
+  return async (stage, details = {}) => {
+    await appendFile(
+      path,
+      `${JSON.stringify({
+        recordedAt: new Date().toISOString(),
+        stage,
+        ...details,
+      })}\n`
+    )
   }
-  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
 async function reloadWorkbench(control) {
@@ -440,6 +455,7 @@ export function createDesktopScenario({
   captureScreenshot,
   codexSqliteHome,
   executorHome,
+  resultDir,
   uiTimeoutMs,
   workspacePath,
 }) {
@@ -529,6 +545,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      const recordTranscriptRace = transcriptRaceRecorder(resultDir)
       await createSingleRootLocalProject(control, workspacePath, 'running-conversation-history')
       await selectE2EModel(control)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -567,27 +584,92 @@ export function createDesktopScenario({
           snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
           snapshot.pane?.transcript?.loading === false,
         'The task-switch fixture did not settle before the transcript race',
-        uiTimeoutMs
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('task-switch-fixture-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
       )
 
+      const gates = runtimeTransportGates(control)
+      await gates.arm({
+        id: 'source-task-transcript',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: taskId }],
+      })
+      await recordTranscriptRace('source-task-click-before')
+      const sourceClickStartedAt = performance.now()
       await control.command('click', taskRow)
+      await recordTranscriptRace('source-task-click-returned', {
+        clickDurationMs: performance.now() - sourceClickStartedAt,
+      })
       await waitForTranscriptState(
         control,
         snapshot =>
           snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
           snapshot.pane?.transcript?.loading === true,
         'The source transcript request did not remain in flight',
-        uiTimeoutMs
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('source-task-in-flight-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
       )
+      await recordTranscriptRace('cached-task-click-before')
+      const cachedClickStartedAt = performance.now()
       await control.command('click', switchTaskRow)
+      await recordTranscriptRace('cached-task-click-returned', {
+        clickDurationMs: performance.now() - cachedClickStartedAt,
+      })
       await waitForTranscriptState(
         control,
         snapshot =>
           snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
           snapshot.pane?.transcript?.loading === false,
         'Returning to the cached task retained another task transcript loading state',
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('cached-task-settled-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
+      )
+      const heldSourceTranscript = await gates.wait(
+        'source-task-transcript',
+        undefined,
         uiTimeoutMs
       )
+      assert.equal(
+        heldSourceTranscript.value.params.taskId,
+        taskId,
+        'The held transcript did not belong to the source task'
+      )
+      assert.equal(
+        heldSourceTranscript.deliveries,
+        0,
+        'The source transcript reached the renderer before the task switch'
+      )
+      await gates.save(resultDir, 'running-conversation-history-held-source.json', [
+        'source-task-transcript',
+      ])
+      await gates.release('source-task-transcript')
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The released source transcript replaced the cached task state',
+        uiTimeoutMs
+      )
+      await gates.save(resultDir, 'running-conversation-history-released-source.json', [
+        'source-task-transcript',
+      ])
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SWITCH_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -687,13 +769,18 @@ export function createDesktopScenario({
         Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
         'Hydrating a long running transcript blocked the renderer'
       )
-      const hydratedSnapshot = await waitForLongHistoryHydration(control, uiTimeoutMs)
+      // Restart recovery transfers the complete large history asynchronously.
+      // Each renderer response still has the separate three-second responsiveness limit.
+      const hydratedSnapshot = await waitForLongHistoryHydration(
+        control,
+        WORKBENCH_READY_TIMEOUT_MS
+      )
       assert.ok(
         hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
         'The long running transcript was not restored into the conversation cache'
       )
       assert.ok(
-        hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
+        hydratedSnapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT,
         'The restored conversation did not include the complete long tool history'
       )
       await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
@@ -798,6 +885,9 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
+      // Every native page includes hydration and transfer of the 1,250-item fixture,
+      // including reads without refresh while the turn is running. UI controls
+      // keep their separate interaction budget and responsiveness assertions.
       const nativePage = await requestExecutor(
         control,
         'runtime.tasks.transcript',
@@ -805,7 +895,7 @@ export function createDesktopScenario({
           ...pageRequest,
           refresh: true,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
       assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
@@ -817,7 +907,7 @@ export function createDesktopScenario({
         control,
         'runtime.tasks.transcript',
         pageRequest,
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
       assert.equal(
@@ -832,7 +922,7 @@ export function createDesktopScenario({
           ...pageRequest,
           beforeCursor: cachedPage.beforeCursor,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
       assert.notEqual(
@@ -846,12 +936,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
-      const restored = await waitForTranscriptState(
+      const restored = await waitForRestoredTranscript(
         control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
-          snapshot.pane?.transcript?.loading === false,
-        'The paginated conversation did not finish restoration',
+        pagedTaskId,
         WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(restored.pane.transcript.hasMoreBefore, true)
@@ -877,6 +964,8 @@ export function createDesktopScenario({
       await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      // Task-index readiness does not include the deliberately delayed transcript read.
+      await waitForRestoredTranscript(control, pagedTaskId, WORKBENCH_READY_TIMEOUT_MS)
       await control.command('waitFor', loadOlder)
       const originalSearchPane = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')

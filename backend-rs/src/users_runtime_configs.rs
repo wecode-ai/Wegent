@@ -18,7 +18,7 @@ use aes_gcm::aes::{Aes128, Aes192, Aes256};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlRow, Json};
+use brz_mysql::{FromMysqlRow, Json, Mysql};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::SessionUser;
@@ -81,14 +81,72 @@ async fn user_runtime_config(
     runtime: &str,
 ) -> Result<UserRuntimeConfigResponse, FastApiError> {
     let normalized = normalize_runtime(runtime)?;
-    let config = fetch_kind(state, RUNTIME_CONFIG_KIND, &normalized, user.id).await?;
-    let proxy = fetch_kind(state, PROXY_CONFIG_KIND, PROXY_CONFIG_NAME, user.id).await?;
+    let config = fetch_kind(
+        &state.mysql,
+        RUNTIME_CONFIG_KIND,
+        &normalized,
+        i64::from(user.id),
+    )
+    .await?;
+    let proxy = fetch_kind(
+        &state.mysql,
+        PROXY_CONFIG_KIND,
+        PROXY_CONFIG_NAME,
+        i64::from(user.id),
+    )
+    .await?;
     build_response(
         &normalized,
         config.as_ref(),
         &user.preferences,
         proxy.as_ref(),
     )
+}
+
+/// `get_execution_config`'s status: the public status plus the decrypted proxy
+/// URL that request building forwards to the executor.
+#[derive(Debug)]
+pub(crate) struct ExecutionRuntimeConfig {
+    /// `is_runtime_user_config_enabled(preferences, runtime)`.
+    pub use_user_config: bool,
+    /// `bool(spec.auth.encryptedValue)`.
+    pub configured: bool,
+    pub target_path: String,
+    pub auth_json_sha256: Option<String>,
+    /// `bool(proxy_url)`.
+    pub use_proxy: bool,
+    /// `bool(proxy_url)`, the same value as `use_proxy`.
+    pub proxy_configured: bool,
+    /// The decrypted proxy URL; the source adds it only when `use_proxy`.
+    pub proxy_url: Option<String>,
+}
+
+/// `UserRuntimeConfigService.get_execution_config`: the same two kind reads as
+/// the public status plus the decrypted proxy URL.
+///
+/// `_apply_user_runtime_config` is the only consumer and it runs while a
+/// request is being built, so the two reads belong to the caller's MySQL
+/// client rather than to the public handler's state.
+pub(crate) async fn get_execution_config<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    preferences: &str,
+    runtime: &str,
+) -> Result<ExecutionRuntimeConfig, FastApiError> {
+    let normalized = normalize_runtime(runtime)?;
+    let config = fetch_kind(mysql, RUNTIME_CONFIG_KIND, &normalized, user_id).await?;
+    let proxy = fetch_kind(mysql, PROXY_CONFIG_KIND, PROXY_CONFIG_NAME, user_id).await?;
+    let (status, proxy_url) =
+        build_response_with_proxy_url(&normalized, config.as_ref(), preferences, proxy.as_ref())?;
+    Ok(ExecutionRuntimeConfig {
+        use_user_config: status.use_user_config,
+        configured: status.configured,
+        target_path: status.target_path,
+        auth_json_sha256: status.auth_json_sha256,
+        use_proxy: status.use_proxy,
+        proxy_configured: status.proxy_configured,
+        proxy_url: (status.use_proxy && !proxy_url.is_empty()).then_some(proxy_url),
+    })
 }
 
 /// `_normalize_runtime`: strip and lowercase; an unsupported runtime is the
@@ -113,11 +171,11 @@ struct KindDocumentRow {
 
 /// `UserRuntimeConfigService._get_kind` / `_get_proxy_kind`: the first active
 /// kind with the exact `user_id`/`kind`/`namespace`/`name`.
-async fn fetch_kind(
-    state: &AppState,
+async fn fetch_kind<M: Mysql>(
+    mysql: &M,
     kind: &str,
     name: &str,
-    user_id: i32,
+    user_id: i64,
 ) -> Result<Option<KindDocumentRow>, FastApiError> {
     let sql = format!(
         "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = {user_id} \
@@ -127,7 +185,7 @@ async fn fetch_kind(
         quote_literal(CONFIG_NAMESPACE),
         quote_literal(name),
     );
-    state.mysql.fetch_optional(&sql, ()).await.map_err(|error| {
+    mysql.fetch_optional(&sql, ()).await.map_err(|error| {
         tracing::error!(%error, "runtime-config kind lookup failed");
         FastApiError::unhandled()
     })
@@ -271,6 +329,17 @@ fn build_response(
     preferences: &str,
     proxy: Option<&KindDocumentRow>,
 ) -> Result<UserRuntimeConfigResponse, FastApiError> {
+    build_response_with_proxy_url(runtime, config, preferences, proxy).map(|(response, _)| response)
+}
+
+/// `_build_response` plus the decrypted proxy URL it already computes, so
+/// `get_execution_config` does not decrypt the stored URL twice.
+fn build_response_with_proxy_url(
+    runtime: &str,
+    config: Option<&KindDocumentRow>,
+    preferences: &str,
+    proxy: Option<&KindDocumentRow>,
+) -> Result<(UserRuntimeConfigResponse, String), FastApiError> {
     let Some(auth_file) = runtime_auth_file(runtime) else {
         // `normalize_runtime` rejects every other runtime first.
         return Err(FastApiError::unhandled());
@@ -280,25 +349,28 @@ fn build_response(
     let proxy_spec = spec_of(proxy);
     let proxy_url = proxy_url(proxy)?;
     let has_proxy_url = !proxy_url.is_empty();
-    Ok(UserRuntimeConfigResponse {
-        runtime: runtime.to_string(),
-        display_name: auth_file.display_name.to_string(),
-        use_user_config: is_runtime_user_config_enabled(preferences, runtime),
-        use_proxy: has_proxy_url,
-        configured: auth
-            .and_then(|auth| auth.encrypted_value.as_ref())
-            .is_some_and(truthy),
-        target_path: auth_file.target_path.to_string(),
-        auth_json_sha256: auth.and_then(|auth| auth.sha256.clone()),
-        auth_json_updated_at: auth.and_then(|auth| auth.updated_at.clone()),
-        proxy_configured: has_proxy_url,
-        proxy_url_masked: mask_proxy_url(&proxy_url),
-        proxy_updated_at: proxy_spec
-            .as_ref()
-            .and_then(|spec| spec.proxy.as_ref())
-            .and_then(|proxy| proxy.updated_at.clone()),
-        updated_at: spec.and_then(|spec| spec.updated_at),
-    })
+    Ok((
+        UserRuntimeConfigResponse {
+            runtime: runtime.to_string(),
+            display_name: auth_file.display_name.to_string(),
+            use_user_config: is_runtime_user_config_enabled(preferences, runtime),
+            use_proxy: has_proxy_url,
+            configured: auth
+                .and_then(|auth| auth.encrypted_value.as_ref())
+                .is_some_and(truthy),
+            target_path: auth_file.target_path.to_string(),
+            auth_json_sha256: auth.and_then(|auth| auth.sha256.clone()),
+            auth_json_updated_at: auth.and_then(|auth| auth.updated_at.clone()),
+            proxy_configured: has_proxy_url,
+            proxy_url_masked: mask_proxy_url(&proxy_url),
+            proxy_updated_at: proxy_spec
+                .as_ref()
+                .and_then(|spec| spec.proxy.as_ref())
+                .and_then(|proxy| proxy.updated_at.clone()),
+            updated_at: spec.and_then(|spec| spec.updated_at),
+        },
+        proxy_url,
+    ))
 }
 
 /// `_get_proxy_url`: the decrypted stored proxy URL, or `""` when it is absent
@@ -434,6 +506,78 @@ mod tests {
         assert_eq!(
             error.detail_message(),
             Some("Unsupported runtime:   claude  ")
+        );
+    }
+
+    /// `get_execution_config` reads the same two kinds as the public status, in
+    /// the source's order, and reports the unconfigured user unchanged.
+    #[tokio::test]
+    async fn the_execution_config_reads_both_kinds_and_reports_no_configuration() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let status = get_execution_config(&mysql, 3097, "{}", "CODEX")
+            .await
+            .expect("status");
+        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
+        assert_eq!(queries.len(), 2);
+        assert!(queries[0].contains(
+            "WHERE kinds.user_id = 3097 AND kinds.kind = 'UserRuntimeConfig' \
+             AND kinds.namespace = 'default' AND kinds.name = 'codex' \
+             AND kinds.is_active IS true LIMIT 1"
+        ));
+        assert!(queries[1].contains(
+            "WHERE kinds.user_id = 3097 AND kinds.kind = 'UserProxyConfig' \
+             AND kinds.namespace = 'default' AND kinds.name = 'default' \
+             AND kinds.is_active IS true LIMIT 1"
+        ));
+        assert_eq!(status.target_path, "auth.json");
+        assert!(!status.use_user_config);
+        assert!(!status.configured);
+        assert_eq!(status.auth_json_sha256, None);
+        assert!(!status.use_proxy);
+        assert!(!status.proxy_configured);
+        assert_eq!(status.proxy_url, None);
+    }
+
+    /// The stored `UserRuntimeConfig` document and the user preference drive
+    /// every execution field. The decrypted-proxy branch needs the deployment's
+    /// AES IV, so the decryption itself stays covered by
+    /// `decrypts_registered_cbc_vectors` and the absent-proxy paths below.
+    #[test]
+    fn the_execution_status_renders_the_stored_runtime_document() {
+        let config = document(
+            r#"{"spec": {"auth": {"encryptedValue": "cipher", "sha256": "sha256:hash",
+            "updatedAt": "2026-10-01T00:00:00Z"}, "updatedAt": "2026-10-02T00:00:00Z"}}"#,
+        );
+        let preferences = r#"{"runtime_configs": {"codex": {"use_user_config": true}}}"#;
+        let (status, proxy_url) =
+            build_response_with_proxy_url("codex", Some(&config), preferences, None)
+                .expect("status");
+        assert!(status.use_user_config);
+        assert!(status.configured);
+        assert_eq!(status.target_path, "auth.json");
+        assert_eq!(status.auth_json_sha256.as_deref(), Some("sha256:hash"));
+        assert_eq!(
+            status.auth_json_updated_at.as_deref(),
+            Some("2026-10-01T00:00:00Z")
+        );
+        assert_eq!(status.updated_at.as_deref(), Some("2026-10-02T00:00:00Z"));
+        assert!(!status.use_proxy);
+        assert!(!status.proxy_configured);
+        assert_eq!(proxy_url, "");
+
+        // A proxy document without a stored ciphertext reports no proxy
+        // (`if not encrypted_url: return ""`), so nothing is decrypted.
+        let proxy = document(r#"{"spec": {"proxy": {"updatedAt": "2026-10-03T00:00:00Z"}}}"#);
+        let (status, proxy_url) =
+            build_response_with_proxy_url("codex", None, "{}", Some(&proxy)).expect("status");
+        assert!(!status.use_user_config);
+        assert!(!status.configured);
+        assert!(!status.use_proxy);
+        assert!(!status.proxy_configured);
+        assert_eq!(proxy_url, "");
+        assert_eq!(
+            status.proxy_updated_at.as_deref(),
+            Some("2026-10-03T00:00:00Z")
         );
     }
 

@@ -10,11 +10,13 @@ use std::{collections::BTreeMap, sync::Arc};
 
 mod group_roles;
 mod namespace;
+mod query;
 
 pub use group_roles::{
     GroupRoleEntry, accessible_namespace_ids, effective_roles_in_groups,
     iter_user_groups_with_roles, list_resources_by_entity_match, organization_names, user_groups,
 };
+pub use query::EntityQuery;
 
 /// The operation requesting an entity match. Providers may refresh identities
 /// for downloads while using cached membership for document reads.
@@ -36,6 +38,23 @@ pub trait EntityResolver<R: Redis>: Send + Sync {
         entity_ids: &[String],
         purpose: ResolutionPurpose,
     ) -> MysqlResult<Vec<String>>;
+
+    /// `match_entity_bindings(db, ...)`: the same resolution on a caller-owned
+    /// query handle, so a resolver that reads the database joins the caller's
+    /// transaction. Implementations without a database read keep the default.
+    async fn match_bindings_on(
+        &self,
+        registry: &EntityResolvers<R>,
+        query: &mut dyn EntityQuery,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>> {
+        let _ = query;
+        self.match_bindings(registry, redis, user_id, entity_ids, purpose)
+            .await
+    }
 
     /// `IExternalEntityResolver.get_resource_ids_by_entity`: the ids of
     /// `resource_type` the user can reach through this entity type's bindings.
@@ -108,6 +127,49 @@ impl<R: Redis> EntityResolvers<R> {
             .map(String::as_str)
             .filter(|name| *name != "namespace")
     }
+    pub async fn match_bindings_on(
+        &self,
+        query: &mut dyn EntityQuery,
+        redis: Option<&R>,
+        user_id: i64,
+        entity_type: &str,
+        entity_ids: &[String],
+        purpose: ResolutionPurpose,
+    ) -> MysqlResult<Vec<String>> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(nested) = self.begin(entity_type, user_id, entity_ids) else {
+            return Ok(Vec::new());
+        };
+        match self.resolvers.get(entity_type) {
+            Some(resolver) => {
+                resolver
+                    .match_bindings_on(&nested, query, redis, user_id, entity_ids, purpose)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// The nested resolver set for one lookup, or `None` when the same lookup
+    /// is already in flight or the chain is too deep.
+    fn begin(&self, entity_type: &str, user_id: i64, entity_ids: &[String]) -> Option<Self> {
+        let mut canonical_ids = entity_ids.to_vec();
+        canonical_ids.sort();
+        canonical_ids.dedup();
+        let key = (entity_type.to_string(), user_id, canonical_ids);
+        if self.active.contains(&key) || self.active.len() >= 50 {
+            return None;
+        }
+        let mut nested = Self {
+            resolvers: self.resolvers.clone(),
+            active: self.active.clone(),
+        };
+        nested.active.push(key);
+        Some(nested)
+    }
+
     pub async fn match_bindings(
         &self,
         redis: Option<&R>,
@@ -119,18 +181,9 @@ impl<R: Redis> EntityResolvers<R> {
         if entity_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut canonical_ids = entity_ids.to_vec();
-        canonical_ids.sort();
-        canonical_ids.dedup();
-        let key = (entity_type.to_string(), user_id, canonical_ids);
-        if self.active.contains(&key) || self.active.len() >= 50 {
+        let Some(nested) = self.begin(entity_type, user_id, entity_ids) else {
             return Ok(Vec::new());
-        }
-        let mut nested = Self {
-            resolvers: self.resolvers.clone(),
-            active: self.active.clone(),
         };
-        nested.active.push(key);
         match self.resolvers.get(entity_type) {
             Some(resolver) => {
                 resolver

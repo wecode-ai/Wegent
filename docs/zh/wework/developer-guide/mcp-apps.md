@@ -31,6 +31,8 @@ Wework 可以在 Codex 任务的工具结果旁运行 MCP 应用。应用由 MCP
 
 宿主同时接受旧的 `ui/resourceUri`、`openai/outputTemplate` 和结果 `_meta` 中的资源引用。`text/html+skybridge` 通过 `window.openai` 兼容桥接入同一条宿主链路。
 
+只有调用记录、工具定义或结果元数据声明了 UI 资源时，才加载 MCP 应用。普通 MCP 工具没有 UI 资源时不显示应用卡片；即使重开历史会话时来源服务或工具已被移除，也不显示“应用不存在”。已声明 UI 资源的应用仍会报告来源失效或资源加载错误。普通调用不能使用应用专属的工具、资源或上下文接口。
+
 ## 通信和生命周期
 
 应用完成 `ui/initialize` 与 `ui/notifications/initialized` 握手后接收工具输入和结果。结果的 `content`、`structuredContent` 和 `_meta` 保持分离；宿主不会把 `_meta` 添加到模型上下文。
@@ -55,7 +57,7 @@ Wework 可以在 Codex 任务的工具结果旁运行 MCP 应用。应用由 MCP
 pnpm --filter wework e2e:desktop --segment mcp-apps
 ```
 
-该 checkpoint 使用真实 Electron、执行器、Codex 和标准输入输出 MCP 服务，仅模拟模型响应，并由桌面 CI 调用。验证范围包含资源读取、初始化、私有结果元数据交付、应用专用工具、模型上下文、显示模式切换、跨调用隔离、连续非只读工具调用、作用域拒绝和资源清理。
+该 checkpoint 使用真实 Electron、执行器、Codex 和标准输入输出 MCP 服务，仅模拟模型响应，并由桌面 CI 调用。验证范围包含资源读取、初始化、私有结果元数据交付、应用专用工具、模型上下文、显示模式切换、跨调用隔离、连续非只读工具调用、作用域拒绝和资源清理。普通工具回归还会禁用来源服务、重启真实 Codex 服务并重开历史会话，验证不会出现应用错误卡片，且应用专属调用仍被拒绝。
 
 每个文档使用独立的 `codex-sandbox://<id>.web-sandbox.oaiusercontent.com/mcp-app.html` 来源。Electron 在本地处理此自定义协议，不查询该域名、不请求 OpenAI 服务，也不远程执行页面。宿主在启动前将协议注册为标准安全协议，文档响应继续执行资源声明的 CSP。
 

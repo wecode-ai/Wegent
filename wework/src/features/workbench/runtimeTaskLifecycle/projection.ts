@@ -97,7 +97,8 @@ export function runtimeTaskReconciliationSnapshot(task: RuntimeTaskSummary): {
 
 export function shouldReplaceRuntimeTaskProjection(
   currentTask: RuntimeTaskSummary,
-  candidateTask: RuntimeTaskSummary
+  candidateTask: RuntimeTaskSummary,
+  hasPendingSend = false
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
@@ -108,6 +109,12 @@ export function shouldReplaceRuntimeTaskProjection(
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 
   if (currentCompleted !== candidateCompleted) {
+    const currentTurnId = current.runtimeHandle?.lastTurnId
+    const candidateTurnId = candidate.runtimeHandle?.lastTurnId
+    // A delayed start snapshot cannot revive the same completed provider turn.
+    // Turn identity is authoritative even when native timestamps lose precision.
+    if (currentCompleted && currentTurnId && currentTurnId === candidateTurnId && !hasPendingSend)
+      return false
     if (candidateCompleted) {
       if (!isRuntimeTaskExecutionRunning(current)) return true
       // Completion belongs to its turn, not to a later metadata refresh.
@@ -245,7 +252,7 @@ function isRuntimeTaskRunningStatus(status: string | null | undefined): boolean 
   return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
 }
 
-function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
+export function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return (
     normalized === 'active' ||

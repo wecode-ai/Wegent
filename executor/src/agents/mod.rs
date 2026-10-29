@@ -21,7 +21,7 @@ pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
 mod instance_home;
-pub(crate) use instance_home::{claude_session_transcript, validate_session};
+pub(crate) use instance_home::{agent_homes, claude_session_transcript, validate_session};
 pub mod interactive_mcp;
 mod pnpm_worktree;
 pub(crate) mod runtime_capabilities;
@@ -60,7 +60,8 @@ pub use codex::{
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
     CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
     CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
-    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_TURN_CANCELLED,
+    CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

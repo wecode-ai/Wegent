@@ -80,7 +80,7 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    super::assignment_index::ensure_active_index(state, item_id).await?;
+    super::assignment_index::ensure_active_index(&state.mysql, item_id).await?;
     let comments = LoopItemRepository::new(&state.mysql)
         .list_active_assignment_comments(item_id)
         .await
@@ -305,10 +305,9 @@ pub(crate) struct ActiveEvent<'a> {
     key: (String, String, String),
 }
 
-/// `issue_assignment_service._active_events`: the active `assign` events after
-/// applying the `unassign` cancellations, in activity order. A repeated member
-/// key keeps its first position and takes the newest event.
-pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
+/// Uncancelled `assign` events in activity order, including superseded events
+/// for the same member so reassignment can revoke every previous root event.
+pub(crate) fn uncancelled_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
     let cancelled: HashSet<&str> = comments
         .iter()
         .filter_map(|comment| {
@@ -318,8 +317,7 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
             .then(|| metadata.assignment_event_id.as_deref().unwrap_or(""))
         })
         .collect();
-    let mut active: Vec<ActiveEvent<'_>> = Vec::new();
-    let mut positions = HashMap::new();
+    let mut active = Vec::new();
     for comment in comments {
         let Some(metadata) = comment.assignment() else {
             continue;
@@ -332,34 +330,47 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
         if cancelled.contains(&comment.id.as_str()) {
             continue;
         }
-        let key = (
-            member_type_key(metadata.target_type.as_deref()).to_string(),
-            metadata.target_id.clone().unwrap_or_default(),
-            metadata
-                .workflow_step
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-        );
+        active.push(ActiveEvent {
+            comment,
+            metadata,
+            #[cfg(test)]
+            key: member_key(metadata),
+        });
+    }
+    active
+}
+
+/// Reassignment cancels all uncancelled events, including superseded events for
+/// the same member. Read projections retain only the newest event per member.
+pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
+    let mut active = Vec::new();
+    let mut positions = HashMap::new();
+    for event in uncancelled_events(comments) {
+        let key = member_key(event.metadata);
         match positions.get(&key).copied() {
             Some(index) => {
-                let existing: &mut ActiveEvent<'_> = &mut active[index];
-                existing.comment = comment;
-                existing.metadata = metadata;
+                active[index] = event;
             }
             None => {
                 positions.insert(key.clone(), active.len());
-                active.push(ActiveEvent {
-                    comment,
-                    metadata,
-                    #[cfg(test)]
-                    key,
-                });
+                active.push(event);
             }
         }
     }
     active
+}
+
+fn member_key(metadata: &AssignmentMetadata) -> (String, String, String) {
+    (
+        member_type_key(metadata.target_type.as_deref()).to_string(),
+        metadata.target_id.clone().unwrap_or_default(),
+        metadata
+            .workflow_step
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
 }
 
 /// `_member_type`: `user`/`human` normalize to `human`, everything else to
