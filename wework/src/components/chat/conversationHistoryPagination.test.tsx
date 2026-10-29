@@ -80,6 +80,8 @@ describe('automatic conversation history pagination', () => {
     expect(onLoad).toHaveBeenCalledOnce()
     view.rerender(boundary({ onLoad, onPrepare, loading: true }))
     await act(async () => resolve())
+    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-transcript-history-start')).toHaveClass('h-px')
     view.rerender(boundary({ onLoad, onPrepare }))
     intersect()
     expect(onLoad).toHaveBeenCalledOnce()

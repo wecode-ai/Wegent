@@ -95,7 +95,8 @@ export function ConversationHistoryBoundary({
     }
   }, [boundaryKey, failed, load, loading, manual, onLoad, scrollRef, status, suspended])
 
-  const showAction = manual || failed || status === 'failed' || completedBoundaryKey === boundaryKey
+  const showAction =
+    manual || failed || status === 'failed' || (!loading && completedBoundaryKey === boundaryKey)
   const busy = loading || status === 'loading'
   return (
     <div
