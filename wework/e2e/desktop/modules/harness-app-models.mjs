@@ -11,6 +11,10 @@ import {
 import { LOCAL_MODEL_CASES } from './shared.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
+import {
+  readActiveHarnessModelRoutes,
+  readPendingHarnessModelRoutes,
+} from './harness-app-model-configuration.mjs'
 
 /** Created by this checkpoint so its DSH profile pins the Wework default model. */
 const INSTALLED_APP_ID = 'dsh-e2e-multi-model'
@@ -85,9 +89,7 @@ export async function verifyHarnessAppModels(
     'instances',
     INSTALLED_APP_ID
   )
-  const routes = parseHarnessModelRoutes(
-    await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-  )
+  const routes = await waitForActiveHarnessModelRoutes(instanceDirectory)
   const defaultRoute = routes.find(route => route.id === 'wework-local')
   assert.ok(defaultRoute, 'The selected Wework model must keep the original default provider')
   const extraRoute = routes.find(route => route.displayName === EXTRA_MODEL.labels[1])
@@ -175,9 +177,7 @@ export async function verifyHarnessAppModels(
     uiTimeoutMs,
     electronUserDataDirectory,
   })
-  const reopenedRoutes = parseHarnessModelRoutes(
-    await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-  )
+  const reopenedRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
   const reopenedDefaultRoute = reopenedRoutes.find(route => route.id === 'wework-local')
   const reopenedExtraRoute = reopenedRoutes.find(
     route => route.displayName === EXTRA_MODEL.labels[1]
@@ -330,9 +330,7 @@ async function verifyCloseDuringTokenHandoff(
       'Starting a stopped app must not mount its stale running URL'
     )
     await gates.wait(ids[0], undefined, 600_000)
-    const oldRoutes = parseHarnessModelRoutes(
-      await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-    )
+    const oldRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
     assert.ok(oldRoutes.length > 1, 'The held launch did not register default and extra routes')
     assert.equal(
       Number(
@@ -384,9 +382,7 @@ async function verifyCloseDuringTokenHandoff(
       INSTALLED_APP_ID,
       30_000
     )
-    const newRoutes = parseHarnessModelRoutes(
-      await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-    )
+    const newRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
     assert.ok(newRoutes.length > 1, 'Rapid reopen lost the additional provider')
     for (const route of newRoutes) {
       assert.equal(
@@ -630,24 +626,13 @@ async function waitForRunningInstallation(userDataDirectory, installationId, tim
   throw new Error(`Smart app ${installationId} did not report a running DSH instance`)
 }
 
-function parseHarnessModelRoutes(settings) {
-  const routes = []
-  let current = null
-  for (const line of settings.split('\n')) {
-    const provider = /^ {4}([A-Za-z0-9_.:-]+):\s*$/.exec(line)
-    if (provider) {
-      current = { id: provider[1], displayName: '', baseUrl: '' }
-      routes.push(current)
-      continue
-    }
-    if (!current) continue
-    const field = /^ {6}(displayName|baseURL):\s*(.+?)\s*$/.exec(line)
-    if (!field) continue
-    const value = field[2].startsWith('"') ? JSON.parse(field[2]) : field[2]
-    if (field[1] === 'displayName') current.displayName = value
-    else current.baseUrl = value
-  }
-  return routes.filter(route => route.baseUrl)
+async function waitForActiveHarnessModelRoutes(instanceDirectory) {
+  // DSH imports startup settings into this profile before exposing its providers.
+  return waitForDshValue(
+    () => readActiveHarnessModelRoutes(instanceDirectory),
+    routes => routes.length > 1,
+    30_000
+  )
 }
 
 async function dshRequest(control, baseUrl, method, payload) {
@@ -730,17 +715,11 @@ async function waitForHarnessModelRequest(control, prompt, expectedModelId, time
 
 async function waitForFailedLaunchRoutes(userDataDirectory, installationId, timeoutMs) {
   const startedAt = Date.now()
-  const settingsPath = join(
-    userDataDirectory,
-    'harness-apps',
-    'instances',
-    installationId,
-    'settings.yaml'
-  )
+  const instanceDirectory = join(userDataDirectory, 'harness-apps', 'instances', installationId)
   let routes = []
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      routes = parseHarnessModelRoutes(await readFile(settingsPath, 'utf8'))
+      routes = await readPendingHarnessModelRoutes(instanceDirectory)
       if (routes.length > 1) break
     } catch {
       // The launch has not written its runtime settings yet.
