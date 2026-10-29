@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+echo "[desktop-e2e-window-manager] starting: display=$DISPLAY" >&2
 openbox >&2 &
 openbox_pid=$!
 trap 'kill "$openbox_pid" 2>/dev/null || true; wait "$openbox_pid" 2>/dev/null || true' EXIT
