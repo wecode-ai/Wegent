@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { sha256 } from './component-content-hash.js'
+import { sha256 } from './component-content-hash.mjs'
 import type { PluginDevelopmentStatus } from './plugin-development-manager.js'
 
 interface PluginDevelopmentChildRuntimeOptions {
