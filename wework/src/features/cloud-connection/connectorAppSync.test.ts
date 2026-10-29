@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { synchronizeConnectorApps } from './connectorAppSync'
+import { synchronizeConnectorApps, waitForLocalConnectorSync } from './connectorAppSync'
 
 const mocks = vi.hoisted(() => ({
   issueToken: vi.fn(),
@@ -120,5 +120,89 @@ describe('synchronizeConnectorApps', () => {
       'runtime.connectors.configure',
       expect.objectContaining({ expiresAtMs: 5_000 + 900_000 })
     )
+  })
+})
+
+describe('waitForLocalConnectorSync', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mocks.issueToken.mockResolvedValue({
+      access_token: 'connector-token',
+      token_type: 'bearer',
+      expires_in: 900,
+    })
+    mocks.listCatalog.mockResolvedValue([])
+    mocks.request.mockResolvedValue({ changed: false })
+  })
+
+  function respondWith(slugs: () => string[]) {
+    mocks.listInstalled.mockImplementation(async () => ({
+      apps: slugs().map(slug => ({
+        id: slug,
+        slug,
+        runtime_name: slug,
+        enabled: true,
+        callable: true,
+        tool_summaries: [],
+        connection: { status: 'connected' },
+      })),
+    }))
+  }
+
+  test('retries until the app is callable and then stops', async () => {
+    let attempt = 0
+    respondWith(() => (++attempt < 3 ? [] : ['ready-app']))
+
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'ready-app',
+      timeoutMs: 10_000,
+      intervalMs: 1_000,
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(waiting).resolves.toBe(true)
+    expect(attempt).toBe(3)
+  })
+
+  test('gives up at the deadline while keeping the app unsynced', async () => {
+    respondWith(() => [])
+
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'missing-app',
+      timeoutMs: 3_000,
+      intervalMs: 1_000,
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(waiting).resolves.toBe(false)
+  })
+
+  test('keeps retrying after a failed synchronization', async () => {
+    respondWith(() => ['ready-app'])
+    let calls = 0
+    mocks.request.mockImplementation((method: string) => {
+      if (method !== 'runtime.connectors.apps.sync') return Promise.resolve({})
+      calls += 1
+      return calls === 1
+        ? Promise.reject(new Error('executor offline'))
+        : Promise.resolve({ changed: true })
+    })
+
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'ready-app',
+      timeoutMs: 10_000,
+      intervalMs: 1_000,
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(waiting).resolves.toBe(true)
+    expect(calls).toBe(2)
   })
 })

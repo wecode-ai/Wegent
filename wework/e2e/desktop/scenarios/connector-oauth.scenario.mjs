@@ -193,10 +193,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'The continuation must not start while the local connector sync is held'
       )
       await control.command('releaseLocalExecutorRequestHold', 'body')
-      await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
-        visible: false,
-        timeoutMs: uiTimeoutMs,
-      })
+      try {
+        await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+      } catch (error) {
+        // Keep the failure debuggable: the card only stays when the resume
+        // barrier never confirmed the app, so capture that state directly.
+        await captureScreenshot(
+          control,
+          'connector-oauth-stuck.png',
+          ACTIVE_WORKBENCH_SELECTOR
+        ).catch(() => undefined)
+        throw new Error(
+          `The card did not clear after releasing the local connector sync ` +
+            `(hold=${JSON.stringify(localSyncHold)}, ` +
+            `resumeRequests=${modelRequests.filter(isResumeRequest).length}): ` +
+            `${error?.message ?? error}`
+        )
+      }
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: RESUME_COMPLETION,
         timeoutMs: uiTimeoutMs,

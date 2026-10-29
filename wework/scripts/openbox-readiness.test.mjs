@@ -73,3 +73,30 @@ echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
   expect(result.stderr).toContain('window manager fixture failed')
   expect(result.stderr).toContain('Openbox exited before registering')
 })
+
+it('restarts the window manager when the display is not accepting connections yet', () => {
+  const result = runFixture(
+    `#!/bin/sh
+directory="$OPENBOX_TEST_DIR"
+starts=0
+if [ -f "$directory/starts" ]; then starts=$(cat "$directory/starts"); fi
+starts=$((starts + 1))
+echo "$starts" > "$directory/starts"
+if [ "$starts" -lt 2 ]; then
+  echo 'Openbox-Message: Failed to open the display from the DISPLAY environment variable.' >&2
+  exit 1
+fi
+echo $$ > "$directory/pid"
+while true; do sleep 1; done
+`,
+    `#!/bin/sh
+echo 2 > "$OPENBOX_TEST_DIR/queries"
+echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+`
+  )
+  expect(result.status, result.stderr).toBe(0)
+  // The first start died on the not-yet-ready display; the launcher retried
+  // instead of reporting the checkpoint as failed.
+  expect(result.stderr).toContain('Failed to open the display')
+  expect(result.stderr).toContain('[desktop-e2e-window-manager] ready')
+})

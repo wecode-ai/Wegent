@@ -7,7 +7,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import { synchronizeConnectorApps } from '@/features/cloud-connection/connectorAppSync'
+import { waitForLocalConnectorSync } from '@/features/cloud-connection/connectorAppSync'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
@@ -75,8 +75,8 @@ export function CloudConnectorAuthCard({
         return
       }
       if (isLocalFirstAppRuntime()) {
-        const sync = await synchronizeConnectorApps({ apiBaseUrl, token })
-        if (!sync.callableSlugs.includes(slug)) {
+        const synced = await waitForLocalConnectorSync({ apiBaseUrl, token, slug })
+        if (!synced) {
           setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
           return
         }

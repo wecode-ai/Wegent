@@ -91,3 +91,39 @@ export async function synchronizeConnectorApps({
     expiresInSeconds: connectorToken.expires_in,
   }
 }
+
+/**
+ * Wait until the local executor has applied this connector as callable.
+ *
+ * The cloud grant and the runtime catalog converge separately, so a single
+ * sync can still run before the backend exposes the app as callable. Retrying
+ * inside a bounded window keeps the resume barrier intact without turning a
+ * slow convergence into a permanent failure; after the deadline the caller
+ * must keep its retry affordance and leave the conversation paused.
+ */
+export async function waitForLocalConnectorSync({
+  apiBaseUrl,
+  token,
+  slug,
+  timeoutMs = 30_000,
+  intervalMs = 1_000,
+}: {
+  apiBaseUrl: string
+  token: string
+  slug: string
+  timeoutMs?: number
+  intervalMs?: number
+}): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const result = await synchronizeConnectorApps({ apiBaseUrl, token })
+      if (result.callableSlugs.includes(slug)) return true
+    } catch {
+      // The reason is reported by the next successful attempt or by the
+      // caller's timeout message; the card stays retryable either way.
+    }
+    if (Date.now() >= deadline) return false
+    await new Promise(resolve => window.setTimeout(resolve, intervalMs))
+  }
+}
