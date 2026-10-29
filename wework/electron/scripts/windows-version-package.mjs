@@ -1,7 +1,7 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
@@ -11,6 +11,19 @@ process.noAsar = true
 export const WINDOWS_UPDATE_SCHEMA_VERSION = 2
 export const WINDOWS_DATA_SCHEMA_VERSION = 1
 export const WINDOWS_INITIAL_UPDATE_STATE = 'initial-update-state.json'
+const RENAME_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM'])
+
+async function renameWithRetry(from, to, attempts = 20) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error) {
+      if (!RENAME_RETRY_CODES.has(error?.code) || attempt >= attempts) throw error
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+  }
+}
 
 export async function finalizeWindowsVersionPackage({
   appOutDir,
@@ -27,10 +40,11 @@ export async function finalizeWindowsVersionPackage({
   await requireFile(launcherPath)
   const launcherBytes = await readFile(launcherPath)
   const staging = `${appOutDir}.version-staging`
+  await rm(staging, { recursive: true, force: true })
   await mkdir(staging)
   // Electron and its native modules have already been signed. Moving preserves those bytes.
   for (const entry of await readdir(appOutDir)) {
-    await rename(join(appOutDir, entry), join(staging, entry))
+    await renameWithRetry(join(appOutDir, entry), join(staging, entry))
   }
   const release = await writeWindowsReleaseManifest({
     directory: staging,
@@ -42,7 +56,7 @@ export async function finalizeWindowsVersionPackage({
   const identifier = `${version}-${createHash('sha256').update(manifestBytes).digest('hex').slice(0, 16)}`
   const versionPath = `versions/${identifier}`
   await mkdir(join(appOutDir, 'versions'))
-  await rename(staging, join(appOutDir, versionPath))
+  await renameWithRetry(staging, join(appOutDir, versionPath))
   const launcher = join(appOutDir, `${executableName}.exe`)
   await writeFile(launcher, launcherBytes)
   await writeFile(
@@ -57,6 +71,9 @@ export async function finalizeWindowsVersionPackage({
       2
     )}\n`
   )
+  // electron-builder's NSIS target copies elevate.exe into <app>/resources.
+  // Keep that directory outside the immutable version tree for the installer.
+  await mkdir(join(appOutDir, 'resources'), { recursive: true })
   return { release, versionPath, launcher }
 }
 

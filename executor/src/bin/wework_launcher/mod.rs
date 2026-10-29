@@ -202,7 +202,9 @@ fn spawn_active(root: &Path, state: &State, args: &[OsString], verify_files: boo
     if manifest.version != state.active.version {
         return Err("Active release version does not match installation state".into());
     }
-    let child = AppProcess::spawn(&path.join(&manifest.entry_point), root, args, None)?;
+    let executable = files::child_path(&path.join(&manifest.entry_point));
+    let child_root = files::child_path(root);
+    let child = AppProcess::spawn(&executable, &child_root, args, None)?;
     files::event(
         root,
         "active-started",
@@ -236,9 +238,11 @@ fn trial(
     state.candidate = Some(candidate.clone());
     save(root, state)?;
     let token = uuid::Uuid::new_v4().to_string();
+    let executable = files::child_path(&path.join(&manifest.entry_point));
+    let child_root = files::child_path(root);
     let mut child = AppProcess::spawn(
-        &path.join(&manifest.entry_point),
-        root,
+        &executable,
+        &child_root,
         args,
         Some((&candidate.transaction_id, &token)),
     )?;

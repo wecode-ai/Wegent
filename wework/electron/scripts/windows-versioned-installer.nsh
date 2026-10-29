@@ -1,3 +1,12 @@
+!macro preInit
+  # Published 0.4.x/0.5.x uninstallers can fail with error 2 and abort the
+  # migration. The complete package replaces the installation in place and
+  # verifies the new version, so drop the legacy uninstall registration before
+  # electron-builder's uninstallOldVersion step runs the old uninstaller.
+  DeleteRegValue HKCU "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
+  DeleteRegValue HKCU "${UNINSTALL_REGISTRY_KEY}" "QuietUninstallString"
+!macroend
+
 !macro customRemoveFiles
   ${if} ${isUpdated}
     # Keep the stable launcher and every immutable version until extraction replaces them.

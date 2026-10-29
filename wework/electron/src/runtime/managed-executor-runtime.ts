@@ -51,6 +51,8 @@ export class ManagedExecutorRuntime {
       },
       extraPipeCount: process.platform === 'win32' ? 0 : 1,
       name: 'wegent-executor',
+      // Windows process-tree termination may need to wait on a busy taskkill.
+      ...(process.platform === 'win32' ? { stopTimeoutMs: 15_000 } : {}),
       log: { path: managedExecutorLogPath(options) },
       probe: async (_child, signal) => {
         await waitForEndpointAuthentication(this.endpoint, this.token, signal)

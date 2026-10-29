@@ -360,10 +360,10 @@ function setLocalizedActionCopy() {
 
 function renderLocalizedStaticCopy() {
   progressElement.setAttribute('aria-label', isChinese ? '启动进度' : 'Startup progress')
-  slowTitleElement.textContent = isChinese ? '仍在等待' : 'Still starting'
+  slowTitleElement.textContent = isChinese ? '请耐心等待' : 'Please wait'
   slowDetailElement.textContent = isChinese
-    ? '首次启动或更新后可能需要更长时间，当前步骤仍在继续。'
-    : 'First launches and updates can take longer. The current step keeps running.'
+    ? '首次启动或更新后可能需要更长时间。'
+    : 'First launches and updates can take longer.'
   timeoutTitleElement.textContent = isChinese ? '首次启动可能较慢' : 'First startup can take longer'
   timeoutDetailElement.textContent = isChinese
     ? '正在继续加载，请稍候…'

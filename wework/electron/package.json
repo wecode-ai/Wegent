@@ -42,6 +42,7 @@
     "semver": "7.8.5",
     "systeminformation": "5.33.15",
     "tar": "7.5.22",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "yauzl": "2.10.0"
   }
 }

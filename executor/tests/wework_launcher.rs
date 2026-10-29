@@ -428,7 +428,12 @@ fn launch_preserves_unicode_quotes_and_trailing_backslash_arguments() {
 fn staging_path_with_parent_traversal_is_rejected() {
     let installation = Installation::new();
     installation.release(".updates/staging/new", "0.5.13", "healthy");
-    let candidate = installation.root.join(".updates/staging/new/../new");
+    // Build the path as a string: Path::join collapses `..`, which would hide
+    // the traversal this test must reject.
+    let candidate = PathBuf::from(format!(
+        "{}/.updates/staging/new/../new",
+        installation.root.display()
+    ));
     let request = installation.apply_request(&candidate, dead_parent());
     let output = installation
         .command()
@@ -437,7 +442,11 @@ fn staging_path_with_parent_traversal_is_rejected() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("without traversal"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("without traversal"),
+        "unexpected launcher stderr: {stderr}"
+    );
     installation.await_start("active");
 }
 

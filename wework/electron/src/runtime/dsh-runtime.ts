@@ -55,6 +55,7 @@ export class DshRuntime {
             : options.hostPipe
               ? { extraPipeCount: 2 }
               : {}),
+          ...(process.platform === 'win32' ? { stopTimeoutMs: 15_000 } : {}),
           startTimeoutMs: options.startTimeoutMs,
           probe: async (child, signal) => {
             if (new URL(options.url).port === '0') {

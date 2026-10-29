@@ -81,6 +81,8 @@ test('preserves signed application bytes and uses the version helper as the stab
   expect((await readdir(appOutDir)).sort()).toEqual([
     'WeWork.exe',
     WINDOWS_INITIAL_UPDATE_STATE,
+    // Reserved for the NSIS elevate helper outside the immutable version.
+    'resources',
     'versions',
   ])
   const outputFile = join(root, 'update.zip')

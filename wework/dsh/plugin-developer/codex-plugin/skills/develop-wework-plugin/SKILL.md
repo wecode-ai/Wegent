@@ -20,11 +20,11 @@ product-oriented showcase plugins:
   the browser-module boundary.
 - Inspect [assets/ui-extension-demo](assets/ui-extension-demo) before writing a
   low-level UI contribution.
-- Inspect [assets/reference-plugins](assets/reference-plugins) for runnable,
+- Inspect [assets/ref](assets/ref) for runnable,
   independently installable examples of Composer augmentation, persistent
   workflow UI, website navigation, and typed desktop-host integration. For a
   left-navigation button that opens a website in the Wework built-in browser,
-  start from `sidebar-browser-panel-demo`. Copy only the closest example into
+  start from `sidebar-demo`. Copy only the closest example into
   the user's writable project, then delete every contribution the plugin does
   not need.
 - Start with [assets/showcase-plugins](assets/showcase-plugins) when the user

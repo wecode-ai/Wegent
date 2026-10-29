@@ -76,6 +76,38 @@ describe('Windows runtime tree shutdown', () => {
     await stopped
   })
 
+  test('treats taskkill 128 as an already stopped tree', async () => {
+    const { child, killer, target } = setup()
+    const finished = vi.fn()
+    const stopped = terminateProcessTree(target, 1000).then(finished)
+    exit(child, 0)
+    exit(killer, 128)
+    await stopped
+    expect(finished).toHaveBeenCalledOnce()
+  })
+
+  test('treats taskkill 255 as an already exited runtime tree', async () => {
+    const { child, killer, target } = setup()
+    const finished = vi.fn()
+    const stopped = terminateProcessTree(target, 1000).then(finished)
+    exit(child, 0)
+    exit(killer, 255)
+    await stopped
+    expect(finished).toHaveBeenCalledOnce()
+  })
+
+  test('waits for the runtime to exit after taskkill 255', async () => {
+    const { child, killer, target } = setup()
+    const finished = vi.fn()
+    const stopped = terminateProcessTree(target, 1000).then(finished)
+    exit(killer, 255)
+    await Promise.resolve()
+    expect(finished).not.toHaveBeenCalled()
+    exit(child, 0)
+    await stopped
+    expect(finished).toHaveBeenCalledOnce()
+  })
+
   test('propagates taskkill executable errors instead of reporting a stopped runtime', async () => {
     const { killer, target } = setup()
     const stopped = expect(terminateProcessTree(target, 1000)).rejects.toMatchObject({

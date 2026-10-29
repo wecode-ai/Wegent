@@ -31,7 +31,9 @@ test('reports every failed owner after attempting all shutdowns, including synch
   const settled = vi.fn()
   const rejection = expect(operation.finally(settled)).rejects.toMatchObject({
     message: 'Application services failed to stop',
-    errors: [expect.objectContaining({ message: 'Failed to stop executor' })],
+    errors: [
+      expect.objectContaining({ message: 'Failed to stop executor: Process remains alive' }),
+    ],
   })
   await Promise.resolve()
   expect(settled).not.toHaveBeenCalled()

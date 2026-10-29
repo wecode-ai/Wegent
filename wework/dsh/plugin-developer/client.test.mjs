@@ -140,7 +140,7 @@ test('documents and demonstrates every extension point declared by the Wework ho
   assert.ok(extensionPoints.length > 0, 'The Wework host does not declare any extension points')
   assert.match(skill, /references\/extension-points\.md/)
   assert.match(skill, /assets\/ui-extension-demo/)
-  assert.match(skill, /assets\/reference-plugins/)
+  assert.match(skill, /assets\/ref/)
   assert.match(skill, /assets\/showcase-plugins/)
   assert.match(skill, /invocation\.composer/)
   assert.match(skill, /Never edit files inside an installed plugin cache/)
@@ -181,11 +181,11 @@ test('keeps Skill resources independent from a machine plugin cache path', async
     [
       'SKILL.md',
       'references/extension-points.md',
-      'assets/reference-plugins/README.md',
-      'assets/reference-plugins/prompt-library-demo/README.md',
-      'assets/reference-plugins/focus-board-demo/README.md',
-      'assets/reference-plugins/sidebar-browser-panel-demo/README.md',
-      'assets/reference-plugins/endpoint-watch-demo/README.md',
+      'assets/ref/README.md',
+      'assets/ref/prompt-library-demo/README.md',
+      'assets/ref/focus-board-demo/README.md',
+      'assets/ref/sidebar-demo/README.md',
+      'assets/ref/endpoint-watch-demo/README.md',
       'assets/ui-extension-demo/README.md',
       'assets/ui-extension-demo/README.en.md',
       'assets/ui-extension-demo/client.js',
@@ -200,19 +200,19 @@ test('keeps Skill resources independent from a machine plugin cache path', async
   assert.doesNotMatch(contents, /plugins\/cache\/(?:wework|wework-personal)/)
   assert.match(contents, /\[references\/extension-points\.md]\(references\/extension-points\.md\)/)
   assert.match(contents, /\[assets\/ui-extension-demo]\(assets\/ui-extension-demo\)/)
-  assert.match(contents, /\[assets\/reference-plugins]\(assets\/reference-plugins\)/)
+  assert.match(contents, /\[assets\/ref]\(assets\/ref\)/)
 })
 
 test('ships focused executable reference plugin packages', async () => {
   const directories = [
     'prompt-library-demo',
     'focus-board-demo',
-    'sidebar-browser-panel-demo',
+    'sidebar-demo',
     'endpoint-watch-demo',
   ]
 
   for (const directory of directories) {
-    const root = new URL(`assets/reference-plugins/${directory}/`, pluginRoot)
+    const root = new URL(`assets/ref/${directory}/`, pluginRoot)
     const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
     const patch = await readFile(new URL('cordis.patch.yml', root), 'utf8')
     const client = await readFile(new URL('client.js', root), 'utf8')
@@ -225,7 +225,7 @@ test('ships focused executable reference plugin packages', async () => {
 })
 
 test('ships a minimal website panel reference without an unrelated nested Codex plugin', async () => {
-  const root = new URL('assets/reference-plugins/sidebar-browser-panel-demo/', pluginRoot)
+  const root = new URL('assets/ref/sidebar-demo/', pluginRoot)
   const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
   const client = await readFile(new URL('client.js', root), 'utf8')
 

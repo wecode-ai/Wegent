@@ -20,6 +20,17 @@ pub fn root(path: &Path) -> Result<PathBuf> {
     path.canonicalize().map_err(|e| e.to_string())
 }
 
+// Electron and Chromium do not accept extended-length prefixes for the
+// executable path, so hand the child the canonical drive path instead.
+pub fn child_path(path: &Path) -> PathBuf {
+    let path = path.to_path_buf();
+    #[cfg(windows)]
+    if let Some(stripped) = path.to_string_lossy().strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
 pub fn lock(root: &Path) -> Result<File> {
     directory(root, ".updates")?;
     let path = root.join(".updates/update.lock");
@@ -112,6 +123,10 @@ pub fn staged_path(root: &Path, absolute: &Path) -> Result<PathBuf> {
     if absolute
         .components()
         .any(|part| matches!(part, Component::ParentDir))
+        || absolute
+            .to_string_lossy()
+            .split(['\\', '/'])
+            .any(|part| part == "..")
     {
         return Err("Candidate must use its direct staging path without traversal".into());
     }

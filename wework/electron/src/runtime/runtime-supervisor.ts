@@ -318,8 +318,10 @@ async function terminateWindowsProcessTree(
     let leaderExited = child.exitCode !== null || child.signalCode !== null
     let treeStopped = false
     let stderr = ''
+    let graceTimer: NodeJS.Timeout | undefined
     const cleanup = () => {
       clearTimeout(timer)
+      if (graceTimer) clearTimeout(graceTimer)
       child.off('exit', onLeaderExit)
       child.off('error', fail)
       killer?.off('exit', onTaskkillExit)
@@ -344,6 +346,30 @@ async function terminateWindowsProcessTree(
     }
     const onTaskkillExit = (code: number | null, signal: NodeJS.Signals | null) => {
       if (code !== 0) {
+        // taskkill reports 128 (not found) or 255 (no running instance) when a
+        // runtime is exiting during the tree kill. Allow a short grace period
+        // for the leader to finish exiting instead of failing the handoff.
+        if (code === 128 || code === 255) {
+          if (leaderExited) {
+            treeStopped = true
+            finish()
+            return
+          }
+          treeStopped = true
+          graceTimer = setTimeout(
+            () => {
+              if (settled || leaderExited) return
+              treeStopped = false
+              fail(
+                new Error(
+                  `taskkill failed for runtime ${child.pid} (code=${code}, signal=${signal}): ${stderr.trim()}`
+                )
+              )
+            },
+            Math.min(timeoutMs, 5_000)
+          )
+          return
+        }
         fail(
           new Error(
             `taskkill failed for runtime ${child.pid} (code=${code}, signal=${signal}): ${stderr.trim()}`

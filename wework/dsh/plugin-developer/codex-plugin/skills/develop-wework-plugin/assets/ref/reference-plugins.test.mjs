@@ -216,7 +216,7 @@ test('Focus Board persists work and inserts a live Markdown summary', async () =
 })
 
 test('Sidebar Browser Panel opens one website beside the current workspace', async () => {
-  const plugin = await loadPlugin('sidebar-browser-panel-demo')
+  const plugin = await loadPlugin('sidebar-demo')
   const runtime = createRuntime()
   plugin.apply(runtime.ctx)
 
