@@ -24,6 +24,7 @@ export function checkpointScenarioEnv(
     checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'window-lifecycle' ||
+    checkpoint === 'window-background-policy' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'

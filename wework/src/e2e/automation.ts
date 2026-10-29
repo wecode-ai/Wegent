@@ -1943,8 +1943,12 @@ async function executeDesktopControlCommand(
       return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
+    case 'getDocumentVisibility':
+      return document.visibilityState
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'getWindowBackgroundPolicy':
+      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''

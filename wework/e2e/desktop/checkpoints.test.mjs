@@ -51,16 +51,21 @@ test('Claude checkpoint enables native discovery only in its spawned child', asy
   const probe = join(directory, 'probe.mjs')
   await writeFile(
     probe,
-    'process.stdout.write(JSON.stringify({ toolSearch: process.env.ENABLE_TOOL_SEARCH }))\n'
+    'process.stdout.write(JSON.stringify({ toolSearch: process.env.ENABLE_TOOL_SEARCH, backgroundWindow: process.env.WEWORK_E2E_BACKGROUND_WINDOW }))\n'
   )
-  const parentEnvironment = { ...process.env, ENABLE_TOOL_SEARCH: 'false' }
+  const parentEnvironment = {
+    ...process.env,
+    ENABLE_TOOL_SEARCH: 'false',
+    WEWORK_E2E_BACKGROUND_WINDOW: '1',
+  }
   const parentSnapshot = JSON.stringify(parentEnvironment)
   const actualParentValue = process.env.ENABLE_TOOL_SEARCH
   const metadata = { scenarioModules: {}, scenarioOnlyCheckpoints: new Set() }
-  for (const [checkpoint, expected] of [
-    ['claude-runtime', 'true'],
-    ['python-runtime', 'false'],
-    ['core-task-flow', 'false'],
+  for (const [checkpoint, expected, backgroundWindow] of [
+    ['claude-runtime', 'true', '1'],
+    ['python-runtime', 'false', '1'],
+    ['core-task-flow', 'false', '0'],
+    ['window-background-policy', 'false', '0'],
   ]) {
     const childEnvironment = checkpointScenarioEnv(parentEnvironment, checkpoint, metadata)
     const child = spawnSync(process.execPath, [probe], {
@@ -69,7 +74,11 @@ test('Claude checkpoint enables native discovery only in its spawned child', asy
     })
     assert.equal(child.error, undefined)
     assert.equal(child.status, 0, child.stderr)
-    assert.deepEqual(JSON.parse(child.stdout), { toolSearch: expected }, checkpoint)
+    assert.deepEqual(
+      JSON.parse(child.stdout),
+      { toolSearch: expected, backgroundWindow },
+      checkpoint
+    )
     assert.equal(
       JSON.stringify(parentEnvironment) === parentSnapshot,
       true,
