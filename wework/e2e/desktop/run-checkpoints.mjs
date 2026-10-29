@@ -14,7 +14,6 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
-import { ISOLATED_XVFB_OPTIONS } from './xvfb-options.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -380,7 +379,8 @@ const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
-const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
+const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
+const openboxPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 
@@ -399,9 +399,9 @@ function runTaskFlow(args, env, label) {
     let outputTail = ''
     let stderrTail = ''
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
-    const command = isolateDisplay ? 'xvfb-run' : process.execPath
+    const command = isolateDisplay ? 'sh' : process.execPath
     const commandArgs = isolateDisplay
-      ? [...ISOLATED_XVFB_OPTIONS, 'sh', isolatedXvfbPath, process.execPath, taskFlowPath, ...args]
+      ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
       env,

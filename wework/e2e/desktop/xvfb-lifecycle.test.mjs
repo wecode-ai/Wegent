@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { ISOLATED_XVFB_OPTIONS } from './xvfb-options.mjs'
+const launcher = join(import.meta.dirname, 'run-with-xvfb.sh')
 
 test('the isolated display retains state between readiness probe connections', () => {
   // Each xprop process closes the last X11 connection before the next opens.
   // A resetting server loses the property or rejects the connecting client.
   const result = spawnSync(
-    'xvfb-run',
+    'sh',
     [
-      ...ISOLATED_XVFB_OPTIONS,
+      launcher,
       'sh',
       '-ec',
       'xprop -root -f _WEWORK_DISPLAY_LIFETIME 8s -set _WEWORK_DISPLAY_LIFETIME checkpoint-owned; xprop -root _WEWORK_DISPLAY_LIFETIME',
