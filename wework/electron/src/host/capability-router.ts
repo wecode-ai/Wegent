@@ -1,4 +1,6 @@
 export const HOST_PROTOCOL_VERSION = 1
+const SLOW_HOST_CAPABILITY_MS = 1_000
+const MAX_SLOW_HOST_CAPABILITY_DIAGNOSTICS = 32
 
 export const HOST_CAPABILITIES = [
   'mcpApps.createDocument',
@@ -250,6 +252,7 @@ export class HostCapabilityError extends Error {
 export class HostCapabilityRouter {
   private readonly handlers = new Map<HostCapability, HostCapabilityHandler>()
   private readonly grants = new Map<string, ReadonlySet<HostCapability>>()
+  private slowInvocationDiagnostics = 0
 
   register(capability: HostCapability, handler: HostCapabilityHandler): void {
     if (this.handlers.has(capability)) {
@@ -292,17 +295,51 @@ export class HostCapabilityRouter {
         `Desktop capability is unavailable: ${capability}`
       )
     }
-    const completions: HostCapabilityCompletion[] = []
-    const result = await handler(params, {
-      principal,
-      deferUntilResponseSent: completion => completions.push(completion),
-    })
-    if (options.onResponseSent) {
-      completions.forEach(options.onResponseSent)
-    } else {
-      for (const completion of completions) await completion()
+    const startedAt = Date.now()
+    let succeeded = false
+    try {
+      const completions: HostCapabilityCompletion[] = []
+      const result = await handler(params, {
+        principal,
+        deferUntilResponseSent: completion => completions.push(completion),
+      })
+      if (options.onResponseSent) {
+        completions.forEach(options.onResponseSent)
+      } else {
+        for (const completion of completions) await completion()
+      }
+      succeeded = true
+      return result
+    } finally {
+      this.logSlowInvocation(capability, startedAt, succeeded)
     }
-    return result
+  }
+
+  private logSlowInvocation(
+    capability: HostCapability,
+    startedAt: number,
+    succeeded: boolean
+  ): void {
+    const finishedAt = Date.now()
+    const elapsedMs = finishedAt - startedAt
+    if (
+      !process.env.WEWORK_E2E_CONTROL_URL ||
+      elapsedMs < SLOW_HOST_CAPABILITY_MS ||
+      this.slowInvocationDiagnostics >= MAX_SLOW_HOST_CAPABILITY_DIAGNOSTICS
+    )
+      return
+    this.slowInvocationDiagnostics += 1
+    try {
+      console.info('[Wework] Slow desktop host capability', {
+        capability,
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        elapsedMs,
+        status: succeeded ? 'success' : 'failure',
+      })
+    } catch {
+      // Diagnostics must not change the capability result or its original error.
+    }
   }
 }
 
