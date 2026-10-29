@@ -502,10 +502,14 @@ export function createDesktopScenario({
       )
       assert.deepEqual(afterProject.roles[0].workspace, saved.workspace)
       assert.equal(afterProject.roles.length, beforeProject.roles.length)
+      assert.ok(
+        afterProject.roles.some(role => role.id === saved.id),
+        'Opening another project lost the saved personal stand-in role'
+      )
       await control.command('click', '[data-testid="stand-in-cancel"]')
       await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
-      await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
+      await control.command('clickWhenEnabled', selector(`stand-in-overview-role-${saved.id}`))
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')
