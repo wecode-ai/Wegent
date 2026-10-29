@@ -42,6 +42,7 @@ The test uses `DWS_DISABLE_KEYCHAIN=1` when an isolated config is supplied.
 | `E2E_DINGTALK_JOB_IMAGE` | Backend image built from the reviewed internal MR |
 | `E2E_DINGTALK_MODEL_IMAGE` | Playwright/Node image for the local model stub |
 | `E2E_DINGTALK_BOOTSTRAP_ADMIN_PASSWORD` | Disposable test administrator password |
+| `E2E_DINGTALK_INTERNAL_SERVICE_TOKEN` | Disposable token shared by the isolated Backend, worker and Chat Shell |
 | `GIT_TOKEN_AES_KEY`, `GIT_TOKEN_AES_IV` | Disposable E2E crypto settings |
 
 The `chat message list` and `chat message list-mentions` queries provide the

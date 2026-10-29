@@ -12,6 +12,7 @@ set -euo pipefail
 : "${E2E_DINGTALK_JOB_IMAGE:?protected Backend image required}"
 : "${E2E_DINGTALK_MODEL_IMAGE:?protected model harness image required}"
 : "${E2E_DINGTALK_BOOTSTRAP_ADMIN_PASSWORD:?isolated test password required}"
+: "${E2E_DINGTALK_INTERNAL_SERVICE_TOKEN:?isolated internal service token required}"
 
 test "${E2E_DINGTALK_REAL_TENANT}" = "1"
 test -x "${DWS_BINARY_PATH}"
@@ -30,6 +31,10 @@ export INIT_DATA_ENABLED="${INIT_DATA_ENABLED:-true}"
 export EMBEDDED_CELERY_ENABLED="${EMBEDDED_CELERY_ENABLED:-false}"
 export SECRET_KEY="${SECRET_KEY:-test-secret-key-for-ci-testing}"
 export ALGORITHM="${ALGORITHM:-HS256}"
+export INTERNAL_SERVICE_TOKEN="$E2E_DINGTALK_INTERNAL_SERVICE_TOKEN"
+export CELERY_TASK_DEFAULT_QUEUE="${CELERY_TASK_DEFAULT_QUEUE:-wegent_dingtalk_real_e2e}"
+export SUBSCRIPTION_SCHEDULER_ENABLED=false
+export SCHEDULED_TASKS_ENABLED=false
 export PYTHONPATH="$ROOT:$ROOT/backend"
 
 command -v docker >/dev/null
@@ -37,12 +42,14 @@ command -v uv >/dev/null
 mkdir -p "$E2E_REPORT_DIR"
 network="dingtalk-real-e2e-${CI_JOB_ID:-local}"
 backend="dingtalk-real-backend-${CI_JOB_ID:-local}"
+chat_shell="dingtalk-real-chat-shell-${CI_JOB_ID:-local}"
+worker="dingtalk-real-worker-${CI_JOB_ID:-local}"
 model="dingtalk-real-model-${CI_JOB_ID:-local}"
 mysql="dingtalk-real-mysql-${CI_JOB_ID:-local}"
 redis="dingtalk-real-redis-${CI_JOB_ID:-local}"
 
 cleanup() {
-  docker rm -f "$backend" "$model" "$mysql" "$redis" >/dev/null 2>&1 || true
+  docker rm -f "$worker" "$chat_shell" "$backend" "$model" "$mysql" "$redis" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -80,6 +87,15 @@ docker run -d --name "$backend" --network "$network" --network-alias backend \
   -e EMBEDDED_CELERY_ENABLED="$EMBEDDED_CELERY_ENABLED" \
   -e SECRET_KEY="$SECRET_KEY" \
   -e ALGORITHM="$ALGORITHM" \
+  -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+  -e CELERY_BROKER_URL="$REDIS_URL" \
+  -e CELERY_RESULT_BACKEND="$REDIS_URL" \
+  -e CELERY_TASK_DEFAULT_QUEUE="$CELERY_TASK_DEFAULT_QUEUE" \
+  -e SUBSCRIPTION_SCHEDULER_ENABLED=false \
+  -e SCHEDULED_TASKS_ENABLED=false \
+  -e OTEL_ENABLED=false \
+  -e CHAT_SHELL_URL=http://localhost:8100 \
+  -e EXECUTOR_MANAGER_URL=http://localhost:8001 \
   -e GIT_TOKEN_AES_KEY="${GIT_TOKEN_AES_KEY:?test crypto key required}" \
   -e GIT_TOKEN_AES_IV="${GIT_TOKEN_AES_IV:?test crypto IV required}" \
   -e WEGENT_HYBRID_STATE_FILE=/app/backend-hybrid.state \
@@ -96,6 +112,39 @@ for attempt in $(seq 1 120); do
   test "$attempt" -lt 120 || { docker logs "$backend" --tail 100; exit 1; }
   sleep 1
 done
+
+docker run -d --name "$chat_shell" --network "$network" --network-alias chat-shell \
+  -e CHAT_SHELL_STORAGE_TYPE=remote \
+  -e CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal \
+  -e CHAT_SHELL_REMOTE_STORAGE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+  -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+  -e OTEL_ENABLED=false \
+  --entrypoint python "$E2E_DINGTALK_JOB_IMAGE" \
+  -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100 >/dev/null
+
+docker run -d --name "$worker" --network "$network" --network-alias worker \
+  -e DATABASE_URL="$DATABASE_URL" \
+  -e REDIS_URL="$REDIS_URL" \
+  -e CELERY_BROKER_URL="$REDIS_URL" \
+  -e CELERY_RESULT_BACKEND="$REDIS_URL" \
+  -e CELERY_TASK_DEFAULT_QUEUE="$CELERY_TASK_DEFAULT_QUEUE" \
+  -e ENVIRONMENT="$ENVIRONMENT" \
+  -e DB_AUTO_MIGRATE=false \
+  -e INIT_DATA_ENABLED=false \
+  -e EMBEDDED_CELERY_ENABLED=false \
+  -e SUBSCRIPTION_SCHEDULER_ENABLED=false \
+  -e SCHEDULED_TASKS_ENABLED=false \
+  -e OTEL_ENABLED=false \
+  -e SECRET_KEY="$SECRET_KEY" \
+  -e ALGORITHM="$ALGORITHM" \
+  -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+  -e CHAT_SHELL_URL=http://localhost:8100 \
+  -e GIT_TOKEN_AES_KEY="$GIT_TOKEN_AES_KEY" \
+  -e GIT_TOKEN_AES_IV="$GIT_TOKEN_AES_IV" \
+  --entrypoint celery "$E2E_DINGTALK_JOB_IMAGE" \
+  -A app.core.celery_app worker --pool=threads --concurrency=1 \
+  --queues="$CELERY_TASK_DEFAULT_QUEUE" --hostname=dingtalk-real-e2e@localhost \
+  --loglevel=INFO >/dev/null
 
 docker cp "$backend":/app/backend-hybrid.state "$WEGENT_HYBRID_STATE_FILE"
 cd "$ROOT/backend"
