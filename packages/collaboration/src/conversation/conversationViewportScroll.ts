@@ -3,29 +3,33 @@ import {
   recordConversationScrollWrite,
 } from './conversationScrollWrite'
 
-export function getDistanceFromBottom(element: HTMLElement, bottomOrigin: boolean): number {
-  if (bottomOrigin) {
-    return Math.max(0, -element.scrollTop)
-  }
+export function isConversationScrollInput(event: Event): boolean {
+  if (
+    event instanceof KeyboardEvent &&
+    !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)
+  )
+    return false
+  return !(
+    event.target instanceof Element &&
+    event.target.closest('input, textarea, [contenteditable="true"]')
+  )
+}
+
+export function getDistanceFromBottom(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop)
 }
 
-export function getDistanceFromTop(element: HTMLElement, bottomOrigin: boolean): number {
-  if (!bottomOrigin) return Math.max(0, element.scrollTop)
-  const maximumOffset = Math.max(0, element.scrollHeight - element.clientHeight)
-  return Math.max(0, maximumOffset + element.scrollTop)
+export function getDistanceFromTop(element: HTMLElement): number {
+  return Math.max(0, element.scrollTop)
 }
 
 export function setDistanceFromBottom(
   element: HTMLElement,
   distanceFromBottomPx: number,
-  behavior: ScrollBehavior,
-  bottomOrigin: boolean
+  behavior: ScrollBehavior
 ): void {
   const distance = Math.max(0, distanceFromBottomPx)
-  const top = bottomOrigin
-    ? -distance
-    : Math.max(0, element.scrollHeight - element.clientHeight - distance)
+  const top = Math.max(0, element.scrollHeight - element.clientHeight - distance)
   recordConversationScrollWrite(
     element,
     CONVERSATION_SCROLL_WRITE_SOURCE.distanceFromBottom,
@@ -63,9 +67,7 @@ export function scrollToContentPosition(
   positionPx: number,
   behavior: ScrollBehavior
 ): void {
-  const top = hasBottomScrollOrigin(element)
-    ? positionPx - Math.max(0, element.scrollHeight - element.clientHeight)
-    : positionPx
+  const top = positionPx
   recordConversationScrollWrite(
     element,
     CONVERSATION_SCROLL_WRITE_SOURCE.contentPosition,
@@ -80,10 +82,6 @@ export function scrollToContentPosition(
   )
 }
 
-export function hasBottomScrollOrigin(element: HTMLElement): boolean {
-  return element.dataset.scrollOrigin === 'bottom'
-}
-
 function getContentScrollPosition(element: HTMLElement): number {
-  return getDistanceFromTop(element, hasBottomScrollOrigin(element))
+  return getDistanceFromTop(element)
 }

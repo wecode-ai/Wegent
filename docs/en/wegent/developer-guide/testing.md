@@ -290,6 +290,28 @@ events; without `ci:all`, test selection still follows the changed paths.
 The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
+Windows desktop builds share the `build-wework-windows-e2e` action between PRs
+and main-branch cache warmup. Only `main` writes shared caches. Complete packages
+require an exact match of source inputs, Node, Rust, and runner image versions;
+prefix matching is not used. A hit validates and uploads the original package,
+preserving its producer identity. A miss builds with shared pnpm, Codex, Electron,
+Executor, and Backend compilation caches. These are E2E builds, not evidence of
+upgrade compatibility.
+
+Windows Core independently balances serial shards using median successful
+checkpoint durations in `.github/ci/wework-windows-checkpoint-durations.json`,
+which records the source Actions runs. Linux grouping stays unchanged. Scheduling
+preserves the ten-runner budget, two exclusive benchmark shards, and every
+checkpoint. A shard containing an unmeasured checkpoint remains intact until
+successful logs provide evidence. Failed and cancelled checkpoints are excluded.
+Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
+preserving the original number of preparation jobs.
+Loads also include measured conditional preparation costs with a source job link,
+so cold object-storage compilation does not sit on an otherwise full shard.
+Cache hits may reduce these costs.
+Estimated loads omit runner queues, common setup, and cleanup; validate actual
+savings with a complete CI run.
+
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`

@@ -32,6 +32,8 @@ When **Show main window on launch** is enabled, Wework opens the main window whe
 
 When the main window is not visible, click the system tray icon to reopen it.
 
+While the startup splash is visible, tray actions that open Settings or a task wait for startup to finish before activating and navigating the main window. Early navigation therefore cannot interrupt startup. Quit remains available without waiting for startup completion.
+
 ## Maximum Concurrent Tasks and the Task Queue
 
 Under **Settings → General → Runtime**, choose how many tasks the current device may run at the same time. The supported range is 1–20, and the default is 10. Once the limit is reached, new tasks enter the device's waiting queue without sending a model request.

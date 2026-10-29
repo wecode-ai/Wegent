@@ -500,29 +500,66 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
         auth_token: "test".into(),
         ..Default::default()
     })));
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "stand-in-human-default".into(),
-        status: "failed".into(),
-        ..RuntimeTaskLink::default()
-    });
     let mut config = json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
     let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    for status in ["failed", "archived"] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "stand-in-human-default".into(),
+            status: status.into(),
+            ..RuntimeTaskLink::default()
+        });
+        config["manual"] = json!(true);
+        let error = handler
+            .start_cloud_stand_in(&config, &issue)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "workspace_unavailable");
+        config["manual"] = json!(false);
+        handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+        assert_eq!(mutations.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            handler
+                .local_task_link("stand-in-human-default")
+                .unwrap()
+                .status,
+            status
+        );
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn archived_local_stand_in_requires_real_preparation_before_reporting_success() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human-default".into(),
+        status: "archived".into(),
+        ..RuntimeTaskLink::default()
+    });
+    let mut config = json!({"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"human"});
+    handler
+        .start_local_stand_in(&config, &issue, &binding)
+        .await
+        .unwrap();
+    config["manual"] = json!(true);
     let error = handler
-        .start_cloud_stand_in(&config, &issue)
+        .start_local_stand_in(&config, &issue, &binding)
         .await
         .unwrap_err();
     assert_eq!(error.code, "workspace_unavailable");
-    config["manual"] = json!(false);
-    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
-    assert_eq!(mutations.load(Ordering::SeqCst), 0);
     assert_eq!(
         handler
             .local_task_link("stand-in-human-default")
             .unwrap()
             .status,
-        "failed"
+        "archived"
     );
-    server.abort();
 }
 
 #[tokio::test]
