@@ -32,7 +32,10 @@ impl AuthError {
 
     /// Missing or malformed bearer credential (source OAuth2 scheme).
     pub fn missing_token() -> Self {
-        Self::invalid_credentials()
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "Not authenticated".to_string(),
+        }
     }
 
     /// `401 "User not activated"` for inactive users.
@@ -57,6 +60,9 @@ impl IntoHttpError for AuthError {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
         let mut response = crate::http_compat::FastApiError::detail(self.status, self.detail)
             .into_http_error(arena);
+        if self.status != StatusCode::UNAUTHORIZED {
+            return response;
+        }
         let mut block = arena.alloc("www-authenticate: Bearer\r\n".len());
         block.extend_from_slice(b"www-authenticate: Bearer\r\n");
         if let Ok(header) = brz_http_server::HeaderBlock::new(block.freeze()) {

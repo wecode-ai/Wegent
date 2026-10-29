@@ -4190,7 +4190,14 @@
     "app_update_rollback_restore_description": "Rolling back to v{{version}} requires restoring pre-update data. New local data will be preserved separately. Repositories and cloud records are unaffected.",
     "app_update_rollback_confirm": "Roll back and restart",
     "app_update_rollback_failed": "Rollback failed. See the update log.",
-    "app_update_rollback_load_failed": "Unable to read the previous release."
+    "app_update_rollback_load_failed": "Unable to read the previous release.",
+    "diagram_zoom_out": "Zoom out",
+    "diagram_zoom_in": "Zoom in",
+    "diagram_fit": "Fit to window",
+    "diagram_preview": "Diagram preview",
+    "diagram_loading": "Rendering diagram…",
+    "diagram_render_failed": "Could not render the diagram. Source shown below.",
+    "diagram_retry": "Retry"
   },
   "delivery": {
     "action": "Deliver",

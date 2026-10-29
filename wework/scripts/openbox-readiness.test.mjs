@@ -147,3 +147,46 @@ exit 1
   expect(result.stderr).toContain('Xvfb display did not become reachable')
   expect(result.stderr).toContain('X connection unavailable probe=100')
 })
+
+it('starts the window manager only after the display accepts connections', () => {
+  const xprop = `#!/bin/sh
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/queries"
+if [ "$queries" -lt 3 ]; then exit 1; fi
+if [ -f "$OPENBOX_TEST_DIR/registered" ]; then
+  echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+else
+  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
+fi
+`
+  const result = runFixture(
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+fs.writeFileSync(directory + '/pid', String(process.pid))
+if (Number(fs.readFileSync(directory + '/queries', 'utf8')) < 3) process.exit(1)
+fs.writeFileSync(directory + '/registered', '')
+setInterval(() => {}, 1000)
+`,
+    xprop,
+    xprop
+  )
+  expect(result.status, result.stderr).toBe(0)
+})
+
+it('fails without launching the window manager when the display never connects', () => {
+  const xprop = '#!/bin/sh\nexit 1\n'
+  const result = runFixture(
+    `#!/bin/sh
+echo 'The window manager must not start' >&2
+exit 1
+`,
+    xprop,
+    xprop
+  )
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('Xvfb display did not become reachable: display=:1234')
+  expect(result.stderr).not.toContain('The window manager must not start')
+}, 10_000)

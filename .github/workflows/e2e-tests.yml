@@ -183,7 +183,7 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -751,6 +751,14 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
 
+      - name: Verify MySQL Issue assignment concurrency
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          ISSUE_ASSIGNMENT_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/issue_assignment_mysql.py
+
       - name: Prepare isolated DingTalk HTTPS download fixture
         if: matrix.shardIndex == 1
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
@@ -964,7 +972,7 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
-      - name: Run subscription callback Rust gateway E2E
+      - name: Run subscription callback and system MCP gateway E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -986,6 +994,9 @@ jobs:
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
           uv run --no-sync python tests/e2e/subscription_callback_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+          E2E_REPORT_DIR="$E2E_REPORT_DIR/system-mcp" \
+            uv run --no-sync python tests/e2e/system_mcp_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1

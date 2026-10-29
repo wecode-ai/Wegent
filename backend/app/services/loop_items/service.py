@@ -851,7 +851,7 @@ class LoopItemService:
                 assigned_by_user_id=user_id,
                 workflow_step=None,
                 notify=values.notify_assignee,
-                new_issue=True,
+                initial_assignment=True,
                 trigger=(
                     "default"
                     if payload.get("assignee_user_id") == user_id
