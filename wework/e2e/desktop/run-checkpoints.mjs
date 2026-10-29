@@ -406,7 +406,8 @@ async function runTaskFlow(args, env, label) {
             '-a',
             '-e',
             errorFile,
-            '--server-args=-screen 0 1280x720x24',
+            // Keep the server ready after short-lived X readiness probes disconnect.
+            '--server-args=-screen 0 1280x720x24 -noreset',
             'sh',
             isolatedXvfbPath,
             process.execPath,
