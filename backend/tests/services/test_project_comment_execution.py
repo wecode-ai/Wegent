@@ -619,6 +619,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
             "taskId": "original-session",
             "limit": 20,
             "beforeCursor": "page-2",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
         allow_app_device_task_reading=True,
@@ -670,6 +671,7 @@ async def test_group_transcript_reads_manager_session_without_changing_dispatch_
     assert s.rpc.call_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session-manager-initial",
+        "transcriptProtocolVersion": 2,
     }
     assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
 

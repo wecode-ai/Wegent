@@ -35,9 +35,10 @@ sequenceDiagram
 - New clients explicitly request `transcriptProtocolVersion: 2`. New Executors retain
   the original response for absent versions and version 1. Unknown versions fail explicitly.
 - A new client accepts a legacy response when an old Executor ignores the additional field.
-  The old Executor's payload limit still applies. Both client and Executor need the update
-  for chunked transfer. Issue panes using HTTP also require backend support for protocol 2
-  request fields and chunk responses on the existing `POST /api/runtime-work/transcript`.
+  The old Executor's payload limit still applies. Direct RPC reads need support in both
+  client and Executor. For HTTP reads, Backend requests device protocol 2: explicit v2
+  clients receive chunks, while absent versions and version 1 receive the original JSON
+  reconstructed by Backend. The device must support v2 to read histories above its limit.
 - The main conversation and Issue panes share the transcript client, loading the latest
   5 turns and using cursors for older pages. For protocol 2, the Executor
   defaults an unspecified page size to 5. Explicit `limit` values retain the existing
@@ -56,6 +57,17 @@ It preserves `transcriptProtocolVersion`, `transcriptTransfer`, pagination and r
 fields. The response model retains chunk fields for the shared client's validation and
 decompression. Revoking access during a transfer fails the request without publishing
 a partial page.
+
+For HTTP callers that do not request v2, Backend collects device chunks within one HTTP
+request, verifies the snapshot SHA-256, offsets and complete size, then decompresses and
+restores string references. The response retains canonical `turns`, `messages` and page
+cursors. Explicit pagination, refresh and export fields are retained; an omitted page size
+uses the v2 default of 5 turns. Every internal continuation reauthorizes the original caller.
+Compressed snapshots and decompressed JSON are each limited to 64 MiB, and the entire
+aggregation shares the existing transcript RPC timeout budget. Invalid packets or an
+overall timeout return 502. Logs include device error codes, chunk offsets and byte counts
+with the existing request ID, without history contents. The device's 980,000-byte limit
+remains unchanged.
 
 ```mermaid
 sequenceDiagram
@@ -139,14 +151,14 @@ discard client-supplied workspace paths and runtime handles. Duplicate prose, lo
 context continuation and restoration run through the existing local
 `running-conversation-history` and cloud `conversation-state` CI checkpoints.
 
-| Scenario                                                           | Expected result                                                                       |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Mixed client/Executor versions                                     | Legacy responses remain readable; new responses require opt-in; unknown versions fail |
-| High-entropy output, Unicode and structured results                | Exact reconstruction over multiple bounded packets                                    |
-| Missing/reordered chunks, changed snapshot, corrupt gzip or expiry | Explicit failure without publishing a partial page                                    |
-| Continuation under another task/session                            | Snapshot cannot be read from another address                                          |
-| More than 500 turns                                                | Complete export and contiguous latest/older pages                                     |
-| Failed history load                                                | Visible error and reload action                                                       |
+| Scenario                                                           | Expected result                                                             |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| Mixed client/Executor versions                                     | Legacy HTTP JSON remains readable over device chunks; unknown versions fail |
+| High-entropy output, Unicode and structured results                | Exact reconstruction over multiple bounded packets                          |
+| Missing/reordered chunks, changed snapshot, corrupt gzip or expiry | Explicit failure without publishing a partial page                          |
+| Continuation under another task/session                            | Snapshot cannot be read from another address                                |
+| More than 500 turns                                                | Complete export and contiguous latest/older pages                           |
+| Failed history load                                                | Visible error and reload action                                             |
 
 Tests cover Rust transport and Codex pagination, the shared TypeScript decoder, desktop IPC
 and conversation UI. The existing registered `running-conversation-history` desktop
@@ -155,6 +167,9 @@ history and multipart snapshot content through its existing CI entry point. HTTP
 authorization tests cover chunk fields, invalid requests and access revocation during a
 transfer. The `collaboration-issue-task-discovery` checkpoint reads oversized tool output
 through the project HTTP path without loss and reopens the Issue pane after reload.
+The same checkpoint verifies full oversized output through an HTTP request without a
+protocol version. Backend tests cover version 1, mid-transfer revocation, corrupt
+snapshots, resource bounds and the overall timeout.
 Run E2E and `ai:verify` only when explicitly requested.
 
 ### Real history validation (2026-10-09)

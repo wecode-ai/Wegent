@@ -107,6 +107,10 @@ from app.services.im.session_service import (
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
+from app.services.runtime_transcript_reader import (
+    RuntimeTranscriptTransferError,
+    read_complete_transcript,
+)
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
     get_device_workspace_kind_by_id,
@@ -443,10 +447,59 @@ async def get_runtime_transcript(
     *,
     db: Session,
     user_id: int,
-    address: RuntimeTranscriptRequest,
+    address: RuntimeTranscriptRequest | RuntimeTaskAddress,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
+    if not isinstance(address, RuntimeTranscriptRequest):
+        address = RuntimeTranscriptRequest.model_validate(address.model_dump())
+
+    async def read(
+        request: RuntimeTranscriptRequest,
+    ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+        return await _get_runtime_transcript_packet(
+            db=db, user_id=user_id, address=request
+        )
+
+    if address.transcript_protocol_version == 2:
+        return await read(address)
+    try:
+        return await asyncio.wait_for(
+            read_complete_transcript(address, read),
+            timeout=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except (RuntimeTranscriptTransferError, ValidationError) as exc:
+        reason = (
+            str(exc)
+            if isinstance(exc, RuntimeTranscriptTransferError)
+            else "invalid_transcript_response"
+        )
+        logger.warning(
+            "[RuntimeWork] Transcript transfer rejected: user_id=%s device_id=%s "
+            "task_id=%s code=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            reason,
+        )
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation response"
+        ) from exc
+    except asyncio.TimeoutError as exc:
+        logger.warning(
+            "[RuntimeWork] Transcript transfer timed out: user_id=%s device_id=%s "
+            "task_id=%s timeout_seconds=%s",
+            user_id,
+            address.device_id,
+            address.local_task_id,
+            RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+        raise HTTPException(502, "Runtime transcript transfer timed out") from exc
+
+
+async def _get_runtime_transcript_packet(
+    *, db: Session, user_id: int, address: RuntimeTranscriptRequest
+) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
@@ -487,6 +540,23 @@ async def get_runtime_transcript(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    if result.get("success") is False:
+        code = result.get("code")
+        if not isinstance(code, str) or code not in {
+            "runtime_rpc_response_too_large",
+            "runtime_rpc_response_encoding_failed",
+            "unsupported_transcript_protocol",
+            "transcript_snapshot_expired",
+        }:
+            code = "runtime_rpc_failed"
+        logger.warning(
+            "[RuntimeWork] Runtime transcript device rejected request: user_id=%s "
+            "device_id=%s task_id=%s code=%s",
+            user_id,
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            code,
+        )
     _raise_runtime_rpc_failure(result)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
@@ -507,7 +577,18 @@ async def get_runtime_transcript(
     )
     try:
         if "transcriptProtocolVersion" in result:
-            return RuntimeTranscriptChunkResponse.model_validate(result)
+            packet = RuntimeTranscriptChunkResponse.model_validate(result)
+            logger.info(
+                "[RuntimeWork] Transcript chunk received: user_id=%s device_id=%s "
+                "task_id=%s offset=%s total_bytes=%s base64_bytes=%s",
+                user_id,
+                normalized_address.device_id,
+                normalized_address.local_task_id,
+                packet.transfer.offset,
+                packet.transfer.total_bytes,
+                len(packet.transfer.payload),
+            )
+            return packet
         if not isinstance(result.get("turns"), list):
             raise HTTPException(
                 502, "Runtime transcript response is missing canonical turns"

@@ -1323,6 +1323,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1417,6 +1418,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
             "taskId": "codex-1",
             "limit": 25,
             "beforeCursor": "offset:240",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1558,6 +1560,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             "afterCursor": "offset:10",
             "includeFullContent": True,
             "conversationContextOnly": True,
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
