@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -166,7 +166,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         )
         // A running task's warm cache already contains its entire streamed turn. Reload the
         // renderer so pagination must fetch records absent from the displayed native page.
-        await control.command('reloadApp', 'body')
+        await reloadMainWindow(control, 'The cold conversation renderer did not reconnect')
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: SUFFIX.trim(),
           timeoutMs: longResponseTimeoutMs,

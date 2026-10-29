@@ -489,7 +489,7 @@ export async function waitForHighlightedHistoryMatch(
 ) {
   // Annotation controls add DOM labels; the metrics verify only searchable text and ranges.
   await control.command('waitFor', content, { timeoutMs })
-  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
+  const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const deadline = Date.now() + timeoutMs
   let actual
   do {
@@ -682,8 +682,17 @@ export async function verifyTerminalHistorySearch(
         for (let page = 0; page < pageCount; page += 1) {
           await control.command('scrollIntoView', button)
           await control.command('clickWhenEnabled', button)
-          await control.command('waitFor', `${button}:not([disabled])`, { timeoutMs })
+          await control.command(
+            'waitFor',
+            `${button}:not([disabled]):not([aria-disabled="true"])`,
+            {
+              timeoutMs,
+            }
+          )
         }
+        // Prepending keeps the current passage anchored. Browse to the expanded boundary
+        // before checking a neighboring turn that can still be outside the virtual range.
+        await control.command('scrollIntoViewAsUser', button)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,

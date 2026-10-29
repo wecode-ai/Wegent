@@ -14,7 +14,7 @@ import { DIAGRAM_REGRESSION_MARKER } from './conversation-diagram-fixture.mjs'
 
 export async function verifyConversationDiagrams(control, composerSelector, restoreTaskRow) {
   const selector = id => `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${id}"]`
-  const scroller = selector('desktop-chat-scroll')
+  const scroller = selector('desktop-workbench-content')
   const preview = selector('assistant-diagram-preview')
   const image = selector('diagram-image')
   await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')
