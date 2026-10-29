@@ -33,6 +33,7 @@ export interface RuntimeTranscriptRange {
 
 export interface UserViewportAnchor {
   messageId: string
+  item?: { id: string; chunkIndex: string | null; anchorIndex: number; text: string }
   element: HTMLElement
   anchorIndex: number
   offsetFromScrollerTop: number
@@ -56,6 +57,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
+  historyLoadingMode?: 'automatic' | 'manual'
   turnNavigation?: RuntimeTurnNavigationItem[]
   loadedTranscriptRanges?: RuntimeTranscriptRange[]
   className?: string
