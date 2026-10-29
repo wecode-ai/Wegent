@@ -3087,3 +3087,25 @@ test('turn completion does not claim an unfinished context compaction succeeded'
     turns[0].items.filter(item => item.type === 'block').map(item => item.block.status)
   ).toEqual(['error', 'done', 'error'])
 })
+
+test('overload recovery completion clears the terminal failure surface', () => {
+  const turns = reduceRuntimeConversationTurns(
+    [
+      {
+        id: 'overloaded-turn',
+        status: 'failed',
+        error: 'Selected model is at capacity.',
+        errorType: 'response.failed',
+        items: [],
+      },
+    ],
+    { type: 'assistant_done', subtaskId: 'overloaded-turn' }
+  )
+
+  expect(turns[0]).toMatchObject({
+    id: 'overloaded-turn',
+    status: 'done',
+  })
+  expect(turns[0].error).toBeUndefined()
+  expect(turns[0].errorType).toBeUndefined()
+})

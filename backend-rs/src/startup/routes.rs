@@ -44,7 +44,8 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
     // `x-wegent-upstream-header-*` header, which the function API's named-header
     // parameters cannot express; it is therefore a hand-written handler merged
     // into the same router.
-    let llm_responses_proxy = crate::llm_proxy::LlmResponsesProxyRoute::new(Arc::clone(&app));
+    let llm_responses_proxy = crate::llm_proxy::LlmResponsesProxyRoute::new(Arc::clone(&app))
+        .context("failed to initialize the LLM proxy transport")?;
 
     let handler = brz_http_server::handlers!(state = app)
         .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?

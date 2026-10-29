@@ -47,7 +47,6 @@ const SAFE_DETAIL_KEYS = new Set([
   'scrolling',
   'estimatedSize',
   'deltaY',
-  'bottomOrigin',
   'paused',
   'hasAnchor',
   'anchorIndex',
@@ -141,7 +140,6 @@ export type ConversationDiagnosticEventName =
   | 'anchor-correction'
   | 'anchor-frame'
   | 'scroll-write'
-  | 'virtual-scroll-offset'
   | 'layout-change'
   | 'virtual-measurement'
   | 'virtual-range'

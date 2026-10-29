@@ -771,7 +771,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
             ],
           }
         }
-        if (endpoint === '/v1/workspaces/workspace-1/agents') {
+        if (endpoint === '/v1/workspaces/workspace-1/agents?include_readiness=false') {
           return {
             items: [
               {
@@ -781,7 +781,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
                 owner_type: 'workspace',
                 owner_id: 'workspace-1',
                 owner_name: 'Workspace',
-                status: 'available',
+                status: 'unchecked',
               },
             ],
           }
@@ -1066,8 +1066,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.workspaces?.removeMember('workspace-1', 2)
     expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members/2')
     await expect(api.workspaces?.listAgents('workspace-1')).resolves.toMatchObject([
-      { id: '12', team_id: 12 },
+      { id: '12', team_id: 12, status: 'unchecked' },
     ])
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/workspaces/workspace-1/agents?include_readiness=false'
+    )
     await expect(api.workspaces?.addAgent('workspace-1', { teamId: 13 })).resolves.toMatchObject({
       id: '13',
       team_id: 13,

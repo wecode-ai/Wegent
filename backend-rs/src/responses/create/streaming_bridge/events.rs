@@ -78,6 +78,9 @@ pub(super) struct ResponseState {
     next_output_index: usize,
     reasoning_segments: Vec<ReasoningSegment>,
     current_reasoning: Option<usize>,
+    /// `streaming.py:204-213`'s tool output indexes, keyed by protocol + id:
+    /// a producer-side classification change at TOOL_RESULT (the exec-name
+    /// fallback) legitimately allocates the new protocol's index.
     tool_output_indexes: HashMap<String, usize>,
     completed_output_items: BTreeMap<usize, Value>,
     response_blocks: Map<String, Value>,

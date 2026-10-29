@@ -642,24 +642,7 @@ export function useCollaborationPlatformController({
           return;
         }
         const workspaceView = location.workspaceView ?? "home";
-        const loadsParticipants =
-          workspaceView === "members" ||
-          workspaceView === "agents" ||
-          workspaceView === "collaboration-participants" ||
-          workspaceView === "collaboration-groups";
-        const [workspace, members, agents, collaborationGroups] =
-          await Promise.all([
-            api.workspaces.get(workspaceId),
-            loadsParticipants
-              ? api.workspaces.listMembers(workspaceId)
-              : Promise.resolve([]),
-            loadsParticipants
-              ? api.workspaces.listAgents(workspaceId)
-              : Promise.resolve([]),
-            loadsParticipants
-              ? api.workspaces.listCollaborationGroups(workspaceId)
-              : Promise.resolve([]),
-          ]);
+        const workspace = await api.workspaces.get(workspaceId);
         if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
@@ -678,9 +661,9 @@ export function useCollaborationPlatformController({
                 )
               : {},
           myWork: [],
-          members,
-          agents,
-          collaborationGroups,
+          members: [],
+          agents: [],
+          collaborationGroups: [],
           executionEnvironments: [],
           resources: emptyResources,
           loading: false,
@@ -939,10 +922,8 @@ export function useCollaborationPlatformController({
           location.workspaceId,
           { userId, version },
         );
-        const members = await api.workspaces.listMembers(location.workspaceId);
         setState((current) => ({
           ...current,
-          members,
           ...updateCurrentWorkspace(current, () => workspace),
         }));
       },

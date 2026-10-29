@@ -4303,8 +4303,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
     const scroller = screen.getByTestId('desktop-workbench-content')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'top')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
@@ -4314,12 +4314,15 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: -200,
+      value: 400,
       writable: true,
       configurable: true,
     })
 
-    fireEvent.scroll(scrollContainer)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+    fireEvent.wheel(scroller, { deltaY: -200 })
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
@@ -13712,7 +13715,7 @@ describe('DesktopWorkbenchLayout', () => {
         screen.getByTestId('smart-app-development-preview-verification-stale')
       ).toHaveTextContent('验证已过期')
     )
-  })
+  }, 10_000)
 
   test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

@@ -535,7 +535,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAccountAuth: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
-    marketplaceSourceProvider: 'codex' | 'wegent'
+    marketplaceSourceProvider: 'codex' | 'wegent' | 'user'
     marketplaceAccessRole: 'catalog' | 'owner' | 'recipient'
     marketplaceName: string
     marketplaceDisplayName: string
@@ -4367,6 +4367,58 @@ describe('PluginsWorkspace', () => {
     expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
   })
 
+  test('does not dispatch background synchronization while a foreground install is pending', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/marketplace/101/install')) await pending
+      return originalFetch(input, init)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    await waitFor(() =>
+      expectFetchRequest('/api/plugins/marketplace/101/install?device_id=current-device', 'POST')
+    )
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const cached = getPluginMarketplaceCache(key)!
+    await act(async () => {
+      setPluginMarketplaceCache({
+        ...cached,
+        marketplaceItems: cached.marketplaceItems.map(item => ({
+          ...item,
+          installed: false,
+          installedLocally: false,
+          installedPluginId: 101,
+          currentDeviceInstallation: {
+            deviceId: 'current-device',
+            desiredReleaseId: 1001,
+            actualReleaseId: null,
+            state: 'pending',
+            errorCode: null,
+            errorMessage: null,
+            attemptCount: 0,
+            lastSyncAt: null,
+            updatedAt: new Date().toISOString(),
+          },
+        })),
+      })
+    })
+    try {
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      await act(async () => release())
+    }
+    await screen.findByTestId('plugin-marketplace-actions-101')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+  })
+
   test('auto-syncs account installs onto the current device once per session', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplaceMock = mockSystemSkillsFetch({
@@ -6829,6 +6881,62 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
+
+  test.each([
+    ['install', 'workspace', 'wegent'],
+    ['trial', 'workspace', 'wegent'],
+    ['install', 'public', 'user'],
+    ['trial', 'public', 'user'],
+  ] as const)(
+    'requires unofficial plugin confirmation before %s for %s from %s and preserves cancellation',
+    async (action, visibility, sourceProvider) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceVisibility: visibility,
+        marketplaceSourceProvider: sourceProvider,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      sessionStorage.clear()
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      await screen.findByTestId('plugin-marketplace-row-101')
+      if (action === 'trial') {
+        await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+      }
+      const trigger = action === 'trial' ? 'plugin-prompt-0' : 'plugin-marketplace-install-101'
+      await userEvent.click(screen.getByTestId(trigger))
+      expect(await screen.findByTestId('plugin-install-unofficial-warning')).toBeInTheDocument()
+      const installed = () =>
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([url, init]) =>
+              String(url).includes('/plugins/marketplace/101/install') && init?.method === 'POST'
+          )
+      expect(installed()).toBe(false)
+      await userEvent.click(screen.getByTestId('install-plugin-dialog-cancel'))
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      expect(installed()).toBe(false)
+      expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+
+      await userEvent.click(screen.getByTestId(trigger))
+      await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+      await waitFor(() => expect(installed()).toBe(true))
+      if (action === 'install') {
+        await screen.findByTestId('plugin-marketplace-actions-101')
+      }
+      if (action === 'trial') {
+        await waitFor(() =>
+          expect(
+            JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')
+          ).toMatchObject({
+            input: expect.stringContaining('Draft a document outline from this chat'),
+            openInNewChat: true,
+          })
+        )
+      }
+    }
+  )
 
   test('automatically installs from a detail example and restores it in a new chat', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

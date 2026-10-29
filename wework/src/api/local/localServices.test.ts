@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import {
@@ -92,10 +93,17 @@ describe('createLocalAppServices', () => {
     expect(ensure).not.toHaveBeenCalled()
     expect(available).not.toHaveBeenCalled()
 
-    request.mockRejectedValueOnce(new Error('invalid personal stand-in settings'))
-    await expect(services.standInApi!.personalSave(7, settings, 'selected-device')).rejects.toThrow(
-      'invalid personal stand-in settings'
-    )
+    const error = Object.assign(new Error('invalid personal stand-in settings'), {
+      code: 'stand_in_settings',
+    })
+    request.mockRejectedValueOnce(error)
+    await expect(
+      services.standInApi!.personalSave(7, settings, 'selected-device')
+    ).rejects.toMatchObject({
+      message: i18n.t('common:standIn.errors.stand_in_settings'),
+      code: error.code,
+      cause: error,
+    })
   })
 
   test('loads project plugins from disk without either online Codex catalog', async () => {
@@ -1344,6 +1352,28 @@ describe('createLocalAppServices', () => {
     )
     expect(JSON.stringify(contextCall)).not.toContain('cloud-token')
     expect(JSON.stringify(contextCall)).not.toContain('provider-secret')
+
+    request.mockClear()
+    const extraLaunch = await services.localHarnessModelApi?.resolveLaunch(
+      'opencode',
+      {
+        key: 'context-model',
+        label: 'Context Model',
+        source: 'local',
+        model: {
+          name: 'local-model:' + config.id,
+          type: 'runtime',
+          provider: 'local',
+          displayName: 'Context Model',
+          modelId: 'context-upstream-model',
+          config: { weworkModelKind: 'model-interface' },
+        },
+      },
+      undefined,
+      false
+    )
+    expect(extraLaunch?.context).toBeUndefined()
+    expect(request).not.toHaveBeenCalledWith('runtime.harness_context.register', expect.anything())
   })
 
   test('registers a decision route through the local Executor with the caller scope', async () => {

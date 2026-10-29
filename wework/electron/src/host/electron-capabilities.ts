@@ -1146,6 +1146,7 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).start({
       installationId: stringParam(params, 'installationId'),
       modelBaseUrl: nullableStringParam(params, 'modelBaseUrl'),
+      additionalModels: additionalModelRoutesParam(params, 'additionalModels'),
       contextBaseUrl: nullableStringParam(params, 'contextBaseUrl'),
       contextToken: nullableStringParam(params, 'contextToken'),
       decisionBaseUrl: nullableStringParam(params, 'decisionBaseUrl'),
@@ -1214,6 +1215,15 @@ export function createElectronCapabilityRouter(
   )
   router.register('smartApps.takeProxyToken', params =>
     requiredSmartApps(smartApps).takeProxyToken(stringParam(params, 'installationId'))
+  )
+  router.register('smartApps.storeAdditionalProxyTokens', params =>
+    requiredSmartApps(smartApps).storeAdditionalProxyTokens(
+      stringParam(params, 'installationId'),
+      stringArrayParam(params, 'tokens') ?? []
+    )
+  )
+  router.register('smartApps.takeAdditionalProxyTokens', params =>
+    requiredSmartApps(smartApps).takeAdditionalProxyTokens(stringParam(params, 'installationId'))
   )
   router.register('smartApps.storeContextToken', params =>
     requiredSmartApps(smartApps).storeContextToken(
@@ -1760,6 +1770,24 @@ function stringArrayParam(params: Record<string, unknown>, key: string): string[
     invalidParam(key)
   }
   return [...value] as string[]
+}
+
+function additionalModelRoutesParam(
+  params: Record<string, unknown>,
+  key: string
+): Array<{ modelKey: string; displayName: string; baseUrl: string }> | undefined {
+  const value = params[key]
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) invalidParam(key)
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) invalidParam(key)
+    const route = item as Record<string, unknown>
+    return {
+      modelKey: stringParam(route, 'modelKey'),
+      displayName: stringParam(route, 'displayName'),
+      baseUrl: stringParam(route, 'baseUrl'),
+    }
+  })
 }
 
 function nullableStringArrayParam(

@@ -22,6 +22,60 @@ fn result_value(result: Value) -> Value {
 }
 
 #[tokio::test]
+async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
+    use axum::{routing::get, Json, Router};
+    use std::sync::atomic::AtomicUsize;
+
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counter = reads.clone();
+    let app = Router::new().route(
+        "/api/v1/cloud-projects",
+        get(move || {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Json(json!({"items": [{"id": "12", "name": "Authorized project"}]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let directory = tempfile::tempdir().unwrap();
+    let runtime =
+        TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
+            .unwrap();
+    let context = SpaceMcpRequestContext::new(None, Some(url), Some("unit-test-token".into()));
+
+    for method in ["initialize", "tools/list"] {
+        let response =
+            handle_request_with_context(&runtime, &json!({"id":1, "method":method}), &context)
+                .await
+                .unwrap();
+        assert!(response.get("error").is_none());
+        if method == "tools/list" {
+            assert!(response["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "list_spaces"));
+        }
+    }
+    let current = result_value(
+        call_tool_with_runtime_context(&runtime, "get_current_context", json!({}), &context).await,
+    );
+    assert_eq!(current["bound"], false);
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+
+    let projects = result_value(
+        call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
+    );
+    assert_eq!(projects[0]["id"], "12");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
+#[tokio::test]
 async fn personal_issue_task_operates_on_another_local_issue_without_rebinding() {
     assert_local_issue_access(false).await;
 }

@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use brz_http_server::{Bytes, HttpResponse, StatusCode};
 use futures_util::Stream;
 use serde_json::Value;
+use tokio::time::{Instant, timeout_at};
 
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
@@ -44,6 +45,7 @@ use crate::state::AppState;
 
 pub(crate) mod model_config;
 mod route;
+mod transport;
 
 pub use route::LlmResponsesProxyRoute;
 #[cfg(test)]
@@ -62,10 +64,8 @@ const MODEL_USER_ID_HEADER: &str = "x-wegent-model-user-id";
 /// `SUPPORTED_MODEL_TYPES`.
 const SUPPORTED_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
 
-/// `httpx.AsyncClient(timeout=600.0)`.
-const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(600);
-/// `MODEL_API_KEY_RESOLUTION_TIMEOUT` around the deployment resolver.
-const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// One budget for authentication, model/credential lookup and the complete response.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The source `Kind` filter of `resolve_llm_proxy_model_config`
 /// (`db.query(Kind).filter(user_id, kind='Model', namespace, name, is_active)`).
@@ -189,9 +189,11 @@ pub fn validate_model_api_key(value: &str, required: bool) -> Option<String> {
 /// `proxy_llm_responses`.
 async fn proxy_llm_responses(
     state: &AppState,
+    http: &brz_http::Client,
     user: &UserRow,
     headers: &InboundHeaders<'_>,
     body: &[u8],
+    deadline: Instant,
 ) -> Result<HttpResponse<ProxyStream>, FastApiError> {
     let (mut body_json, model_name) = parse_request_body(body)?;
     let model_type = required_header(headers.first(MODEL_TYPE_HEADER), MODEL_TYPE_HEADER)?;
@@ -200,15 +202,19 @@ async fn proxy_llm_responses(
         MODEL_NAMESPACE_HEADER,
     )?;
     let resource_user_id = resource_user_id(headers.first(MODEL_USER_ID_HEADER))?;
-    let model_config = resolve_model_config(
-        state,
-        user,
-        &model_name,
-        &model_type,
-        &namespace,
-        resource_user_id,
+    let model_config = timeout_at(
+        deadline,
+        resolve_model_config(
+            state,
+            user,
+            &model_name,
+            &model_type,
+            &namespace,
+            resource_user_id,
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| httpx_request_error("model lookup exceeded the request deadline"))??;
 
     let provider_base_url = model_config.base_url.trim().to_string();
     let provider_model_id = model_config.model_id.trim().to_string();
@@ -237,7 +243,7 @@ async fn proxy_llm_responses(
     // credential service (`resolve_llm_proxy_protocol` precedes
     // `resolve_model_provider_api_key`).
     let protocol = resolve_llm_proxy_protocol(&model_name, &model_config)?;
-    let provider_api_key = resolve_provider_api_key(state, user, &model_config).await?;
+    let provider_api_key = resolve_provider_api_key(state, user, &model_config, deadline).await?;
     let (upstream_path, auth_headers) = resolve_upstream_target(protocol, &provider_api_key);
     let upstream_url = model_config::join_upstream_url(&provider_base_url, &upstream_path);
 
@@ -261,7 +267,14 @@ async fn proxy_llm_responses(
     provider_headers =
         merge_headers_case_insensitive([provider_headers.as_slice(), protocol_headers.as_slice()]);
 
-    forward_upstream(state, &upstream_url, &provider_headers, &body_bytes).await
+    forward_upstream(
+        http,
+        &upstream_url,
+        &provider_headers,
+        &body_bytes,
+        deadline,
+    )
+    .await
 }
 
 /// `resolve_model_provider_api_key`: resolve for the caller, never the owner of
@@ -271,9 +284,10 @@ async fn resolve_provider_api_key(
     state: &AppState,
     user: &UserRow,
     model_config: &model_config::ModelConfig,
+    deadline: Instant,
 ) -> Result<String, FastApiError> {
-    let resolution = tokio::time::timeout(
-        CREDENTIAL_TIMEOUT,
+    let resolution = timeout_at(
+        deadline,
         state
             .llm_proxy_credentials
             .provider_api_key(CredentialRequest {
@@ -285,12 +299,12 @@ async fn resolve_provider_api_key(
     )
     .await;
     match resolution {
-        Ok(Ok(api_key)) => Ok(api_key),
+        Ok(Ok(api_key)) if Instant::now() < deadline => Ok(api_key),
         Ok(Err(error)) => {
             tracing::error!(status = %error.status(), "LLM proxy credential resolution failed");
             Err(model_credentials_unavailable())
         }
-        Err(_) => {
+        _ => {
             tracing::error!("LLM proxy credential resolution timed out");
             Err(model_credentials_unavailable())
         }
@@ -306,7 +320,7 @@ fn model_credentials_unavailable() -> FastApiError {
 }
 
 /// `resolve_llm_proxy_model_config`.
-async fn resolve_model_config(
+pub(crate) async fn resolve_model_config(
     state: &AppState,
     user: &UserRow,
     model_name: &str,
@@ -346,27 +360,37 @@ async fn resolve_model_config(
 ///
 /// The source builds a fresh `httpx.AsyncClient(timeout=600.0)` per call. The
 /// request carries no connection-local state, so the target reuses the retained
-/// pooled transport with the same 600-second budget instead of constructing a
-/// client per request.
+/// pooled transport, spending only the request budget remaining after credentials.
 async fn forward_upstream(
-    state: &AppState,
+    http: &brz_http::Client,
     upstream_url: &str,
     provider_headers: &[(String, String)],
     body: &[u8],
+    deadline: Instant,
 ) -> Result<HttpResponse<ProxyStream>, FastApiError> {
-    let mut request = state
-        .attachment_http
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(httpx_request_error(
+            "request deadline exceeded before upstream dispatch",
+        ));
+    }
+    let mut request = http
         .post(upstream_url)
         .map_err(|error| httpx_request_error(&error.to_string()))?;
     for (name, value) in provider_headers {
         request = request.header(name.as_str(), value.as_str());
     }
     let request = request.body(body.to_vec());
-    let response = match request.timeout(UPSTREAM_TIMEOUT).send().await {
-        Ok(response) => response,
-        Err(error) => {
+    let response = match timeout_at(deadline, request.timeout(remaining).send()).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
             tracing::error!(%error, "LLM proxy upstream request failed");
             return Err(httpx_request_error(&error.to_string()));
+        }
+        Err(_) => {
+            return Err(httpx_request_error(
+                "upstream response exceeded the request deadline",
+            ));
         }
     };
     let status = response.status();
@@ -375,18 +399,7 @@ async fn forward_upstream(
         .get("content-type")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let stream: ProxyStream = Box::pin(futures_util::stream::unfold(
-        response,
-        |mut response| async move {
-            match response.chunk().await {
-                Ok(Some(chunk)) if !chunk.is_empty() => {
-                    Some((Ok::<Bytes, std::io::Error>(chunk), response))
-                }
-                Ok(_) => None,
-                Err(error) => Some((Err(std::io::Error::other(error.to_string())), response)),
-            }
-        },
-    ));
+    let stream = upstream_stream(response, deadline);
 
     // `text/event-stream` default and Starlette's `text/*` charset rendering.
     let media_type = upstream_content_type.unwrap_or_else(|| "text/event-stream".to_string());
@@ -404,6 +417,41 @@ async fn forward_upstream(
         .header("x-accel-buffering", "no")
         .map_err(|_| FastApiError::unhandled())?;
     Ok(reply)
+}
+
+/// Keeps the original absolute deadline while consuming every upstream body chunk.
+/// Errors are emitted once, then the response is dropped to cancel the upstream.
+fn upstream_stream(response: brz_http::Response, deadline: Instant) -> ProxyStream {
+    Box::pin(futures_util::stream::unfold(
+        Some(response),
+        move |response| async move {
+            let mut response = response?;
+            loop {
+                if Instant::now() >= deadline {
+                    return Some((Err(stream_deadline_error()), None));
+                }
+                match timeout_at(deadline, response.chunk()).await {
+                    Ok(Ok(Some(chunk))) if chunk.is_empty() => continue,
+                    Ok(Ok(Some(chunk))) => return Some((Ok(chunk), Some(response))),
+                    Ok(Ok(None)) => return None,
+                    Ok(Err(error)) => {
+                        tracing::error!(%error, "LLM proxy upstream response body failed");
+                        return Some((Err(std::io::Error::other(error.to_string())), None));
+                    }
+                    Err(_) => return Some((Err(stream_deadline_error()), None)),
+                }
+            }
+        },
+    ))
+}
+
+/// Distinguishes a response deadline from a clean upstream EOF.
+fn stream_deadline_error() -> std::io::Error {
+    tracing::error!("LLM proxy response body exceeded the request deadline");
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "LLM proxy request deadline exceeded",
+    )
 }
 
 /// `LLM_PROXY_STREAM_HEADERS`' media type: Starlette appends `; charset=utf-8`

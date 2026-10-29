@@ -2,6 +2,7 @@ import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.m
 
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
+  'project-space-tool-discovery',
   'remote-device-onboarding',
   'workspace-tabs',
   'notification-tab-navigation',
@@ -180,6 +181,7 @@ export const DESKTOP_CHECKPOINTS = [
   'harness-apps',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'browser-multi-tabs',
   'embedded-browser',
@@ -231,7 +233,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-uninstall-reinstall-race',
     ],
   ],
-  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle']],
+  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle', 'harness-app-models']],
   [
     'streaming-text',
     [
