@@ -26,6 +26,8 @@ Compatible rollback switches directly. Incompatible rollback after the target op
 
 Plugin configuration changes invalidate preparation. Recheck before switching instead of repairing large installations after restart.
 
+Resolve only the active profile's root pointer before cloning, copying the physical directory while preserving internal dependency links. Copying the root link would let rollback preparation mutate the running release's profile. Pass the resolved source profile to older preparation entries as well, so packages with the old clone implementation still receive an isolated copy.
+
 Confirmed manual rollback records its transaction direction independently. After an interruption, resume rollback instead of treating the target's earlier healthy marker as a new startup confirmation.
 
 Incompatible restoration retains the rejected slot so subsequent cleanup cannot remove newer user plugin data. `preserved-data/<snapshot>/retained-release` identifies it. Preserved data does not expire automatically.
@@ -59,6 +61,11 @@ The `Wework Upgrade E2E` workflow runs the complete three-platform matrix for no
 The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
+
+The upgrade workflow covers all three platforms by default; manual dispatches can select one
+`runner` for focused diagnosis. Intel Mac cold builds plus five serial real-package checkpoints
+have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
+75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
 
 ## Native launcher linker
 
@@ -99,6 +106,8 @@ CI verifies X to target, then previous release to target, running once if both s
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 
 Persist the confirmed floor and exact edges in each target channel's `upgradePolicy`. Publish immutable version assets before promoting rolling manifests. The next release reads X from that catalog and retains or raises it automatically, without writing version lists back to source. Stable publication verifies Stable and Beta independently; Beta publication advances only Beta. All platform jobs must succeed before publication. Always retain CI decision summaries and failure logs, distinguishing unavailable baselines, failed verification, and blocked publication; do not retry to hide failures.
+
+Resolve extracted source directories to physical paths before invoking old packages: aliases such as macOS `/var` and `/private/var` must not cause package identity mismatches. Retain candidate packages as CI artifacts before verification and upload successful evidence separately. Publication still requires every platform job to pass and validates the evidence before promoting manifests. Failed runs can then be reproduced with the same signed archive without rebuilding or changing its identity. Retain UI snapshots and failure explanations while excluding credential directories, browser partitions and session storage.
 
 Release jobs create complete portable packages, download the automatically selected immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
 

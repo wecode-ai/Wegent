@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -40,7 +40,7 @@ const node = {
   minSourceVersion: policy.minSourceVersion,
   revoked: false,
 }
-const temporary = await mkdtemp(join(tmpdir(), 'wework-release-upgrades-'))
+const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
 try {
   const catalogs = await publishedCatalogs()
   const published = Object.values(catalogs)
