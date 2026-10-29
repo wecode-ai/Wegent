@@ -161,7 +161,7 @@ export async function authorizeWegentConnector(
       pluginKey: slug,
     }),
   })
-  let authorizationHandle: CloudAuthorizationHandle | void
+  let authorizationHandle: CloudAuthorizationHandle | void = undefined
   try {
     const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
     authorizationHandle = await openAuthorizationUrl(session.authorize_url)
