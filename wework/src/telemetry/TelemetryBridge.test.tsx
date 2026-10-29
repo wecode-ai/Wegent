@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   officialRelease: true,
   distribution: 'public' as 'public' | 'internal',
   electronRuntime: false,
+  cloudUser: null as { id: number; user_name: string; email: string } | null,
+  identityForUsers: [] as Array<{ id: number; user_name: string; email: string } | null>,
   user: null as { id: number; user_name: string; email: string } | null,
 }))
 
@@ -42,9 +44,16 @@ vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({ user: mocks.user }),
 }))
 
+vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
+  useOptionalCloudConnection: () => ({ user: mocks.cloudUser }),
+}))
+
 vi.mock('@extensions/telemetry-policy', () => ({
   telemetryPolicy: {
-    identityFor: () => mocks.identity,
+    identityFor: (user: { id: number; user_name: string; email: string } | null) => {
+      mocks.identityForUsers.push(user)
+      return mocks.identity
+    },
     personProfiles: 'never',
     sendClientIp: false,
   },
@@ -75,12 +84,14 @@ describe('TelemetryBridge', () => {
     mocks.officialRelease = true
     mocks.distribution = 'public'
     mocks.electronRuntime = false
+    mocks.cloudUser = null
+    mocks.identityForUsers = []
     mocks.user = null
   })
 
   it('attaches the account identity only while the client is capturing', async () => {
     mocks.identity = { distinctId: 'jiaqi62', properties: { username: 'jiaqi62' } }
-    mocks.user = { id: 42, user_name: 'jiaqi62', email: 'jiaqi62@example.com' }
+    mocks.cloudUser = { id: 42, user_name: 'jiaqi62', email: 'jiaqi62@example.com' }
 
     const view = render(<TelemetryBridge />)
 
@@ -91,6 +102,22 @@ describe('TelemetryBridge', () => {
     view.rerender(<TelemetryBridge />)
 
     expect(mocks.applyTelemetryIdentity).not.toHaveBeenCalled()
+  })
+
+  it('reports the signed-in cloud account instead of the local placeholder user', async () => {
+    mocks.user = { id: 0, user_name: 'local', email: 'local@wework.local' }
+    mocks.cloudUser = { id: 42, user_name: 'jiaqi62', email: 'jiaqi62@example.com' }
+
+    render(<TelemetryBridge />)
+
+    await waitFor(() =>
+      expect(mocks.identityForUsers).toContainEqual(
+        expect.objectContaining({ id: 42, user_name: 'jiaqi62' })
+      )
+    )
+    expect(mocks.identityForUsers).not.toContainEqual(
+      expect.objectContaining({ user_name: 'local' })
+    )
   })
 
   it('initializes once and starts telemetry again after it is re-enabled', async () => {

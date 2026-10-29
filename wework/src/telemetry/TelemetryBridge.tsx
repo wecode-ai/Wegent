@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useAuth } from '@/features/auth/useAuth'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
   applyTelemetryIdentity,
   installTelemetry,
@@ -33,6 +34,7 @@ const CONSENT_SAVE_TIMEOUT_MS = 10_000
 export function TelemetryBridge() {
   const appPreferences = useAppPreferencesState()
   const { user } = useAuth()
+  const cloudConnection = useOptionalCloudConnection()
   const { t } = useTranslation('common')
   const clientEnabled = useTelemetryEnabled()
   const initializedRef = useRef(false)
@@ -49,14 +51,19 @@ export function TelemetryBridge() {
   const effectiveTelemetryEnabled =
     !officialRelease && consentAsked !== true ? true : telemetryEnabled === true
   const surface = useMemo(() => appSurface(), [])
+  // The desktop app runs the workbench as a local-first session, so `useAuth`
+  // reports the local placeholder user. The signed-in Wegent account lives on
+  // the cloud connection; a distribution that installs identity must report
+  // that account, otherwise every session would stay anonymous.
+  const account = cloudConnection.user ?? user
 
   // A distribution that installs account identity attaches the signed-in user
   // as soon as the client is capturing; the anonymous policy returns `null` and
   // leaves the generated distinct id untouched.
   useEffect(() => {
     if (!clientEnabled) return
-    applyTelemetryIdentity(telemetryPolicy.identityFor(user))
-  }, [clientEnabled, user])
+    applyTelemetryIdentity(telemetryPolicy.identityFor(account))
+  }, [account, clientEnabled])
 
   useEffect(() => {
     if (!appPreferences?.loaded || initializedRef.current) {
