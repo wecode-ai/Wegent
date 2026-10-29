@@ -253,6 +253,8 @@ mod tests {
         assert_eq!(completed.data["block"]["content"], "xyz123");
     }
 
+    /// A late commentary snapshot must update the provider ID already used by
+    /// Unicode streaming deltas instead of introducing another text identity.
     #[test]
     fn late_commentary_keeps_the_streamed_output_block_identity() {
         let mut projection = StandardEventProjection::default();

@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::Completion;
 use super::sql;
+use super::text_value::terminal_text_value;
 use crate::internal_callback::session;
 use crate::task_store::subtask_column_index;
 
@@ -122,33 +123,6 @@ pub(crate) fn is_blank_text_value(value: Option<&Value>) -> bool {
         Some(Value::String(text)) => text.trim().is_empty(),
         _ => false,
     }
-}
-
-/// `_extract_text_value_from_blocks`.
-fn extract_text_value_from_blocks(blocks: Option<&Value>) -> String {
-    let Some(Value::Array(blocks)) = blocks else {
-        return String::new();
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for block in blocks {
-        let Value::Object(block) = block else {
-            continue;
-        };
-        if !matches!(
-            block.get("type").and_then(Value::as_str),
-            Some("text" | "output_text")
-        ) {
-            continue;
-        }
-        let mut content = block.get("content").and_then(Value::as_str);
-        if content.is_none_or(|text| text.trim().is_empty()) {
-            content = block.get("text").and_then(Value::as_str);
-        }
-        if let Some(text) = content.filter(|text| !text.trim().is_empty()) {
-            parts.push(text.trim());
-        }
-    }
-    parts.join("\n")
 }
 
 /// `_decode_tool_output_payloads`.
@@ -307,11 +281,7 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     if is_blank_text_value(final_result.get("value"))
         && (normalized_status == "COMPLETED" || !accumulated_content.trim().is_empty())
     {
-        let text_value = if !accumulated_content.trim().is_empty() {
-            accumulated_content.clone()
-        } else {
-            extract_text_value_from_blocks(final_result.get("blocks"))
-        };
+        let text_value = terminal_text_value(final_result.get("blocks"), &accumulated_content);
         final_result.insert("value".into(), Value::String(text_value));
     }
 

@@ -392,6 +392,7 @@ function formatDuration(durationMs) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
+/** Run one checkpoint with an isolated display and retain fully drained failure evidence. */
 function runTaskFlow(args, env, label) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()

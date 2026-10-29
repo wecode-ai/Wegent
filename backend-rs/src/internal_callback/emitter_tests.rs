@@ -304,6 +304,8 @@ impl brz_redis::Redis for RecordingRedis {
     }
 }
 
+/// Adjacent Unicode deltas merge within an item; replayed prefixes and distinct
+/// item IDs must remain separate Redis appends for atomic offset handling.
 #[tokio::test]
 async fn identified_text_flush_preserves_unicode_offsets_and_callback_replays() {
     let redis = RecordingRedis::default();

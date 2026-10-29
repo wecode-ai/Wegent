@@ -2,6 +2,7 @@ import type { ServerResponse } from 'http'
 
 export interface PhaseChangingMessage {
   text: string
+  completedText?: string
   startedPhase: 'final_answer' | 'commentary'
   completedPhase: 'final_answer' | 'commentary'
   doneDelayMs?: number
@@ -37,7 +38,9 @@ export function writePhaseChangingMessage(
       ...item,
       status: 'completed',
       phase: message.completedPhase,
-      content: [{ type: 'output_text', text: message.text, annotations: [] }],
+      content: [
+        { type: 'output_text', text: message.completedText ?? message.text, annotations: [] },
+      ],
     }
     emit({ type: 'response.output_item.done', output_index: 0, item: completed })
     complete(completed)

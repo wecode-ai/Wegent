@@ -571,6 +571,7 @@ function writeResponsesToolCalls(
     type: 'response.created',
     response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
   })
+  /** Finish tool output after the optional assistant item at output index zero. */
   const finish = (message?: Record<string, unknown>) => {
     output.forEach((item, outputIndex) => {
       writeResponsesSseEvent(res, {
