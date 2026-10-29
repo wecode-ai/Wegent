@@ -37,6 +37,7 @@ import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
 import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
@@ -805,6 +806,18 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'height')
     )
     return { width, height }
+  })
+  // Windows restores precision-touchpad input only while the native window
+  // keeps Chromium's default visibility lifecycle; see window-background-policy.
+  router.register('e2e.getWindowBackgroundPolicy', () => {
+    const target = requiredWindow(window)
+    return {
+      platform: process.platform,
+      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
+        BACKGROUND_TIMER_THROTTLING_SWITCH
+      ),
+    }
   })
   router.register('e2e.verifyEmbeddedBrowserDetachedInspector', params =>
     browser.verifyDetachedInspector(optionalStringParam(params, 'label') ?? 'workspace-browser')

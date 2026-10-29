@@ -140,6 +140,10 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import {
+  applyWorkbenchBackgroundPolicy,
+  workbenchBackgroundThrottling,
+} from './host/window-background-policy.js'
 import { redactLog } from './runtime/rotating-log.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -176,6 +180,7 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
 ])
+applyWorkbenchBackgroundPolicy(process.platform, app.commandLine)
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -653,7 +658,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = false
+      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -970,7 +975,7 @@ async function openWorkspaceWindow(input: {
     backgroundColor: '#181818',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1069,7 +1074,7 @@ async function createAuxiliaryWindow(
     type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1170,7 +1175,7 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1302,7 +1307,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,

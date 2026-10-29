@@ -185,6 +185,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
               },
             })
           await reloadMainWindow(control, 'The stale assignment notification did not replay')
+          // The control client reconnects before the workbench shell mounts its
+          // titlebar notifications, so wait for the button instead of clicking
+          // into the still-loading surface.
+          await control.command('waitFor', '[data-testid="wework-notifications-button"]', {
+            timeoutMs: uiTimeoutMs,
+          })
           await control.command('click', '[data-testid="wework-notifications-button"]')
           await control.command(
             'click',

@@ -20,6 +20,7 @@
 //! 4. `response_values` per active event, resolving `created_by_user_name`
 //!    through the session's identity map (`db.get(User, id)`).
 use brz_http_server::StatusCode;
+use brz_mysql::MysqlService;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
@@ -80,14 +81,22 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    super::assignment_index::ensure_active_index(&state.mysql, item_id).await?;
-    let comments = LoopItemRepository::new(&state.mysql)
-        .list_active_assignment_comments(item_id)
+    list_assignment_items(&state.mysql, item_id, current_user).await
+}
+
+/// Read and render assignments after the existing Issue access checks.
+pub(super) async fn list_assignment_items(
+    mysql: &MysqlService,
+    item_id: &str,
+    current_user: &FlexibleUser,
+) -> Result<IssueAssignmentListResponse, FastApiError> {
+    let comments = LoopItemRepository::new(mysql)
+        .list_assignment_comments(item_id)
         .await
         .map_err(internal)?;
     let mut items = Vec::new();
     for event in active_events(&comments) {
-        items.push(assignment_response(state, &event, current_user).await?);
+        items.push(assignment_response(mysql, &event, current_user).await?);
     }
     Ok(IssueAssignmentListResponse { items })
 }
@@ -384,7 +393,7 @@ fn member_type_key(value: Option<&str>) -> &'static str {
 
 /// `issue_assignment_service.response_values(db, row)`.
 async fn assignment_response(
-    state: &AppState,
+    mysql: &MysqlService,
     event: &ActiveEvent<'_>,
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentResponse, FastApiError> {
@@ -397,7 +406,7 @@ async fn assignment_response(
     let creator_name = if assigned_by == current_user.id {
         Some(current_user.user_name.clone())
     } else {
-        assignment_repository::user_by_id(&state.mysql, i64::from(assigned_by))
+        assignment_repository::user_by_id(mysql, i64::from(assigned_by))
             .await
             .map_err(internal)?
             .map(|user| user.user_name)
