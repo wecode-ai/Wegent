@@ -116,6 +116,7 @@ async function verifyCachedInitialRecovery({
   const modal = scope('[data-testid="ai-chat-modal"]')
   const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  await control.command('waitFor', modal, { visible: false, timeoutMs: 10_000 })
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -125,6 +126,7 @@ async function verifyCachedInitialRecovery({
       'click',
       scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
     )
+    await control.command('waitFor', modal, { visible: true, timeoutMs: 10_000 })
     await control.command('waitFor', `${modal} [data-testid="runtime-transcript-error"]`)
     assert.match(await control.command('getText', modal), new RegExp(RESTORED))
     assert.ok(
