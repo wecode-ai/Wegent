@@ -16,6 +16,9 @@ use wegent_backend_rs::{
 
 use super::fixture::{LARGE_RESULT_BYTES, LONG_CONVERSATION_ROWS};
 
+#[path = "session_auth.rs"]
+mod session_auth;
+
 // The source limits package registers this exact script before EVALSHA.
 const RATE_SCRIPT: &str = "local current\nlocal amount = tonumber(ARGV[2])\ncurrent = redis.call(\"incrby\", KEYS[1], amount)\n\nif tonumber(current) == amount then\n    redis.call(\"expire\", KEYS[1], ARGV[1])\nend\n\nreturn current\n";
 
@@ -203,6 +206,7 @@ pub async fn assert_http_reads(
             bytes.len()
         );
     }
+    session_auth::assert_session_compatibility(&client, address, task_ids[0], user_id + 1).await;
     stop.send(()).unwrap();
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();
@@ -218,11 +222,18 @@ pub fn runtime_config() -> HybridConfig {
 }
 
 fn token_for(user_id: i32) -> String {
+    signed_claims(
+        &json!({"sub":format!("responses-fixture-{user_id}"),"exp":chrono::Utc::now().timestamp()+300}),
+    )
+}
+
+fn signed_claims(claims: &Value) -> String {
     jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
-        &json!({"sub":format!("responses-fixture-{user_id}"),"exp":chrono::Utc::now().timestamp()+300}),
+        claims,
         &jsonwebtoken::EncodingKey::from_secret(b"responses-fixture-signing-key"),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 fn assert_output(response: &Value, task_id: i64, long_conversation: bool) {

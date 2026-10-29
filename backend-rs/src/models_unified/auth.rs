@@ -186,24 +186,12 @@ fn decode_session_token(
     decode_keys: &[String],
     algorithm: jsonwebtoken::Algorithm,
 ) -> Option<SessionClaims> {
-    let mut last_error = None;
-    for key in decode_keys {
-        match jsonwebtoken::decode::<SessionClaims>(
-            token,
-            &jsonwebtoken::DecodingKey::from_secret(key.as_bytes()),
-            &jsonwebtoken::Validation::new(algorithm),
-        ) {
-            Ok(token_data) => {
-                if token_data.claims.is_user_session_payload() {
-                    return Some(token_data.claims);
-                }
-                return None;
-            }
-            Err(error) => last_error = Some(error),
-        }
-    }
-    let _ = last_error;
-    None
+    crate::jwt_compat::decode_jose::<SessionClaims>(
+        token,
+        decode_keys.iter().map(String::as_bytes),
+        algorithm,
+    )
+    .filter(SessionClaims::is_user_session_payload)
 }
 
 #[cfg(test)]
@@ -216,7 +204,7 @@ mod tests {
     fn claims(scope: Option<&str>, token_use: Option<&str>) -> SessionClaims {
         SessionClaims {
             sub: Some("haibo16".to_string()),
-            scope: scope.map(|_| serde::de::IgnoredAny),
+            scope: scope.map(serde_json::Value::from),
             token_use: token_use.map(ToOwned::to_owned),
             exp: None,
         }
@@ -341,6 +329,27 @@ mod tests {
             assert_eq!(
                 std::str::from_utf8(body.as_ref()).unwrap(),
                 format!("{{\"detail\":\"{detail}\"}}")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::decode_session_token(
+                    &token,
+                    &["test-key".to_string()],
+                    jsonwebtoken::Algorithm::HS256
+                )
+                .and_then(|claims| claims.username())
+                .is_some(),
+                expected,
+                "{name}"
             );
         }
     }

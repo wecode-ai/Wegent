@@ -10,7 +10,7 @@
 //! the active `users` row referenced by the `sub` claim.
 use std::sync::Arc;
 
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::Algorithm;
 
 use crate::auth::SessionClaims;
 use crate::plugins_marketplace::db::{MysqlCapability, UserRepository, UserRow};
@@ -86,30 +86,13 @@ where
         "HS512" => Algorithm::HS512,
         _ => Algorithm::HS256,
     };
-    let mut validation = Validation::new(algorithm);
-    // python-jose validates `exp` only when present and checks no audience
-    // for this token shape; no claim is required.
-    validation.validate_exp = true;
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    for key in keys {
-        let decoded = decode::<SessionClaims>(
-            token,
-            &DecodingKey::from_secret(key.as_bytes()),
-            &validation,
-        );
-        let Ok(data) = decoded else {
-            continue;
-        };
-        let claims = data.claims;
-        let sub = claims.username()?;
-        let user = UserRepository::find_by_username(mysql, &sub).await;
-        return match user {
-            Ok(Some(user)) if user.is_active => Some(user),
-            _ => None,
-        };
+    let claims: SessionClaims =
+        crate::jwt_compat::decode_jose(token, keys.iter().map(|key| key.as_bytes()), algorithm)?;
+    let sub = claims.username()?;
+    match UserRepository::find_by_username(mysql, &sub).await {
+        Ok(Some(user)) if user.is_active => Some(user),
+        _ => None,
     }
-    None
 }
 
 #[cfg(test)]
@@ -135,7 +118,7 @@ mod tests {
         assert!(user.is_user_session_payload());
         let service = SessionClaims {
             sub: Some("u".to_owned()),
-            scope: Some(serde::de::IgnoredAny),
+            scope: Some(serde_json::json!("read")),
             token_use: None,
             exp: None,
         };

@@ -1,0 +1,980 @@
+{
+  "python_jose_version": "3.5.0",
+  "pyjwt_version": "2.10.1",
+  "now": 2000000000,
+  "cases": [
+    {
+      "name": "ordinary",
+      "claims": {
+        "sub": "u"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "wework_access",
+      "claims": {
+        "sub": "u",
+        "token_use": "wework_access"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "refresh",
+      "claims": {
+        "sub": "u",
+        "token_use": "wework_refresh"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "task_scope",
+      "claims": {
+        "sub": "u",
+        "scope": "task"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "api_scope",
+      "claims": {
+        "sub": "u",
+        "scope": "api_key"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_null",
+      "claims": {
+        "sub": "u",
+        "scope": null
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_false",
+      "claims": {
+        "sub": "u",
+        "scope": false
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_zero",
+      "claims": {
+        "sub": "u",
+        "scope": 0
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_float_zero",
+      "claims": {
+        "sub": "u",
+        "scope": 0.0
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_empty_string",
+      "claims": {
+        "sub": "u",
+        "scope": ""
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_empty_list",
+      "claims": {
+        "sub": "u",
+        "scope": []
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_empty_object",
+      "claims": {
+        "sub": "u",
+        "scope": {}
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_true",
+      "claims": {
+        "sub": "u",
+        "scope": true
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_one",
+      "claims": {
+        "sub": "u",
+        "scope": 1
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_list",
+      "claims": {
+        "sub": "u",
+        "scope": [
+          "read"
+        ]
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "scope_object",
+      "claims": {
+        "sub": "u",
+        "scope": {
+          "a": 1
+        }
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_past",
+      "claims": {
+        "sub": "u",
+        "exp": 1999999970
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "ExpiredSignatureError",
+      "pyjwt_exception": "ExpiredSignatureError"
+    },
+    {
+      "name": "exp_now",
+      "claims": {
+        "sub": "u",
+        "exp": 2000000000
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ExpiredSignatureError"
+    },
+    {
+      "name": "exp_future",
+      "claims": {
+        "sub": "u",
+        "exp": 2000000030
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_string_future",
+      "claims": {
+        "sub": "u",
+        "exp": "2000000030"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_string_past",
+      "claims": {
+        "sub": "u",
+        "exp": "1999999970"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "ExpiredSignatureError",
+      "pyjwt_exception": "ExpiredSignatureError"
+    },
+    {
+      "name": "exp_float_future",
+      "claims": {
+        "sub": "u",
+        "exp": 2000000030.9
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_float_past",
+      "claims": {
+        "sub": "u",
+        "exp": 1999999969.1
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "ExpiredSignatureError",
+      "pyjwt_exception": "ExpiredSignatureError"
+    },
+    {
+      "name": "exp_bad_string",
+      "claims": {
+        "sub": "u",
+        "exp": "not-a-number"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "exp_false",
+      "claims": {
+        "sub": "u",
+        "exp": false
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "ExpiredSignatureError",
+      "pyjwt_exception": "ExpiredSignatureError"
+    },
+    {
+      "name": "exp_whitespace",
+      "claims": {
+        "sub": "u",
+        "exp": "  +2000000030  "
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_unicode_whitespace",
+      "claims": {
+        "sub": "u",
+        "exp": "2000000030 "
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_control_prefix",
+      "claims": {
+        "sub": "u",
+        "exp": "\u001c2000000030"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "exp_control_suffix",
+      "claims": {
+        "sub": "u",
+        "exp": "2000000030\u001f"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "exp_underscore",
+      "claims": {
+        "sub": "u",
+        "exp": "2_000_000_030"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_unicode",
+      "claims": {
+        "sub": "u",
+        "exp": "٢٠٠٠٠٠٠٠٣٠"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "exp_huge_string",
+      "claims": {
+        "sub": "u",
+        "exp": "999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_past",
+      "claims": {
+        "sub": "u",
+        "nbf": 1999999970
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_now",
+      "claims": {
+        "sub": "u",
+        "nbf": 2000000000
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_future",
+      "claims": {
+        "sub": "u",
+        "nbf": 2000000030
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_string_future",
+      "claims": {
+        "sub": "u",
+        "nbf": "2000000030"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_string_past",
+      "claims": {
+        "sub": "u",
+        "nbf": "1999999970"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_float_future",
+      "claims": {
+        "sub": "u",
+        "nbf": 2000000030.9
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_float_past",
+      "claims": {
+        "sub": "u",
+        "nbf": 1999999969.1
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_bad_string",
+      "claims": {
+        "sub": "u",
+        "nbf": "not-a-number"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "nbf_false",
+      "claims": {
+        "sub": "u",
+        "nbf": false
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_whitespace",
+      "claims": {
+        "sub": "u",
+        "nbf": "  +2000000030  "
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_unicode_whitespace",
+      "claims": {
+        "sub": "u",
+        "nbf": "2000000030 "
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_control_prefix",
+      "claims": {
+        "sub": "u",
+        "nbf": "\u001c2000000030"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "nbf_control_suffix",
+      "claims": {
+        "sub": "u",
+        "nbf": "2000000030\u001f"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "nbf_underscore",
+      "claims": {
+        "sub": "u",
+        "nbf": "2_000_000_030"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_unicode",
+      "claims": {
+        "sub": "u",
+        "nbf": "٢٠٠٠٠٠٠٠٣٠"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "nbf_huge_string",
+      "claims": {
+        "sub": "u",
+        "nbf": "999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_past",
+      "claims": {
+        "sub": "u",
+        "iat": 1999999970
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "iat_now",
+      "claims": {
+        "sub": "u",
+        "iat": 2000000000
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "iat_future",
+      "claims": {
+        "sub": "u",
+        "iat": 2000000030
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_string_future",
+      "claims": {
+        "sub": "u",
+        "iat": "2000000030"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_string_past",
+      "claims": {
+        "sub": "u",
+        "iat": "1999999970"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "iat_float_future",
+      "claims": {
+        "sub": "u",
+        "iat": 2000000030.9
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_float_past",
+      "claims": {
+        "sub": "u",
+        "iat": 1999999969.1
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "iat_bad_string",
+      "claims": {
+        "sub": "u",
+        "iat": "not-a-number"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidIssuedAtError"
+    },
+    {
+      "name": "iat_false",
+      "claims": {
+        "sub": "u",
+        "iat": false
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "iat_whitespace",
+      "claims": {
+        "sub": "u",
+        "iat": "  +2000000030  "
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_unicode_whitespace",
+      "claims": {
+        "sub": "u",
+        "iat": "2000000030 "
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_control_prefix",
+      "claims": {
+        "sub": "u",
+        "iat": "\u001c2000000030"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidIssuedAtError"
+    },
+    {
+      "name": "iat_control_suffix",
+      "claims": {
+        "sub": "u",
+        "iat": "2000000030\u001f"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidIssuedAtError"
+    },
+    {
+      "name": "iat_underscore",
+      "claims": {
+        "sub": "u",
+        "iat": "2_000_000_030"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_unicode",
+      "claims": {
+        "sub": "u",
+        "iat": "٢٠٠٠٠٠٠٠٣٠"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "iat_huge_string",
+      "claims": {
+        "sub": "u",
+        "iat": "999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "aud_string",
+      "claims": {
+        "sub": "u",
+        "aud": "other-service"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidAudienceError"
+    },
+    {
+      "name": "aud_list",
+      "claims": {
+        "sub": "u",
+        "aud": [
+          "other-service"
+        ]
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidAudienceError"
+    },
+    {
+      "name": "aud_empty_list",
+      "claims": {
+        "sub": "u",
+        "aud": []
+      },
+      "jose_valid": false,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": null
+    },
+    {
+      "name": "aud_null",
+      "claims": {
+        "sub": "u",
+        "aud": null
+      },
+      "jose_valid": false,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": null
+    },
+    {
+      "name": "aud_integer",
+      "claims": {
+        "sub": "u",
+        "aud": 123
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidAudienceError"
+    },
+    {
+      "name": "jti_string",
+      "claims": {
+        "sub": "u",
+        "jti": "u"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "jti_integer",
+      "claims": {
+        "sub": "u",
+        "jti": 123
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidJTIError"
+    },
+    {
+      "name": "jti_null",
+      "claims": {
+        "sub": "u",
+        "jti": null
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidJTIError"
+    },
+    {
+      "name": "jti_empty_string",
+      "claims": {
+        "sub": "u",
+        "jti": ""
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "sub_string",
+      "claims": {
+        "sub": "u"
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "sub_integer",
+      "claims": {
+        "sub": 123
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidSubjectError"
+    },
+    {
+      "name": "sub_null",
+      "claims": {
+        "sub": null
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "InvalidSubjectError"
+    },
+    {
+      "name": "sub_empty_string",
+      "claims": {
+        "sub": ""
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": null,
+      "pyjwt_exception": null
+    },
+    {
+      "name": "at_hash_present",
+      "claims": {
+        "sub": "u",
+        "at_hash": "test-value"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": true,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": null
+    },
+    {
+      "name": "nbf_string_decimal",
+      "claims": {
+        "sub": "u",
+        "nbf": "2000000030.5"
+      },
+      "jose_valid": false,
+      "pyjwt_valid": false,
+      "session_valid": false,
+      "python_exception": "JWTClaimsError",
+      "pyjwt_exception": "DecodeError"
+    },
+    {
+      "name": "iat_huge_float",
+      "claims": {
+        "sub": "u",
+        "iat": 1e+200
+      },
+      "jose_valid": true,
+      "pyjwt_valid": false,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": "ImmatureSignatureError"
+    },
+    {
+      "name": "exp_huge_float",
+      "claims": {
+        "sub": "u",
+        "exp": 1e+200
+      },
+      "jose_valid": true,
+      "pyjwt_valid": true,
+      "session_valid": true,
+      "python_exception": null,
+      "pyjwt_exception": null
+    }
+  ]
+}
