@@ -60,6 +60,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let connectorAppId = 0
   const modelRequests = []
   let replySequence = 0
+  let catalogAtResume = null
 
   async function api(path, { method = 'GET', body } = {}) {
     const response = await fetch(`${backend.backendUrl}${path}`, {
@@ -111,6 +112,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       const text = lastInputText(body)
       replySequence += 1
       if (isResumeRequest(body)) {
+        // Ordering evidence: by the time the blocked step resumes, the backend
+        // catalog must already expose the connector's tools.
+        const installed = await api('/api/apps/installed')
+        const app = installed.apps.find(item => item.slug === CONNECTOR_OAUTH_SLUG)
+        catalogAtResume = {
+          status: app?.connection?.status ?? 'missing',
+          tools: (app?.tool_summaries ?? []).map(tool => tool.raw_tool_name),
+        }
         writeReply(response, `connector-oauth-resume-${replySequence}`, RESUME_COMPLETION)
         return true
       }
@@ -168,6 +177,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.equal(provider.authorizeRequests, 1, 'The consent page must load exactly once')
       assert.equal(provider.tokenRequests, 1, 'The code exchange must run exactly once')
 
+      assert.ok(catalogAtResume, 'The blocked step never resumed')
+      assert.equal(
+        catalogAtResume.status,
+        'connected',
+        `The catalog did not see the stored grant at resume time: ${JSON.stringify(catalogAtResume)}`
+      )
+      assert.ok(
+        catalogAtResume.tools.length > 0,
+        `The blocked step resumed before the tool catalog synced: ${JSON.stringify(catalogAtResume)}`
+      )
+
       const resumes = modelRequests.filter(isResumeRequest)
       assert.equal(resumes.length, 1, 'Authorization must resume the blocked step once')
       const resumedText = lastInputText(resumes[0])
@@ -189,6 +209,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         modelRequests: modelRequests.length,
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
+        catalogAtResume,
       }
     },
 

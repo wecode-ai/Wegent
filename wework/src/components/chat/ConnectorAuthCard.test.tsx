@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import '@/i18n'
 
 const authMocks = vi.hoisted(() => ({
@@ -22,13 +22,14 @@ vi.mock('@/api/local/localConnectorAuth', async importOriginal => {
   }
 })
 
-const cloudMocks = vi.hoisted(() => ({ authorize: vi.fn(), open: vi.fn() }))
+const cloudMocks = vi.hoisted(() => ({ authorize: vi.fn(), open: vi.fn(), catalog: vi.fn() }))
 
 vi.mock('@/api/cloud/connectorApps', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/cloud/connectorApps')>()
   return {
     ...actual,
     authorizeWegentConnector: cloudMocks.authorize,
+    waitForConnectorToolCatalog: cloudMocks.catalog,
     notifyConnectorAuthorizationChanged: vi.fn(),
   }
 })
@@ -236,6 +237,7 @@ describe('CloudConnectorAuthCard', () => {
     authMocks.start.mockReset()
     cloudMocks.authorize.mockReset()
     cloudMocks.open.mockReset()
+    cloudMocks.catalog.mockReset().mockResolvedValue(true)
   })
 
   test('authorizes the connector app and reports success', async () => {
@@ -259,6 +261,60 @@ describe('CloudConnectorAuthCard', () => {
       'dingtalk_log',
       cloudMocks.open
     )
+    expect(cloudMocks.catalog).toHaveBeenCalledWith(
+      'https://wegent.test/api',
+      'cloud-token',
+      'dingtalk_log'
+    )
+  })
+
+  test('resumes only after the tool catalog lists the connector', async () => {
+    cloudMocks.authorize.mockResolvedValue({ status: 'connected' })
+    let releaseCatalog: (ready: boolean) => void = () => {}
+    cloudMocks.catalog.mockReturnValue(
+      new Promise<boolean>(resolve => {
+        releaseCatalog = resolve
+      })
+    )
+    const onSuccess = vi.fn()
+
+    render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="cloud-token"
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+
+    // Authorization finished, but the catalog has not reported the tools yet.
+    await waitFor(() => expect(cloudMocks.catalog).toHaveBeenCalledTimes(1))
+    expect(onSuccess).not.toHaveBeenCalled()
+
+    await act(async () => releaseCatalog(true))
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
+  })
+
+  test('still resumes when the catalog never catches up', async () => {
+    cloudMocks.authorize.mockResolvedValue({ status: 'connected' })
+    cloudMocks.catalog.mockResolvedValue(false)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    onTestFinished(() => warn.mockRestore())
+    const onSuccess = vi.fn()
+
+    render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="cloud-token"
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
+    expect(warn).toHaveBeenCalled()
   })
 
   test('explains that the Wegent account must be connected first', async () => {

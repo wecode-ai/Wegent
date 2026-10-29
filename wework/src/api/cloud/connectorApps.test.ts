@@ -1,6 +1,6 @@
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import { afterEach, onTestFinished, describe, expect, test, vi } from 'vitest'
-import { authorizeWegentConnector } from './connectorApps'
+import { authorizeWegentConnector, waitForConnectorToolCatalog } from './connectorApps'
 
 describe('connector OAuth client', () => {
   afterEach(() => {
@@ -230,5 +230,55 @@ describe('connector OAuth client', () => {
     expect(error).toBeInstanceOf(Error)
     expect(String((error as Error).message)).toContain('超时')
     expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  test('waits for the catalog until the connector tools appear', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).includes('/apps/installed')) throw new Error('unexpected request')
+      reads += 1
+      const apps =
+        reads < 2
+          ? []
+          : [{ slug: 'slow-connector', tool_summaries: [{ name: 'slow-connector__echo' }] }]
+      return new Response(JSON.stringify({ apps }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const waiting = waitForConnectorToolCatalog(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      { intervalMs: 500, timeoutMs: 5_000 }
+    )
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await expect(waiting).resolves.toBe(true)
+    expect(reads).toBe(2)
+  })
+
+  test('gives up when the catalog never syncs', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ apps: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const waiting = waitForConnectorToolCatalog(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      { intervalMs: 500, timeoutMs: 1_000 }
+    )
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    await expect(waiting).resolves.toBe(false)
   })
 })

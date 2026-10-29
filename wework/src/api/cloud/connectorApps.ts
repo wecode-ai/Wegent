@@ -145,6 +145,35 @@ export function refreshWegentConnector(
   )
 }
 
+/**
+ * Wait until the installed-app catalog exposes the connector's tools.
+ *
+ * The blocked turn resumes with whatever surface the catalog reports, so
+ * resuming before discovery lands would run the continuation without the
+ * connector. The wait is bounded: a catalog that never syncs must not trap the
+ * user, and the runtime rediscovers on the next call anyway.
+ */
+export async function waitForConnectorToolCatalog(
+  apiBaseUrl: string,
+  token: string,
+  slug: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<boolean> {
+  const deadline = Date.now() + (options.timeoutMs ?? 20_000)
+  const intervalMs = options.intervalMs ?? 500
+  for (;;) {
+    try {
+      const catalog = await listWegentInstalledConnectorApps(apiBaseUrl, token)
+      const app = catalog.apps.find(item => item.slug === slug)
+      if (app && (app.tool_summaries?.length ?? 0) > 0) return true
+    } catch {
+      // A transient catalog read is retried until the deadline.
+    }
+    if (Date.now() >= deadline) return false
+    await delay(intervalMs)
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }

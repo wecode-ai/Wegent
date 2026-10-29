@@ -99,6 +99,33 @@ export async function startConnectorOAuthProvider() {
         sendEmpty(response, 202)
         return
       }
+      if (message.method === 'tools/list') {
+        sendJson(response, 200, {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            tools: [
+              {
+                name: 'echo',
+                description: 'Echo the caller payload.',
+                inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+              },
+            ],
+          },
+        })
+        return
+      }
+      if (message.method === 'tools/call') {
+        sendJson(response, 200, {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text', text: 'CONNECTOR-OAUTH-ECHO-OK' }],
+            isError: false,
+          },
+        })
+        return
+      }
       sendJson(response, 200, { jsonrpc: '2.0', id, result: { tools: [] } })
       return
     }

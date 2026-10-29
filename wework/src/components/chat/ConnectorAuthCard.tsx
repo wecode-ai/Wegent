@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
-import { authorizeWegentConnector } from '@/api/cloud/connectorApps'
+import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import type {
   LocalConnectorAuthResult,
@@ -62,6 +62,12 @@ export function CloudConnectorAuthCard({
       if (connection.status !== 'connected') {
         setError(t('workbench.plugins_connector_auth_failed', { name: slug }))
         return
+      }
+      // Resume only once the catalog lists this app's tools, so the continued
+      // step sees the connector instead of an empty surface.
+      const catalogReady = await waitForConnectorToolCatalog(apiBaseUrl, token, slug)
+      if (!catalogReady) {
+        console.warn(`[ConnectorAuthCard] ${slug} tools did not reach the catalog before resuming`)
       }
       onSuccess()
     } catch (cause) {

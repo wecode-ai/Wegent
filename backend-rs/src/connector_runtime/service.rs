@@ -39,9 +39,54 @@ where
     };
     for app in connected {
         if app.transport == "http" {
-            // `_http_tools` projects the app's inline `httpTools` definitions
-            // through `ConnectorHttpToolDefinition`; the recorded catalog
-            // defines an empty list, so this transport contributes no tools.
+            // `_http_tools`: inline `httpTools` definitions filtered by the
+            // administrator allowlist, projected exactly like the MCP entry.
+            match crate::apps_installed::http_tools::definitions(app) {
+                Ok(definitions) => {
+                    for tool in definitions {
+                        if !app.tool_allowlist.is_empty()
+                            && !app.tool_allowlist.contains(&tool.name)
+                        {
+                            continue;
+                        }
+                        tools.push(ConnectorTool {
+                            name: format!("{}__{}", app.slug, tool.name),
+                            title: None,
+                            description: tool.description,
+                            input_schema: tool
+                                .input_schema
+                                .as_ref()
+                                .filter(|schema| schema.is_nonempty_object())
+                                .cloned()
+                                .unwrap_or_else(default_input_schema),
+                            annotations: None,
+                            connector_id: app.slug.clone(),
+                            connector_slug: app.slug.clone(),
+                            connector_name: app.name.clone(),
+                            raw_tool_name: tool.name,
+                            model_visible: true,
+                            risk_hints: RiskHints {
+                                destructive: Some(matches!(
+                                    tool.method.to_ascii_uppercase().as_str(),
+                                    "DELETE" | "PUT" | "PATCH"
+                                )),
+                                open_world: Some(true),
+                            },
+                            source_transport: "http".to_string(),
+                            app_id: app.id,
+                            app_slug: app.slug.clone(),
+                            app_name: app.name.clone(),
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping invalid HTTP connector during tool discovery"
+                    );
+                }
+            }
             continue;
         }
         // `_upstream_tools` wraps `_server_config` and session failures into a
@@ -57,19 +102,20 @@ where
                 continue;
             }
         };
-        let upstream = match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
-            Ok(upstream) => upstream,
-            // `except HTTPException`: an app whose discovery failed is
-            // skipped with a warning, not reported to the caller.
-            Err(error) => {
-                tracing::warn!(
-                    connector = %app.slug,
-                    %error,
-                    "skipping unavailable connector during tool discovery"
-                );
-                continue;
-            }
-        };
+        let upstream =
+            match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
+                Ok(upstream) => upstream,
+                // `except HTTPException`: an app whose discovery failed is
+                // skipped with a warning, not reported to the caller.
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping unavailable connector during tool discovery"
+                    );
+                    continue;
+                }
+            };
         let allowlist = &app.tool_allowlist;
         for tool in upstream {
             if !allowlist.is_empty() && !allowlist.contains(&tool.name) {

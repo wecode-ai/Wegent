@@ -138,6 +138,7 @@ impl AppSpec {
 
 /// One tool discovered for a connector (`ConnectorRuntimeService.list_tools`
 /// output projection).
+#[derive(Debug)]
 struct ConnectorTool {
     connector_id: String,
     name: String,
@@ -418,9 +419,34 @@ where
     let mut tools = Vec::new();
     for app in connected_apps(mysql, apps, user).await? {
         if app.transport == "http" {
-            // HTTP-transport apps carry inline `httpTools` definitions; the
-            // recorded deployment exposes none, so the definition list is
-            // empty and contributes no tools.
+            // `_http_tools`: inline `httpTools` definitions, filtered by the
+            // administrator allowlist, so the catalog matches the public MCP
+            // entry for HTTP-transport apps.
+            match super::http_tools::definitions(app) {
+                Ok(definitions) => {
+                    for tool in definitions {
+                        if !app.tool_allowlist.is_empty()
+                            && !app.tool_allowlist.contains(&tool.name)
+                        {
+                            continue;
+                        }
+                        tools.push(ConnectorTool {
+                            connector_id: app.slug.clone(),
+                            name: format!("{}__{}", app.slug, tool.name),
+                            title: None,
+                            description: tool.description,
+                            raw_tool_name: tool.name,
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping invalid HTTP connector during tool discovery"
+                    );
+                }
+            }
             continue;
         }
         let headers = match session_headers(mysql, app, user).await {
@@ -437,7 +463,7 @@ where
             }
         };
         let upstream: Vec<UpstreamTool> =
-            match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
+            match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
                 Ok(tools) => tools,
                 Err(error) => {
                     tracing::warn!(
@@ -827,5 +853,141 @@ mod tests {
             ]
         );
         assert!(mysql.queries().is_empty());
+    }
+
+    /// A legacy HTTP+SSE MCP server that answers with one tool.
+    async fn spawn_sse_server() -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buffer = Vec::new();
+                    let mut chunk = [0_u8; 2048];
+                    let head = loop {
+                        let read = stream.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if text.contains("\r\n\r\n") {
+                            break text;
+                        }
+                    };
+                    if head.starts_with("GET ") {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
+                                  event: endpoint\r\ndata: /messages\r\n\r\n",
+                            )
+                            .await;
+                        let _ = stream.flush().await;
+                        // Serve the JSON-RPC replies on this same stream.
+                        let replies = [
+                            "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2024-11-05\"}}",
+                            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"read_doc\"}]}}",
+                        ]
+                        .into_iter();
+                        for reply in replies {
+                            let frame = format!("event: message\r\ndata: {reply}\r\n\r\n");
+                            if stream.write_all(frame.as_bytes()).await.is_err() {
+                                return;
+                            }
+                            let _ = stream.flush().await;
+                            // Wait for the next posted message before replying.
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                        return;
+                    }
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        format!("http://{address}/sse")
+    }
+
+    /// A `transport = "sse"` app must publish the same tool surface the public
+    /// MCP entry lists; discovery used to assume streamable HTTP and reported
+    /// no tools for a legacy SSE server.
+    #[tokio::test]
+    async fn sse_transport_apps_publish_the_same_tools_as_the_mcp_entry() {
+        let url = spawn_sse_server().await;
+        let row = app_row(
+            11,
+            "legacy_sse",
+            serde_json::json!({
+                "name": "Legacy SSE",
+                "mcpUrl": url,
+                "enabled": true,
+                "authType": "none",
+                "transport": "sse",
+                "visibility": "all",
+                "description": "d",
+                "allowedRoles": [],
+                "toolAllowlist": [],
+            }),
+        );
+        let app = row_to_app(&row);
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+
+        let listed = list_tools(&capture, std::slice::from_ref(&app), &user())
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].name, "legacy_sse__read_doc");
+        assert_eq!(listed[0].raw_tool_name, "read_doc");
+
+        // The public MCP entry projects the same upstream tool.
+        let entry = mcp::list_tools_for_transport("sse", &app.mcp_url, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            entry
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["read_doc".to_string()]
+        );
+    }
+
+    /// HTTP-transport apps contribute their configured operations to the
+    /// catalog, matching the public MCP entry.
+    #[tokio::test]
+    async fn http_transport_apps_publish_their_configured_tools() {
+        let row = app_row(
+            12,
+            "erp",
+            serde_json::json!({
+                "name": "ERP",
+                "mcpUrl": "https://api.example.invalid/v1",
+                "enabled": true,
+                "authType": "none",
+                "transport": "http",
+                "visibility": "all",
+                "description": "d",
+                "allowedRoles": [],
+                "toolAllowlist": [],
+                "httpTools": [{"name": "lookup", "description": "Lookup", "method": "GET", "path": "/records/{id}"}],
+            }),
+        );
+        let app = row_to_app(&row);
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+
+        let listed = list_tools(&capture, std::slice::from_ref(&app), &user())
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].name, "erp__lookup");
+        assert_eq!(listed[0].raw_tool_name, "lookup");
     }
 }
