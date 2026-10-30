@@ -179,6 +179,7 @@ export async function createAndAssignCloudIssue(
   })
   const selectAssignee = async () => {
     const prefix = assignDuringCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'
+    await control.command('waitFor', scoped(`[data-testid="${prefix}"]`), { visible: true })
     await control.command('clickWhenEnabled', scoped(`[data-testid="${prefix}"]`))
     const option = `[data-testid="${prefix}-option-${assigneeTarget}"]`
     await control.command('waitFor', option, { visible: true, timeoutMs })
