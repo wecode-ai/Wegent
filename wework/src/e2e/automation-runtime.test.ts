@@ -40,6 +40,43 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test('reports metric cardinality across missing, mounted, and duplicate DOM surfaces', async () => {
+    const surface = document.createElement('section')
+    surface.dataset.testid = 'layout-cardinality-surface'
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 100))
+    const duplicate = surface.cloneNode() as HTMLElement
+    const results: Array<{ ok: boolean; value?: string; error?: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls === 2) document.body.append(surface)
+        if (polls === 3) document.body.append(duplicate)
+        if (polls > 3) return Promise.resolve(new Response(null, { status: 410 }))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: String(polls),
+              action: 'getElementMetrics',
+              selector: '[data-testid="layout-cardinality-surface"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    try {
+      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      expect(results.map(result => result.ok)).toEqual([true, true, true])
+      expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
+      expect(JSON.parse(results[1].value!)[0].width).toBe(200)
+    } finally {
+      surface.remove()
+      duplicate.remove()
+    }
+  })
+
   test.each([false, true])(
     'allows an authenticated RPC to overlap later commands and reports its failure: %s',
     async failHeldRequest => {

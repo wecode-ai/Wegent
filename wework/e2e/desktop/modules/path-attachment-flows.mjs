@@ -783,6 +783,7 @@ async function verifySideChatAttachmentIsolation({
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
   const mainComposerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
   const sideComposerSelector = `${sideChatSelector} [data-testid="chat-message-input"]`
+  const sideSendButtonSelector = `${sideChatSelector} [data-testid="send-message-button"]`
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command(
@@ -900,8 +901,10 @@ async function verifySideChatAttachmentIsolation({
     SIDE_CHAT_PROMPT,
     'The side-chat prompt did not reach the isolated composer'
   )
-  await new Promise(resolvePromise => setTimeout(resolvePromise, COMPOSER_READY_STABILITY_MS))
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.awaitScenarioRequestCount('side_chat_attachment', 1)
   await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
     text: SIDE_CHAT_COMPLETION_TEXT,
@@ -926,10 +929,16 @@ async function verifySideChatAttachmentIsolation({
 
   control.setScenario('side_chat_guidance')
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_INITIAL })
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.awaitScenarioRequestCount('side_chat_guidance', 1)
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
     text: SIDE_CHAT_QUEUE_FOLLOW_UP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -954,7 +963,10 @@ async function verifySideChatAttachmentIsolation({
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )
-  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
     text: SIDE_CHAT_QUEUE_FOLLOW_UP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1000,7 +1012,10 @@ async function verifySideChatAttachmentIsolation({
     `${SIDE_CHAT_QUEUE_FOLLOW_UP}_3`,
   ]) {
     await control.command('fill', sideComposerSelector, { value: prompt })
-    await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+    await control.command('clickWhenEnabled', sideSendButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command(
       'waitFor',
       `${sideChatSelector} [data-testid="conversation-queue-panel"]`,

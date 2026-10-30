@@ -63,6 +63,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  fetchJson,
   join,
   mkdir,
   resultDir,
@@ -565,13 +566,28 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const [shareDialogBeforeSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
+  // User search excludes the signed-in owner, so seed a real eligible recipient.
+  const recipient = await fetchJson(`${cloudEnvironment.backendUrl}/api/admin/users`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cloudEnvironment.authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_name: `plugin-share-recipient-${process.pid}`,
+      password: 'plugin-share-e2e-only',
+      role: 'user',
+      auth_source: 'password',
+    }),
+  })
   await control.command('fill', '[data-testid="plugin-share-search"]', {
-    value: 'admin',
+    value: recipient.user_name,
   })
-  await control.command('waitFor', '[data-testid="plugin-share-search-results"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await new Promise(resolve => setTimeout(resolve, 400))
+  await control.command(
+    'waitFor',
+    `[data-testid="plugin-share-search-results"] [data-testid="plugin-share-user-${recipient.id}"]`,
+    { text: recipient.user_name, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const [shareDialogAfterSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
