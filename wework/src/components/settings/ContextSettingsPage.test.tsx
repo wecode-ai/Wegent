@@ -13,7 +13,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
-  contextCompactionThreshold: 85,
+  contextCompactionThreshold: 75,
   supervisorPrinciples: '',
   experimentalFeaturesEnabled: false,
   telemetryEnabled: true,
@@ -50,7 +50,7 @@ vi.mock('@/desktop/appPreferences', () => ({
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
-    contextCompactionThreshold: 85,
+    contextCompactionThreshold: 75,
     supervisorPrinciples: '',
     experimentalFeaturesEnabled: false,
     telemetryEnabled: true,
@@ -111,7 +111,7 @@ describe('ContextSettingsPage', () => {
     render(<ContextSettingsPage />)
 
     const input = await screen.findByTestId('context-compaction-threshold-input')
-    expect(input).toHaveValue(85)
+    expect(input).toHaveValue(75)
     await waitFor(() => expect(input).toBeEnabled())
 
     await userEvent.clear(input)

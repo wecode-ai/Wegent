@@ -252,6 +252,7 @@
       "collapse_file_diff": "Collapse file diff",
       "expand_file_diff": "Expand file diff",
       "copy_git_apply": "Copy git apply command",
+      "copied_git_apply": "Copied",
       "hide_files": "Hide files",
       "show_files": "Show files",
       "show_split": "Switch to split view",
