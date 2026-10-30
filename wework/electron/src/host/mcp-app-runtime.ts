@@ -13,7 +13,12 @@ interface Target {
 export class McpAppRuntime {
   private readonly clients = new Map<
     string,
-    { client: CloudRuntimeIpcClient; credential: { token: string } }
+    {
+      client: CloudRuntimeIpcClient
+      credential: { token: string }
+      target: string
+      account: number | string | undefined
+    }
   >()
 
   constructor(
@@ -34,15 +39,18 @@ export class McpAppRuntime {
       )
     )
       throw new Error('Invalid MCP App Runtime target')
-    const key = JSON.stringify(route)
+    const key = request.sessionId
+    if (typeof key !== 'string' || !key) throw new Error('Missing MCP App Runtime session')
+    const targetKey = JSON.stringify(route)
     let entry = this.clients.get(key)
+    if (entry && entry.target !== targetKey) throw new Error('MCP App Runtime target changed')
     const address = request.address as Record<string, unknown>
     if (typeof address?.deviceId !== 'string') throw new Error('Missing MCP App Runtime device')
     // Disposal belongs to the acquired client, even after the cloud settings are cleared.
     if (request.method === 'release' && entry)
-      return entry.client.request('runtime.mcp_apps.request', request, address.deviceId)
+      return this.release(key, entry.client, request, address.deviceId)
     const connection = (await this.connection()) as
-      | (Target & { token?: string; credentialMode?: string })
+      | (Target & { token?: string; credentialMode?: string; user?: { id?: number | string } })
       | null
     if (
       !connection ||
@@ -53,6 +61,8 @@ export class McpAppRuntime {
       )
     )
       throw new Error('MCP App Runtime target is not configured')
+    const account = connection.user?.id
+    if (entry && entry.account !== account) throw new Error('MCP App Runtime account changed')
     const token =
       connection.credentialMode !== 'desktop_refresh' && connection.token
         ? connection.token
@@ -64,11 +74,25 @@ export class McpAppRuntime {
         socketPath: route.socketPath,
         getToken: () => credential.token,
       })
-      entry = { credential, client }
+      entry = { credential, client, target: targetKey, account }
       this.clients.set(key, entry)
     }
     entry.credential.token = token
+    if (request.method === 'release')
+      return this.release(key, entry.client, request, address.deviceId)
     return entry.client.request('runtime.mcp_apps.request', request, address.deviceId)
+  }
+
+  private async release(
+    key: string,
+    client: CloudRuntimeIpcClient,
+    request: Record<string, unknown>,
+    deviceId: string
+  ): Promise<unknown> {
+    const result = await client.request('runtime.mcp_apps.request', request, deviceId)
+    client.dispose()
+    if (this.clients.get(key)?.client === client) this.clients.delete(key)
+    return result
   }
 
   dispose(): void {

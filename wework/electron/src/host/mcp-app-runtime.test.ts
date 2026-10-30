@@ -72,3 +72,37 @@ it('disposes through its acquired client after the user disconnects cloud settin
   expect(cloud.request).toHaveBeenLastCalledWith('runtime.mcp_apps.request', payload, 'remote')
   runtime.dispose()
 })
+
+it('binds each instance to its original authenticated client across account changes', async () => {
+  const original = { request: vi.fn().mockResolvedValue({}), dispose: vi.fn() }
+  const replacement = { request: vi.fn().mockResolvedValue({}), dispose: vi.fn() }
+  vi.mocked(createCloudRuntimeIpcClient)
+    .mockReturnValueOnce(original as never)
+    .mockReturnValueOnce(replacement as never)
+  let userId = 1
+  const runtime = new McpAppRuntime(vi.fn(), vi.fn().mockResolvedValue('token'), async () => ({
+    ...target,
+    user: { id: userId },
+  }))
+  await runtime.request({ ...payload, method: 'retain', target })
+  userId = 2
+  await expect(runtime.request({ ...payload, method: 'retain', target })).rejects.toThrow(
+    'account changed'
+  )
+  await runtime.request({ ...payload, sessionId: 'replacement', method: 'retain', target })
+  await runtime.request({ ...payload, target })
+  expect(original.request).toHaveBeenLastCalledWith('runtime.mcp_apps.request', payload, 'remote')
+  expect(original.dispose).toHaveBeenCalledOnce()
+  expect(replacement.request).toHaveBeenCalledTimes(1)
+  expect(replacement.dispose).not.toHaveBeenCalled()
+  runtime.dispose()
+  expect(replacement.dispose).toHaveBeenCalledOnce()
+})
+
+it('disposes a cleanup client even when acquisition never succeeded', async () => {
+  const runtime = new McpAppRuntime(vi.fn(), vi.fn().mockResolvedValue('token'), async () => target)
+  await runtime.request({ ...payload, target })
+  expect(cloud.dispose).toHaveBeenCalledOnce()
+  runtime.dispose()
+  expect(cloud.dispose).toHaveBeenCalledOnce()
+})
