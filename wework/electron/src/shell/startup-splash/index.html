@@ -30,7 +30,7 @@
       <span class="stage-corner stage-corner-bottom-left" aria-hidden="true"></span>
       <span class="stage-corner stage-corner-bottom-right" aria-hidden="true"></span>
 
-      <main id="splash-root" class="splash" aria-label="Wework is starting">
+      <main id="splash-root" class="splash" aria-labelledby="splash-title">
         <div class="workbench-scene" aria-hidden="true">
           <svg class="workbench" viewBox="0 0 300 126">
             <path class="floor-line" d="M17 108h266" />
@@ -119,21 +119,76 @@
           </svg>
         </div>
         <div class="splash-copy">
-          <h1 id="splash-title">We're preparing your workbench</h1>
-          <p id="splash-status" aria-live="polite">Opening your projects</p>
+          <h1 id="splash-title" aria-live="polite">We're preparing your workbench</h1>
         </div>
-        <div
-          id="stage-indicator"
-          class="stage-indicator"
-          role="progressbar"
-          aria-label="Preparing your workbench"
-          aria-valuemin="1"
-          aria-valuemax="3"
-          aria-valuenow="1"
-        >
-          <span class="stage-dot is-active"></span>
-          <span class="stage-dot"></span>
-          <span class="stage-dot"></span>
+        <section class="progress-block" aria-label="Startup progress">
+          <div class="progress-meta">
+            <span id="splash-step-count">Starting</span>
+            <span id="splash-elapsed" class="elapsed">0.0s</span>
+          </div>
+          <div
+            id="splash-progress"
+            class="startup-progress is-running"
+            role="progressbar"
+            aria-label="Preparing your workbench"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <div id="splash-progress-fill" class="startup-progress-fill"></div>
+          </div>
+          <p id="splash-activity" class="activity-line" aria-hidden="true"></p>
+        </section>
+        <div id="startup-slow" class="inline-note" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 4.6v4l2.3 1.4" fill="none" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-slow-title">Please wait</strong>
+            <p id="startup-slow-detail">
+              First launches and updates can take longer.
+            </p>
+          </div>
+        </div>
+        <div id="startup-timeout" class="inline-note" role="alert" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 2.8v5.4l3 1.8" fill="none" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-timeout-title">First startup can take longer</strong>
+            <p id="startup-timeout-detail">Still loading. Please wait…</p>
+          </div>
+        </div>
+        <div id="startup-timeout-actions" class="startup-actions startup-timeout-actions" hidden>
+          <button
+            id="startup-timeout-copy"
+            data-testid="startup-timeout-copy-button"
+            class="startup-button startup-button-secondary"
+            type="button"
+          >
+            Copy diagnostics
+          </button>
+          <button
+            id="startup-timeout-open-logs"
+            data-testid="startup-timeout-open-logs-button"
+            class="startup-link-button"
+            type="button"
+          >
+            Open log folder
+          </button>
+        </div>
+        <div id="startup-failure" class="inline-note inline-note-error" role="alert" hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
+            <path d="M8 4.6v4.2" stroke="currentColor" stroke-linecap="round" />
+            <circle cx="8" cy="11.3" r="0.8" fill="currentColor" stroke="none" />
+          </svg>
+          <div class="note-body">
+            <strong id="startup-failure-title">Startup was interrupted</strong>
+            <p id="startup-failure-detail">Restarting usually recovers.</p>
+          </div>
         </div>
         <div id="startup-recovery" class="startup-recovery" hidden>
           <div class="startup-actions">
@@ -153,6 +208,14 @@
               Retry
             </button>
             <button
+              id="startup-copy-diagnostics"
+              data-testid="startup-copy-diagnostics-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            >
+              Copy diagnostics
+            </button>
+            <button
               id="startup-recover"
               data-testid="startup-recover-button"
               class="startup-button startup-button-primary"
@@ -167,6 +230,14 @@
               type="button"
             >
               Reset personal state
+            </button>
+            <button
+              id="startup-open-logs"
+              data-testid="startup-open-logs-button"
+              class="startup-link-button"
+              type="button"
+            >
+              Open log folder
             </button>
           </div>
           <p id="startup-action-error" class="startup-action-error" role="alert" hidden></p>
@@ -199,6 +270,7 @@
         </div>
       </main>
     </div>
+    <div id="startup-toast" class="startup-toast" role="status" hidden></div>
     <script src="./splash.js"></script>
   </body>
 </html>

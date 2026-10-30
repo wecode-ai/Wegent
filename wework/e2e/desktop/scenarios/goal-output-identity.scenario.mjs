@@ -26,10 +26,12 @@ import { withShortConversationViewport } from '../modules/conversation-short-lay
 const BASE = 'WEWORK_OUTPUT_IDENTITY_BASE'
 const GOAL = 'WEWORK_OUTPUT_IDENTITY_GOAL'
 const FOLLOW_UP = 'WEWORK_OUTPUT_IDENTITY_FOLLOW_UP'
+const AFTER_RESTART = 'WEWORK_OUTPUT_IDENTITY_AFTER_RESTART'
 const HISTORY = 'The original answer must keep its place.'
 const INITIAL = 'The goal answer before restart must stay attached to its user.'
 const RECOVERED = 'The recovered output must appear as a new live turn.'
 const FINAL = 'The ordinary follow-up must also keep its own answer.'
+const RESTARTED_FINAL = 'A completed conversation must remain sendable after recovery.'
 
 async function captureIdentityFailure(control, resultDir, evidence) {
   const transcriptSelector = '[data-testid="desktop-chat-scroll-content"]'
@@ -95,13 +97,13 @@ export function createDesktopScenario(options) {
         hasFollowUp: JSON.stringify(body).includes(FOLLOW_UP),
         timestamp: Date.now(),
       })
-      if (current === 4) {
+      if (current === 4 || current === 5) {
         assert.ok(
-          JSON.stringify(body).includes(FOLLOW_UP),
+          JSON.stringify(body).includes(current === 4 ? FOLLOW_UP : AFTER_RESTART),
           `A stopped Goal requested another model response before the follow-up: ${JSON.stringify(requestTrace)}`
         )
       }
-      const text = [HISTORY, INITIAL, '', RECOVERED, FINAL][current]
+      const text = [HISTORY, INITIAL, '', RECOVERED, FINAL, RESTARTED_FINAL][current]
       assert.notEqual(text, undefined, `Unexpected model request ${current}`)
       const stream = streamingTextEvents(`output-identity-${current}`, text, 'final_answer')
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
@@ -140,6 +142,7 @@ export function createDesktopScenario(options) {
       active = true
       let address
       let recoveredTranscript
+      const recoveryEvidence = {}
       const rpc = async (method, params) => {
         const origin = await control.command('getLocationOrigin', 'body')
         const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
@@ -159,6 +162,12 @@ export function createDesktopScenario(options) {
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       }
       const transcript = () => rpc('runtime.tasks.transcript', { address, refresh: true })
+      const lifecycle = async () =>
+        JSON.parse(
+          await control.command('getRuntimeLifecycleState', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
       const goalUser = result =>
         result.messages.find(message => message.role === 'user' && message.content === GOAL)
       try {
@@ -183,10 +192,19 @@ export function createDesktopScenario(options) {
           'The native Goal did not enter its automatic continuation'
         )
         address = before.workbench.currentRuntimeTask
-        const originalUser = goalUser(await transcript())
+        const heldTranscript = await transcript()
+        recoveryEvidence.beforeCrash = heldTranscript
+        const originalUser = goalUser(heldTranscript)
         assert.ok(originalUser?.turnId, 'The original Goal user needs a native turn identity')
+        const interruptedTurn = heldTranscript.turns.at(-1)
+        assert.equal(
+          interruptedTurn?.status,
+          'streaming',
+          'The crash needs a real active native turn'
+        )
+        assert.ok(interruptedTurn.id, 'The interrupted native turn needs a persisted identity')
         phase = 'restart'
-        await restartDesktopApp()
+        await restartDesktopApp({ forceStop: true })
         await control.command('waitFor', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitText(RECOVERED)
@@ -245,9 +263,14 @@ export function createDesktopScenario(options) {
           snapshot => snapshot.pane?.transcript?.loading === false,
           'The final history did not finish loading'
         )
+        const completedTranscript = await transcript()
+        recoveryEvidence.beforeCompletedRestart = {
+          transcript: completedTranscript,
+          lifecycle: await lifecycle(),
+        }
         await writeFile(
           join(options.resultDir, 'output-identity-transcript.json'),
-          JSON.stringify(await transcript(), null, 2)
+          JSON.stringify(completedTranscript, null, 2)
         )
         await withShortConversationViewport(
           control,
@@ -263,6 +286,58 @@ export function createDesktopScenario(options) {
             assertConversationTextOrder(visible, ordered)
           }
         )
+        phase = 'verify-stale-streaming-precondition'
+        assert.equal(
+          completedTranscript.turns.find(turn => turn.id === interruptedTurn.id)?.status,
+          'streaming',
+          'The real crash must retain the older streaming turn for this recovery regression'
+        )
+        assert.equal(
+          completedTranscript.turns.at(-1)?.status,
+          'done',
+          'The latest real follow-up turn must complete before the recovery restart'
+        )
+        assert.equal(recoveryEvidence.beforeCompletedRestart.lifecycle?.derived.canSend, true)
+        phase = 'restart-completed-conversation'
+        await restartDesktopApp()
+        await control.command('waitFor', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
+        await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
+        await waitText(FINAL)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+        )
+        recoveryEvidence.afterCompletedRestart = {
+          transcript: await transcript(),
+          lifecycle: await lifecycle(),
+        }
+        assert.equal(
+          recoveryEvidence.afterCompletedRestart.transcript.turns.find(
+            turn => turn.id === interruptedTurn.id
+          )?.status,
+          'streaming',
+          'Cold recovery must actually read the stale streaming native history'
+        )
+        assert.equal(recoveryEvidence.afterCompletedRestart.transcript.turns.at(-1)?.status, 'done')
+        assert.equal(recoveryEvidence.afterCompletedRestart.lifecycle?.derived.canSend, true)
+        assert.equal(recoveryEvidence.afterCompletedRestart.lifecycle?.derived.isBusy, false)
+        phase = 'send-after-completed-restart'
+        await send(AFTER_RESTART)
+        await waitText(RESTARTED_FINAL)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+        )
+        recoveryEvidence.afterRestartSend = {
+          transcript: await transcript(),
+          lifecycle: await lifecycle(),
+        }
+        assert.equal(recoveryEvidence.afterRestartSend.transcript.turns.at(-1)?.status, 'done')
+        assert.equal(recoveryEvidence.afterRestartSend.lifecycle?.derived.canSend, true)
+        await writeFile(
+          join(options.resultDir, 'output-identity-recovery.json'),
+          JSON.stringify({ ...recoveryEvidence, requestTrace }, null, 2)
+        )
       } catch (error) {
         console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
         try {
@@ -270,6 +345,7 @@ export function createDesktopScenario(options) {
             phase,
             requestTrace,
             recoveredTranscript,
+            recoveryEvidence,
           })
         } catch (diagnosticError) {
           console.error('[goal-output-identity] failed to retain diagnostics', diagnosticError)

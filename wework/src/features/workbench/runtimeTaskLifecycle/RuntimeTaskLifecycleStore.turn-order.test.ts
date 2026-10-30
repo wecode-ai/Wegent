@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
+import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 
 test('a delayed list snapshot cannot revive an earlier turn after a follow-up completes', () => {
@@ -104,6 +105,83 @@ test('stale streaming history cannot replace the known turn after a reload', () 
 
   expect(store.getTask(address)?.turn.latestId).toBe('real-turn')
   expect(store.getTask(address)?.derived.isBusy).toBe(false)
+})
+
+test.each(['streaming', 'failed', 'removed'] as const)(
+  'a completed follow-up stays sendable when an earlier recovered turn is %s',
+  historicalStatus => {
+    const store = new RuntimeTaskLifecycleStore(`recovered-history-${historicalStatus}`)
+    const address = { deviceId: 'device-1', taskId: 'task-1' }
+    store.syncRuntimeTask(address, {
+      taskId: address.taskId,
+      title: 'Recovered Goal follow-up',
+      workspacePath: '/repo',
+      runtime: 'codex',
+      continuable: true,
+      running: true,
+      status: 'running',
+      runtimeHandle: { lastTurnId: 'follow-up-turn' },
+    })
+    store.turnStarted(address, 'follow-up-turn')
+    const completedTurn = {
+      id: 'follow-up-turn',
+      items: [],
+      status: 'done',
+      completedAt: 3000,
+    }
+    store.syncTranscript(address, {
+      messages: [],
+      running: true,
+      turns: [{ id: 'pre-restart-turn', items: [], status: 'streaming' }, completedTurn],
+    })
+
+    expect(store.getTask(address)?.turn.id).toBe('follow-up-turn')
+    store.turnSettled(address, 'follow-up-turn', 'succeeded')
+    const historicalTurns: RuntimePaneTranscript['turns'] =
+      historicalStatus === 'removed'
+        ? []
+        : [{ id: 'pre-restart-turn', items: [], status: historicalStatus }]
+    store.syncTranscript(address, {
+      messages: [],
+      running: false,
+      turns: [...historicalTurns, completedTurn],
+    })
+
+    expect(store.getTask(address)?.turn.latestId).toBe('follow-up-turn')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+  }
+)
+
+test('cold history does not restore an earlier streaming turn before the latest completed turn', () => {
+  const store = new RuntimeTaskLifecycleStore('cold-completed-follow-up-history')
+  const address = { deviceId: 'device-1', taskId: 'task-1' }
+  store.syncRuntimeTask(address, {
+    taskId: address.taskId,
+    title: 'Recovered conversation',
+    workspacePath: '/repo',
+    runtime: 'codex',
+    continuable: true,
+    running: true,
+    status: 'running',
+  })
+  const transcript: RuntimePaneTranscript = {
+    messages: [],
+    running: true,
+    turns: [
+      { id: 'pre-restart-turn', items: [], status: 'streaming' },
+      { id: 'follow-up-turn', items: [], status: 'done', completedAt: 3000 },
+    ],
+  }
+
+  store.syncTranscript(address, transcript)
+
+  expect(store.getTask(address)?.turn.id).not.toBe('pre-restart-turn')
+  store.syncTranscript(address, { ...transcript, running: false })
+
+  expect(store.getTask(address)?.turn.latestId).toBe('follow-up-turn')
+  expect(store.getTask(address)?.derived.canSend).toBe(true)
 })
 
 test('an admitted follow-up can clear async waiting before its new turn ID arrives', () => {

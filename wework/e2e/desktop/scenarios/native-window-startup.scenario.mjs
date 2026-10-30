@@ -4,24 +4,16 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import {
+  parseStartupEvents,
+  verifyStartupSplashProgress,
+  waitForStartupProgressEvidence,
+} from '../modules/startup-splash-progress.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
+import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
-
-function parseStartupEvents(appLog) {
-  const events = []
-  for (const match of appLog.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)) {
-    const body = match[1]
-    const step = body.match(/\bstep:\s*'([^']+)'/)?.[1]
-    const status = body.match(/\bstatus:\s*'([^']+)'/)?.[1]
-    const elapsedMs = Number(body.match(/\belapsedMs:\s*(\d+)/)?.[1])
-    if (step && status && Number.isFinite(elapsedMs)) {
-      events.push({ step, status, elapsedMs })
-    }
-  }
-  return events
-}
 
 function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
@@ -57,7 +49,12 @@ export async function createDesktopScenario({ resultDir }) {
     },
 
     async verify(control) {
-      await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
+      const appBinary = process.env.WEWORK_E2E_APP_BIN
+      await verifyStartupRecovery({
+        appBinary,
+        resultDir,
+        electronRoot: join(packagedResourcesRoot(appBinary), 'app.asar'),
+      })
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
         snapshot.events.map(event => event.name),
@@ -75,6 +72,8 @@ export async function createDesktopScenario({ resultDir }) {
         'PNG',
         'The Electron startup splash evidence was not a PNG'
       )
+      const userDataDirectory = join(resultDir, 'electron-user-data')
+      await waitForStartupProgressEvidence({ userDataDirectory, resultDir })
       const appLog = await waitForStartupLogs(resultDir)
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
@@ -137,12 +136,32 @@ export async function createDesktopScenario({ resultDir }) {
         `${JSON.stringify(runtimeStartupEvents, null, 2)}\n`
       )
 
+      await verifyStartupSplashProgress({
+        control,
+        resultDir,
+        restartDesktopApp,
+        userDataDirectory,
+      })
+
       // Consent is already saved by common bootstrap. Restart without clicking or focusing
       // anything so the assertion exercises startup autofocus itself.
       assert.ok(restartDesktopApp, 'The startup focus scenario requires the desktop restart hook')
       const telemetryRequestCountBeforeRestart = control.telemetryRequestCount()
-      await restartDesktopApp()
+      const afterBytes = (await readFile(join(userDataDirectory, 'logs', 'wework-main.log'))).length
+      await restartDesktopApp({
+        appEnvironmentOverrides: {
+          WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '',
+          WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '',
+          WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '',
+        },
+      })
       await waitForClosedStartupSplash(control)
+      await waitForStartupProgressEvidence({
+        userDataDirectory,
+        resultDir,
+        name: 'startup-recovered-progress',
+        afterBytes,
+      })
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
       await control.command(
         'waitFor',
