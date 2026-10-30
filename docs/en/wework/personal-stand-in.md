@@ -6,7 +6,7 @@ sidebar_position: 12
 
 Open **My stand-in** in the collaboration sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
-A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for an inline preview and answer pending approvals there. Open the full conversation when you need more context or discussion. Each role also has its own persistent identity conversation.
+A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
 ## Manual and conversational configuration
 
@@ -32,7 +32,15 @@ Remote execution devices can still use the all-project scope. It uses the select
 
 Follow-up messages concerning the same concrete matter can join existing work. Uncertain associations wait for review. Expand related messages in the preview to split a message into separate work or move it to another item within the same role. Moving a completed message does not execute it again.
 
-Answer operation approvals directly in the work-list preview. The same approval appears in the conversation input area with clickable actions; no typed “yes” is required. DingTalk reply approvals show the outgoing text bound to the original tool call. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
+Operation approvals appear in **Needs your input** and link to the original conversation's approval card. Use its approval or rejection action; no typed “yes” is required. DingTalk reply approvals show the outgoing text bound to the original tool call. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
+
+## Shared human decisions
+
+Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab with the question, supporting context, and original conversation. Work lists and notification entries no longer contain independent reply forms.
+
+Background delivery follows the notification channel settings. Eligible simple asynchronous questions support text replies through system notifications. Manage channels in the title-bar bell's settings; the account area no longer has a separate global IM notification menu. System delivery also depends on operating-system permissions and notification settings.
+
+Reading a notification, dismissing a reminder, or marking it read does not resolve a request. Accepted replies or an already resolved original question move it into history; failed sends retain the draft. Offline devices retain last-known questions and drafts, with replies enabled only after reconnecting and revalidating. Execution approvals, connector login, and complex forms remain in their original context; ordinary business answers never grant operation permissions. Issue answers persist in the owning comment thread before continuing its execution.
 
 Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
 

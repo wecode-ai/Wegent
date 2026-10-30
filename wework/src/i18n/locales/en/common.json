@@ -5294,7 +5294,8 @@
     "ask_body": "When you save this assignment, send an in-app notification and push to their connected IM.",
     "without_notification": "Do not notify",
     "with_notification": "Notify",
-    "connect": "Connect to the cloud to view notifications"
+    "connect": "Connect to the cloud to view notifications",
+    "im_target": "Choose IM notification conversation"
   },
   "standIn": {
     "model_label": "Model",
@@ -5455,7 +5456,7 @@
       "no_matching_work": "No work matches this filter.",
       "work_preview": "Work preview",
       "preview_no_summary": "No summary yet. Open the work to see its full context.",
-      "preview_help": "Confirm operations here, or open the conversation for more context.",
+      "preview_help": "Respond to questions in Needs your input. Open the original conversation for full context.",
       "open_work": "Open work",
       "receive_new": "Receive new work",
       "pause_help": "Enable and save to receive new work. Pausing stops new intake; existing work continues.",
@@ -5636,5 +5637,33 @@
     "close": "Close app",
     "send": "Send",
     "unsupported_display_mode": "The app has no supported display mode."
+  },
+  "interactions": {
+    "title": "Needs your input",
+    "needs_reply": "AI needs your input",
+    "reply": "Reply",
+    "reply_placeholder": "Write a reply…",
+    "send": "Send",
+    "dismiss": "Dismiss reminder",
+    "handle_in_context": "Open to handle",
+    "add_detail": "Add a note",
+    "pending": "Pending",
+    "history": "Handled",
+    "loading": "Loading pending requests…",
+    "empty": "Nothing needs your input",
+    "load_failed": "Could not load some requests. Retry to refresh.",
+    "open_original": "Open original conversation",
+    "context": "Context",
+    "back_to_list": "Back to list",
+    "your_reply": "Your reply",
+    "resume_hint": "After your reply, AI continues this task.",
+    "replied": "Replied",
+    "expired": "This question has already been answered or has expired.",
+    "failed": "Could not send your reply. Your draft is saved.",
+    "reply_success": "Replied. AI is continuing.",
+    "pending_count": "{{count}} pending requests",
+    "needs_action": "Open the original context to complete this action.",
+    "title_with_count": "Needs your input, {{count}} pending",
+    "cached": "This question was pending when last connected. Syncing its latest state; reconnect the device to respond."
   }
 }

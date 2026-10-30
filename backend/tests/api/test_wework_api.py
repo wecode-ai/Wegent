@@ -428,7 +428,9 @@ async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
     monkeypatch.setattr(native.runtime, "_list_online_runtime_workspaces", listing)
     await native.runtime.list_runtime_work(db=None, user_id=1, device_id="target")
     listing.assert_awaited_once_with(
-        user_id=1, devices=[{"device_id": "target", "status": "online"}]
+        user_id=1,
+        devices=[{"device_id": "target", "status": "online"}],
+        pending_only=False,
     )
 
 
