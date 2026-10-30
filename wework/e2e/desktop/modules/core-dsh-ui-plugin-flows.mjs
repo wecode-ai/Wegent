@@ -502,6 +502,7 @@ async function verifyInternalTelemetryRecovery({
 }) {
   const pluginRoot = await createDelayedTelemetrySinkPlugin(resultDir)
   const installed = await invokeCoreDshPluginCapability(
+    control,
     rendererOrigin,
     'runtime.installCoreDshPlugin',
     { spec: `file:${pluginRoot}` }
@@ -577,6 +578,7 @@ async function waitForTelemetryReceiver(origin, predicate) {
 
 async function invokePluginBackend(origin, plugin, method, params = {}) {
   const response = await fetch(`${origin}${PLUGIN_RPC_PATH}`, {
+    signal: AbortSignal.timeout(WORKBENCH_READY_TIMEOUT_MS),
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ method, params, plugin }),
