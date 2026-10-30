@@ -376,7 +376,7 @@ function requestContainsSkillLocator(body, skillPath) {
   )
 }
 
-/** Text of the user-authored turns codex forwarded to the model, in order. */
+/** User-role text Codex forwarded, including injected context, in order. */
 function inputUserMessageTexts(request) {
   const texts = []
   const visit = value => {
@@ -3958,8 +3958,8 @@ class DesktopE2EServer {
         const toolOutput = toolOutputText(body, callId)
         if (toolOutput !== null) {
           assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
-          const answered = inputUserMessageTexts(body).some(text =>
-            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
+          const answered = inputUserMessageTexts(body).some(
+            text => text.trim() === REQUEST_USER_INPUT_FREE_TEXT_ANSWER
           )
           this.writeSse(response, [
             responseCreated(responseId),
@@ -4008,8 +4008,8 @@ class DesktopE2EServer {
           ])
           return
         }
-        const answered = inputUserMessageTexts(body).some(text =>
-          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        const answered = inputUserMessageTexts(body).some(
+          text => text.trim() === REQUEST_USER_INPUT_ASYNC_ANSWER
         )
         this.writeSse(response, [
           responseCreated(responseId),

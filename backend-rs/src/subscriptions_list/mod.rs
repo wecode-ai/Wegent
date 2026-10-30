@@ -585,11 +585,26 @@ mod tests {
 
     #[test]
     fn aware_expires_at_renders_z_suffix() {
+        let future = (chrono::Utc::now() + chrono::Duration::days(1))
+            .format("%Y-%m-%dT11:53:00")
+            .to_string();
         let mut json = subscription_json();
-        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+00:00");
+        json["_internal"]["expires_at"] = json!(format!("{future}+00:00"));
         let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
-        assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00Z"));
+        assert_eq!(item.expires_at, Some(format!("{future}Z")));
         assert!(!item.is_expired);
+    }
+
+    #[test]
+    fn past_aware_expires_at_renders_z_suffix_and_is_expired() {
+        let past = (chrono::Utc::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%dT11:53:00")
+            .to_string();
+        let mut json = subscription_json();
+        json["_internal"]["expires_at"] = json!(format!("{past}+00:00"));
+        let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+        assert_eq!(item.expires_at, Some(format!("{past}Z")));
+        assert!(item.is_expired);
     }
 
     #[test]
