@@ -47,6 +47,7 @@ export const templateMessages = {
     publish: '发布到能力商店',
     publishConfirm: '确认发布',
     publishTitle: '分享协作模板',
+    publishScope: '当前仅自己可见，确认发布后公开。',
     publishHint:
       '发布后，其他人可以在能力商店发现并添加此模板。请先检查说明中是否包含不适合公开的内容。',
     published: '模板已发布',
@@ -124,6 +125,7 @@ export const templateMessages = {
     publish: 'Publish to marketplace',
     publishConfirm: 'Publish template',
     publishTitle: 'Share collaboration template',
+    publishScope: 'Currently private to you. Confirm publication to make it public.',
     publishHint:
       'Others will be able to discover and add this template. Check that its text is suitable for sharing.',
     published: 'Template published',

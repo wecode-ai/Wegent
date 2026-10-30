@@ -131,7 +131,13 @@ export function TemplateSaveDialog({
         </>
       ) : (
         <p className="collaboration-template-notice" role="status">
-          {published ? m.published : saved.pendingSync ? m.saveOffline : m.saveOnline}
+          {published
+            ? m.published
+            : publishing
+              ? m.publishScope
+              : saved.pendingSync
+                ? m.saveOffline
+                : m.saveOnline}
         </p>
       )}
       {saved?.syncError && <p role="alert">{m.syncConflict}</p>}

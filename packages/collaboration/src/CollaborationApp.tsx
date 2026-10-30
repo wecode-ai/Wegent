@@ -1067,6 +1067,7 @@ export function CollaborationApp({
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
                             api={api}
+                            currentUserId={templateStore?.library.ownerId}
                             projectId={project.id}
                             workspaceId={project.workspace_id}
                             locale={locale}
