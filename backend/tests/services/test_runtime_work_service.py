@@ -1266,7 +1266,9 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Resolve device-owned task history without requiring cloud task records."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTaskAddress
     from app.services import runtime_work_service
 
@@ -1323,6 +1325,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1334,7 +1337,9 @@ async def test_runtime_transcript_dispatches_pagination_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Preserve pagination and file-change data while requesting device protocol v2."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTranscriptRequest
     from app.services import runtime_work_service
 
@@ -1417,6 +1422,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
             "taskId": "codex-1",
             "limit": 25,
             "beforeCursor": "offset:240",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
@@ -1512,7 +1518,9 @@ async def test_runtime_transcript_dispatches_full_content_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
+    """Forward explicit full-content and navigation options to the device read."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services import runtime_work_service
 
@@ -1558,6 +1566,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             "afterCursor": "offset:10",
             "includeFullContent": True,
             "conversationContextOnly": True,
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
     )
