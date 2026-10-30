@@ -249,6 +249,16 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
 
+### 异步提问模型桩
+
+桌面 E2E 的异步提问模型桩仅将对应 `function_call_output` 回执之后、与预期答案
+完全一致的用户消息识别为回答。AGENTS.md 和环境上下文也可能通过 `role=user`
+传入模型，不能通过扫描全部请求或子串匹配判断用户是否作答。
+
+`desktop-async-input-fixture.test.mjs` 覆盖注入上下文、历史答案、工具输出和真实
+回答；现有桌面异步提问场景在提示词中保留 `Complete` 干扰文本，并继续断言
+作答前的等待消息和作答后的完成消息。
+
 ## Wework 桌面云设备测试
 
 从仓库根目录运行云设备功能 E2E：
