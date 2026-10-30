@@ -113,6 +113,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
     onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     onCreateDeviceDirectory: vi.fn(),
+    onCloneGitRepository: vi.fn(),
     onOpenSettings: vi.fn(),
     onLogout: vi.fn(),
     ...overrides,
