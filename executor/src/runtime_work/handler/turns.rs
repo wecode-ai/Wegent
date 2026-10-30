@@ -482,9 +482,17 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn journal_active_goal_turn(
         &self,
         local_task_id: &str,
-        request: &ExecutionRequest,
         active_turn: Option<&ActiveCodexTurn>,
     ) {
+        let Some(request) = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .get(local_task_id)
+            .and_then(|execution| execution.request.clone())
+        else {
+            return;
+        };
         let thread_id = active_turn.map(|turn| turn.thread_id.clone()).or_else(|| {
             self.local_task_link(local_task_id)
                 .and_then(|link| link.thread_id)
@@ -492,7 +500,7 @@ impl RuntimeWorkRpcHandler {
         let persisted_turn = SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
-            request: request.clone(),
+            request,
             send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
@@ -1136,6 +1144,12 @@ impl RuntimeWorkRpcHandler {
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        self.active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .get_mut(&local_task_id)
+            .expect("the newly admitted execution must exist")
+            .request = Some(request.clone());
         if let Some(restore_startup) = restore_startup.as_ref() {
             self.schedule_restore_startup_timeout(
                 local_task_id.clone(),

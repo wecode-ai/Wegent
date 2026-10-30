@@ -29,7 +29,16 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 #[tokio::test]
 async fn passive_goal_updates_cannot_replace_the_admitted_recovery_request() {
     let (handler, root, request) = setup("native-goal-recovery-request");
-    handler.journal_active_goal_turn("task-1", &request, None);
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stopped, stopped) = oneshot::channel();
+    handler.start_local_task_execution("task-1".into(), cancel, stopped);
+    handler
+        .active_local_executions
+        .lock()
+        .unwrap()
+        .get_mut("task-1")
+        .unwrap()
+        .request = Some(request.clone());
     let mut passive_request = request.clone();
     passive_request.subtask_id = "task-1-context-compact".into();
     handler.register_thread_event_route("thread-1", "task-1".into(), passive_request, false);

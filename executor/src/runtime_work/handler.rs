@@ -676,6 +676,7 @@ struct WorktreeReconciliationState {
 
 struct ActiveLocalExecution {
     execution_id: u64,
+    request: Option<ExecutionRequest>,
     stop_requested: bool,
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,

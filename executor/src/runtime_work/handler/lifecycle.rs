@@ -93,11 +93,7 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
             if self.sync_runtime_task_goal_from_notification(task_id, message) {
-                self.journal_active_goal_turn(
-                    task_id,
-                    request,
-                    self.active_codex_turn(task_id).as_ref(),
-                );
+                self.journal_active_goal_turn(task_id, self.active_codex_turn(task_id).as_ref());
             }
             let mut changed = false;
             let link = self.store.update_task(task_id, |link| {

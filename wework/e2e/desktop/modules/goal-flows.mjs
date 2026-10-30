@@ -109,25 +109,33 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.turn.updated',
   })
-  const clearResponse = JSON.parse(
-    await control.command('clearRuntimeGoalDirectly', 'body', {
-      value: JSON.stringify({ address }),
-    })
-  )
-  assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
-  const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    staleSnapshot.testIds.includes('goal-status-bar'),
-    true,
-    'The dropped Goal clear event did not preserve the stale Goal bar fixture'
-  )
-  assert.equal(
-    staleSnapshot.testIds.includes(goalDotTestId),
-    true,
-    'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
-  )
+  // A refreshed task list can independently repair the sidebar from the same snapshot.
+  await control.command('holdLocalExecutorRequests', 'body', {
+    value: JSON.stringify({ method: 'runtime.tasks.list', phase: 'after-response' }),
+  })
+  try {
+    const clearResponse = JSON.parse(
+      await control.command('clearRuntimeGoalDirectly', 'body', {
+        value: JSON.stringify({ address }),
+      })
+    )
+    assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+    const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      staleSnapshot.testIds.includes('goal-status-bar'),
+      true,
+      'The dropped Goal clear event did not preserve the stale Goal bar fixture'
+    )
+    assert.equal(
+      staleSnapshot.testIds.includes(goalDotTestId),
+      true,
+      'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
+    )
 
-  await control.command('dispatchRuntimeEventLagged', 'body')
+    await control.command('dispatchRuntimeEventLagged', 'body')
+  } finally {
+    await control.command('releaseLocalExecutorRequestHold', 'body')
+  }
   await waitForSnapshot(
     control,
     snapshot =>

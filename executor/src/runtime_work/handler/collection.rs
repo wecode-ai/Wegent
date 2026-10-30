@@ -782,6 +782,7 @@ impl RuntimeWorkRpcHandler {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let control = ActiveLocalExecution {
             execution_id,
+            request: None,
             stop_requested: false,
             stop_acknowledged: false,
             cancel,
