@@ -1952,6 +1952,12 @@ describe('ToolBlocksDisplay', () => {
         />
       )
       expect(screen.getByTestId('processing-summary-header')).toHaveTextContent('正在自动重试…')
+      const announcement = within(screen.getByTestId('processing-summary-header')).getByRole(
+        'status'
+      )
+      expect(announcement).toHaveTextContent('正在自动重试…')
+      expect(announcement).toHaveAttribute('aria-live', 'polite')
+      expect(announcement).toHaveAttribute('aria-atomic', 'true')
       expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
       expect(screen.queryByTestId('tool-thinking-indicator')).not.toBeInTheDocument()
 
@@ -1963,6 +1969,9 @@ describe('ToolBlocksDisplay', () => {
         />
       )
       expect(screen.queryByText('正在自动重试…')).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId('processing-summary-header')?.querySelector('[role="status"]')
+      ).toBeFalsy()
     }
   )
 

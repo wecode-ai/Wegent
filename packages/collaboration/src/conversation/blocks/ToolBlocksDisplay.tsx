@@ -421,6 +421,7 @@ export function ToolBlocksDisplay({
           rows={rows}
           onToggle={toggleSummary}
           title={summaryTitle}
+          announceTitle={retryWaiting}
           labels={{
             command: t('tool_activity.command'),
             file: t('tool_activity.file'),
