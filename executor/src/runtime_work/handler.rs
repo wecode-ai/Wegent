@@ -123,6 +123,7 @@ impl RestoreStartupGate {
 mod active_text;
 mod archives;
 mod assignment_receipts;
+mod async_questions;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
