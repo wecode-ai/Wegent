@@ -565,10 +565,11 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   await control.command('fill', '[data-testid="plugin-share-search"]', {
     value: 'admin',
   })
-  await control.command('waitFor', '[data-testid="plugin-share-search-results"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await new Promise(resolve => setTimeout(resolve, 400))
+  await control.command(
+    'waitFor',
+    '[data-testid="plugin-share-search-results"] [data-testid^="plugin-share-user-"]',
+    { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const [shareDialogAfterSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
