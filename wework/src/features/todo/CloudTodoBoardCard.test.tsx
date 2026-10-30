@@ -991,4 +991,31 @@ describe('CloudTodoBoardCard', () => {
       'task-86'
     )
   })
+  it('keeps the supplied child navigation alongside the card action', () => {
+    const onOpen = vi.fn()
+    const onChildren = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={onOpen}
+        onArchive={vi.fn()}
+        display={{ showAssignee: false, showPriority: false, showTags: false, showDate: false }}
+        childrenAction={
+          <button data-testid="child-issue-navigation" onClick={onChildren}>
+            Children
+          </button>
+        }
+        cardAction={{
+          kind: 'archive',
+          label: 'Archive',
+          testId: 'extra-card-action',
+          onClick: vi.fn(),
+        }}
+      />
+    )
+    expect(screen.getByTestId('extra-card-action')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('child-issue-navigation'))
+    expect(onChildren).toHaveBeenCalledOnce()
+    expect(onOpen).not.toHaveBeenCalled()
+  })
 })
