@@ -368,7 +368,7 @@ export function applyCompletedAssistantContent(
   );
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: itemId ?? `runtime-final:${turnId ?? "pending"}`,
+      id: itemId ?? items[matchingProcessTextIndex].id,
       type: "assistant_text",
       content,
       createdAt: new Date().toISOString(),

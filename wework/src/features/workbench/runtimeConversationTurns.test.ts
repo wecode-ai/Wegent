@@ -1018,7 +1018,7 @@ describe('runtimeConversationTurns', () => {
     expect(turns[0].items).toEqual([
       expect.objectContaining({ id: 'cpu-progress', type: 'block' }),
       expect.objectContaining({
-        id: 'runtime-final:turn-1',
+        id: 'memory-final',
         type: 'assistant_text',
         content: '内存检查完成。',
       }),
@@ -1316,7 +1316,7 @@ describe('runtimeConversationTurns', () => {
 
     expect(turns[0].items.map(item => item.id)).toEqual([
       'tool-1',
-      'runtime-final:turn-1',
+      'final-process-text',
       'guidance-1',
     ])
     expect(
