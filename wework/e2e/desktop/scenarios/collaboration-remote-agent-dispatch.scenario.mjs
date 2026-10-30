@@ -36,6 +36,7 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  waitForControlValue,
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -197,11 +198,13 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     timeoutMs
   )
   // Persistence can be visible before the create dialog becomes the saved Issue.
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
-    value: title,
-    visible: true,
-    timeoutMs,
-  })
+  await waitForControlValue(
+    control,
+    scoped('[data-testid="cloud-todo-detail-title"]'),
+    title,
+    'The newly created Issue detail was not opened',
+    timeoutMs
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
     timeoutMs,
   })
