@@ -500,10 +500,13 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: thread_id,
             initial_thread_goal: None,
         };
+        // Native metadata may arrive through a passive or compaction content route.
+        // Only admission owns replacement of an existing recovery request.
         self.active_goal_turns
             .lock()
             .expect("active Goal turn map lock should not be poisoned")
-            .insert(local_task_id.to_owned(), persisted_turn);
+            .entry(local_task_id.to_owned())
+            .or_insert(persisted_turn);
         self.set_goal_execution_status(local_task_id, Some("running"));
         let handler = self.clone();
         let local_task_id = local_task_id.to_owned();

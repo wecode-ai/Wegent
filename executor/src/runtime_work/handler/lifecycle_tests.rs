@@ -27,6 +27,26 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 }
 
 #[tokio::test]
+async fn passive_goal_updates_cannot_replace_the_admitted_recovery_request() {
+    let (handler, root, request) = setup("native-goal-recovery-request");
+    handler.journal_active_goal_turn("task-1", &request, None);
+    let mut passive_request = request.clone();
+    passive_request.subtask_id = "task-1-context-compact".into();
+    handler.register_thread_event_route("thread-1", "task-1".into(), passive_request, false);
+    handler.route_codex_notification(json!({"method":"thread/goal/updated", "params": {
+        "threadId":"thread-1", "goal":{"status":"active", "tokensUsed":10}
+    }}));
+    let journal = handler.active_goal_turns.lock().unwrap();
+    assert_eq!(journal["task-1"].request.subtask_id, request.subtask_id);
+    assert_eq!(
+        journal["task-1"].resume_thread_id.as_deref(),
+        Some("thread-1")
+    );
+    drop(journal);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn native_execution_survives_summary_projection_but_is_not_restored_from_disk() {
     let (handler, root, _) = setup("native-summary-projection");
     handler.route_codex_notification(notification("turn/started", "turn-1"));

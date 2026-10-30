@@ -105,6 +105,10 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.goal.cleared',
   })
+  // The versioned task snapshot also carries the authoritative Goal status.
+  await control.command('dropNextRuntimeEvent', 'body', {
+    value: 'runtime.turn.updated',
+  })
   const clearResponse = JSON.parse(
     await control.command('clearRuntimeGoalDirectly', 'body', {
       value: JSON.stringify({ address }),
