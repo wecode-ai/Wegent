@@ -39,8 +39,17 @@ interface LogFile {
 }
 
 const DEFAULT_MAX_LOG_FILES = 12
-const DEFAULT_MAX_LOG_TAIL_BYTES = 16 * 1024
+const DEFAULT_MAX_LOG_TAIL_BYTES = 96 * 1024
 const MAX_ERROR_LINES = 60
+// Keep the logs that explain a failed start ahead of rotated noise when the
+// file budget is exhausted.
+const PRIORITY_LOG_NAMES = [
+  'wework-main.log',
+  'renderer-startup.log',
+  'executor.log',
+  'dsh-core-runtime.log',
+  'app-update.log',
+] as const
 const ERROR_LINE_PATTERN =
   /\b(error|failed|failure|fatal|exception|timeout|timed out|refused|crash|exit(?:ed)? code|EADDRINUSE|ENOENT|EACCES)\b/i
 
@@ -145,14 +154,23 @@ async function collectLogFiles(
     }
   }
   return [...files.values()]
-    .sort(
-      (left, right) => right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path)
-    )
+    .sort((left, right) => {
+      const priority = logPriority(basename(left.path)) - logPriority(basename(right.path))
+      return priority !== 0
+        ? priority
+        : right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path)
+    })
     .slice(0, maxFiles)
 }
 
 function isLogName(name: string): boolean {
   return /\.log(?:\.\d+|\.bak)?$/i.test(name) || /\.log\.[^.]+$/i.test(name)
+}
+
+function logPriority(name: string): number {
+  const base = name.replace(/\.\d+$|\.bak$/i, '')
+  const index = PRIORITY_LOG_NAMES.indexOf(base as (typeof PRIORITY_LOG_NAMES)[number])
+  return index === -1 ? PRIORITY_LOG_NAMES.length : index
 }
 
 function formatProgress(
@@ -212,28 +230,37 @@ function formatRuntimeState(runtimeState: unknown): string {
   }
 }
 
+interface LogWindow {
+  tail: string
+  /** First matching error outside the included tail, so truncation cannot hide it. */
+  firstErrorLine: string | null
+}
+
 async function readLogTails(
   files: readonly LogFile[],
   maxTailBytes: number
-): Promise<Map<string, string>> {
-  const tails = new Map<string, string>()
+): Promise<Map<string, LogWindow>> {
+  const windows = new Map<string, LogWindow>()
   for (const file of files) {
-    tails.set(file.path, await readLogTail(file.path, maxTailBytes))
+    windows.set(file.path, await readLogWindow(file.path, maxTailBytes))
   }
-  return tails
+  return windows
 }
 
-function formatLogFiles(files: readonly LogFile[], tails: ReadonlyMap<string, string>): string {
+function formatLogFiles(files: readonly LogFile[], tails: ReadonlyMap<string, LogWindow>): string {
   if (files.length === 0) return '(no log files found)'
   const sections: string[] = []
   for (const file of files) {
-    const tail = tails.get(file.path) ?? ''
+    const window = tails.get(file.path)
     sections.push(
       `--- ${basename(file.path)} (${formatBytes(file.size)}, modified ${new Date(
         file.modifiedAt
       ).toISOString()}) ---`,
       `path: ${file.path}`,
-      tail.trimEnd() || '(empty)'
+      ...(window?.firstErrorLine
+        ? [`[first error before the included tail] ${window.firstErrorLine}`, '']
+        : []),
+      window?.tail.trimEnd() || '(empty)'
     )
   }
   return sections.join('\n\n')
@@ -241,11 +268,16 @@ function formatLogFiles(files: readonly LogFile[], tails: ReadonlyMap<string, st
 
 function formatRecentErrorLines(
   files: readonly LogFile[],
-  tails: ReadonlyMap<string, string>
+  tails: ReadonlyMap<string, LogWindow>
 ): string {
   const matches: string[] = []
   for (const file of files) {
-    for (const line of (tails.get(file.path) ?? '').split('\n')) {
+    const window = tails.get(file.path)
+    if (window?.firstErrorLine) {
+      matches.push(`${basename(file.path)}: ${window.firstErrorLine}`)
+      if (matches.length >= MAX_ERROR_LINES) break
+    }
+    for (const line of (window?.tail ?? '').split('\n')) {
       if (!ERROR_LINE_PATTERN.test(line)) continue
       matches.push(`${basename(file.path)}: ${line.trim()}`)
       if (matches.length >= MAX_ERROR_LINES) break
@@ -255,20 +287,38 @@ function formatRecentErrorLines(
   return matches.length > 0 ? matches.join('\n') : '(no error lines found in recent logs)'
 }
 
-async function readLogTail(path: string, maxBytes: number): Promise<string> {
+async function readLogWindow(path: string, maxBytes: number): Promise<LogWindow> {
   try {
     const handle = await open(path, 'r')
     try {
       const metadata = await handle.stat()
-      const length = Math.min(metadata.size, maxBytes)
-      const buffer = Buffer.alloc(length)
-      await handle.read(buffer, 0, length, Math.max(0, metadata.size - length))
-      return buffer.toString('utf8')
+      const tailLength = Math.min(metadata.size, maxBytes)
+      const tailStart = Math.max(0, metadata.size - tailLength)
+      const tailBuffer = Buffer.alloc(tailLength)
+      await handle.read(tailBuffer, 0, tailLength, tailStart)
+      const tail = tailBuffer.toString('utf8')
+      if (tailStart === 0) return { tail, firstErrorLine: null }
+
+      const headLength = Math.min(tailStart, maxBytes)
+      const headBuffer = Buffer.alloc(headLength)
+      await handle.read(headBuffer, 0, headLength, 0)
+      const headError = headBuffer
+        .toString('utf8')
+        .split('\n')
+        .map(line => line.trim())
+        .find(line => ERROR_LINE_PATTERN.test(line))
+      return {
+        tail,
+        firstErrorLine: headError && !tail.includes(headError) ? headError : null,
+      }
     } finally {
       await handle.close()
     }
   } catch (error) {
-    return `(unable to read log: ${error instanceof Error ? error.message : String(error)})`
+    return {
+      tail: `(unable to read log: ${error instanceof Error ? error.message : String(error)})`,
+      firstErrorLine: null,
+    }
   }
 }
 

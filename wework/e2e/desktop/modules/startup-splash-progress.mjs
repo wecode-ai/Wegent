@@ -137,6 +137,7 @@ export async function verifyStartupSplashProgress({ appBinary, resultDir, electr
     failureCopy,
     copiedDiagnostics,
     missingLogs,
+    firstErrorPreserved,
   } = evidence
 
   // The copy action must carry every startup log source, not just the UI text.
@@ -144,6 +145,11 @@ export async function verifyStartupSplashProgress({ appBinary, resultDir, electr
     missingLogs,
     [],
     `The copied startup diagnostics missed log sources: ${missingLogs.join(', ')}`
+  )
+  assert.equal(
+    firstErrorPreserved,
+    true,
+    'The copied startup diagnostics lost the first error line of a truncated log'
   )
   for (const section of [
     'Wework startup diagnostics',
@@ -274,6 +280,14 @@ async function runSplashProgressVerification() {
   await Promise.all(
     Object.values(logFiles).map(file => fs.writeFile(file.path, `${file.marker}\n`))
   )
+  // Overflow the included tail so the first error only survives through the
+  // dedicated "first error" capture.
+  const firstErrorLine = 'fatal: first startup error EACCES'
+  const filler = Array.from(
+    { length: 4000 },
+    (_, index) => `noise ${index} ${'x'.repeat(64)}`
+  ).join('\n')
+  await fs.writeFile(logFiles.main.path, `${firstErrorLine}\n${filler}\n${logFiles.main.marker}\n`)
   const diagnosticsProgress = () => ({
     index: 2,
     total: 9,
@@ -412,6 +426,7 @@ async function runSplashProgressVerification() {
   const missingLogs = Object.entries(logFiles)
     .filter(([, file]) => !copiedDiagnostics.includes(file.marker))
     .map(([name]) => name)
+  const firstErrorPreserved = copiedDiagnostics.includes(firstErrorLine)
 
   await fs.writeFile(
     path.join(input.root, 'evidence.json'),
@@ -425,6 +440,7 @@ async function runSplashProgressVerification() {
         failureCopy,
         copiedDiagnostics,
         missingLogs,
+        firstErrorPreserved,
       },
       null,
       2

@@ -489,12 +489,15 @@ app.on('web-contents-created', (_event, contents) => {
         sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
       })
     }
-    // Keep renderer errors that happen while the splash is still up; they are
-    // the only startup evidence the main process cannot observe itself.
-    if (level === 3 && startupSplash?.snapshot().state !== 'closed') {
+    // Keep renderer warnings and errors raised while the splash is still up;
+    // they are startup evidence the main process cannot observe itself.
+    if (level >= 2 && startupSplash?.snapshot().state !== 'closed') {
       const source = URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : sourceId
       void startupRendererLog
-        .record(contents.id, `[renderer] ${source}:${lineNumber} ${message}`)
+        .record(
+          contents.id,
+          `[renderer:${level === 3 ? 'error' : 'warning'}] ${source}:${lineNumber} ${message}`
+        )
         .catch(error => {
           console.warn('[Wework] Failed to write startup renderer diagnostics', error)
         })

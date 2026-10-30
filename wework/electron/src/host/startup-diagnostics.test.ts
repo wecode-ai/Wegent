@@ -96,6 +96,68 @@ describe('startup diagnostics', () => {
 
     expect(diagnostics.match(/--- file-/g)).toHaveLength(2)
   })
+
+  test('keeps the first error line when a log is larger than the included tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    const logDirectory = join(root, 'logs')
+    await mkdir(logDirectory)
+    const filler = Array.from(
+      { length: 400 },
+      (_, index) => `noise ${index} ${'x'.repeat(40)}`
+    ).join('\n')
+    await writeFile(
+      join(logDirectory, 'wework-main.log'),
+      `fatal: first startup error\n${filler}\nlatest-tail-marker\n`
+    )
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [logDirectory],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogTailBytes: 256,
+    })
+
+    expect(diagnostics).toContain(
+      '[first error before the included tail] fatal: first startup error'
+    )
+    expect(diagnostics).toContain('wework-main.log: fatal: first startup error')
+    expect(diagnostics).toContain('latest-tail-marker')
+    expect(diagnostics).not.toContain('noise 0 ')
+  })
+
+  test('keeps priority logs when the file budget is exhausted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    const logDirectory = join(root, 'logs')
+    await mkdir(logDirectory)
+    await writeFile(join(logDirectory, 'wework-main.log'), 'main-tail\n')
+    await writeFile(join(logDirectory, 'app-update.log'), 'update-tail\n')
+    for (let index = 0; index < 4; index += 1) {
+      await writeFile(join(logDirectory, `noise-${index}.log`), `noise-${index}\n`)
+    }
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [logDirectory],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogFiles: 2,
+    })
+
+    expect(diagnostics).toContain('wework-main.log')
+    expect(diagnostics).toContain('app-update.log')
+    expect(diagnostics).not.toContain('noise-0.log')
+  })
 })
 
 function progressUpdate(
