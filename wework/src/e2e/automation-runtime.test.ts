@@ -40,6 +40,65 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test.each([false, true])(
+    'allows an authenticated RPC to overlap later commands and reports its failure: %s',
+    async failHeldRequest => {
+      let resolveHeld!: (value: unknown) => void
+      let rejectHeld!: (error: Error) => void
+      const held = new Promise((resolve, reject) => {
+        resolveHeld = resolve
+        rejectHeld = reject
+      })
+      const requestRuntime = vi.fn(async (input: { url: string }) => {
+        if (input.url.endsWith('/held')) return held
+        if (failHeldRequest) rejectHeld(new Error('Held RPC failed'))
+        else resolveHeld({ status: 200, body: 'held result' })
+        return { status: 200, body: 'overlapping result' }
+      })
+      const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+      verificationWindow.weworkElectronVerification = { requestRuntime }
+      const command = (id: string): DesktopControlCommand => ({
+        id,
+        action: 'fetchLocalRuntime',
+        selector: 'body',
+        value: JSON.stringify({ url: `http://127.0.0.1:3000/wework/${id}` }),
+      })
+      const commands: DesktopControlCommand[] = [
+        command('held'),
+        { id: 'origin', action: 'getLocationOrigin', selector: 'body' },
+        command('overlapping'),
+      ]
+      const results: Array<{ id: string; ok: boolean; value?: string; error?: string }> = []
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          const next = commands.shift()
+          return next
+            ? Promise.resolve(new Response(JSON.stringify(next)))
+            : new Promise<Response>(() => {})
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      try {
+        await vi.waitFor(() => expect(results).toHaveLength(3))
+        expect(requestRuntime).toHaveBeenCalledTimes(2)
+        expect(results[0]).toMatchObject({ id: 'origin', ok: true, value: window.location.origin })
+        expect(results.find(result => result.id === 'overlapping')).toMatchObject({
+          ok: true,
+          value: JSON.stringify({ status: 200, body: 'overlapping result' }),
+        })
+        expect(results.find(result => result.id === 'held')).toMatchObject(
+          failHeldRequest
+            ? { ok: false, error: 'Held RPC failed' }
+            : { ok: true, value: JSON.stringify({ status: 200, body: 'held result' }) }
+        )
+      } finally {
+        delete verificationWindow.weworkElectronVerification
+      }
+    }
+  )
+
   test('registers before polling and stops when the server retires the client', async () => {
     let register!: (response: Response) => void
     const registration = new Promise<Response>(resolve => {
