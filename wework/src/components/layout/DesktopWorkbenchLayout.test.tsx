@@ -8036,6 +8036,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
   })
 
+  test('keeps the sidebar and side chat translucent behind the workbench background', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+        backgroundInSidebar: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('bg-background/25')
+    const paneGroups = screen.getAllByTestId(/^workbench-pane-pane-/)
+    expect(paneGroups.length).toBeGreaterThan(0)
+    paneGroups.forEach(group => expect(group).toHaveClass('bg-transparent'))
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(
+      within(screen.getByTestId('right-workspace-chat-panel')).getByTestId(
+        'right-workspace-chat-composer-shell'
+      )
+    ).toHaveClass('bg-transparent')
+  })
+
   test('opens the browser from the right workspace launcher row', async () => {
     renderWorkspacePanelLayout()
 

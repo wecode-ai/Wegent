@@ -1,3 +1,4 @@
+import { getTelemetryConfig } from './config'
 import { trackPluginEvent } from './businessEvents'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -9,12 +10,11 @@ const mocks = vi.hoisted(() => ({
     isLoading: false,
     user: { email: 'zhongyang@example.invalid', id: 7, user_name: 'zhongyang' },
   },
-  distribution: 'public' as 'internal' | 'public',
-  flushInternalSinks: vi.fn(),
   hostEventHandler: null as
     | ((event: { type: string; payload: Record<string, unknown> }) => void)
     | null,
   publish: vi.fn(),
+  listApps: vi.fn(),
   preferences: {
     loaded: true,
     preferences: { telemetryConsentAsked: true, telemetryEnabled: true },
@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/features/dsh-runtime/useDshSlotEntries', () => ({
   useDshSlotEntries: () => [{ path: '/plugins', telemetryFeature: 'plugins' }],
 }))
+
+vi.mock('@/api/local/harnessApps', () => ({ harnessAppsApi: { list: mocks.listApps } }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   subscribeDesktopHostEvents: (
@@ -41,9 +43,8 @@ vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => true,
 }))
 
-vi.mock('./config', () => ({
-  getTelemetryConfig: () => ({ distribution: mocks.distribution }),
-}))
+const setTelemetryUser = vi.hoisted(() => vi.fn())
+vi.mock('./identity', () => ({ setTelemetryUser }))
 
 vi.mock('./client', () => ({
   trackEvent: vi.fn(),
@@ -52,7 +53,6 @@ vi.mock('./client', () => ({
 
 vi.mock('./dispatcher', () => ({
   createTelemetryDispatcher: () => ({
-    flushInternalSinks: mocks.flushInternalSinks,
     publish: mocks.publish,
   }),
 }))
@@ -65,18 +65,13 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
   useAppPreferencesState: () => mocks.preferences,
 }))
 
-vi.mock('@/features/dsh-runtime/dshExtensions', () => ({
-  getDshTelemetrySinks: () => [],
-  subscribeDshTelemetrySinks: () => () => {},
-}))
-
 describe('TelemetryAgent', () => {
   beforeEach(() => {
     mocks.auth.isLoading = false
     mocks.auth.user = { email: 'zhongyang@example.invalid', id: 7, user_name: 'zhongyang' }
-    mocks.distribution = 'public'
-    mocks.flushInternalSinks.mockReset()
     mocks.hostEventHandler = null
+    vi.unstubAllEnvs()
+    mocks.listApps.mockReset().mockResolvedValue([])
     mocks.publish.mockReset()
     mocks.preferences.loaded = true
     mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
@@ -85,7 +80,90 @@ describe('TelemetryAgent', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     window.history.replaceState({}, '', '/')
+  })
+
+  test('updates account identity without depending on event routing', () => {
+    const view = render(<TelemetryAgent />)
+    expect(setTelemetryUser).toHaveBeenLastCalledWith(mocks.auth.user)
+    view.unmount()
+    expect(setTelemetryUser).toHaveBeenLastCalledWith(null)
+  })
+
+  test('includes application dimensions on a restored route before runtime registration', async () => {
+    vi.stubEnv(
+      'VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS',
+      '["smart_app_key","smart_app_name","smart_app_version","smart_app_source"]'
+    )
+    window.history.replaceState({}, '', '/app/harness-restored')
+    mocks.listApps.mockResolvedValue([
+      {
+        id: 'restored',
+        source: 'market',
+        state: 'installed',
+        manifest: { name: 'research', displayName: 'Research', version: '1.0.0' },
+      },
+    ])
+    render(<TelemetryAgent />)
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'smart_app_opened',
+          context: {
+            smartApp: { key: 'research', name: 'Research', version: '1.0.0', source: 'market' },
+          },
+        })
+      )
+    )
+    expect(mocks.listApps).toHaveBeenCalledOnce()
+    expect(getTelemetryConfig().contextFields).toHaveLength(4)
+  })
+
+  test('does not load application identity with the default privacy policy', async () => {
+    window.history.replaceState({}, '', '/app/harness-restored')
+    render(<TelemetryAgent />)
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'smart_app_opened' })
+      )
+    )
+    expect(mocks.listApps).not.toHaveBeenCalled()
+    expect(mocks.publish.mock.calls[0][0]).not.toHaveProperty('context')
+  })
+
+  test('keeps the route event when application metadata cannot be read', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', '["smart_app_name"]')
+    window.history.replaceState({}, '', '/app/harness-restored')
+    mocks.listApps.mockRejectedValue(new Error('offline'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      render(<TelemetryAgent />)
+      await waitFor(() =>
+        expect(mocks.publish).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'smart_app_opened' })
+        )
+      )
+      expect(mocks.publish).toHaveBeenCalledOnce()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('drops an unresolved application observation after the account changes', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', '["smart_app_name"]')
+    let resolveApps: (apps: unknown[]) => void = () => {}
+    mocks.listApps.mockReturnValue(
+      new Promise(resolve => {
+        resolveApps = resolve
+      })
+    )
+    window.history.replaceState({}, '', '/app/harness-restored')
+    const view = render(<TelemetryAgent />)
+    mocks.auth.user = { id: 8, user_name: 'Bob', email: 'bob@example.invalid' }
+    view.rerender(<TelemetryAgent />)
+    await act(async () => resolveApps([]))
+    expect(mocks.publish).not.toHaveBeenCalled()
   })
 
   test('automatically publishes each Smart App route transition once', async () => {
@@ -112,8 +190,7 @@ describe('TelemetryAgent', () => {
     )
   })
 
-  test('waits for authentication before adding internal context', async () => {
-    mocks.distribution = 'internal'
+  test('waits for authentication before publishing route observations', async () => {
     mocks.auth.isLoading = true
     const view = render(<TelemetryAgent />)
 
@@ -125,16 +202,13 @@ describe('TelemetryAgent', () => {
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
-          context: {
-            user: { email: 'zhongyang@example.invalid', id: 7, userName: 'zhongyang' },
-          },
           name: 'smart_app_marketplace_opened',
         })
       )
     )
   })
 
-  test('publishes the current route after public telemetry is enabled', async () => {
+  test('publishes the current route after telemetry is enabled', async () => {
     mocks.preferences.preferences = { telemetryConsentAsked: false, telemetryEnabled: false }
     mocks.telemetryEnabled = false
     const view = render(<TelemetryAgent />)
@@ -192,8 +266,7 @@ describe('TelemetryAgent', () => {
     )
   })
 
-  test('dispatches plugin observations and operation results to internal sinks', async () => {
-    mocks.distribution = 'internal'
+  test('dispatches plugin observations and operation results through the shared dispatcher', async () => {
     window.history.replaceState({}, '', '/plugins')
     render(<TelemetryAgent />)
     await waitFor(() =>
@@ -213,7 +286,6 @@ describe('TelemetryAgent', () => {
     expect(mocks.publish).toHaveBeenLastCalledWith(
       expect.objectContaining({
         name: 'plugin_installed',
-        context: { user: { id: 7, userName: 'zhongyang', email: 'zhongyang@example.invalid' } },
       })
     )
   })

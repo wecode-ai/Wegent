@@ -1115,6 +1115,15 @@ export function createHybridWorkbenchServices(
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
     },
+    getMcpAppSessionTarget(address: RuntimeTaskAddress) {
+      return isLocalDeviceId(address.deviceId)
+        ? undefined
+        : {
+            apiBaseUrl: options.apiBaseUrl,
+            socketBaseUrl: options.socketBaseUrl,
+            socketPath: options.socketPath,
+          }
+    },
     requestMcpApp<T = unknown>(data: import('@/api/mcpApps').McpAppRequest): Promise<T> {
       const api = routeByAddress(data.address)
       if (!api.requestMcpApp) throw new Error('Executor does not support MCP Apps')

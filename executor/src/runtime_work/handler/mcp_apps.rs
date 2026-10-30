@@ -61,7 +61,14 @@ fn app_resources(source: &Value, server: &Value, key: &str) -> Vec<Value> {
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn mcp_app_request(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let link = self.task_link_from_payload(&payload, false).await?;
+        // Closing an app may race task archival; both states own the same session.
+        let link = match self.task_link_from_payload(&payload, false).await {
+            Ok(link) => link,
+            Err(error) if payload["method"] == "release" && error.code == "not_found" => {
+                self.task_link_from_payload(&payload, true).await?
+            }
+            Err(error) => return Err(error),
+        };
         if link.runtime != "codex" {
             return Err(app_error("MCP Apps require a Codex session"));
         }
@@ -69,9 +76,24 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| app_error("The task has no active session"))?;
         let call_id = string_field(&payload, "callId")
             .ok_or_else(|| app_error("Missing source invocation"))?;
+        let discovering = payload["method"].is_null() || payload["method"] == "discover";
+        let session_id = payload
+            .get("sessionId")
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty() && id.len() <= 128 && id.is_ascii())
+                    .ok_or_else(|| app_error("Invalid MCP App session identity"))
+            })
+            .transpose()?;
         if payload["method"] == "release" {
             self.codex_app_server
-                .set_mcp_app_lease(&thread_id, &call_id, false)
+                .set_mcp_app_session(
+                    &thread_id,
+                    &call_id,
+                    session_id.ok_or_else(|| app_error("Missing MCP App session identity"))?,
+                    false,
+                )
                 .await;
             return Ok(json!({}));
         }
@@ -85,7 +107,7 @@ impl RuntimeWorkRpcHandler {
         let source = match source_call(&read["thread"], &call_id) {
             Some(source) => source,
             // Streamed model calls can precede the native MCP invocation record.
-            None if payload["method"].is_null() => return Ok(Value::Null),
+            None if discovering => return Ok(Value::Null),
             None => return Err(app_error("Source invocation does not belong to this task")),
         };
         if read["thread"]["status"]["type"] == "notLoaded" {
@@ -120,7 +142,7 @@ impl RuntimeWorkRpcHandler {
         let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
             // Discovery is optional for ordinary MCP calls, including historical calls
             // whose server or tool is no longer in the current catalog.
-            return if payload["method"].is_null() {
+            return if discovering {
                 Ok(Value::Null)
             } else {
                 Err(app_error("Source invocation has no MCP App resource"))
@@ -135,13 +157,29 @@ impl RuntimeWorkRpcHandler {
         if origin.is_none() {
             return Err(app_error("The source app is no longer available"));
         }
-        self.codex_app_server
-            .set_mcp_app_lease(&thread_id, &call_id, true)
-            .await;
+        let descriptor = || {
+            json!({"tool":origin,"server":server,
+            "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
+            "resourceUri":uri,"arguments":source["arguments"],"result":source["result"]})
+        };
+        // Discovery confirms app identity without loading HTML or retaining a connection.
+        if payload["method"] == "discover" {
+            return Ok(descriptor());
+        }
+        if payload["method"] == "retain" {
+            self.codex_app_server
+                .set_mcp_app_session(
+                    &thread_id,
+                    &call_id,
+                    session_id.ok_or_else(|| app_error("Missing MCP App session identity"))?,
+                    true,
+                )
+                .await;
+            return Ok(json!({}));
+        }
         let method = payload["method"].as_str().unwrap_or("initialize");
         let params = &payload["params"];
         match method {
-            "ping" => Ok(json!({})),
             "ui/update-model-context" => {
                 if !params.is_object()
                     || serde_json::to_vec(params).map_or(true, |bytes| bytes.len() > 65536)
@@ -178,9 +216,9 @@ impl RuntimeWorkRpcHandler {
                     )
                     .await
                     .map_err(|_| app_error("Cannot read MCP App resource"))?;
-                Ok(json!({"resource":resource,"tool":origin,"server":server,
-                    "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
-                    "resourceUri":uri,"arguments":source["arguments"],"result":source["result"]}))
+                let mut descriptor = descriptor();
+                descriptor["resource"] = resource;
+                Ok(descriptor)
             }
             "tools/list" => {
                 Ok(json!({"tools":catalog.into_iter().filter(app_visible).collect::<Vec<_>>()}))
@@ -450,9 +488,10 @@ done
                 let mut task = RuntimeTaskLink::new_pending("task".into(),
                     root.path().join("project").display().to_string(), "MCP".into());
                 task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
-                handler.upsert_local_task(task);
+                handler.upsert_local_task(task.clone());
                 for call in ["missing-server", "missing-tool", "ordinary", "broken-catalog"] {
                     assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap(), Value::Null, "{call}");
+                    assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap(), Value::Null, "{call}");
                     for method in ["initialize", "tools/call", "resources/read", "ui/update-model-context"] {
                         assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":method})).await.is_err(), "{call}: {method}");
                     }
@@ -461,10 +500,17 @@ done
                     assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.is_err(), "{call}");
                 }
                 for call in ["catalog-app", "result-app"] {
+                    let discovery = handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap();
+                    assert_eq!(discovery["resourceUri"], "ui://app");
+                    assert!(discovery.get("resource").is_none());
                     let app = handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap();
                     assert_eq!(app["resourceUri"], "ui://app");
                     assert_eq!(app["resource"]["contents"][0]["text"], "Ready");
                 }
+                handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"retain","sessionId":"instance"})).await.unwrap();
+                task.status = "archived".into();
+                handler.upsert_local_task(task);
+                handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"release","sessionId":"instance"})).await.unwrap();
                 handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
             });
     }

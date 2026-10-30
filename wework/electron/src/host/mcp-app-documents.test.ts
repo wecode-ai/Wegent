@@ -2,18 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { McpAppDocuments, mcpAppContentSecurityPolicy } from './mcp-app-documents.js'
 
 describe('MCP App isolated documents', () => {
-  it('expires abandoned documents and renews live renderer leases', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  it('keeps documents until explicit release without timer renewal', async () => {
+    vi.useFakeTimers()
     const documents = new McpAppDocuments()
     try {
       const active = await documents.create('<p>Active</p>', {})
-      const abandoned = await documents.create('<p>Abandoned</p>', {})
-      vi.advanceTimersByTime(60000)
-      documents.renew(active.id)
-      vi.advanceTimersByTime(30001)
-      expect(documents.owns(abandoned.url)).toBe(false)
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000)
       expect(documents.owns(active.url)).toBe(true)
-      vi.advanceTimersByTime(60000)
+      documents.release(active.id)
       expect(documents.owns(active.url)).toBe(false)
     } finally {
       documents.dispose()
