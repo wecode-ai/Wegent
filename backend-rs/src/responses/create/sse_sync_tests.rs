@@ -547,6 +547,44 @@ async fn spawn_stream_server(frames: Vec<&'static str>) -> String {
     format!("http://{addr}")
 }
 
+/// Answers with `200 text/event-stream`, writes `first`, then waits before
+/// each remaining frame. The total lifetime can exceed the per-read timeout
+/// while every individual inter-chunk gap stays below it.
+async fn spawn_gapped_stream_server(
+    first: &'static str,
+    frames: Vec<(&'static str, Duration)>,
+) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if !read_http_request(&mut stream).await {
+            return;
+        }
+        let _ = stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+            )
+            .await;
+        let _ = stream
+            .write_all(format!("data: {first}\n\n").as_bytes())
+            .await;
+        let _ = stream.flush().await;
+        for (frame, gap) in frames {
+            tokio::time::sleep(gap).await;
+            let _ = stream
+                .write_all(format!("data: {frame}\n\n").as_bytes())
+                .await;
+            let _ = stream.flush().await;
+        }
+        let mut byte = [0_u8; 1];
+        let _ = stream.read(&mut byte).await;
+    });
+    format!("http://{addr}")
+}
+
 /// As [`spawn_stream_server`], but signals after the frames were flushed and
 /// keeps the connection open, so a test can act while the terminal drain is
 /// still reading the delayed EOF.
@@ -650,6 +688,37 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         "register and unregister still delete the key: {:?}",
         redis.calls()
     );
+}
+
+/// A stream that outlives the per-read timeout must keep running while
+/// chunks arrive. The regression this guards is a total request deadline that
+/// cuts an otherwise healthy long-running Chat turn at the timeout boundary.
+#[tokio::test]
+async fn stream_outliving_the_read_timeout_continues_while_chunks_arrive() {
+    let gap = Duration::from_millis(1_200);
+    let read_timeout = Duration::from_secs(2);
+    let url = spawn_gapped_stream_server(CREATED, vec![(DELTA, gap), (COMPLETED, gap)]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default();
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+    };
+    let request = execution_request();
+
+    let collected = tokio::time::timeout(
+        Duration::from_secs(6),
+        collect_with_read_timeout(&ctx, &url, &request, "req-test", Some(2), read_timeout),
+    )
+    .await
+    .expect("the stream completes after outliving the read timeout")
+    .expect("chunks arriving inside the read timeout keep the stream alive");
+
+    assert_eq!(collected.content, "hello");
 }
 
 /// A cross-worker cancel is acted on while `.send()` still awaits the HTTP

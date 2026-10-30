@@ -79,7 +79,11 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
 const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
 /// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The chat-shell request timeout (`httpx`'s 300-second default).
+/// The chat-shell per-read timeout (`httpx`'s 300-second default).
+///
+/// This is an inactivity window, not a total request deadline. A streaming
+/// response may legitimately run longer than this as long as chunks keep
+/// arriving.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 /// `_SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS`: the bounded tail read after a
 /// delivered terminal event.
@@ -128,6 +132,25 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     request_id: &str,
     message_id: Option<i64>,
 ) -> Result<Collected, String> {
+    collect_with_read_timeout(
+        ctx,
+        target_url,
+        request,
+        request_id,
+        message_id,
+        STREAM_TIMEOUT,
+    )
+    .await
+}
+
+async fn collect_with_read_timeout<M: Mysql, R: Redis + Clone>(
+    ctx: &ConsumerContext<'_, M, R>,
+    target_url: &str,
+    request: &ExecutionRequest,
+    request_id: &str,
+    message_id: Option<i64>,
+    read_timeout: Duration,
+) -> Result<Collected, String> {
     let Some(redis) = ctx.redis else {
         return Err("Connection error.".to_string());
     };
@@ -147,6 +170,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
         redis,
         &mut emitter,
         cancel_key.as_str(),
+        read_timeout,
     )
     .await;
 
@@ -230,6 +254,7 @@ async fn read_stream<M: Mysql, R: Redis>(
     redis: &R,
     emitter: &mut StatusUpdatingEmitter<R>,
     cancel_key: &str,
+    read_timeout: Duration,
 ) -> Result<Collected, Failure> {
     let mut content = String::new();
     // `_wait_for_sse_cancellation` is created before `stream_open_task`
@@ -259,6 +284,7 @@ async fn read_stream<M: Mysql, R: Redis>(
             message_id,
             emitter,
             &mut content,
+            read_timeout,
         );
         tokio::pin!(open);
         if already_cancelled {
@@ -320,6 +346,7 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     message_id: Option<i64>,
     emitter: &mut StatusUpdatingEmitter<R>,
     content: &mut String,
+    read_timeout: Duration,
 ) -> Result<StreamEnd, Failure> {
     let url = format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/'));
     // The source's OpenAI/httpx client uses a 300-second per-read timeout
@@ -327,7 +354,7 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     // `brz-http` default is 400 ms per socket read, which aborts an SSE stream
     // at its first recorded inter-chunk gap (up to ~1.2 s in the recording).
     let client = HttpClient::builder()
-        .read_timeout(STREAM_TIMEOUT)
+        .read_timeout(read_timeout)
         .build()
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
     let payload = dispatch::assemble(request, true, false);
@@ -343,7 +370,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     // executor-manager dispatch applies the same shared set.
     let mut response = dispatch::apply_openai_client_headers(http_request)
         .json(&body)
-        .timeout(STREAM_TIMEOUT)
         .send()
         .await
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
@@ -380,7 +406,8 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                 continue;
             }
         };
-        let chunk = chunk.map_err(|error| Failure::persisted(error.to_string()))?;
+        let chunk = chunk
+            .map_err(|error| Failure::persisted(stream_transport_error(&error, read_timeout)))?;
         let Some(chunk) = chunk else { break };
         for event in frames.push(&chunk) {
             event_count += 1;
@@ -449,6 +476,19 @@ async fn open_and_consume<M: Mysql, R: Redis>(
 pub(super) async fn drain_terminal_stream(response: &mut brz_http::Response) {
     let drain = async { while let Ok(Some(_)) = response.chunk().await {} };
     let _ = tokio::time::timeout(TERMINAL_DRAIN_TIMEOUT, drain).await;
+}
+
+/// Render a stream transport failure without hiding an inactivity timeout
+/// behind reqwest's generic body-decode message.
+pub(super) fn stream_transport_error(error: &brz_http::Error, read_timeout: Duration) -> String {
+    if error.is_timeout() {
+        format!(
+            "Chat Shell SSE stream read timed out after {}s without data",
+            read_timeout.as_secs()
+        )
+    } else {
+        error.to_string()
+    }
 }
 
 /// `_drain_terminal_stream` driven alongside the still-live cancel poll.
