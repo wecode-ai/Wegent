@@ -1812,6 +1812,9 @@ classify_path() {
       backend/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
+      if [[ "$path" == packages/collaboration/src/templates/* ]]; then
+        select_target "core:collaboration-group-onboarding"
+      fi
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \

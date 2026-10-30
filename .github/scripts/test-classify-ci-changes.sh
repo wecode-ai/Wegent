@@ -1629,6 +1629,14 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
 
+assert_desktop_case "template components retain group onboarding coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "packages/collaboration/src/templates/TemplateCreateSection.tsx"
+
 assert_desktop_case "collaboration human round scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

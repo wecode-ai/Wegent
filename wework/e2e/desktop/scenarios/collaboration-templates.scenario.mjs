@@ -60,6 +60,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       assert.equal(source.document.kind, 'Template')
       assert.equal(source.document.spec.category, 'collaboration')
+      assert.equal(source.source, 'personal')
       const repeated = await request(
         `/api/v1/collaboration-templates/${document.metadata.name}`,
         'PUT',
@@ -115,6 +116,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Reference installation is absent from the shared library'
       )
       const updated = structuredClone(document)
+      updated.spec.description = 'Changed configuration with the same version'
+      await request(
+        `/api/v1/collaboration-templates/${document.metadata.name}`,
+        'PUT',
+        { document: updated, expectedRevision: source.revision },
+        cloud.authToken,
+        409
+      )
+      const outsideDefault = structuredClone(document)
+      outsideDefault.metadata.namespace = 'system'
+      await request(
+        `/api/v1/collaboration-templates/${document.metadata.name}`,
+        'PUT',
+        { document: outsideDefault, expectedRevision: source.revision },
+        cloud.authToken,
+        400
+      )
       updated.spec.version = '2.0.0'
       await request(
         `/api/v1/collaboration-templates/${document.metadata.name}`,
@@ -147,6 +165,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         consumerToken
       )
       assert.equal(read.document.spec.version, '2.0.0')
+      assert.equal(read.source, 'downloaded')
+      await request(`/api/resource-library/listings/${source.id}/publication`, 'PUT', {
+        status: 'archived',
+      })
+      await request(
+        `/api/resource-library/listings/${source.id}/install`,
+        'DELETE',
+        undefined,
+        consumerToken
+      )
+      await request(
+        `/api/v1/collaboration-templates/${source.id}`,
+        'GET',
+        undefined,
+        consumerToken,
+        404
+      )
+      const revoked = await request('/api/v1/collaboration-templates', 'GET', undefined, consumerToken)
+      assert.ok(!revoked.items.some(item => item.id === source.id))
       const sharedDocument = structuredClone(document)
       sharedDocument.metadata.name = `consumer-workflow-${process.pid}`
       sharedDocument.spec.displayName = `Account workflow ${process.pid}`

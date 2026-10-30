@@ -1684,6 +1684,7 @@ function RootTeamEditor({
               version,
             });
             await onCreated();
+            onClose();
           }
         : undefined,
       searchUsers: (query) => api.members.searchUsers(query),
@@ -1710,14 +1711,16 @@ function RootTeamEditor({
           input,
         );
         await onCreated();
+        onClose();
         return updated;
       },
       async removeCollaborationGroup(groupId) {
         await api.workspaces!.removeCollaborationGroup(workspace.id, groupId);
         await onCreated();
+        onClose();
       },
     };
-  }, [api.members, api.workspaces, onCreated, workspace.id]);
+  }, [api.members, api.workspaces, onClose, onCreated, workspace.id]);
 
   if (loading || error) {
     return (
@@ -3155,6 +3158,7 @@ function CollaborationPlatformAppContent({
           onClose={() => {
             setWorkspaceDialogOpen(false);
             setCreateProjectAfterWorkspace(false);
+            setProjectTemplate(null);
           }}
           onCreate={async (input) => {
             const workspace = await commands.createWorkspace(input);
@@ -3492,7 +3496,6 @@ function CollaborationPlatformAppContent({
                 locale={locale}
                 onClose={() => setRootTeamCreationWorkspaceId(null)}
                 onCreated={async () => {
-                  setRootTeamCreationWorkspaceId(null);
                   await commands.reload();
                   host.notify?.(messages.resourceSaved, "success");
                 }}

@@ -69,9 +69,14 @@ fn portable(row: &Row) -> Value {
             "description":spec["description"],"version":spec["version"],"resources":spec["resources"]}})
 }
 
-fn record(row: &Row) -> Value {
+fn record(row: &Row, user_id: i64) -> Value {
+    let source = if row.user_id == user_id && row.namespace == "default" {
+        "personal"
+    } else {
+        "downloaded"
+    };
     json!({"id":row.id,"ownerId":row.user_id,"document":portable(row),
-        "revision":revision(row),"source":"downloaded"})
+        "revision":revision(row),"source":source})
 }
 
 fn summary(row: &Row) -> Value {
@@ -171,7 +176,7 @@ async fn get_template(
         return Err(not_found());
     }
     schema::validate(&portable(&row))?;
-    Ok(record(&row))
+    Ok(record(&row, i64::from(user.id)))
 }
 
 enum SaveResult {
@@ -229,5 +234,25 @@ async fn save_template(
         ));
     };
     let row: Option<Row> = state.mysql.fetch_optional(format!("SELECT {COLUMNS} FROM kinds WHERE id=? AND user_id=? AND namespace='default' AND name=? AND kind='Template' AND is_active=true"), (id,user_id,name.as_str())).await.map_err(internal)?;
-    Ok(record(&row.ok_or_else(not_found)?))
+    Ok(record(&row.ok_or_else(not_found)?, user_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn records_classify_only_owned_default_templates_as_personal() {
+        let mut row = Row {
+            id: 42,
+            user_id: 7,
+            name: "workflow".into(),
+            namespace: "default".into(),
+            json: Json(json!({"spec":{"category":"collaboration"}})),
+        };
+        assert_eq!(record(&row, 7)["source"], "personal");
+        assert_eq!(record(&row, 8)["source"], "downloaded");
+        row.namespace = "system".into();
+        assert_eq!(record(&row, 7)["source"], "downloaded");
+    }
 }

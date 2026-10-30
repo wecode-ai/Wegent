@@ -44,11 +44,12 @@ export function createCollaborationTemplateRemote(
       const record = await client.get<TemplateRecord>(`/v1/collaboration-templates/${id}`)
       return { ...record, document: validateTemplate(record.document) }
     },
-    save(document, revision) {
-      return client.put(
+    async save(document, revision) {
+      const record = await client.put<TemplateRecord>(
         `/v1/collaboration-templates/${encodeURIComponent(document.metadata.name)}`,
         { document, expectedRevision: revision }
       )
+      return { ...record, document: validateTemplate(record.document) }
     },
     async install(id) {
       await client.post(`/resource-library/listings/${id}/install`, {

@@ -33,6 +33,8 @@ import type {
   CollaborationPlatformLocation,
 } from "./types";
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
+import { CollaborationTemplateStore } from '../templates/store'
+import { builtinCollaborationTemplates } from '../templates/builtins'
 
 const workspace: CollaborationWorkspace = {
   id: "workspace-1",
@@ -775,6 +777,7 @@ async function change(
 }
 
 function PlatformHarness({
+  templateStore,
   refreshKey,
   cloudAccess,
   api,
@@ -797,6 +800,7 @@ function PlatformHarness({
   loadProjectCollaborationGroupGenerationModels,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
+  templateStore?: CollaborationPlatformHostAdapter['templateStore'];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
@@ -821,6 +825,7 @@ function PlatformHarness({
 }) {
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
+    templateStore,
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
@@ -3899,6 +3904,55 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).querySelector(".collaboration-resource-row-leader");
     expect(leader?.textContent).toBe(agent.name);
   });
+
+  it('keeps the root template dialog mounted when a later group fails to create', async () => {
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      value(this: HTMLDialogElement) { this.open = true },
+    })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+      configurable: true,
+      value(this: HTMLDialogElement) { this.open = false },
+    })
+    const templateStore = new CollaborationTemplateStore({
+      scope: 'test:7', ownerId: member.user_id,
+      persistence: { read: async () => [], write: async () => {} },
+    })
+    const document = structuredClone(builtinCollaborationTemplates()[0].document)
+    document.metadata = { name: 'three-groups', namespace: 'default' }
+    const base = document.spec.resources.collaboration.groups[0]
+    document.spec.resources.collaboration.groups = [0, 1, 2].map(index => ({
+      ...structuredClone(base), key: `group-${index}`, name: `Group ${index}`,
+    }))
+    await templateStore.save(document, member.user_id)
+    const { api } = createApi({ initialWorkspaces: [localWorkspace, workspace, groupWorkspace] })
+    vi.mocked(api.workspaces!.createCollaborationGroup)
+      .mockResolvedValueOnce(collaborationGroup)
+      .mockRejectedValueOnce(new Error('Second group unavailable'))
+    await render(<PlatformHarness api={api} templateStore={templateStore}
+      currentUser={{ id: member.user_id, name: member.user_name }}
+      capabilities={{ automation: false, dingtalkAitable: false,
+        workspaceLocations: ['local', 'cloud'], sidebarPresentation: 'full' }} />)
+    await click(byTestId('collaboration-primary-teams'))
+    await click(byTestId('collaboration-teams-create'))
+    await click(byTestId('collaboration-teams-create-cloud-groups'))
+    await click(byTestId(`collaboration-teams-create-workspace-${groupWorkspace.id}`))
+    await click(byTestId('group-template-create'))
+    await click(byTestId('template-tab-mine'))
+    await click(byTestId('template-details-three-groups'))
+    await click(byTestId('template-use'))
+    for (const group of document.spec.resources.collaboration.groups) {
+      for (const role of group.roles.filter(role => role.key !== group.leaderRole)) {
+        await change(byTestId(`template-role-${group.key}-${role.key}`) as HTMLSelectElement,
+          `agent:${agent.team_id}`)
+      }
+    }
+    await click(byTestId('template-bindings-apply'))
+    await flush()
+    expect(api.workspaces!.createCollaborationGroup).toHaveBeenCalledTimes(2)
+    expect(byTestId('collaboration-template-dialog').textContent).toContain('部分小组已添加')
+    expect((byTestId('template-bindings-apply') as HTMLButtonElement).disabled).toBe(true)
+  })
 
   it("creates a team in the workspace selected from the unified view", async () => {
     const { api } = createApi({

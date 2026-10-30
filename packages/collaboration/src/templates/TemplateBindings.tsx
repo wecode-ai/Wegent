@@ -64,7 +64,9 @@ export function TemplateBindings({
     [document, names]
   )
   const changed = useRef(onChange)
-  changed.current = onChange
+  useEffect(() => {
+    changed.current = onChange
+  }, [onChange])
   const candidateKey = candidates
     .map(candidate => `${candidate.kind}:${candidate.id}`)
     .sort()
