@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { waitForLogPattern } from '../modules/shared.mjs'
 
 export async function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
   return {
@@ -9,7 +9,13 @@ export async function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs
       await control.command('waitFor', '[data-testid="new-chat-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const log = await readFile(join(resultDir, 'app.log'), 'utf8')
+      const log = await waitForLogPattern(
+        join(resultDir, 'app.log'),
+        /step: 'renderer-startup-ready'/,
+        {
+          timeoutMs: workbenchReadyTimeoutMs,
+        }
+      )
       assert.equal(log.split('[startup-network-fault] injected').length - 1, 1)
       assert.equal(log.split('[startup-network-recovery]').length - 1, 1)
       assert.ok(log.includes('net::ERR_NETWORK_CHANGED'))
