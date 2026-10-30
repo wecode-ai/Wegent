@@ -6,6 +6,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 mobile_dir="$repo_root/wework-mobile"
 artifact_dir="$mobile_dir/artifacts/android-e2e"
 sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is required}}"
+export ANDROID_SDK_ROOT="$sdk_root"
+export ANDROID_HOME="$sdk_root"
+export PATH="$sdk_root/cmdline-tools/latest/bin:$sdk_root/platform-tools:$PATH"
 serial=emulator-5556
 image='system-images;android-36;google_apis;x86_64'
 mkdir -p "$artifact_dir"

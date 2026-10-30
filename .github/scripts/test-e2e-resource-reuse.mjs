@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -93,6 +94,77 @@ test("native Android coverage reuses the platform host and retains the SDK befor
   ]);
   assert(!native.run.includes("docker run"));
 });
+
+for (const sdkVariable of ["ANDROID_SDK_ROOT", "ANDROID_HOME"]) {
+  test(`native Android tools resolve from ${sdkVariable} without SDK tools on PATH`, () => {
+    const root = mkdtempSync(join(tmpdir(), "android-sdk-tools-"));
+    try {
+      const scripts = join(root, ".github", "scripts");
+      const sdk = join(root, "sdk with spaces");
+      const tools = join(sdk, "cmdline-tools", "latest", "bin");
+      const calls = join(root, "calls.jsonl");
+      mkdirSync(scripts, { recursive: true });
+      mkdirSync(tools, { recursive: true });
+      const source = readFileSync(
+        resolve(".github/scripts/run-wework-mobile-android-e2e.sh"),
+        "utf8",
+      );
+      const script = join(scripts, "run-wework-mobile-android-e2e.sh");
+      writeFileSync(script, source);
+      for (const tool of ["sdkmanager", "avdmanager"]) {
+        const path = join(tools, tool);
+        writeFileSync(
+          path,
+          `#!${process.execPath}\nconst fs = require('node:fs')\nfs.appendFileSync(process.env.SDK_TOOL_CALLS, JSON.stringify({ tool: '${tool}', args: process.argv.slice(2), input: '${tool}' === 'avdmanager' ? fs.readFileSync(0, 'utf8') : null }) + '\\n')\nprocess.exit('${tool}' === 'avdmanager' ? 73 : 0)\n`,
+        );
+        chmodSync(path, 0o755);
+      }
+      const result = spawnSync("bash", [script], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: "/usr/bin:/bin",
+          ANDROID_SDK_ROOT: sdkVariable === "ANDROID_SDK_ROOT" ? sdk : "",
+          ANDROID_HOME: sdkVariable === "ANDROID_HOME" ? sdk : "/unused-sdk",
+          SDK_TOOL_CALLS: calls,
+        },
+      });
+      assert.equal(result.status, 73, result.stderr);
+      assert.deepEqual(
+        readFileSync(calls, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+        [
+          {
+            tool: "sdkmanager",
+            args: [
+              "system-images;android-36;google_apis;x86_64",
+              "platform-tools",
+              "emulator",
+            ],
+            input: null,
+          },
+          {
+            tool: "avdmanager",
+            args: [
+              "create",
+              "avd",
+              "--force",
+              "--name",
+              "wework-mobile-e2e",
+              "--package",
+              "system-images;android-36;google_apis;x86_64",
+            ],
+            input: "no\n",
+          },
+        ],
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 for (const timeoutStatus of [0, 124]) {
   test(`native Android ADB connection has a deadline and fails before boot polling (${timeoutStatus})`, () => {

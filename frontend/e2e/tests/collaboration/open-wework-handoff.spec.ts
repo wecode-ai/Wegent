@@ -185,9 +185,15 @@ handoffTest.describe('mobile web session security with real users and Issues', (
       expect((await mentions.api.post('/api/auth/wework/web-sessions/exchange', body)).status).toBe(
         410
       )
-      expect(
-        (await mentions.recipientApi.get(`/api/v1/cloud-projects/${mentions.project.id}`)).status
-      ).toBe(403)
+      const denied = await mentions.recipientApi.get<{ detail: string }>(
+        `/api/v1/cloud-projects/${mentions.project.id}`
+      )
+      // Private projects are hidden from users without a permission source.
+      expect(denied.status).toBe(404)
+      expect(denied.data).toEqual({ detail: 'Cloud project not found' })
+      expect((await mentions.recipientApi.get<{ id: number }>('/api/users/me')).data?.id).toBe(
+        mentions.recipient.id
+      )
       await page.goto(redirect)
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     }

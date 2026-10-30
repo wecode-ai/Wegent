@@ -120,19 +120,19 @@ test('real Android cold and running App links authorize, display and focus the p
           )
         ).status
       ).toBe(204)
-      expect(
-        (await mentions.recipientApi.get(`/api/v1/cloud-projects/${mentions.project.id}`)).status
-      ).toBe(403)
+      const projectPath = `/api/v1/cloud-projects/${mentions.project.id}`
+      const inaccessibleProject = await mentions.recipientApi.get(projectPath)
+      expect(inaccessibleProject.status).toBe(404)
+      expect(inaccessibleProject.data).toEqual({ detail: 'Cloud project not found' })
       const denied = webPage.waitForResponse(
-        response =>
-          response.url().includes(`/cloud-projects/${mentions.project.id}`) &&
-          response.status() === 403
+        response => new URL(response.url()).pathname === projectPath && response.status() === 404
       )
       await openLink(device, scheme)
-      await denied
+      expect(await (await denied).json()).toEqual({ detail: 'Cloud project not found' })
       await expect(webPage.getByTestId('collaboration-issue-detail')).toHaveCount(0)
       await expect(webPage.getByTestId('collaboration-error')).toBeVisible()
-      await apiData(mentions.recipientApi.get('/api/users/me'))
+      const account = await apiData(mentions.recipientApi.get<{ id: number }>('/api/users/me'))
+      expect(account.id).toBe(mentions.recipient.id)
     })
   } finally {
     await testInfo.attach('android-device', {
