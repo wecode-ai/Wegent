@@ -1,0 +1,206 @@
+# Generated from shared/data/collaboration-templates.json.
+# Regenerate: pnpm --filter @wegent/collaboration exec node ../../scripts/generate-collaboration-templates.mjs
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: product-lifecycle
+  namespace: system
+spec:
+  displayName: 产品全流程
+  description: 从产品定义与体验设计开始，协同研发、测试和交付，让每一阶段都有明确的负责人、产物与验收标准。
+  category: collaboration
+  version: 1.0.0
+  resources:
+    collaboration:
+      project:
+        name: 产品全流程协作
+        description: 明确用户问题与产品需求，完成体验设计、技术方案、研发实现和独立测试，经业务验收后交付上线方案、使用文档与回滚预案。
+      groups:
+        - name: 产品全流程小组
+          description: 明确用户问题与产品需求，完成体验设计、技术方案、研发实现和独立测试，经业务验收后交付上线方案、使用文档与回滚预案。
+          instructions: 项目负责人协调端到端流程，不代替各专业角色。产品经理先明确用户问题、需求边界和验收标准；设计师据此产出用户流程、交互稿及视觉规范，与产品和研发评审确认。研发工程师制定技术方案，评审后编码与自测。测试工程师基于需求和设计独立执行功能、集成与回归测试，缺陷回到研发修复并重新验证；需求或设计变更应回到对应阶段确认。产品经理完成业务验收后，交付负责人整理发布清单、使用文档与回滚预案，由项目负责人确认交付。未经人工确认不自动发布。
+          leaderRole: role-0
+          roles:
+            - key: role-0
+              name: 项目负责人
+              responsibility: 协调全流程、管理阻塞与阶段确认
+            - key: role-1
+              name: 产品经理
+              responsibility: 梳理用户问题、需求范围与验收标准
+            - key: role-2
+              name: 设计师
+              responsibility: 设计用户流程、交互与高保真界面
+            - key: role-3
+              name: 研发工程师
+              responsibility: 技术方案、编码实现与自测
+            - key: role-4
+              name: 测试工程师
+              responsibility: 独立测试、缺陷跟踪与回归验证
+            - key: role-5
+              name: 交付负责人
+              responsibility: 发布准备、使用文档、交接与回滚预案
+          stages:
+            - key: stage-0
+              name: 产品定义
+              ownerRole: role-1
+              deliverables:
+                - 用户问题、需求文档、范围与验收标准
+              acceptance: 项目负责人确认需求边界
+              description: ""
+            - key: stage-1
+              name: 体验设计
+              ownerRole: role-2
+              deliverables:
+                - 用户流程、高保真交互稿与视觉规范
+              acceptance: 产品与研发评审确认
+              description: ""
+            - key: stage-2
+              name: 技术方案
+              ownerRole: role-3
+              deliverables:
+                - 架构方案、接口与数据设计、实现计划
+              acceptance: 技术评审通过
+              description: ""
+            - key: stage-3
+              name: 研发实现
+              ownerRole: role-3
+              deliverables:
+                - 代码、自动化测试、自测记录
+              acceptance: 代码审查通过并满足提测要求
+              description: ""
+            - key: stage-4
+              name: 测试验收
+              ownerRole: role-4
+              deliverables:
+                - 测试报告、缺陷闭环、业务验收记录
+              acceptance: 测试通过且产品验收确认
+              description: ""
+            - key: stage-5
+              name: 发布交付
+              ownerRole: role-5
+              deliverables:
+                - 发布清单、使用文档、交接与回滚预案
+              acceptance: 人工确认后发布并核验结果
+              description: ""
+          executionRequirements:
+            requiredTags: []
+          key: main
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: research-analysis
+  namespace: system
+spec:
+  displayName: 调研分析
+  description: 围绕一个问题收集证据、比较选项，形成有来源、有判断的决策建议。
+  category: collaboration
+  version: 1.0.0
+  resources:
+    collaboration:
+      project:
+        name: 专题调研
+        description: 围绕调研问题收集可靠资料、交叉核验，输出方案对比、关键结论和行动建议。
+      groups:
+        - name: 调研分析小组
+          description: 围绕调研问题收集可靠资料、交叉核验，输出方案对比、关键结论和行动建议。
+          instructions: 负责人明确问题、研究范围和输出格式。资料研究保留可追溯来源，分析核验区分事实与推断并交叉检查。负责人汇总结论、建议与尚未解决的问题。
+          leaderRole: role-0
+          roles:
+            - key: role-0
+              name: 协调负责人
+              responsibility: 确定范围、整合结论
+            - key: role-1
+              name: 资料研究
+              responsibility: 检索资料、标注来源
+            - key: role-2
+              name: 分析核验
+              responsibility: 比较选项、交叉验证
+          stages:
+            - key: stage-0
+              name: 定义问题
+              ownerRole: null
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-1
+              name: 资料收集
+              ownerRole: role-1
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-2
+              name: 分析核验
+              ownerRole: role-2
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-3
+              name: 结论建议
+              ownerRole: role-2
+              deliverables: []
+              acceptance: ""
+              description: ""
+          executionRequirements:
+            requiredTags: []
+          key: main
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: content-creation
+  namespace: system
+spec:
+  displayName: 内容创作
+  description: 确定受众与传播目标，让策划、撰写和审校沿着清晰流程完成。
+  category: collaboration
+  version: 1.0.0
+  resources:
+    collaboration:
+      project:
+        name: 内容策划与制作
+        description: 面向目标受众完成选题、内容初稿与审校，形成符合渠道要求的最终内容。
+      groups:
+        - name: 内容创作小组
+          description: 面向目标受众完成选题、内容初稿与审校，形成符合渠道要求的最终内容。
+          instructions: 负责人先确认受众、渠道、风格和验收标准。内容撰写提交提纲与初稿，内容审校检查事实、表达和版权问题。负责人收敛意见，定稿需人工确认，不自动发布。
+          leaderRole: role-0
+          roles:
+            - key: role-0
+              name: 协调负责人
+              responsibility: 确认受众、把控方向
+            - key: role-1
+              name: 内容撰写
+              responsibility: 策划提纲、撰写初稿
+            - key: role-2
+              name: 内容审校
+              responsibility: 核查事实、调整表达
+          stages:
+            - key: stage-0
+              name: 选题提纲
+              ownerRole: null
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-1
+              name: 内容初稿
+              ownerRole: role-1
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-2
+              name: 事实与审校
+              ownerRole: role-2
+              deliverables: []
+              acceptance: ""
+              description: ""
+            - key: stage-3
+              name: 定稿确认
+              ownerRole: role-2
+              deliverables: []
+              acceptance: ""
+              description: ""
+          executionRequirements:
+            requiredTags: []
+          key: main

@@ -98,7 +98,9 @@ def get_resource_library_publication(
 
 @router.get("/publications/source", response_model=ResourceLibraryListing)
 def get_resource_library_publication_by_source(
-    resource_type: str = Query(..., pattern="^(agent|skill|model|shell|retriever)$"),
+    resource_type: str = Query(
+        ..., pattern="^(agent|skill|model|shell|retriever|template)$"
+    ),
     source_name: str = Query(..., min_length=1, max_length=100),
     source_namespace: str = Query(default="default", min_length=1, max_length=100),
     db: Session = Depends(get_db),
@@ -260,7 +262,7 @@ def sync_agent_bindings(
 @router.get("/users/me/installs", response_model=ResourceLibraryInstallList)
 def list_my_resource_library_installs(
     resource_type: str | None = Query(
-        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+        default=None, pattern="^(agent|skill|model|shell|retriever|template)$"
     ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
@@ -281,7 +283,7 @@ def list_my_resource_library_installs(
 def list_group_resource_library_installs_batch(
     group_names: str = Query(..., min_length=1, max_length=10000),
     resource_type: str | None = Query(
-        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+        default=None, pattern="^(agent|skill|model|shell|retriever|template)$"
     ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
@@ -313,7 +315,7 @@ def list_group_resource_library_installs_batch(
 def list_group_resource_library_installs(
     group_namespace: str,
     resource_type: str | None = Query(
-        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+        default=None, pattern="^(agent|skill|model|shell|retriever|template)$"
     ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),

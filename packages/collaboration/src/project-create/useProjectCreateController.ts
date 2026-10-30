@@ -73,13 +73,18 @@ export function useProjectCreateController({
   labels,
   onCreated,
   resourceSetup,
+  initialTemplate,
 }: ProjectCreateDialogProps) {
   const initialLocation =
     targets.find((target) => target.location === defaultLocation)?.location ??
     targets[0]?.location ??
     "cloud";
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(
+    initialTemplate?.spec.resources.collaboration.project.name ?? "",
+  );
+  const [description, setDescription] = useState(
+    initialTemplate?.spec.resources.collaboration.project.description ?? "",
+  );
   const [location, setLocation] =
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
@@ -102,9 +107,16 @@ export function useProjectCreateController({
       ),
     );
   const executionEnvironmentSelectionChanged = useRef(false);
-  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
-    import("./types").ProjectCreateCollaborationGroupDraft | null
-  >(null);
+  const [collaborationGroupDrafts, setCollaborationGroupDrafts] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft[]
+  >([]);
+  const [templatePending, setTemplatePending] = useState(
+    Boolean(initialTemplate?.spec.resources.collaboration.groups.length),
+  );
+  const collaborationGroupDraft = collaborationGroupDrafts[0] ?? null;
+  const setCollaborationGroupDraft = (
+    draft: import("./types").ProjectCreateCollaborationGroupDraft | null,
+  ) => setCollaborationGroupDrafts(draft ? [draft] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -119,6 +131,7 @@ export function useProjectCreateController({
   );
   const canSubmit = Boolean(
     name.trim() &&
+    !templatePending &&
     (!repositoryProvider || repositoryAddress.trim()) &&
     (!isAITableProvider || aitableLink) &&
     !saving,
@@ -182,7 +195,7 @@ export function useProjectCreateController({
           memberUserIds,
           agentResourceIds,
           executionEnvironmentDeviceIds,
-          collaborationGroupDraft,
+          collaborationGroupDrafts,
         });
       }
       host?.track?.("created");
@@ -217,6 +230,7 @@ export function useProjectCreateController({
       agentResourceIds,
       executionEnvironmentDeviceIds,
       collaborationGroupDraft,
+      collaborationGroupDrafts,
     },
     commands: {
       setName,
@@ -236,6 +250,8 @@ export function useProjectCreateController({
         setExecutionEnvironmentDeviceIds(deviceIds);
       },
       setCollaborationGroupDraft,
+      setCollaborationGroupDrafts,
+      setTemplatePending,
       clearError: () => setError(null),
       submit,
     },

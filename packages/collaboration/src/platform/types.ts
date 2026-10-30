@@ -28,7 +28,9 @@ export type CollaborationPlatformRootView =
   | "teams"
   | "devices"
   | "inbox"
-  | "stand-in";
+  | "stand-in"
+  | "templates";
+// Template discovery belongs to collaboration in Wework and to the marketplace in Wegent.
 
 export type CollaborationWorkspaceView =
   | "home"
@@ -53,6 +55,8 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  templateStore?: import("../templates/store").CollaborationTemplateStore;
+  templateNavigation?: boolean;
   renderStandInPage?(props: {
     projects: CollaborationProject[];
     onClose(): void;

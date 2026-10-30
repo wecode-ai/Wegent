@@ -10,6 +10,13 @@ import { StandInPopover } from './StandInPopover'
 import { standInReturnLocation } from './standInReturnLocation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
+import {
+  CollaborationTemplateStore,
+  browserTemplatePersistence,
+  createCollaborationTemplateRemote,
+} from '@wegent/collaboration/templates'
+import { createHttpClient } from '@/api/http'
+import { getRuntimeConfig } from '@/config/runtime'
 // eslint-disable-next-line react-refresh/only-export-components
 export { createLocalWorkspaceApi, createWeworkPlatformApi }
 import {
@@ -1302,6 +1309,36 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const { i18n, t } = useTranslation('common')
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
+  const templateOwnerId =
+    cloudConnection.user?.id && cloudConnection.user.id > 0
+      ? cloudConnection.user.id
+      : Number(props.user.id)
+  const templateBackend = cloudConnection.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl
+  const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
+  const templateStore = useMemo(
+    () =>
+      new CollaborationTemplateStore({
+        scope: templateScope,
+        ownerId: templateOwnerId,
+        persistence: browserTemplatePersistence(templateScope, localStorage),
+        remote: cloudConnection.isConnected
+          ? createCollaborationTemplateRemote(
+              createHttpClient({
+                baseUrl: templateBackend,
+                getToken: () => cloudConnection.token,
+                redirectOnUnauthorized: false,
+              })
+            )
+          : undefined,
+      }),
+    [
+      templateBackend,
+      templateOwnerId,
+      templateScope,
+      cloudConnection.isConnected,
+      cloudConnection.token,
+    ]
+  )
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
@@ -1592,6 +1629,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          templateStore,
+          templateNavigation: true,
           renderStandInPage: ({ projects, onClose }) =>
             personalSettingsTarget && personalSettingsTarget.roleId !== '@primary' ? (
               <StandInSettingsPage

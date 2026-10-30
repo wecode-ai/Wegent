@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DialogForm } from "../controls/DialogForm";
+import { TemplateCreateSection } from "../templates/TemplateCreateSection";
 
 import * as Popover from "@radix-ui/react-popover";
 import {
@@ -289,6 +290,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
+  const [templateSelected, setTemplateSelected] = useState(
+    Boolean(props.initialTemplate),
+  );
   const [groupRecommendationDismissed, setGroupRecommendationDismissed] =
     useState(false);
   const [groupEditorDraft, setGroupEditorDraft] =
@@ -919,6 +923,55 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         }}
       >
         <div className="collaboration-project-create-body">
+          {resourceSetup && (
+            <TemplateCreateSection
+              setup={resourceSetup}
+              locale={labels.locale}
+              initialTemplate={props.initialTemplate}
+              disabled={state.saving}
+              onSelect={(document) => {
+                setTemplateSelected(Boolean(document));
+                if (document) {
+                  if (!state.name.trim())
+                    commands.setName(
+                      document.spec.resources.collaboration.project.name,
+                    );
+                  commands.setDescription(
+                    document.spec.resources.collaboration.project.description,
+                  );
+                }
+              }}
+              onChange={(drafts, selected) => {
+                setTemplateSelected(selected);
+                commands.setTemplatePending(selected && drafts === null);
+                commands.setCollaborationGroupDrafts(drafts ?? []);
+                if (drafts) {
+                  const participants = drafts.flatMap((group) => [
+                    group.leader,
+                    ...group.members,
+                  ]);
+                  commands.setMemberUserIds([
+                    ...new Set(
+                      participants
+                        .filter(
+                          (member) =>
+                            member.kind === "human" &&
+                            member.id !== String(resourceSetup.currentUser.id),
+                        )
+                        .map((member) => Number(member.id)),
+                    ),
+                  ]);
+                  commands.setAgentResourceIds([
+                    ...new Set(
+                      participants
+                        .filter((member) => member.kind === "agent")
+                        .map((member) => member.id),
+                    ),
+                  ]);
+                }
+              }}
+            />
+          )}
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
             <input
@@ -1044,7 +1097,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             </section>
           )}
 
-          {resourceSetup ? (
+          {resourceSetup && !templateSelected ? (
             <section className="collaboration-project-create-collaborators">
               <h3>{labels.collaborators}</h3>
               {state.collaborationGroupDraft ? (

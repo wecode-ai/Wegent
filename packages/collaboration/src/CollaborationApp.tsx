@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { bulkIssueStatus } from './platform/bulkIssueStatus'
-import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
-import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
-import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
+import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
+import { useCollaborationTemplateStore } from "./templates/context";
+import { templateMessages } from "./templates/messages";
+import { bulkIssueStatus } from "./platform/bulkIssueStatus";
+import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
+import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
+import { saveProjectBoardViews } from "./project-board/saveProjectBoardViews";
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -150,6 +153,7 @@ export function CollaborationApp({
   renderIssueDetail,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
+  const templateStore = useCollaborationTemplateStore();
   const translate = useMemo(
     () => createCollaborationTranslator(locale),
     [locale],
@@ -923,21 +927,23 @@ export function CollaborationApp({
                           : undefined
                       }
                       batchFailedLabel={translate(
-                        'todo.batch_status_failed',
-                        '部分任务更新失败，请查看以下原因并重试。'
+                        "todo.batch_status_failed",
+                        "部分任务更新失败，请查看以下原因并重试。",
                       )}
                       onBulkStatusChange={(selectedIssues, status) =>
                         bulkIssueStatus(
                           selectedIssues,
-                          issue =>
+                          (issue) =>
                             commands.updateIssue(
                               issue.id,
                               { version: issue.version, status },
-                              { throwOnError: true }
+                              { throwOnError: true },
                             ),
-                          error =>
+                          (error) =>
                             runnerEnvironmentError(error, translate) ??
-                            (error instanceof Error ? error.message : messages.saveFailed)
+                            (error instanceof Error
+                              ? error.message
+                              : messages.saveFailed),
                         )
                       }
                       statusName={(status) =>
@@ -999,6 +1005,28 @@ export function CollaborationApp({
                           />
                         ),
                       },
+                      ...(templateStore
+                        ? [
+                            {
+                              id: "configuration-sharing",
+                              label: templateMessages[locale].configuration,
+                              testId: "collaboration-project-settings-sharing",
+                              content: (
+                                <ProjectTemplateSettings
+                                  key={project.id}
+                                  api={api}
+                                  project={project}
+                                  locale={locale}
+                                  currentUserId={templateStore.library.ownerId}
+                                  canManage={
+                                    project.access_role === "Owner" ||
+                                    project.access_role === "Maintainer"
+                                  }
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
                       ...createProjectAiTeamSections({
                         translate: translate,
                         membersContent: (

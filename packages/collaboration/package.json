@@ -433,6 +433,10 @@
     "./controls/DialogForm": {
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
+    },
+    "./templates": {
+      "types": "./src/templates/index.ts",
+      "import": "./src/templates/index.ts"
     }
   },
   "scripts": {
@@ -486,6 +490,7 @@
     "remark-parse": "^11.0.0",
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "yaml": "2.9.0"
   }
 }
