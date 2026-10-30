@@ -80,6 +80,8 @@ History navigation must retain failed turns without user-message items. When a s
 
 The `latest-conversation-history` checkpoint verifies this preview, error visibility after clicking, active marker, and loading-state completion before returning to the latest turn. It reuses the existing real Codex history database fixture and CI desktop runner. Run it with `pnpm --filter wework e2e:desktop --segment latest-conversation-history`.
 
+Async question model fixtures must also respect user-message boundaries: reuse the visible-user-text parser and match complete answers, rather than treating option text in AGENTS or application context as an answer. Desktop drivers run directly in Node, so the shared parser has one strictly type-checked JavaScript implementation with type declarations and needs no TypeScript loader. A script test disables native TypeScript loading and verifies that the driver still imports.
+
 ## Streaming Rendering Ownership
 
 Streaming text and scroll following each have exactly one scheduler. Component animation, direct scrolling, and delayed scroll timers must not compete:

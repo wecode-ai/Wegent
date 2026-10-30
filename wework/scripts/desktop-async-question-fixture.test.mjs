@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { Readable } from 'node:stream'
+import { promisify } from 'node:util'
 import { test } from 'vitest'
 
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
@@ -11,6 +13,17 @@ import {
   REQUEST_USER_INPUT_ASYNC_PROMPT,
   REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
 } from '../e2e/desktop/modules/shared.mjs'
+
+test('desktop model fixture loads without native TypeScript support', async () => {
+  const moduleUrl = new URL('../e2e/desktop/modules/desktop-server.mjs', import.meta.url).href
+  const { stdout } = await promisify(execFile)(process.execPath, [
+    '--no-experimental-strip-types',
+    '--input-type=module',
+    '-e',
+    `const { DesktopE2EServer } = await import(${JSON.stringify(moduleUrl)}); console.log(typeof DesktopE2EServer)`,
+  ])
+  assert.equal(stdout.trim(), 'function')
+})
 
 test.each([
   ['unanswered', null, REQUEST_USER_INPUT_ASYNC_WAITING_TEXT],

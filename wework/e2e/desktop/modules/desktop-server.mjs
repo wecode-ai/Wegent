@@ -1,4 +1,4 @@
-import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.ts'
+import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
 
 import {
   DIAGRAM_REGRESSION_MARKER,
