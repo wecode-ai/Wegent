@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import { verifyStartupSplashProgress } from '../modules/startup-splash-progress.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
@@ -57,6 +58,7 @@ export async function createDesktopScenario({ resultDir }) {
     },
 
     async verify(control) {
+      await verifyStartupSplashProgress({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
       await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
