@@ -11,11 +11,57 @@ use crate::runtime_work::{
 use crate::runtime_work::lifecycle::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn sync_native_queue_admissions(
+        &self,
+        mut previous: HashSet<String>,
+        current: Vec<String>,
+    ) {
+        let active = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned")
+            .active_task_ids
+            .clone();
+        let mut positions = HashMap::new();
+        for (position, task_id) in current.into_iter().enumerate() {
+            positions.entry(task_id.clone()).or_insert(position);
+            previous.insert(task_id);
+        }
+        for task_id in previous {
+            let mut changed = false;
+            self.store.update_task(&task_id, |link| {
+                let before = native_execution_state(link);
+                if active.contains(&task_id) {
+                    if before
+                        .as_ref()
+                        .is_some_and(|state| state.phase == NativeExecutionPhase::Queued)
+                    {
+                        begin_native_request(link);
+                    }
+                } else if let Some(position) = positions.get(&task_id) {
+                    queue_native_execution(link, *position);
+                } else if before
+                    .as_ref()
+                    .is_some_and(|state| state.phase == NativeExecutionPhase::Queued)
+                {
+                    settle_native_execution(link, "cancelled");
+                }
+                changed = before != native_execution_state(link);
+            });
+            if changed {
+                emit_runtime_work_changed(&self.event_tx, &self.device_id, &task_id);
+            }
+        }
+    }
+
     pub(super) fn settle_native_transport_exit(&self) {
         for task in self.local_task_links(true) {
-            if !native_execution_state(&task)
-                .is_some_and(|state| state.phase != NativeExecutionPhase::Idle)
-            {
+            if !native_execution_state(&task).is_some_and(|state| {
+                !matches!(
+                    state.phase,
+                    NativeExecutionPhase::Idle | NativeExecutionPhase::Queued
+                )
+            }) {
                 continue;
             }
             if let Some(link) = self.store.update_task(&task.local_task_id, |link| {

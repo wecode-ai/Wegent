@@ -344,6 +344,11 @@ an active turn or a model-thinking indicator. Goal status and execution status a
 completing a Goal does not cancel its open turn, and completing a turn does not finish an
 execution that is continuing toward its Goal.
 
+`queued` means the scheduler has not admitted execution; no model turn is running.
+Enqueue, cancellation, and dequeue advance the same execution revision only after queue
+persistence succeeds. Cancelling admission preserves the previous turn's result, and an
+older queued snapshot cannot make the cancelled task busy again.
+
 Content mappers neither cache Goal status nor gate native lifecycle delivery. Native turn
 completion settles that turn's messages and thinking blocks. Late content can enrich a
 settled message but cannot restore streaming. An ordinary RPC releases its own scheduling

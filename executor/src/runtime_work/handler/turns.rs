@@ -309,7 +309,21 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn persist_turn_queue(
         &self,
         turns: VecDeque<SpawnTurnRequest>,
+        previous: Option<&RuntimeTurnScheduler>,
     ) -> Result<(), AppIpcError> {
+        let admissions = previous.map(|previous| {
+            (
+                previous
+                    .queued_turns
+                    .iter()
+                    .map(|turn| turn.local_task_id.clone())
+                    .collect(),
+                turns
+                    .iter()
+                    .map(|turn| turn.local_task_id.clone())
+                    .collect(),
+            )
+        });
         let queue_path = Arc::clone(&self.turn_queue_path);
         let active_goal_turns = self
             .active_goal_turns
@@ -326,7 +340,11 @@ impl RuntimeWorkRpcHandler {
                 format!("Runtime queue writer task failed: {error}"),
             )
         })?
-        .map_err(|error| AppIpcError::new("runtime_queue_failed", error))
+        .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+        if let Some((previous, current)) = admissions {
+            self.sync_native_queue_admissions(previous, current);
+        }
+        Ok(())
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
@@ -391,7 +409,7 @@ impl RuntimeWorkRpcHandler {
             let queued_turns = scheduler.queued_turns.clone();
             (previous, turn_to_start, queued_turns)
         };
-        if let Err(error) = self.persist_turn_queue(queued_turns).await {
+        if let Err(error) = self.persist_turn_queue(queued_turns, Some(&previous)).await {
             *self
                 .turn_scheduler
                 .lock()
@@ -616,7 +634,7 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .queued_turns
             .clone();
-        self.persist_turn_queue(queued_turns).await
+        self.persist_turn_queue(queued_turns, None).await
     }
 
     pub(super) fn set_goal_execution_status(&self, local_task_id: &str, status: Option<&str>) {
@@ -1502,7 +1520,10 @@ impl RuntimeWorkRpcHandler {
             scheduler.queued_turns.remove(position);
             (previous, scheduler.queued_turns.clone())
         };
-        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+        if let Err(error) = self
+            .persist_turn_queue(remaining_turns, Some(&previous))
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -1525,7 +1546,10 @@ impl RuntimeWorkRpcHandler {
             (previous, turns, remaining_turns)
         };
         if let Some(remaining_turns) = remaining_turns {
-            if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            if let Err(error) = self
+                .persist_turn_queue(remaining_turns, Some(&previous))
+                .await
+            {
                 let mut scheduler = self
                     .turn_scheduler
                     .lock()
@@ -1562,7 +1586,10 @@ impl RuntimeWorkRpcHandler {
             (previous, turns, remaining_turns)
         };
         if let Some(remaining_turns) = remaining_turns {
-            if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            if let Err(error) = self
+                .persist_turn_queue(remaining_turns, Some(&previous))
+                .await
+            {
                 let mut scheduler = self
                     .turn_scheduler
                     .lock()
@@ -1599,7 +1626,10 @@ impl RuntimeWorkRpcHandler {
             }
             (previous, turns, scheduler.queued_turns.clone())
         };
-        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+        if let Err(error) = self
+            .persist_turn_queue(remaining_turns, Some(&previous))
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()

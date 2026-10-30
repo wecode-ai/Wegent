@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum NativeExecutionPhase {
+    Queued,
     Starting,
     Running,
     Continuing,
@@ -70,10 +71,12 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
         return;
     }
     let previous = native_execution_state(link);
-    if previous
-        .as_ref()
-        .is_some_and(|state| state.phase != NativeExecutionPhase::Idle)
-    {
+    if previous.as_ref().is_some_and(|state| {
+        !matches!(
+            state.phase,
+            NativeExecutionPhase::Idle | NativeExecutionPhase::Queued
+        )
+    }) {
         return;
     }
     let state = NativeExecutionState {
@@ -96,6 +99,39 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
     project_native_execution(link, &state);
 }
 
+pub(crate) fn queue_native_execution(link: &mut RuntimeTaskLink, position: usize) {
+    if native_execution_state(link).is_some_and(|state| {
+        !matches!(
+            state.phase,
+            NativeExecutionPhase::Idle | NativeExecutionPhase::Queued
+        )
+    }) {
+        return;
+    }
+    if link
+        .execution_state
+        .as_ref()
+        .is_some_and(|state| state.phase == NativeExecutionPhase::Queued)
+        && link.runtime_handle["queuePosition"].as_u64() == Some(position as u64 + 1)
+    {
+        return;
+    }
+    if native_execution_state(link).is_none() {
+        begin_native_request(link);
+    }
+    let Some(mut state) = native_execution_state(link) else {
+        return;
+    };
+    state.revision = next_runtime_event_sequence().to_string();
+    state.phase = NativeExecutionPhase::Queued;
+    state.execution_outcome = None;
+    state.request_turn_id = None;
+    state.continuation = false;
+    state.updated_at = now_ms();
+    link.runtime_handle["queuePosition"] = json!(position + 1);
+    project_native_execution(link, &state);
+}
+
 pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &NativeExecutionState) {
     if link.status == "archived" {
         return;
@@ -104,8 +140,19 @@ pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &Nativ
     if let Some(turn_id) = &state.latest_turn_id {
         link.runtime_handle["lastTurnId"] = json!(turn_id);
     }
-    link.running = state.phase != NativeExecutionPhase::Idle;
-    link.status = if link.running {
+    let queued = state.phase == NativeExecutionPhase::Queued;
+    if !queued {
+        if let Some(handle) = link.runtime_handle.as_object_mut() {
+            handle.remove("queuePosition");
+        }
+    }
+    link.running = !matches!(
+        state.phase,
+        NativeExecutionPhase::Idle | NativeExecutionPhase::Queued
+    );
+    link.status = if queued {
+        "queued"
+    } else if link.running {
         "running"
     } else {
         match state
@@ -133,5 +180,5 @@ pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &Nativ
         .into(),
     );
     link.updated_at = link.updated_at.max(state.updated_at);
-    link.completed_at = (!link.running).then_some(state.updated_at);
+    link.completed_at = (state.phase == NativeExecutionPhase::Idle).then_some(state.updated_at);
 }

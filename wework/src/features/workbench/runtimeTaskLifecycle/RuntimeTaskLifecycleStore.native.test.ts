@@ -16,7 +16,7 @@ function task(
     title: 'Native Goal',
     runtime: 'codex',
     goalStatus: 'active',
-    running: phase !== 'idle',
+    running: phase !== 'idle' && phase !== 'queued',
     continuable: true,
     executionState: {
       revision,
@@ -30,6 +30,21 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test('queue cancellation releases admission and rejects a delayed queued snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('native-queue-cancel')
+    store.syncRuntimeTask(address, { ...task('2', 'queued', null, 'old-turn'), status: 'queued' })
+    expect(store.getTask(address)?.execution.phase).toBe('queued')
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.turn.active).toBe(false)
+    const cancelled = task('3', 'idle', null, 'old-turn')
+    cancelled.executionState!.executionOutcome = 'cancelled'
+    store.syncRuntimeTask(address, cancelled)
+    store.syncRuntimeTask(address, task('2', 'queued', null, 'old-turn'))
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+  })
   test('invalidates execution evidence from a replaced executor before accepting its new snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('native-executor-replacement')
     store.syncRuntimeTask(address, task('100', 'running', 'old-turn'))

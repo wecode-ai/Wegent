@@ -27,6 +27,60 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 }
 
 #[tokio::test]
+async fn queue_admission_and_cancellation_publish_new_versions_without_rewriting_the_last_turn() {
+    let (handler, root, request) = setup("native-queue-admission");
+    handler.route_codex_notification(notification("turn/started", "old-turn"));
+    handler.route_codex_notification(notification("turn/completed", "old-turn"));
+    handler.route_codex_notification(
+        json!({"method":"thread/goal/cleared", "params":{"threadId":"thread-1"}}),
+    );
+    let before = handler
+        .local_task_link("task-1")
+        .unwrap()
+        .execution_state
+        .unwrap();
+    handler
+        .queue_turn(SpawnTurnRequest {
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: Some("thread-1".into()),
+            initial_thread_goal: None,
+        })
+        .await
+        .unwrap();
+    let queued = handler.get_task(&json!({"taskId":"task-1"})).unwrap();
+    assert_eq!(queued["task"]["executionState"]["phase"], "queued");
+    assert_eq!(queued["task"]["status"], "queued");
+    assert_eq!(queued["task"]["running"], false);
+    assert_eq!(queued["task"]["completedAt"], Value::Null);
+    assert_eq!(queued["task"]["queuePosition"], 1);
+    let queued_version = queued["task"]["executionState"]["revision"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(queued_version > before.revision.parse::<u64>().unwrap());
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    let cancelled = handler.local_task_link("task-1").unwrap();
+    let state = cancelled.execution_state.unwrap();
+    assert_eq!(
+        state.phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+    );
+    assert_eq!(state.latest_turn_id.as_deref(), Some("old-turn"));
+    assert_eq!(state.outcome.as_deref(), Some("succeeded"));
+    assert_eq!(state.execution_outcome.as_deref(), Some("cancelled"));
+    assert!(state.revision.parse::<u64>().unwrap() > queued_version);
+    assert!(cancelled.runtime_handle.get("queuePosition").is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn recovered_content_uses_native_turn_identity_before_request_callback_registration() {
     let (mut handler, root, mut request) = setup("native-recovery-content-identity");
     let (sender, mut receiver) = broadcast::channel(32);

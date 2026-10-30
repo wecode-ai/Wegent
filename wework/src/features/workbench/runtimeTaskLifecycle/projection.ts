@@ -220,7 +220,7 @@ export function runtimeTaskSummaryTrackingExecutionStatus(
 }
 
 export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean {
-  if (task.executionState) return task.executionState.phase !== 'idle'
+  if (task.executionState) return isRuntimeTaskExecutionRunning(task)
   if (task.optimistic === true) return false
   if (isRuntimeGoalExecutionActive(task)) return true
   return (
@@ -231,7 +231,8 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
 }
 
 export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean {
-  if (task.executionState) return task.executionState.phase !== 'idle'
+  if (task.executionState)
+    return task.executionState.phase !== 'idle' && task.executionState.phase !== 'queued'
   const normalizedTask = normalizeRuntimeTaskSummary(task)
   if (normalizedTask.optimistic === true) return false
   if (isRuntimeGoalExecutionActive(normalizedTask)) return true
@@ -240,7 +241,7 @@ export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean
 
 export function isRuntimeGoalExecutionActive(task: RuntimeTaskSummary): boolean {
   if (task.executionState)
-    return task.goalStatus === 'active' && task.executionState.phase !== 'idle'
+    return task.goalStatus === 'active' && isRuntimeTaskExecutionRunning(task)
   if (task.goalExecutionStatus === 'running' || task.goalExecutionStatus === 'recovering') {
     return true
   }

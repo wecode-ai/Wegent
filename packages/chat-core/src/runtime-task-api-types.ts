@@ -24,7 +24,7 @@ export type RuntimeAdditionalContext = Record<string, RuntimeAdditionalContextEn
 export interface RuntimeExecutionState {
   epoch?: string
   revision: string
-  phase: 'starting' | 'running' | 'continuing' | 'idle' | 'recovering' | 'stopping'
+  phase: 'queued' | 'starting' | 'running' | 'continuing' | 'idle' | 'recovering' | 'stopping'
   turnId: string | null
   continuation?: boolean
   latestTurnId: string | null
