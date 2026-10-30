@@ -196,7 +196,15 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The auto-tagged Issue was not persisted',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-more-properties"]'))
+  // Persistence can be visible before the create dialog becomes the saved Issue.
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    value: title,
+    visible: true,
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
