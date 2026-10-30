@@ -5,6 +5,10 @@ import {
   NotificationTaskSourceProvider,
 } from '@/features/notifications/NotificationTaskSource'
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
+import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
+import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
+import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   Activity,
   useCallback,
@@ -754,25 +758,65 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
         currentUserId={workbenchIdentity?.id}
         localUserId={LOCAL_USER.id}
       />
-      {mountedWorkspaceTabs.map(tab => (
-        <WorkspaceTabSurface
-          key={tab.id}
-          active={tab.id === workspaceTabs.activeTabId}
-          lifecycleStore={lifecycleStore}
-          nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          smartAppsEnabled={experimentalFeatures.enabled}
-          services={services}
-          cloudWebUrl={cloudWebUrl}
-          onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-          onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-          tab={
-            tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
-              ? { ...tab, contentRoute: `${path}${search}` }
-              : tab
-          }
-          user={user}
-        />
-      ))}
+      {mountedWorkspaceTabs.map(tab =>
+        tab.contentRoute.startsWith(INTERACTIONS_PATH) ? (
+          <Activity key={tab.id} mode={tab.id === workspaceTabs.activeTabId ? 'visible' : 'hidden'}>
+            <div
+              className={cn('h-full', tab.id !== workspaceTabs.activeTabId && 'hidden')}
+              data-testid={`workspace-tab-content-${tab.id}`}
+              data-workspace-tab-content={tab.id}
+              aria-hidden={tab.id !== workspaceTabs.activeTabId}
+            >
+              <WorkbenchProvider
+                lifecycleStore={lifecycleStore}
+                services={services}
+                user={user}
+                workspaceTabId={tab.id}
+                loadTaskComposerCatalogs={false}
+                composerAppsSourceActive={false}
+                debugSnapshotEnabled={false}
+                publishDebugSnapshots={false}
+                consumePluginTrials={false}
+                syncCoreDshModels={false}
+                syncRemoteProjects={tab.id === workspaceTabs.activeTabId}
+                syncRuntimeTaskLifecycle={tab.id === workspaceTabs.activeTabId}
+                onStartupReadyChange={
+                  tab.id === workspaceTabs.activeTabId ? onWorkbenchStartupReadyChange : undefined
+                }
+              >
+                <NotificationTaskSourceBridge
+                  id={tab.id}
+                  active={tab.id === workspaceTabs.activeTabId}
+                />
+                <RuntimeInteractionsPage
+                  active={tab.id === workspaceTabs.activeTabId}
+                  selectedId={new URL(tab.contentRoute, window.location.origin).searchParams.get(
+                    'interaction'
+                  )}
+                />
+              </WorkbenchProvider>
+            </div>
+          </Activity>
+        ) : (
+          <WorkspaceTabSurface
+            key={tab.id}
+            active={tab.id === workspaceTabs.activeTabId}
+            lifecycleStore={lifecycleStore}
+            nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
+            smartAppsEnabled={experimentalFeatures.enabled}
+            services={services}
+            cloudWebUrl={cloudWebUrl}
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+            tab={
+              tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
+                ? { ...tab, contentRoute: `${path}${search}` }
+                : tab
+            }
+            user={user}
+          />
+        )
+      )}
     </>
   )
 }
@@ -1248,63 +1292,70 @@ function AppShell() {
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
       >
-        <ElectronWorkbenchTabBridge />
-        <WeworkSchemeBridge />
-        {isElectron && !isPopoutWindow ? <ApplicationMenuWorkspaceBridge pathname={path} /> : null}
-        <div
-          data-testid="app-shell"
-          className={cn(
-            isDesktop ? 'fixed inset-0' : 'h-dvh',
-            isPopoutWindow
-              ? 'overflow-visible bg-transparent'
-              : isWorkspaceWindow
-                ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-                : hasWorkbenchBackground
-                  ? 'overflow-hidden bg-transparent'
-                  : 'overflow-hidden bg-surface',
-            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-          )}
+        <RuntimeInteractionsProvider
+          accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
         >
-          {showChromeTitlebar && (
-            <ChromeTitlebar
-              showWorkspacePortals={activeAppKey !== 'wework'}
-              showFeedback={activeAppKey !== 'wework'}
-            />
-          )}
-          {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-          {!isPopoutWindow && !isWorkspaceWindow ? (
-            <LocalExecutorCloudBridge
-              apiBaseUrl={cloudConnection.apiBaseUrl}
-              backendUrl={cloudConnection.backendUrl}
-              socketBaseUrl={cloudConnection.socketBaseUrl}
-              isConnected={cloudConnection.isConnected}
-              token={cloudConnection.token}
-              preferencesLoaded={appPreferences?.loaded ?? false}
-            />
+          <ElectronWorkbenchTabBridge />
+          <WeworkSchemeBridge />
+          {isElectron && !isPopoutWindow ? (
+            <ApplicationMenuWorkspaceBridge pathname={path} />
           ) : null}
-          {isMainWindow && isElectron ? (
-            <>
-              <IdleTaskCoordinator active={workbenchStartupReady} />
-              <WeworkIdleTasks />
-            </>
-          ) : null}
-          {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
-          <CloudModelCatalogSyncDialogHost />
           <div
-            data-testid="app-route-host"
+            data-testid="app-shell"
             className={cn(
-              'relative min-h-0',
-              isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-              titlebarOverlaysContent ? 'h-full' : 'flex-1'
+              isDesktop ? 'fixed inset-0' : 'h-dvh',
+              isPopoutWindow
+                ? 'overflow-visible bg-transparent'
+                : isWorkspaceWindow
+                  ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+                  : hasWorkbenchBackground
+                    ? 'overflow-hidden bg-transparent'
+                    : 'overflow-hidden bg-surface',
+              titlebarOverlaysContent ? 'relative' : 'flex flex-col'
             )}
           >
-            <AppRoutes
-              onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-              onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
-            />
+            {showChromeTitlebar && (
+              <ChromeTitlebar
+                showWorkspacePortals={activeAppKey !== 'wework'}
+                showFeedback={activeAppKey !== 'wework'}
+              />
+            )}
+            {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+            {!isPopoutWindow && !isWorkspaceWindow ? (
+              <LocalExecutorCloudBridge
+                apiBaseUrl={cloudConnection.apiBaseUrl}
+                backendUrl={cloudConnection.backendUrl}
+                socketBaseUrl={cloudConnection.socketBaseUrl}
+                isConnected={cloudConnection.isConnected}
+                token={cloudConnection.token}
+                preferencesLoaded={appPreferences?.loaded ?? false}
+              />
+            ) : null}
+            {isMainWindow && isElectron ? (
+              <>
+                <IdleTaskCoordinator active={workbenchStartupReady} />
+                <WeworkIdleTasks />
+              </>
+            ) : null}
+            {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
+            <CloudModelCatalogSyncDialogHost />
+            <div
+              data-testid="app-route-host"
+              className={cn(
+                'relative min-h-0',
+                isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+                titlebarOverlaysContent ? 'h-full' : 'flex-1'
+              )}
+            >
+              <AppRoutes
+                onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+                onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
+              />
+            </div>
+            {!isPopoutWindow && <WeworkDevInstanceBadge />}
+            {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}
           </div>
-          {!isPopoutWindow && <WeworkDevInstanceBadge />}
-        </div>
+        </RuntimeInteractionsProvider>
       </WorkspaceTabsProvider>
     </NotificationTaskSourceProvider>
   )

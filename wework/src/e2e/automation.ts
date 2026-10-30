@@ -625,8 +625,6 @@ function desktopControlElementText(selector: string, visible = false): string {
 
 function desktopControlElementMetrics(selector: string): string {
   const elements = findDesktopControlElements(selector)
-  if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
-
   return JSON.stringify(
     elements.map(element => {
       const rect = element.getBoundingClientRect()
@@ -2423,6 +2421,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'removeLocalStorageItem':
       localStorage.removeItem(command.value ?? '')
       return ''
+    case 'getWebLocksSnapshot':
+      return JSON.stringify(await navigator.locks.query())
     case 'getLocationOrigin':
       return window.location.origin
     case 'restartCoreDsh':

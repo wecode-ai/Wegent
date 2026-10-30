@@ -1825,12 +1825,84 @@ When a screenshot feels wrong, compare it in this order: composition, surface
 hierarchy, typography, spacing, control sizing, radii, elevation, then color.
 Do not try to rescue incorrect composition by adding accent color or decoration.
 
+### 13.1 Composition and information density
+
+Simplicity means a clear hierarchy with few competing decisions. A small number
+of controls is not evidence of a successful composition. Whitespace must help
+users read, understand relationships, and act; it must not leave essential
+content visually weak or disconnected.
+
+Review the whole application window at its intended display size, not only a
+cropped component or an enlarged screenshot. Check these points explicitly:
+
+- **Visual hierarchy:** Can a user immediately identify the primary question or
+  work item, understand its source, and find the next action? Repeated source
+  titles and metadata must not compete with the actual work content.
+- **Spatial relationships:** Do the source, question, supporting context, and
+  response form read as one coherent group? Avoid detached controls at opposite
+  edges, unrelated gaps between connected elements, and content that appears to
+  float in an otherwise unstructured pane.
+- **Proportion and density:** Are pane widths, reading width, top inset, and
+  vertical spacing appropriate for the amount of content? A single pending item
+  is a normal working state, not an empty state. A sparse list or short question
+  must still have a deliberate composition in a wide desktop window. Do not
+  stretch a short response field merely because horizontal space is available.
+- **Context for decisions:** Does the initial view contain enough available
+  context to make the requested judgment? Show a concise explanation or evidence
+  summary when the task provides one; keep lengthy logs and secondary details
+  progressively disclosed. Do not hide all useful context behind a generic
+  disclosure, invent supporting information, or force users to open the original
+  conversation for every simple decision.
+- **Restraint:** Fix hierarchy, grouping, and proportions before adding UI.
+  Decorative cards, redundant instructions, extra controls, and fabricated
+  metadata must not be used to fill space. Unused space is acceptable when the
+  content that remains is intentional, readable, and complete.
+
+For list/detail and human-response surfaces, inspect zero, one, and multiple
+items, short and long content, and both wide and constrained windows. Include
+the ordinary unfocused state; a blue focus ring must not be the only visible
+anchor. Preserve the hierarchy when details expand, drafts grow, an item is
+handled, or an error appears. Apply the responsive and accessibility checks
+above rather than judging only a populated desktop happy path.
+
+### 13.2 Review evidence and conclusions
+
+Review functional correctness, interaction usability, and visual quality as
+separate dimensions. Passing tests, matching screenshot hashes, and finding no
+functional blockers do not establish that a screen is visually well designed.
+
+When an independent reviewer is requested, explicitly include the composition
+checks above in the assignment. Ask the reviewer to assess the actual work at
+the full-window scale, including the one-item state, rather than only verify
+controls and screenshot provenance. Give the reviewer the user's visual
+requirements and relevant before/after evidence.
+
+The review conclusion must identify the states and window sizes actually
+inspected, findings in each dimension, and any unverified scope. Describe visual
+defects concretely, such as excessive reading width, weak question emphasis, or
+disconnected context and response controls; do not dismiss structural problems
+as subjective taste. Reserve an unqualified UI approval for a review that
+actually assessed composition. The implementing agent must also inspect the
+result and remains responsible for addressing the user's requirements.
+
+These are review acceptance criteria, not authorization to run verification
+tools. Follow the repository's E2E and `ai:verify` execution policy.
+
 ## 14. Notification inbox and unread contract
 
 The title-bar bell is the product's single notification inbox. Its badge is the
 sum of unread items from every registered source. The macOS Dock badge mirrors
 that sum; it does not count tray-menu rows. A tray preference may hide the
 unread-task section in the tray, but must never change the bell or Dock total.
+
+The bell also links to the singleton **Needs your input** workspace tab. Its
+pending count tracks unresolved structured questions independently of unread
+notifications: reading, dismissing, or marking notifications read never answers
+a question. In-app reminders, that tab, and the original conversation share the
+same request identity and response state. Simple business questions can be
+answered inline; approvals, authorization, and complex forms link to their
+original context. Keep one notification-settings surface and one reply control
+implementation; do not recreate per-source human-response forms.
 
 ```mermaid
 flowchart LR

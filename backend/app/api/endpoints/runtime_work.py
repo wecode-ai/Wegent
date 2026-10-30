@@ -92,6 +92,8 @@ async def _runtime_worktree_rpc(
 
 @router.get("", response_model=RuntimeWorkListResponse, response_model_by_alias=True)
 async def list_runtime_work_endpoint(
+    pending_only: bool = Query(False),
+    device_id: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -100,6 +102,8 @@ async def list_runtime_work_endpoint(
     return await runtime_work_service.list_runtime_work(
         db=db,
         user_id=current_user.id,
+        pending_only=pending_only,
+        device_id=device_id,
     )
 
 

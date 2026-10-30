@@ -4,9 +4,19 @@ import {
   weworkDestinationRoute,
   weworkIssueScheme,
   weworkTaskScheme,
+  weworkInteractionScheme,
 } from './scheme'
 
 describe('Wework scheme routing', () => {
+  it('round trips the exact question identity, including turn scope and reserved characters', () => {
+    const requestKey = 'scope:turn/1#item:question?keep'
+    const address = { deviceId: 'device:1', taskId: 'review/#1' }
+    const destination = parseWeworkScheme(weworkInteractionScheme(address, requestKey))!
+    expect(destination).toEqual({ kind: 'interaction', ...address, requestKey })
+    const route = new URL(weworkDestinationRoute(destination), 'https://local')
+    expect(route.pathname).toBe('/pending-interactions')
+    expect(JSON.parse(route.searchParams.get('interaction')!)).toEqual([address.deviceId, address.taskId, requestKey])
+  })
   it('keeps local project storage in the destination and navigation route', () => {
     const url = weworkIssueScheme('local-project-1', 'OFF-1', 'local')
     const destination = parseWeworkScheme(url)!
