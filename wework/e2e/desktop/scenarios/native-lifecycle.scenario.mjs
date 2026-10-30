@@ -18,11 +18,14 @@ import {
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const GOAL = 'WEWORK_NATIVE_LIFECYCLE_EXISTING_GOAL'
 const FOLLOW_UP = 'WEWORK_NATIVE_LIFECYCLE_ORDINARY_REQUEST'
 const ORDINARY_DONE = 'WEWORK_NATIVE_ORDINARY_REQUEST_FINISHED'
 const CONTINUED = 'WEWORK_NATIVE_GOAL_CONTINUED'
+const NAMED_HOME = 'WEWORK_NATIVE_LIFECYCLE_NAMED_HOME'
+const NAMED_DONE = 'WEWORK_NATIVE_NAMED_HOME_FINISHED'
 
 function deferred() {
   let resolve
@@ -37,6 +40,8 @@ export function createDesktopScenario(options) {
   const ordinary = deferred()
   const continuation = deferred()
   const continuationRequested = deferred()
+  const namedRequested = deferred()
+  const namedFinished = deferred()
   let active = false
   let ordinaryFinished = false
   let requestCount = 0
@@ -46,6 +51,7 @@ export function createDesktopScenario(options) {
       initial.resolve()
       ordinary.resolve()
       continuation.resolve()
+      namedFinished.resolve()
     },
     async handleHttp(request, response, url) {
       if (
@@ -56,6 +62,15 @@ export function createDesktopScenario(options) {
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (JSON.stringify(body).includes(NAMED_HOME)) {
+        const id = `native-named-${++requestCount}`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(createSse([responseCreated(id)]))
+        namedRequested.resolve()
+        await namedFinished.promise
+        response.end(createSse([assistantMessage(NAMED_DONE), responseCompleted(id)]))
+        return true
+      }
       assert.ok(
         JSON.stringify(body).includes(GOAL),
         'The real native request lost the existing Goal'
@@ -213,6 +228,65 @@ export function createDesktopScenario(options) {
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-thinking"]`,
           { visible: false }
         )
+        const catalog = await rpc('runtime.runner.catalog', {})
+        const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
+        assert.ok(model, 'The real Codex model is missing from the runner catalog')
+        const namedTaskId = 'native-lifecycle-named-home'
+        await rpc('runtime.tasks.create', {
+          taskId: namedTaskId,
+          title: NAMED_HOME,
+          runtime: 'codex',
+          workspacePath: options.workspacePath,
+          message: NAMED_HOME,
+          executionRequest: {
+            task_id: namedTaskId,
+            subtask_id: `${namedTaskId}-request`,
+            user_name: 'native-lifecycle-user',
+            team_namespace: 'default',
+            team_name: 'native-lifecycle-agent',
+            team_id: 7301,
+            bot: [{ id: 7302, shell_type: 'Codex' }],
+            prompt: NAMED_HOME,
+            new_session: true,
+            model_config: { model_id: model.local_model_id, model_provider: model.provider },
+          },
+        })
+        await withTimeout(
+          namedRequested.promise,
+          options.modelResponseTimeoutMs,
+          'The isolated Home process did not reach the model'
+        )
+        const namedStarted = await waitForValue(
+          () => rpc('runtime.tasks.get', { taskId: namedTaskId }),
+          value => value.task?.executionState?.phase === 'running',
+          'The isolated Home source did not publish its native start',
+          options.uiTimeoutMs
+        )
+        assert.equal(namedStarted.task.running, true)
+        assert.ok(namedStarted.task.executionState.turnId)
+        namedFinished.resolve()
+        const namedSettled = await waitForValue(
+          () => rpc('runtime.tasks.get', { taskId: namedTaskId }),
+          value => value.task?.executionState?.phase === 'idle',
+          'The isolated Home source did not publish native completion',
+          options.uiTimeoutMs
+        )
+        assert.equal(namedSettled.task.executionState.outcome, 'succeeded')
+        assert.equal(
+          namedSettled.task.executionState.latestTurnId,
+          namedStarted.task.executionState.turnId
+        )
+        assert.equal(namedSettled.task.running, false)
+        const namedTranscript = await rpc('runtime.tasks.transcript', { taskId: namedTaskId })
+        assert.ok(
+          JSON.stringify(namedTranscript.messages).includes(NAMED_DONE),
+          'The isolated Home completion lost its native transcript'
+        )
+        evidence.push({
+          label: 'named-home',
+          started: namedStarted.task.executionState,
+          settled: namedSettled.task.executionState,
+        })
         await gates.save(options.resultDir, 'native-lifecycle-event-order.json', [
           'ordinary-completed',
         ])
@@ -226,6 +300,7 @@ export function createDesktopScenario(options) {
         initial.resolve()
         ordinary.resolve()
         continuation.resolve()
+        namedFinished.resolve()
       }
     },
   }

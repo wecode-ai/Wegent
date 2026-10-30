@@ -369,6 +369,12 @@ keeps receiving events from the replacement process. Ordinary broadcast serves o
 prediction. Request cleanup does not wait for native publication; no completion handshake
 or timeout fallback connects the two lifetimes. The sole native owner retains source order.
 
+Per-turn processes for named Homes publish JSON-RPC notifications and local interaction
+settlements into that same native channel at their source, independently of request observers.
+Their process exits also carry a generation. Explicit thread unsubscription retains the
+existing admission lock until Codex responds, preventing a late unsubscribe from overtaking
+a new resume and removing the replacement execution's listener.
+
 Interaction notifications reuse the execution entry point's effective permission profile.
 Automatically approved requests do not create pending user cards; read-only and stand-in
 confirmation limits remain intact. Local answer, cancellation, and expiry settlements enter

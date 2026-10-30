@@ -942,8 +942,6 @@ impl CodexAppServerClient {
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
         }
-        drop(_lifecycle_guard);
-
         self.request_thread_unsubscribe(thread_id).await
     }
 
@@ -1968,7 +1966,16 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(thread_id) = options.direct_thread_id.take() {
             options.resume_thread_id = Some(thread_id);
         }
-        return run_codex_app_server_turn_with_cancel(&client.binary, request, options).await;
+        let runtime_notifications = CodexNotificationHub::for_runtime(Arc::clone(
+            &client.state.lock().await.runtime_notifications,
+        ));
+        return run_codex_app_server_turn_with_runtime(
+            &client.binary,
+            request,
+            options,
+            Some(runtime_notifications),
+        )
+        .await;
     }
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
@@ -2335,6 +2342,15 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    run_codex_app_server_turn_with_runtime(binary, request, options, None).await
+}
+
+async fn run_codex_app_server_turn_with_runtime(
+    binary: &str,
+    request: ExecutionRequest,
+    options: CodexAppServerTurnOptions,
+    runtime_notifications: Option<CodexNotificationHub>,
+) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
@@ -2394,7 +2410,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
             stdout,
             Some((&prepared.request.task_id, &prepared.request.subtask_id)),
         );
-        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1);
+        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
+            .with_runtime_notifications(runtime_notifications.clone());
         let mut state = CodexRunState::default();
 
         with_rpc_timeout(
@@ -2553,6 +2570,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    if let Some(runtime) = runtime_notifications.as_ref() {
+        notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
+    }
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
         failed_fields.push(("error", error.clone()));

@@ -107,6 +107,48 @@ async fn native_subscription_survives_process_stop_and_replacement() {
     assert_eq!(start.process_generation(), replacement.process_generation);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = Command::new("sh")
+        .args(["-c", r#"printf '%s\n' '{"method":"turn/started","params":{"threadId":"named-thread","turn":{"id":"turn-1"}}}' '{"id":1,"result":{}}' '{"id":2,"method":"item/commandExecution/requestApproval","params":{"threadId":"named-thread","turnId":"turn-1","expiresAtUnixMs":0}}'"#])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn().unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        1,
+    )
+    .with_runtime_notifications(Some(hub.clone()));
+    let start = rpc.read_message().await.unwrap();
+    assert_eq!(start["method"], "turn/started");
+    let native_start = runtime.try_recv().unwrap();
+    assert_eq!(native_start["params"]["threadId"], "named-thread");
+    assert_eq!(native_start.process_generation(), hub.process_generation);
+    assert_eq!(rpc.read_message().await.unwrap()["id"], 1);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let approval = rpc.read_message().await.unwrap();
+    assert_eq!(runtime.try_recv().unwrap()["id"], 2);
+    rpc.publish_runtime_notification(elicitation::settled(&approval, "expired", None))
+        .await;
+    let settled = runtime.try_recv().unwrap();
+    assert_eq!(settled["method"], "wegent/approval/settled");
+    assert_eq!(settled["params"]["interactionStatus"], "expired");
+    assert_eq!(
+        settled.process_generation(),
+        native_start.process_generation()
+    );
+    assert!(settled.sequence() > native_start.sequence());
+    assert!(child.wait().await.unwrap().success());
+}
+
 #[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
@@ -326,6 +368,50 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
         "new process admission raced with old process cleanup"
     );
     assert!(client.state.lock().await.process.is_none());
+}
+
+#[tokio::test]
+async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_response() {
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
+
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let mut client = CodexAppServerClient::new("explicit-unsubscribe-admission");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    let mut unsubscribe = Box::pin(client.release_thread_subscription("thread-1"));
+    assert!(unsubscribe.as_mut().poll(&mut context).is_pending());
+    let mut admission = Box::pin(client.mark_thread_active("thread-1"));
+    let admission_blocked = admission.as_mut().poll(&mut context).is_pending();
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, response) in responses {
+        response.send(Ok(json!({}))).unwrap();
+    }
+    unsubscribe.await.unwrap();
+    if admission_blocked {
+        admission.await;
+    }
+    client.restart().await;
+    assert!(
+        admission_blocked,
+        "a new resume overtook the native unsubscribe response"
+    );
 }
 
 #[tokio::test]
