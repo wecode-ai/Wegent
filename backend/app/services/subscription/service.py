@@ -153,6 +153,8 @@ def _validate_execution_target(
     actual_type = device.json.get("spec", {}).get(
         "deviceType", SubscriptionExecutionTargetType.LOCAL.value
     )
+    if actual_type == "app":
+        actual_type = SubscriptionExecutionTargetType.LOCAL.value
     if actual_type != execution_target.type.value:
         raise HTTPException(
             status_code=400,
