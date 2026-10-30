@@ -19,6 +19,7 @@ import { PatchDiff } from '@pierre/diffs/react'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -317,6 +318,8 @@ export function FileChangesReviewPanel({
                 canComment={Boolean(onAddCodeComment)}
                 commentSelection={commentSelection}
                 onCommentSelectionChange={selection => {
+                  // A typed draft keeps its selection until it is cancelled or added.
+                  if (comment.trim()) return
                   setCommentSelection(selection)
                   setComment('')
                 }}
@@ -408,6 +411,8 @@ function ReviewToolbar({
 }) {
   const { t } = useTranslation('chat')
   const [menuOpen, setMenuOpen] = useState(false)
+  const switcherRef = useRef<HTMLDivElement>(null)
+  const switcherButtonRef = useRef<HTMLButtonElement>(null)
   const sourceBranchLabel = branchName?.trim() || t('file_changes.branch_unknown')
   const targetBranchLabel = targetBranchName?.trim()
   const hasBranchContext = Boolean(branchName?.trim() || targetBranchName?.trim())
@@ -416,6 +421,26 @@ function ReviewToolbar({
     (hasBranchContext ? t('file_changes.branch_label') : t('file_changes.changes_label'))
   const canSwitchView = Boolean(viewOptions?.length)
 
+  useEscapeKey(
+    () => {
+      setMenuOpen(false)
+      switcherButtonRef.current?.focus()
+    },
+    menuOpen,
+    switcherRef
+  )
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!switcherRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [menuOpen])
+
   return (
     <div
       data-testid="file-changes-review-toolbar"
@@ -423,10 +448,11 @@ function ReviewToolbar({
     >
       <div className="flex min-h-8 items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-text-primary">
-          <div className="relative shrink-0">
+          <div ref={switcherRef} className="relative shrink-0">
             {canSwitchView ? (
               <>
                 <button
+                  ref={switcherButtonRef}
                   type="button"
                   data-testid="review-view-switcher-button"
                   aria-haspopup="menu"
