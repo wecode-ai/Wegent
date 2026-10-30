@@ -134,9 +134,10 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       ...options,
     }
 
+    const thisClient = this
     this.facade = {
       get connected() {
-        return Boolean(this.rawSocket?.connected)
+        return Boolean(thisClient.rawSocket?.connected)
       },
       emit: <TArgs extends unknown[]>(...args: TArgs) => this.rawSocket?.emit(...args),
       on: <TArgs extends unknown[]>(event: string, handler: (...args: TArgs) => void) => {
