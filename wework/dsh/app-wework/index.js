@@ -258,6 +258,9 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_SEED_LOCAL_MODELS',
       'VITE_WEWORK_E2E_SEED_LOCAL_MODELS'
     ),
+    telemetryDistribution:
+      environment.WEWORK_E2E_TELEMETRY_DISTRIBUTION ||
+      environment.VITE_WEWORK_E2E_TELEMETRY_DISTRIBUTION,
     transcriptPageSize: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',

@@ -10,6 +10,7 @@ export interface DesktopE2ERuntimeConfig {
   posthogHost?: string
   posthogKey?: string
   seedLocalModels?: boolean
+  telemetryDistribution?: 'internal' | 'public'
   transcriptPageSize?: number
   windowLabel?: string
   worktreeCreationDelayMs?: number

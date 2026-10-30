@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 afterEach(() => {
+  delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
   vi.resetModules()
   vi.unstubAllEnvs()
 })
@@ -14,6 +15,13 @@ describe('telemetry configuration', () => {
 
   test('selects internal distribution from the build environment', async () => {
     vi.stubEnv('VITE_WEWORK_TELEMETRY_DISTRIBUTION', 'internal')
+    const { getTelemetryConfig } = await import('./config')
+
+    expect(getTelemetryConfig().distribution).toBe('internal')
+  })
+
+  test('selects internal distribution from the desktop E2E runtime configuration', async () => {
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = { telemetryDistribution: 'internal' }
     const { getTelemetryConfig } = await import('./config')
 
     expect(getTelemetryConfig().distribution).toBe('internal')

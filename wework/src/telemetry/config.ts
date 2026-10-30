@@ -36,7 +36,9 @@ function sampleRate(value: string): number {
 export function getTelemetryConfig(): TelemetryConfig {
   const desktopE2ERuntimeConfig = getDesktopE2ERuntimeConfig()
   return {
-    distribution: telemetryDistribution(env('VITE_WEWORK_TELEMETRY_DISTRIBUTION')),
+    distribution: telemetryDistribution(
+      desktopE2ERuntimeConfig.telemetryDistribution ?? env('VITE_WEWORK_TELEMETRY_DISTRIBUTION')
+    ),
     environment: env('VITE_WEWORK_TELEMETRY_ENVIRONMENT') || import.meta.env.MODE,
     posthogHost:
       desktopE2ERuntimeConfig.posthogHost ||
