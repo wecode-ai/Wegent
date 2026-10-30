@@ -243,11 +243,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await createFromBacklog(control, backlog, 'Filtered Backlog creation')
       const issuePath = '/api/v1/cloud-projects/' + project.id + '/loop-items'
       const parent = await request(issuePath, 'POST', { title: 'Backlog parent', tags: ['bug'] })
-      await request(issuePath, 'POST', {
+      const child = await request(issuePath, 'POST', {
         title: 'Existing Backlog child',
         parent_id: parent.id,
         tags: ['bug'],
       })
+      assert.equal(child.parent_id, parent.id)
+      const tree = await request('/api/v1/cloud-projects/' + project.id + '/board-snapshot')
+      assert.ok(tree.items.some(issue => issue.id === child.id && issue.parent_id === parent.id))
       await reloadMainWindow(control, 'Backlog child fixtures did not reload')
       await openCloud(control)
       await control.command(

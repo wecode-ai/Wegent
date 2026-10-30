@@ -78,6 +78,7 @@ export interface ProjectBoardAdapterLabels {
 export interface ProjectBoardIssueCardRenderContext {
   column: ProjectBoardColumn;
   defaultCard: ReactNode;
+  childrenAction?: ReactNode;
   display: {
     showAssignee: boolean;
     showDate: boolean;
@@ -590,10 +591,13 @@ export function ProjectBoardAdapter({
             <button
               type="button"
               data-testid={`collaboration-issue-children-${issue.id}`}
-              onClick={() => controller.setCurrentParentId(issue.id)}
-              className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
+              onClick={(event) => {
+                event.stopPropagation();
+                controller.setCurrentParentId(issue.id);
+              }}
+              className="mx-3 mb-3 min-h-11 text-xs text-text-secondary hover:text-text-primary md:min-h-0"
             >
-              查看子任务
+              {translate('todo.view_child_task')}
             </button>
           ) : null;
           const defaultCard = (
@@ -603,6 +607,7 @@ export function ProjectBoardAdapter({
             renderIssueCard({
               column,
               defaultCard,
+              childrenAction,
               display: issueDisplay,
               focused,
               issue,
