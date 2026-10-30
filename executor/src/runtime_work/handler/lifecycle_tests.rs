@@ -27,6 +27,41 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 }
 
 #[tokio::test]
+async fn queued_goal_recovery_preserves_owned_recovery_without_claiming_a_model_slot() {
+    let (handler, root, mut request) = setup("native-goal-recovering-admission");
+    request
+        .extra
+        .insert(RESUME_GOAL_ONLY_MARKER.into(), json!(true));
+    handler
+        .queue_turn(SpawnTurnRequest {
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: Some("thread-1".into()),
+            initial_thread_goal: None,
+        })
+        .await
+        .unwrap();
+    let task = handler.get_task(&json!({"taskId":"task-1"})).unwrap();
+    assert_eq!(task["task"]["executionState"]["phase"], "recovering");
+    assert_eq!(task["task"]["executionState"]["turnId"], Value::Null);
+    assert_eq!(task["task"]["goalExecutionStatus"], "recovering");
+    assert_eq!(task["task"]["running"], false);
+    assert_eq!(task["task"]["status"], "queued");
+    assert_eq!(task["task"]["queuePosition"], 1);
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert_eq!(
+        json!(handler.local_task_link("task-1").unwrap().execution_state)["phase"],
+        "idle"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn queue_admission_and_cancellation_publish_new_versions_without_rewriting_the_last_turn() {
     let (handler, root, request) = setup("native-queue-admission");
     handler.route_codex_notification(notification("turn/started", "old-turn"));

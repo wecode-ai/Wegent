@@ -30,6 +30,21 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test('keeps queued Goal recovery owned without inventing a running model turn', () => {
+    const store = new RuntimeTaskLifecycleStore('native-goal-recovery-admission')
+    store.syncRuntimeTask(address, {
+      ...task('2', 'recovering', null),
+      running: false,
+      status: 'queued',
+      goalExecutionStatus: 'recovering',
+    })
+    const lifecycle = store.getTask(address)!
+    expect(lifecycle.derived.shouldShowSidebarRunning).toBe(true)
+    expect(lifecycle.turn.active).toBe(false)
+    const pane = deriveRuntimePaneStatus({ messages: [], currentRuntimeTask: address, lifecycle })
+    expect(pane.isBusy).toBe(true)
+    expect(pane.isWaitingForAssistantIndicator).toBe(false)
+  })
   test('queue cancellation releases admission and rejects a delayed queued snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('native-queue-cancel')
     store.syncRuntimeTask(address, { ...task('2', 'queued', null, 'old-turn'), status: 'queued' })

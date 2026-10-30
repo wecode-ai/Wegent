@@ -349,12 +349,20 @@ Enqueue, cancellation, and dequeue advance the same execution revision only afte
 persistence succeeds. Cancelling admission preserves the previous turn's result, and an
 older queued snapshot cannot make the cancelled task busy again.
 
+`recovering` means the executor owns an existing Goal's recovery while awaiting an
+execution slot. Recovery remains busy without an active model turn; its queued legacy
+`task.running: false` must not present that owned recovery as stopped.
+
 Content mappers neither cache Goal status nor gate native lifecycle delivery. Native turn
 completion settles that turn's messages and thinking blocks. Late content can enrich a
 settled message but cannot restore streaming. An ordinary RPC releases its own scheduling
 resources and includes the current execution snapshot in its existing terminal event; it
 must preserve recovery journals for still-active Goal executions. Context compaction can
 update content routing without replacing execution state.
+
+Native start also establishes the content turn. The request-created callback only binds
+user-message identity. Binding may arrive after content or even completion, but cannot
+drop received text, move subsequent turns, or restore streaming on a settled turn.
 
 When the user stops the current response for a task with an active goal, Wework must persist
 `paused` through the runtime goal API before cancelling the current turn. This ordering disables

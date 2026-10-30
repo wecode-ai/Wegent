@@ -83,6 +83,7 @@ export interface ChatRecoveredPayload {
 }
 
 export interface ChatStartPayload {
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   taskId?: string;
   subtaskId?: string;
   clientUserMessageId?: string;

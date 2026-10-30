@@ -245,6 +245,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       onChatStart: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
+        if (payload.task) store.syncRuntimeTask(address, payload.task)
         store.turnStarted(address, payload.subtaskId?.trim() || null)
       },
       onBlockCreated: payload => {

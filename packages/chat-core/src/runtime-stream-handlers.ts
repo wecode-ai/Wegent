@@ -377,6 +377,18 @@ export function createRuntimeTaskStreamHandlers(
           },
         });
       }
+      if (payload.task?.executionState) {
+        handlers.onMessageAction({
+          type: "assistant_bound",
+          taskId: payload.taskId,
+          subtaskId: identity.subtaskId,
+          clientUserMessageId:
+            payload.clientUserMessageId ??
+            payload.runtimeGeneratedUserMessage?.id,
+          shellType: payload.shellType,
+        });
+        return;
+      }
       if (settledAssistantTurnIds.has(identity.subtaskId)) return;
       unsettledAssistantTurnIds.add(identity.subtaskId);
       handlers.onAssistantStart?.(identity.subtaskId);
@@ -790,6 +802,23 @@ export function createRuntimeTaskStreamHandlers(
       if (!isRuntimeTaskStreamPayload(address, payload)) return;
       handlers.onRuntimeTurnUpdated?.(payload);
       const state = payload.task?.executionState;
+      if (
+        payload.status === "started" &&
+        payload.turnId &&
+        state?.turnId === payload.turnId &&
+        !settledAssistantTurnIds.has(payload.turnId) &&
+        !unsettledAssistantTurnIds.has(payload.turnId)
+      ) {
+        unsettledAssistantTurnIds.add(payload.turnId);
+        handlers.onAssistantStart?.(payload.turnId);
+        handlers.onMessageAction({
+          type: "assistant_started",
+          taskId: payload.taskId,
+          subtaskId: payload.turnId,
+          clientUserMessageId: null,
+          startedAt: state.startedAt ?? undefined,
+        });
+      }
       if (
         payload.status === "settled" &&
         payload.turnId &&

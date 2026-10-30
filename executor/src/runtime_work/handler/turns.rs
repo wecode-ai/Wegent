@@ -320,7 +320,16 @@ impl RuntimeWorkRpcHandler {
                     .collect(),
                 turns
                     .iter()
-                    .map(|turn| turn.local_task_id.clone())
+                    .map(|turn| {
+                        (
+                            turn.local_task_id.clone(),
+                            turn.request
+                                .extra
+                                .get(RESUME_GOAL_ONLY_MARKER)
+                                .and_then(Value::as_bool)
+                                == Some(true),
+                        )
+                    })
                     .collect(),
             )
         });

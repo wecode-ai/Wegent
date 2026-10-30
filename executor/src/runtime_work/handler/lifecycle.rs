@@ -14,7 +14,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn sync_native_queue_admissions(
         &self,
         mut previous: HashSet<String>,
-        current: Vec<String>,
+        current: Vec<(String, bool)>,
     ) {
         let active = self
             .turn_scheduler
@@ -23,8 +23,10 @@ impl RuntimeWorkRpcHandler {
             .active_task_ids
             .clone();
         let mut positions = HashMap::new();
-        for (position, task_id) in current.into_iter().enumerate() {
-            positions.entry(task_id.clone()).or_insert(position);
+        for (position, (task_id, recovering)) in current.into_iter().enumerate() {
+            positions
+                .entry(task_id.clone())
+                .or_insert((position, recovering));
             previous.insert(task_id);
         }
         for task_id in previous {
@@ -34,15 +36,15 @@ impl RuntimeWorkRpcHandler {
                 if active.contains(&task_id) {
                     if before
                         .as_ref()
-                        .is_some_and(|state| state.phase == NativeExecutionPhase::Queued)
+                        .is_some_and(|state| state.phase.awaits_admission())
                     {
                         begin_native_request(link);
                     }
-                } else if let Some(position) = positions.get(&task_id) {
-                    queue_native_execution(link, *position);
+                } else if let Some((position, recovering)) = positions.get(&task_id) {
+                    queue_native_execution(link, *position, *recovering);
                 } else if before
                     .as_ref()
-                    .is_some_and(|state| state.phase == NativeExecutionPhase::Queued)
+                    .is_some_and(|state| state.phase.awaits_admission())
                 {
                     settle_native_execution(link, "cancelled");
                 }
@@ -57,10 +59,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn settle_native_transport_exit(&self) {
         for task in self.local_task_links(true) {
             if !native_execution_state(&task).is_some_and(|state| {
-                !matches!(
-                    state.phase,
-                    NativeExecutionPhase::Idle | NativeExecutionPhase::Queued
-                )
+                state.phase != NativeExecutionPhase::Idle && !state.phase.awaits_admission()
             }) {
                 continue;
             }

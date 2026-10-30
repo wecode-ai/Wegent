@@ -60,6 +60,9 @@ export function emitResponseApiEvent(
     );
     handlers.onChatStart?.({
       ...base,
+      ...(data.task
+        ? { task: data.task as RuntimeTurnUpdatedPayload["task"] }
+        : {}),
       shellType: stringField(payload, "runtime"),
       ...(generatedUserMessageId &&
         generatedUserMessageContent && {
