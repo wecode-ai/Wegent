@@ -114,6 +114,8 @@ Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when 
 
 Desktop update eligibility must come from exact, CI-verified source-to-target package pairs. A target's minimum source version is a constraint, never proof of compatibility. Preserve required intermediate packages, and never promote an upgrade edge without successful upgrade and rollback evidence bound to the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
 
+The explicit release-gate exception is macOS x64: it adopts successful arm64 version paths with matching source revisions and declared architecture-equivalence evidence, while retaining x64 package hashes. See the scoped maintenance contract for this exception; Windows x64 remains independently verified.
+
 Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. Never weaken assertions, skip scenarios, or tolerate failures to obtain a pass; fix failures instead.
 Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
 Modify existing E2E tests only when a complete chain of log evidence proves the original test logic is wrong.

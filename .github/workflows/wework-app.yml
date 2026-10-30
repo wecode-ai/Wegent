@@ -144,43 +144,6 @@ jobs:
           fi
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve previous Wework release
-        id: previous-release
-        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind == 'full'
-        env:
-          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
-          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
-        run: echo "tag=$(node wework/scripts/resolve-previous-release-tag.mjs)" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update draft release
-        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind != 'none'
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}
-          RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
-          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
-          RELEASE_VERSION: ${{ steps.plan.outputs.value }}
-          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
-        run: |
-          set -euo pipefail
-          title="Wework $RELEASE_VERSION"
-          [[ "$RELEASE_CHANNEL" == "beta" ]] && title="$title Beta"
-          notes="$(mktemp)"
-          node wework/scripts/generate-release-notes.mjs > "$notes"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --target "$RELEASE_SHA" \
-              --title "$title" \
-              --notes-file "$notes"
-          else
-            gh release create "$RELEASE_TAG" \
-              --target "$RELEASE_SHA" \
-              --title "$title" \
-              --notes-file "$notes" \
-              --draft
-          fi
-
   build:
     name: Build ${{ matrix.name }}
     needs: prepare-release
@@ -414,7 +377,7 @@ jobs:
           compression-level: 0
 
       - name: Verify declared upgrade and rollback edges on real release packages
-        if: matrix.platform == 'macos' || matrix.platform == 'windows'
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -427,7 +390,7 @@ jobs:
             "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
 
       - name: Retain release upgrade decisions and failure diagnostics
-        if: always() && (matrix.platform == 'macos' || matrix.platform == 'windows')
+        if: always() && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
           name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -457,7 +420,7 @@ jobs:
           fi
 
       - name: Upload verified release upgrade evidence
-        if: matrix.platform == 'macos' || matrix.platform == 'windows'
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: wework-${{ needs.prepare-release.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
@@ -485,7 +448,15 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Resolve previous Wework release
+        id: previous-release
+        env:
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+        run: echo "tag=$(node wework/scripts/resolve-previous-release-tag.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Set up release script dependencies
         uses: ./.github/actions/setup-node-workspace
@@ -497,18 +468,26 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Reuse verified arm64 upgrade paths for macOS x64
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+        run: node wework/scripts/mirror-macos-upgrade-policy.mjs release-assets "${{ needs.prepare-release.outputs.channel }}" "$GITHUB_REPOSITORY"
+
       - name: Generate desktop update manifests
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
           WEWORK_REQUIRE_UPGRADE_POLICY: "true"
         run: |
           set -euo pipefail
-          notes="$(mktemp)"
-          gh release view "$RELEASE_TAG" --json body --jq .body > "$notes"
+          notes="$RUNNER_TEMP/wework-release-notes.md"
+          node wework/scripts/generate-release-notes.mjs > "$notes"
           node wework/scripts/generate-desktop-update-manifests.mjs \
             release-assets \
             release-manifests \
@@ -518,6 +497,32 @@ jobs:
             "$RELEASE_TAG" \
             "$notes" \
             "${{ needs.prepare-release.outputs.release_sha }}"
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+        run: |
+          set -euo pipefail
+          title="Wework $RELEASE_VERSION"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && title="$title Beta"
+          notes="$RUNNER_TEMP/wework-release-notes.md"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$title" \
+              --notes-file "$notes"
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$title" \
+              --notes-file "$notes" \
+              --draft
+          fi
 
       - name: Upload formal release assets
         env:

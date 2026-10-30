@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { mirrorMacosUpgradePolicies } from './mirror-macos-upgrade-policy.mjs'
+import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import { planUpgrade } from '../electron/src/runtime/upgrade-policy.mjs'
 import {
+  mirrorMacosUpgradePolicy,
   verifiedUpgradeEdge,
   mergeUpgradePolicy,
   releaseUpgradePlan,
@@ -432,5 +438,230 @@ test('a Stable source can reach Beta only through a separately verified Beta edg
         source.version
       ),
     /immutable across channels/
+  )
+})
+
+function macosMirrorFixture() {
+  const arm = publishedCatalog('stable', ['0.6.0', '0.6.1'])
+  arm.platform = 'macos'
+  arm.arch = 'arm64'
+  arm.releases[1].minSourceVersion = '0.6.0'
+  arm.edges = [
+    {
+      from: '0.6.0',
+      to: '0.6.1',
+      fromSha256: arm.releases[0].sha256,
+      toSha256: arm.releases[1].sha256,
+      fromSourceSha: arm.releases[0].sourceSha,
+      toSourceSha: arm.releases[1].sourceSha,
+      runId: '123',
+      evidenceSha256: 'e'.repeat(64),
+      upgrade: 'passed',
+      rollback: 'passed',
+      revoked: false,
+    },
+  ]
+  const x64 = structuredClone(arm)
+  x64.arch = 'x64'
+  x64.releases = x64.releases.slice(0, 1).map(item => ({ ...item, sha256: 'b'.repeat(64) }))
+  x64.edges = []
+  const release = { ...arm.releases[1], platform: 'macos', arch: 'x64', sha256: 'c'.repeat(64) }
+  return { arm, x64, release }
+}
+
+test('macOS x64 mirrors arm64 paths with x64 package identities and explicit provenance', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  const result = mirrorMacosUpgradePolicy(arm, x64, release)
+  assert.equal(result.arch, 'x64')
+  assert.equal(result.releases.at(-1).minSourceVersion, '0.6.0')
+  assert.deepEqual(result.edges[0], {
+    ...arm.edges[0],
+    fromSha256: 'b'.repeat(64),
+    toSha256: 'c'.repeat(64),
+    verification: {
+      kind: 'architecture-equivalence',
+      platform: 'macos',
+      arch: 'arm64',
+      fromSha256: arm.edges[0].fromSha256,
+      toSha256: arm.edges[0].toSha256,
+    },
+  })
+  assert.equal(planUpgrade(result, '0.6.0').next.sha256, release.sha256)
+  assert.equal(x64.edges.length, 0)
+})
+
+test('mirroring refuses missing sources, mismatched revisions and non-macOS results', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  assert.throws(() => mirrorMacosUpgradePolicy(arm, null, release), /not in the verified/)
+  assert.throws(
+    () => mirrorMacosUpgradePolicy(arm, x64, { ...release, sourceSha: '2'.repeat(40) }),
+    /same release revision/
+  )
+  x64.releases[0].sourceSha = '3'.repeat(40)
+  assert.throws(() => mirrorMacosUpgradePolicy(arm, x64, release), /matching macOS x64 source/)
+  arm.platform = 'windows'
+  assert.throws(() => mirrorMacosUpgradePolicy(arm, x64, release), /same release revision/)
+})
+
+test('Beta may mirror an arm64 path whose x64 source is in Stable', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  arm.channel = 'beta'
+  const result = mirrorMacosUpgradePolicy(arm, null, release, [x64])
+  assert.equal(result.channel, 'beta')
+  assert.deepEqual(planUpgrade(result, '0.6.0').path, ['0.6.1'])
+})
+
+test('mirroring does not create upgrade permission without arm64 edges', () => {
+  const { arm, release } = macosMirrorFixture()
+  arm.edges = []
+  arm.releases[1].minSourceVersion = release.version
+  const result = mirrorMacosUpgradePolicy(arm, null, release)
+  assert.equal(result.edges.length, 0)
+  assert.equal(planUpgrade(result, '0.6.0'), null)
+})
+
+test('revoked arm64 paths remain revoked on x64', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  arm.edges[0].revoked = true
+  const result = mirrorMacosUpgradePolicy(arm, x64, release)
+  assert.equal(planUpgrade(result, '0.6.0'), null)
+})
+
+test('release mirroring generates Stable and Beta policies without invoking E2E', async () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  const temporary = mkdtempSync(join(tmpdir(), 'wework-mirror-policy-'))
+  try {
+    for (const channel of ['stable', 'beta']) {
+      writeFileSync(
+        join(temporary, `upgrade-policy-${channel}-macos-arm64.json`),
+        JSON.stringify({ ...arm, channel })
+      )
+      writeFileSync(
+        join(temporary, `components-${channel}-macos-x64.json`),
+        JSON.stringify({ upgradePolicy: { ...x64, channel } })
+      )
+    }
+    writeFileSync(
+      join(temporary, 'release-macos-x64.json'),
+      JSON.stringify({
+        ...release,
+        name: 'WeWorkRelease_0.6.1_macos_x64.tar.gz',
+      })
+    )
+    const execute = (command, args) => {
+      assert.equal(command, 'gh')
+      assert.equal(args[0], 'release')
+      assert.equal(args[args.indexOf('--repo') + 1], 'owner/repository')
+      if (args[1] === 'view')
+        return JSON.stringify({
+          assets: ['stable', 'beta'].map(channel => ({
+            name: 'components-' + channel + '-macos-x64.json',
+          })),
+        })
+      assert.equal(args[1], 'download')
+      return readFileSync(join(temporary, args[args.indexOf('--pattern') + 1]), 'utf8')
+    }
+    for (const channel of ['stable', 'beta']) {
+      if (channel === 'beta') {
+        const stable = readFileSync(join(temporary, 'upgrade-policy-stable-macos-x64.json'), 'utf8')
+        rmSync(join(temporary, 'upgrade-policy-beta-macos-x64.json'))
+        writeFileSync(join(temporary, 'stable-before.json'), stable)
+      }
+      await mirrorMacosUpgradePolicies(
+        { assets: temporary, channel, repository: 'owner/repository' },
+        execute
+      )
+      const output = JSON.parse(
+        readFileSync(join(temporary, `upgrade-policy-${channel}-macos-x64.json`), 'utf8')
+      )
+      assert.equal(output.channel, channel)
+      assert.equal(output.edges[0].verification.arch, 'arm64')
+      assert.equal(output.releases.at(-1).sha256, release.sha256)
+      assert.match(output.releases.at(-1).url, /WeWorkRelease_0.6.1_macos_x64.tar.gz$/)
+      if (channel === 'beta')
+        assert.equal(
+          readFileSync(join(temporary, 'upgrade-policy-stable-macos-x64.json'), 'utf8'),
+          readFileSync(join(temporary, 'stable-before.json'), 'utf8')
+        )
+    }
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
+test('architecture equivalence provenance is restricted to macOS x64', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  const result = mirrorMacosUpgradePolicy(arm, x64, release)
+  for (const change of [
+    catalog => {
+      catalog.arch = 'arm64'
+    },
+    catalog => {
+      catalog.edges[0].verification.arch = 'x64'
+    },
+    catalog => {
+      catalog.edges[0].verification.toSha256 = ''
+    },
+  ]) {
+    const invalid = structuredClone(result)
+    change(invalid)
+    assert.throws(() => planUpgrade(invalid, '0.6.0'), /Invalid macOS architecture equivalence/)
+  }
+})
+
+test('mirroring preserves cross-channel immutability and revocation', () => {
+  const { arm, x64, release } = macosMirrorFixture()
+  const beta = structuredClone(x64)
+  beta.channel = 'beta'
+  beta.releases[0].revoked = true
+  assert.throws(
+    () => mirrorMacosUpgradePolicy(arm, x64, release, [beta]),
+    /matching macOS x64 source/
+  )
+  beta.releases = [{ ...release, sha256: 'd'.repeat(64) }]
+  assert.throws(
+    () => mirrorMacosUpgradePolicy(arm, x64, release, [beta]),
+    /immutable across channels/
+  )
+})
+
+test('published policy reader rejects wrong targets and distinguishes absent baseline from download errors', () => {
+  const catalog = publishedCatalog('stable', ['0.6.0'])
+  const target = { repository: 'owner/repository', platform: 'macos', arch: 'x64' }
+  const read = download => (command, args) => {
+    assert.equal(command, 'gh')
+    if (args[1] === 'view')
+      return JSON.stringify({ assets: [{ name: 'components-stable-macos-x64.json' }] })
+    return download()
+  }
+  assert.deepEqual(
+    publishedUpgradePolicies(target, () => JSON.stringify({ assets: [] })),
+    {}
+  )
+  assert.throws(
+    () =>
+      publishedUpgradePolicies(
+        target,
+        read(() => JSON.stringify({ upgradePolicy: catalog }))
+      ),
+    /target mismatch/
+  )
+  const failure = new Error('permission denied')
+  assert.throws(
+    () =>
+      publishedUpgradePolicies(
+        target,
+        read(() => {
+          throw failure
+        })
+      ),
+    failure
+  )
+  assert.deepEqual(
+    publishedUpgradePolicies(
+      target,
+      read(() => JSON.stringify({}))
+    ),
+    {}
   )
 })
