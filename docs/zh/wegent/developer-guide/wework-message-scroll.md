@@ -80,7 +80,7 @@ flowchart TD
 
 `latest-conversation-history` 检查点同时验证上述悬浮内容、点击后的错误可见性、活动标记及加载状态结束，再跳回最新回合。它复用原有真实 Codex 历史数据库夹具和 CI 桌面运行器，可通过 `pnpm --filter wework e2e:desktop --segment latest-conversation-history` 聚焦运行。
 
-异步问答模型夹具也必须遵守用户消息边界：复用可见用户正文解析器，按完整回答匹配选项，不能把 AGENTS 或应用上下文中出现的选项文字当成回答。桌面驱动直接由 Node 运行，因此共享解析器使用经过严格类型检查的 JavaScript 实现及类型声明，无需额外 TypeScript loader；脚本测试会关闭原生 TypeScript 加载能力，验证驱动仍可导入。
+异步问答模型夹具也必须遵守用户消息边界：复用可见用户正文解析器，按完整回答匹配选项，不能把 AGENTS 或应用上下文中出现的选项文字当成回答。桌面驱动直接由 Node 运行，因此共享解析器使用经过严格类型检查的 JavaScript 实现及类型声明，无需额外 TypeScript loader；脚本测试会关闭原生 TypeScript 加载能力，验证驱动仍可导入。该测试同时支持 Node 与 CI 的 jsdom 环境，子进程从本地文件 URL 导入模块；无工作区依赖的隔离测试需复制驱动使用的共享运行时源码和包声明，保留真实检出的模块边界。
 
 ## 流式渲染职责边界
 

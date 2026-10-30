@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
 import { Readable } from 'node:stream'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { test } from 'vitest'
 
@@ -15,7 +17,9 @@ import {
 } from '../e2e/desktop/modules/shared.mjs'
 
 test('desktop model fixture loads without native TypeScript support', async () => {
-  const moduleUrl = new URL('../e2e/desktop/modules/desktop-server.mjs', import.meta.url).href
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../e2e/desktop/modules/desktop-server.mjs')
+  ).href
   const { stdout } = await promisify(execFile)(process.execPath, [
     '--no-experimental-strip-types',
     '--input-type=module',
