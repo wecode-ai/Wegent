@@ -79,6 +79,15 @@ async fn global_router_persists_async_question_after_execution_settles() {
 
 #[tokio::test]
 async fn execution_receiver_persists_async_question_for_identified_active_root_turn() {
+    assert_execution_question_delivery(false).await;
+}
+
+#[tokio::test]
+async fn async_question_remains_pending_after_native_turn_callback_clears_active_context() {
+    assert_execution_question_delivery(true).await;
+}
+
+async fn assert_execution_question_delivery(clear_active: bool) {
     let root = tempfile::tempdir().unwrap();
     let (event_tx, mut event_rx) = broadcast::channel(16);
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -101,12 +110,16 @@ async fn execution_receiver_persists_async_question_for_identified_active_root_t
         "item":{"id":"question", "type":"agentMessage", "questions":[{"title":"Continue?","options":["Yes","No"]}]}}
     }));
     handler.route_codex_notification(question.clone());
+    let mapper_turn = handler.active_codex_turn("task");
+    if clear_active {
+        handler.clear_active_codex_turn("task", execution);
+    }
     handler
         .map_execution_codex_notification(
             "task",
             execution,
             &request,
-            handler.active_codex_turn("task"),
+            mapper_turn,
             &mut CodexNotificationEventMapper::default(),
             question.clone(),
         )
@@ -162,8 +175,18 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
         link.runtime_handle = json!({"lastTurnId":"turn"});
         link.interaction_status = interaction.map(str::to_owned);
         handler.upsert_local_task(link);
+        let mut delivering_turn = None;
         if executing {
             let execution = start_test_execution(&handler, "task");
+            delivering_turn = Some(ActiveCodexTurn {
+                execution_id: if active_turn.is_some() {
+                    execution
+                } else {
+                    execution + 1
+                },
+                thread_id: "thread".into(),
+                turn_id: "turn".into(),
+            });
             if let Some(active_turn) = active_turn {
                 handler.record_active_codex_turn(
                     "task",
@@ -176,7 +199,7 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
         handler.persist_async_question_interaction("task", &json!({
             "method":"item/completed", "params":{"threadId":thread,"turnId":turn,
             "item":{"id":"question","type":"agentMessage","questions":[{"title":"Continue?","options":["Yes","No"]}]}}
-        }));
+        }), delivering_turn.as_ref());
         assert_eq!(
             handler
                 .local_task_link("task")
@@ -187,4 +210,31 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
             "Rejected question case {index} must preserve interaction state"
         );
     }
+}
+
+#[test]
+fn async_question_rejects_mapper_context_older_than_recorded_native_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let mut link =
+        RuntimeTaskLink::new_pending("task".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread".into());
+    link.runtime_handle = json!({"lastTurnId":"next-turn"});
+    handler.upsert_local_task(link);
+    let execution = start_test_execution(&handler, "task");
+    let context = ActiveCodexTurn {
+        execution_id: execution,
+        thread_id: "thread".into(),
+        turn_id: "old-turn".into(),
+    };
+    handler.persist_async_question_interaction("task", &json!({
+        "method":"item/completed", "params":{"threadId":"thread","turnId":"old-turn",
+        "item":{"id":"question","type":"agentMessage","questions":[{"title":"Continue?","options":["Yes","No"]}]}}
+    }), Some(&context));
+    assert!(handler
+        .local_task_link("task")
+        .unwrap()
+        .interaction_status
+        .is_none());
 }

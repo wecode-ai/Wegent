@@ -985,7 +985,11 @@ impl RuntimeWorkRpcHandler {
                     // still active. Deliver it with its own identity; the shared claim also
                     // prevents a duplicate when the global router already delivered it.
                     if message.claim_runtime_delivery() {
-                        self.persist_async_question_interaction(local_task_id, &message);
+                        self.persist_async_question_interaction(
+                            local_task_id,
+                            &message,
+                            Some(active_turn),
+                        );
                         self.record_background_terminal_notification(local_task_id, &message);
                         let event_request = self.request_for_codex_event(
                             local_task_id,
@@ -1006,7 +1010,7 @@ impl RuntimeWorkRpcHandler {
             if !message.claim_runtime_delivery() {
                 return;
             }
-            self.persist_async_question_interaction(local_task_id, &message);
+            self.persist_async_question_interaction(local_task_id, &message, active_turn.as_ref());
             self.record_background_terminal_notification(local_task_id, &message);
 
             let hook_input =

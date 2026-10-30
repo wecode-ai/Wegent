@@ -789,7 +789,7 @@ impl RuntimeWorkRpcHandler {
                 });
             if !skip_active_notification && message.claim_runtime_delivery() {
                 if !route_nested {
-                    self.persist_async_question_interaction(&local_task_id, &message);
+                    self.persist_async_question_interaction(&local_task_id, &message, None);
                     self.record_background_terminal_notification(&local_task_id, &message);
                 }
                 let mut event_request = route_request;
