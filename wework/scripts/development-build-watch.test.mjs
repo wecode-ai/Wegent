@@ -1,6 +1,8 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
+import chokidar from 'chokidar'
 import { test, expect, vi, onTestFinished, onTestFailed } from 'vitest'
 import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
 
@@ -76,10 +78,16 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       onError,
       debounceMs: 20,
       watchDirectory: (directory, options, notify) =>
-        watchDevelopmentDirectory(directory, options, (...event) => {
-          record('native-notification', ...event)
-          notify(...event)
-        }),
+        watchDevelopmentDirectory(
+          directory,
+          options,
+          (...event) => {
+            record('native-notification', ...event)
+            notify(...event)
+          },
+          (directory, options) =>
+            chokidar.watch(directory, { ...options, useFsEvents: false, usePolling: false })
+        ),
     })
     onTestFinished(async () => {
       await watcher.close()
@@ -132,6 +140,53 @@ test('starts the initial build only after directory subscriptions are ready', as
   }
   expect(close).toHaveBeenCalledTimes(1)
 })
+
+test.each(['directory', 'file'])(
+  'preserves a rapid recovery edit omitted by normalized events from a watched %s',
+  async watchedKind => {
+    const root = await mkdtemp(path.join(tmpdir(), 'development-build-raw-'))
+    const source = path.join(root, 'entry.js')
+    await writeFile(source, 'one')
+    const native = new EventEmitter()
+    native.close = vi.fn()
+    const failed = Promise.withResolvers()
+    let published
+    const onError = vi.fn(error => failed.resolve(error))
+    const build = vi.fn(async () => {
+      const value = await readFile(source, 'utf8')
+      if (value === 'invalid') throw new Error('compile failed')
+      published = value
+    })
+    const watcher = await watchDevelopmentBuild({
+      directories: [root],
+      files: [],
+      build,
+      onError,
+      debounceMs: 0,
+      watchDirectory: (directory, options, notify) =>
+        watchDevelopmentDirectory(directory, options, notify, () => {
+          queueMicrotask(() => native.emit('ready'))
+          return native
+        }),
+    })
+    onTestFinished(async () => {
+      await watcher.close()
+      await rm(root, { recursive: true, force: true })
+    })
+    const details = { watchedPath: watchedKind === 'file' ? source : root }
+    await writeFile(source, 'invalid')
+    native.emit('all', 'change', source)
+    native.emit('raw', 'change', 'entry.js', details)
+    expect(await failed.promise).toEqual(new Error('compile failed'))
+    await writeFile(source, 'two')
+    // The second normalized change is suppressed by the Node backend's throttle.
+    native.emit('raw', 'change', 'entry.js', details)
+    native.emit('raw', 'change', 'entry.js', details)
+    await expect.poll(() => published).toBe('two')
+    expect(build).toHaveBeenCalledTimes(3)
+    expect(onError).toHaveBeenCalledTimes(1)
+  }
+)
 
 test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
   const { build: viteBuild } = await import('vite')

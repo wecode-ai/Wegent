@@ -335,6 +335,9 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
     '端上创建根 Issue 未持久化',
     uiTimeoutMs
   )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
+    visible: true,
+  })
   await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
   const groupOption = await waitForTestIdByText(
     control,

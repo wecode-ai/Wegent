@@ -4,13 +4,32 @@ import path from 'node:path'
 import chokidar from 'chokidar'
 import { developmentBuildInputs } from './development-build-inputs.mjs'
 
-export function watchDevelopmentDirectory(directory, { recursive, ignored }, notify) {
-  const watcher = chokidar.watch(directory, {
+export function watchDevelopmentDirectory(
+  directory,
+  { recursive, ignored },
+  notify,
+  createWatcher = chokidar.watch
+) {
+  const watcher = createWatcher(directory, {
     ignoreInitial: true,
     depth: recursive ? undefined : 0,
     ignored,
   })
   watcher.on('all', (event, filename) => notify(event, path.relative(directory, filename)))
+  // Node-backed normalized change events are throttled for 50 ms. Preserve
+  // raw edits as well; the input snapshot deduplicates repeated notifications.
+  watcher.on('raw', (event, filename, details) => {
+    const watched = details?.watchedPath
+    if (!watched) return
+    const changed =
+      !filename || path.basename(watched) === String(filename)
+        ? watched
+        : path.resolve(watched, String(filename))
+    notify(
+      event,
+      changed === directory ? path.basename(directory) : path.relative(directory, changed)
+    )
+  })
   return {
     ready: once(watcher, 'ready'),
     on: (...args) => watcher.on(...args),

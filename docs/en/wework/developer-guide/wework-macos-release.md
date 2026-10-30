@@ -353,6 +353,9 @@ initial build. Creating a native watcher alone does not establish subscription
 readiness, so the first edit can lose its notification. Await all watcher
 closures during shutdown; failure diagnostics retain the edit, notification,
 and build timeline.
+Chokidar's Node backend throttles normalized `change` events, so preserve raw
+file notifications as well and deduplicate through the input snapshot. A rapid
+edit that fixes a compilation error must still trigger recovery.
 
 `pnpm --dir wework run dev:mac` continuously builds the original Wework
 application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher

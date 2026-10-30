@@ -270,6 +270,8 @@ Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证�
 文件监听必须等待 Chokidar 的 `ready`，再采集输入快照并启动首次构建。仅创建
 原生 watcher 不代表订阅已经就绪，启动后的首次编辑可能丢失通知。关闭时须等待
 所有监听器释放；失败日志同时保留编辑、通知和构建的时间线。
+Chokidar 的 Node 后端会节流规范化的 `change` 事件，因此还须保留底层文件通知，
+由输入快照统一去重，避免快速修正编译错误时丢失恢复修改。
 
 `pnpm --dir wework run dev:mac` 会通过
 `wework/scripts/dev-wework-app-watch.mjs` 持续构建原始 Wework 应用。监听器启动时
