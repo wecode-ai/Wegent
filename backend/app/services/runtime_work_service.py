@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.db.session import get_db_session
 from app.models.im_session import IMPrivateSession
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -458,8 +459,16 @@ async def get_runtime_transcript(
         request: RuntimeTranscriptRequest,
     ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
         """Reauthorize the original caller before requesting each device packet."""
+        # A reused REPEATABLE READ transaction cannot observe committed revocation.
+        # Close each independent authorization transaction before awaiting the device.
+        with get_db_session() as read_db:
+            packet_user_id, normalized_address = _resolve_runtime_session_read(
+                read_db, user_id, request
+            )
         return await _get_runtime_transcript_packet(
-            db=db, user_id=user_id, address=request
+            user_id=packet_user_id,
+            address=request,
+            normalized_address=normalized_address,
         )
 
     if address.transcript_protocol_version == 2:
@@ -499,10 +508,12 @@ async def get_runtime_transcript(
 
 
 async def _get_runtime_transcript_packet(
-    *, db: Session, user_id: int, address: RuntimeTranscriptRequest
+    *,
+    user_id: int,
+    address: RuntimeTranscriptRequest,
+    normalized_address: RuntimeTaskAddress,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
-    """Authorize the session and validate one canonical or chunked device response."""
-    user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
+    """Read one authorized packet without holding its permission transaction open."""
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(

@@ -63,6 +63,11 @@ request, verifies the snapshot SHA-256, offsets and complete size, then decompre
 restores string references. The response retains canonical `turns`, `messages` and page
 cursors. Explicit pagination, refresh and export fields are retained; an omitted page size
 uses the v2 default of 5 turns. Every internal continuation reauthorizes the original caller.
+Each packet checks permission, Issue visibility, binding and device ownership in its own
+short Session, closed before waiting for the device RPC. This avoids reusing a MySQL
+REPEATABLE READ snapshot or ORM state without committing or rolling back the caller's
+Session. A separately committed revocation or visibility restriction returns 404 before
+the next RPC, and no collected partial history is returned.
 Compressed snapshots, decompressed JSON and projected restored JSON are each limited to
 64 MiB. Before restoration, Backend counts compact UTF-8 JSON bytes for every expanded
 string reference, including repeated references and escaping, and rejects oversized pages

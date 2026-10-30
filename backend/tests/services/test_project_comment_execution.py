@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
@@ -13,6 +14,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
@@ -25,7 +27,19 @@ from tests.utils.collaboration import (
 
 
 @pytest.fixture
-def scenario(test_db, test_user, test_admin_user, monkeypatch):
+def scenario(
+    test_db, test_user, test_admin_user, monkeypatch, runtime_transcript_sessions
+):
+    return create_scenario(test_db, test_user, test_admin_user, monkeypatch)
+
+
+def create_scenario(
+    test_db: Session,
+    test_user: User,
+    test_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build committed collaboration state for SQLite and MySQL regressions."""
     owner, member = test_admin_user, test_user
     project = CloudProject(
         public_id="comment-project",

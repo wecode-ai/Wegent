@@ -1266,6 +1266,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
     """Resolve device-owned task history without requiring cloud task records."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTaskAddress
@@ -1336,6 +1337,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
     """Preserve pagination and file-change data while requesting device protocol v2."""
     from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTranscriptRequest
@@ -1516,6 +1518,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
     test_db,
     test_user,
     monkeypatch,
+    runtime_transcript_sessions,
 ):
     """Forward explicit full-content and navigation options to the device read."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest

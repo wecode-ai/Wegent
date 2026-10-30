@@ -111,6 +111,31 @@ async def test_legacy_http_read_uses_device_chunks_and_preserves_json(
 
 
 @pytest.mark.asyncio
+async def test_packet_authorization_sessions_end_before_rpc(
+    scenario, runtime_transcript_sessions
+):
+    """Never keep an authorization snapshot open while waiting for the device."""
+    _, chunks = packed_transcript_chunks()
+    caller_transaction = scenario.db.get_transaction()
+
+    async def rpc(**_values):
+        assert runtime_transcript_sessions
+        assert all(not db.in_transaction() for db in runtime_transcript_sessions)
+        return chunks[scenario.rpc.await_count - 1]
+
+    scenario.rpc.side_effect = rpc
+    request = bound_request(scenario)
+    request.transcript_protocol_version = None
+    await runtime_work_service.get_runtime_transcript(
+        db=scenario.db, user_id=scenario.member.id, address=request
+    )
+
+    assert len(runtime_transcript_sessions) == len(chunks)
+    assert len({id(db) for db in runtime_transcript_sessions}) == len(chunks)
+    assert scenario.db.get_transaction() is caller_transaction
+
+
+@pytest.mark.asyncio
 async def test_legacy_transfer_rechecks_access_before_reading_next_chunk(scenario):
     """Stop assembly when the original caller loses access after the first chunk."""
     _, chunks = packed_transcript_chunks()
