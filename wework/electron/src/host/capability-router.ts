@@ -3,9 +3,11 @@ export const HOST_PROTOCOL_VERSION = 1
 export const HOST_CAPABILITIES = [
   'mcpApps.createDocument',
   'mcpApps.releaseDocument',
-  'mcpApps.renewDocument',
+  'mcpApps.retainSession',
+  'mcpApps.releaseSession',
   'mcpApps.saveFile',
   'e2e.mcpAppFrame',
+  'e2e.mcpAppDiscoveryFault',
   'app.getVersion',
   'app.quit',
   'app.relaunch',

@@ -1,4 +1,4 @@
-import { cp, mkdir, open, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -58,4 +58,22 @@ try {
 } finally {
   await lock.close()
   await rm(lockPath, { force: true })
+}
+
+// Share the existing authenticated Runtime transport with native app owners.
+const chatSource = resolve(electronRoot, '../../packages/chat-core/src')
+const chatTarget = resolve(electronRoot, 'src/vendor/chat-core')
+await mkdir(chatTarget, { recursive: true })
+for (const entry of [
+  'runtime-ipc.ts',
+  'runtime-transcript-transport.ts',
+  'socket/authenticatedSocketClient.ts',
+]) {
+  const source = join(chatSource, entry)
+  const target = join(chatTarget, entry)
+  await mkdir(dirname(target), { recursive: true })
+  const text = (await readFile(source, 'utf8'))
+    .replaceAll('"./socket"', '"./socket/authenticatedSocketClient.js"')
+    .replaceAll('"./runtime-transcript-transport"', '"./runtime-transcript-transport.js"')
+  await writeFile(target, text)
 }
