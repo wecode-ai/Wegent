@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
 import { requestExecutor } from './executor-rpc.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
@@ -116,6 +117,13 @@ async function verifyCachedInitialRecovery({
   const modal = scope('[data-testid="ai-chat-modal"]')
   const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  // The closing drawer retains its conversation until the exit animation ends.
+  // Inject the next read failure only after that previous reader is unmounted.
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('ai-chat-modal'),
+    'The previous Issue conversation did not unmount before testing its next history read'
+  )
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -189,6 +197,19 @@ export async function verifyIssueTranscriptTransfer({
     transcriptProtocolVersion: 2,
     limit: 5,
   }
+  // Older HTTP clients still expect one canonical JSON response. Backend must
+  // use device chunks internally instead of asking Socket.IO to carry the page.
+  const legacy = await request('/api/runtime-work/transcript', {
+    ...address,
+    projectSession: query.projectSession,
+    limit: query.limit,
+  })
+  assert.equal(legacy.transcriptProtocolVersion, undefined)
+  assert.ok(Array.isArray(legacy.turns), 'Legacy HTTP history must retain canonical turns')
+  assert.ok(
+    JSON.stringify(legacy).includes(JSON.stringify(OUTPUT).slice(1, -1)),
+    'Legacy HTTP history must preserve the complete output beyond the device relay limit'
+  )
   const chunks = []
   let offset = 0
   let snapshotId

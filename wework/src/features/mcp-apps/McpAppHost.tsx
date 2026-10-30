@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
+import { dequal } from 'dequal'
 import type {
   McpAppDescriptor,
   McpAppRequest,
@@ -81,7 +82,7 @@ export function McpAppHost({
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
   const initialized = useRef(false)
-  const sentResult = useRef<unknown>(undefined)
+  const sentResult = useRef<McpAppResult>(undefined)
   const sentInput = useRef(false)
   const latest = useEffectEvent(() => ({ block, onMessage, onContext, mode }))
   const requestApp = useEffectEvent((data: Partial<McpAppRequest>) =>
@@ -226,22 +227,23 @@ export function McpAppHost({
       await app.sendToolInput({ arguments: block.toolInput ?? descriptor?.arguments ?? {} })
     }
     const output = block.toolOutput ?? descriptor?.result
-    if (sentResult.current === output) return
     const result = record(output)
+    let payload: McpAppResult | undefined
     if (Array.isArray(result.content)) {
-      await app.sendToolResult({
+      payload = {
         ...result,
         content: result.content,
         isError: block.status === 'error' || result.isError === true,
-      } as McpAppResult)
-      sentResult.current = output
+      } as McpAppResult
     } else if (block.status === 'error') {
-      await app.sendToolResult({
+      payload = {
         content: [{ type: 'text', text: typeof output === 'string' ? output : 'Tool call failed' }],
         isError: true,
-      })
-      sentResult.current = output
+      }
     }
+    if (!payload || dequal(sentResult.current, payload)) return
+    await app.sendToolResult(payload)
+    sentResult.current = payload
   })
 
   useEffect(() => {
@@ -347,12 +349,16 @@ export function McpAppHost({
     app.onerror = error => {
       if (active) setFailure(error.message)
     }
+    const element = frame.current
     void app
-      .connect(appDocumentTransport(frame.current.contentWindow, appDocumentOrigin(document.url)))
+      .connect(appDocumentTransport(element.contentWindow!, appDocumentOrigin(document.url)))
+      .then(() => {
+        // Listen before loading a document that can initialize immediately.
+        if (active && element.src !== document.url) element.src = document.url
+      })
       .catch(error => {
         if (active) setFailure(error.message)
       })
-    const element = frame.current
     const updateContext = () =>
       app.setHostContext(appHostContext(element, latest().mode, descriptor, block.id))
     const resize = new ResizeObserver(updateContext)
@@ -496,7 +502,7 @@ export function McpAppHost({
           referrerPolicy="no-referrer"
           className="w-full min-w-0 flex-1 border-0"
           style={{ height: mode === 'fullscreen' ? undefined : height }}
-          src={document?.url ?? 'about:blank'}
+          src="about:blank"
         />
       )}
     </section>

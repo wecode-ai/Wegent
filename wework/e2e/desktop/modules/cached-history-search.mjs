@@ -302,7 +302,11 @@ export async function verifyCachedHistorySearch(
   search,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  await control.command('waitFor', OLDER, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
   await waitForBottom(control, 'The initial cached conversation', timeoutMs)
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
@@ -333,11 +337,24 @@ export async function verifyCachedHistorySearch(
   await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
     key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
   })
+  await control.command('waitFor', OLDER)
   const afterShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After find')
+  assert.equal(
+    afterShortcut.scrollHeight,
+    beforeShortcut.scrollHeight,
+    'Opening find changed transcript height through the manual history control'
+  )
   assert.ok(
     Math.abs(afterShortcut.scrollTop - beforeShortcut.scrollTop) <= 2,
     `Opening find moved the original reading position: ${JSON.stringify({ beforeShortcut, afterShortcut })}`
   )
+  await control.command('click', '[data-testid="conversation-find-close-button"]')
+  const afterClose = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After closing find')
+  assert.equal(afterClose.scrollHeight, beforeShortcut.scrollHeight)
+  assert.ok(Math.abs(afterClose.scrollTop - beforeShortcut.scrollTop) <= 2)
+  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
+    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+  })
   for (const { query, matches, browseContext } of CASES) {
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')

@@ -70,7 +70,7 @@ export async function syncCoreDshModels(
   input: CoreDshModelSyncInput,
   api: CoreDshModelSyncApi
 ): Promise<void> {
-  const descriptions = await api.request<DshSettingsDescription>('settings.describe', {})
+  const descriptions = await api.request<DshSettingsDescription>('settings/describe', {})
   const llmSettings = descriptions.namespaces.find(namespace => namespace.ns === 'llm-pi-ai')
   if (!llmSettings) throw new Error('Core DSH does not expose llm-pi-ai settings')
 
@@ -123,7 +123,7 @@ export async function syncCoreDshModels(
 
   try {
     if (ops.length > 0) {
-      await api.request('settings.mutate', {
+      await api.request('settings/mutate', {
         ns: 'llm-pi-ai',
         ops,
       })
@@ -185,7 +185,7 @@ export async function requestCoreDsh<Result>(
       type: 'client-request',
       rpcId,
       method,
-      payload,
+      payload: { args: payload },
     }),
   })
   if (!response.ok) {
@@ -242,7 +242,7 @@ async function syncDefaultModel(
   if (registrations.length === 0) {
     if (!currentProvider.startsWith(DSH_PROVIDER_PREFIX)) return
     await api
-      .request('settings.mutate', {
+      .request('settings/mutate', {
         ns: 'agent-default-model',
         ops: [
           { op: 'unset', path: ['provider'] },
@@ -265,7 +265,7 @@ async function syncDefaultModel(
   }
   const defaultRegistration = registrations[0]
   await api
-    .request('settings.mutate', {
+    .request('settings/mutate', {
       ns: 'agent-default-model',
       ops: [
         { op: 'set', path: ['provider'], value: defaultRegistration.provider },

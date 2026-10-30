@@ -850,6 +850,8 @@ async function verifyLocalModelRouting({
     enabled: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // The compact panel requires a model whose catalog declares reasoning levels.
+  await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   const selectedModelLabel = await control.command('getText', modelSelector)
   assert.ok(
     selectedModelLabel,

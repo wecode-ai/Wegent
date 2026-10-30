@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
+import { verifyRuntimeRequestSecurity } from '../modules/runtime-security.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -700,6 +701,10 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      await verifyRuntimeRequestSecurity(
+        control,
+        await control.command('getLocationOrigin', 'body')
+      )
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await configureHarnesses(control, executables, uiTimeoutMs, capturePage)
       await startHarness({

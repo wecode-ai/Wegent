@@ -1,8 +1,10 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
+import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -112,31 +114,6 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
-
-interface DesktopControlResult {
-  id: string
-  clientId: string
-  ok: boolean
-  value?: string
-  error?: string
-}
-
-interface ScrollStabilitySamplePoint {
-  anchorTop: number
-  clientHeight: number
-  scrollHeight: number
-  scrollOrigin: 'bottom' | 'top'
-  scrollTop: number
-  time: number
-}
-
-interface ScrollStabilitySample {
-  done: boolean
-  frames: ScrollStabilitySamplePoint[]
-  missingFrames: number
-  scrollEvents: ScrollStabilitySamplePoint[]
-  stop: () => void
-}
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
@@ -1939,8 +1916,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
+    case 'getDocumentVisibility':
+      return document.visibilityState
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'getWindowBackgroundPolicy':
+      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''
@@ -2806,77 +2787,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!scrollerSelector) {
         throw new Error('sampleScrollStability requires scrollerSelector')
       }
-      const scroller = findDesktopControlElements(scrollerSelector)[0]
-      if (!scroller) throw new Error(`Unable to find selector "${scrollerSelector}"`)
+      if (!findDesktopControlElements(scrollerSelector).length)
+        throw new Error(`Unable to find selector "${scrollerSelector}"`)
       activeScrollStabilitySample?.stop()
-      const startedAt = performance.now()
-      let sampleTimer = 0
-      let mutationObserver: MutationObserver | null = null
-      const sample: ScrollStabilitySample = {
-        done: false,
-        frames: [],
-        missingFrames: 0,
-        scrollEvents: [],
-        stop: () => {},
-      }
-      const capture = (time: number): ScrollStabilitySamplePoint | null => {
-        const anchors = findDesktopControlElements(command.selector)
-        const anchor = options.anchorText
-          ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
-          : anchors[0]
-        if (!anchor) return null
-        return {
-          anchorTop: anchor.getBoundingClientRect().top,
-          clientHeight: scroller.clientHeight,
-          scrollHeight: scroller.scrollHeight,
-          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
-          scrollTop: scroller.scrollTop,
-          time: time - startedAt,
-        }
-      }
-      const handleScroll = () => {
-        const point = capture(performance.now())
-        if (point) sample.scrollEvents.push(point)
-      }
-      const finish = () => {
-        if (sample.done) return
-        sample.done = true
-        scroller.removeEventListener('scroll', handleScroll)
-        mutationObserver?.disconnect()
-      }
-      sample.stop = () => {
-        window.clearInterval(sampleTimer)
-        finish()
-      }
-      scroller.addEventListener('scroll', handleScroll)
-      mutationObserver = new MutationObserver(() => {
-        const point = capture(performance.now())
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-      })
-      mutationObserver.observe(scroller, {
-        characterData: true,
-        childList: true,
-        subtree: true,
-      })
-      const captureFrame = () => {
-        const time = performance.now()
-        const point = capture(time)
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-        if (time - startedAt >= durationMs) {
-          window.clearInterval(sampleTimer)
-          finish()
-        }
-      }
-      captureFrame()
-      sampleTimer = window.setInterval(captureFrame, 16)
-      activeScrollStabilitySample = sample
+      activeScrollStabilitySample = startScrollStabilitySampler(
+        () => {
+          const anchors = findDesktopControlElements(command.selector)
+          return options.anchorText
+            ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
+            : anchors[0]
+        },
+        () => findDesktopControlElements(scrollerSelector),
+        durationMs
+      )
       return ''
     }
+    case 'stopScrollStabilitySampling':
     case 'getScrollStabilitySample': {
       const sample = activeScrollStabilitySample
       if (!sample) throw new Error('Scroll stability sampling has not started')
+      if (command.action === 'stopScrollStabilitySampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -3691,7 +3621,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
-  let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
@@ -3701,10 +3630,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
+  let commandRequest = pollForCommand()
 
   while (true) {
     try {
       const response = await commandRequest
+      if (response.status === 410) return
       if (response.status === 204) {
         commandRequest = pollForCommand()
         continue
@@ -3717,39 +3648,22 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
-      let result: DesktopControlResult
-      try {
-        const value = await executeDesktopControlCommand(command)
-        result = { id: command.id, clientId, ok: true, value }
-      } catch (error) {
-        result = {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
+      const completion = completeDesktopControlCommand(
+        command,
+        clientId,
+        executeDesktopControlCommand,
+        result => postDesktopControlResult(url, result)
+      )
+      if (command.action === 'fetchLocalRuntime') {
+        // Runtime RPCs may wait on each other; keep polling so the controller
+        // can issue the overlapping request while each result retains its ID.
+        void completion.catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
       }
-      try {
-        logRuntimeTaskCreateStage(
-          'desktop-control-executed',
-          { ...diagnostic, ok: result.ok },
-          'debug'
-        )
-        await postDesktopControlResult(url, result)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic, 'debug')
-      } catch (error) {
-        console.error(
-          '[Wework] Desktop E2E result acknowledgement failed:',
-          JSON.stringify({
-            commandId: command.id,
-            action: command.action,
-            actionSucceeded: result.ok,
-            actionError: result.error,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        )
-        throw error
-      }
+      const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')

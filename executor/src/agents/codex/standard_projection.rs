@@ -119,6 +119,9 @@ impl StandardEventProjection {
         )
     }
 
+    /// Project output under a stable provider item ID and code-point block offset.
+    /// Completed prefix snapshots emit only their unseen suffix; rewritten text
+    /// replaces the same block even when its final phase differs from its start.
     fn project_output(
         &mut self,
         event_type: &str,
@@ -158,18 +161,31 @@ impl StandardEventProjection {
             return Ok(Some(self.update_block(&block_id, &mut updates, builder)));
         }
         let previous = self.output_text.entry(id.to_owned()).or_default();
+        let block_offset = previous.chars().count();
         let delta = if completed {
             match text.strip_prefix(previous.as_str()) {
                 Some(suffix) => suffix,
-                // A delta cannot replace emitted text; response.completed carries the result.
-                None => return Ok(None),
+                None => {
+                    *previous = text.to_owned();
+                    return Ok(Some(builder.envelope(
+                        "response.block.created",
+                        json!({"type":"response.block.created", "block": {
+                            "id": id, "type": "text", "content": text,
+                            "status": "done", "process_item_id": id,
+                        }}),
+                    )));
+                }
             }
         } else {
             text
         };
-        // Standard callbacks merge body chunks by subtask, without retaining item IDs.
-        let event = (!delta.is_empty())
-            .then(|| builder.response_text_delta_for_item(id, delta, self.output_offset));
+        // Keep the item identity when its phase changes after text has streamed.
+        let event = (!delta.is_empty()).then(|| {
+            let mut event = builder.response_text_delta_for_item(id, delta, self.output_offset);
+            event.data["block_id"] = json!(id);
+            event.data["block_offset"] = json!(block_offset);
+            event
+        });
         self.output_offset += delta.chars().count();
         if completed {
             *previous = text.to_owned();
@@ -208,6 +224,8 @@ mod tests {
                 .unwrap();
             assert_eq!(event.data["delta"], text);
             assert_eq!(event.data["offset"], expected_offset);
+            assert_eq!(event.data["block_id"], id);
+            assert_eq!(event.data["block_offset"], 0);
         }
     }
 
@@ -228,8 +246,44 @@ mod tests {
                 json!({"item_id": "message", "text": "xyz123"}),
                 &builder,
             )
+            .unwrap()
             .unwrap();
-        assert!(completed.is_none());
+        assert_eq!(completed.event_type, "response.block.created");
+        assert_eq!(completed.data["block"]["id"], "message");
+        assert_eq!(completed.data["block"]["content"], "xyz123");
+    }
+
+    /// A late commentary snapshot must update the provider ID already used by
+    /// Unicode streaming deltas instead of introducing another text identity.
+    #[test]
+    fn late_commentary_keeps_the_streamed_output_block_identity() {
+        let mut projection = StandardEventProjection::default();
+        let builder = ResponsesEventBuilder::new("task", "first", "model");
+        for (delta, offset) in [("先检查🙂", 0), ("再执行", 4)] {
+            let event = projection
+                .project(
+                    "response.output_text.delta",
+                    json!({"item_id": "message", "delta": delta}),
+                    &builder,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(event.data["block_id"], "message");
+            assert_eq!(event.data["block_offset"], offset);
+        }
+        let event = projection
+            .project(
+                "response.block.created",
+                json!({"block": {
+                    "id":"message", "type":"text", "status":"done",
+                    "content":"先检查🙂再执行", "process_item_id":"message",
+                    "process_kind":"assistant_message"
+                }, "replacesItemId":"message"}),
+                &builder,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.data["block"]["id"], "message");
     }
 
     #[test]

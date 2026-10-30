@@ -149,6 +149,7 @@ export const DESKTOP_CHECKPOINTS = [
   'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
+  'window-background-policy',
   'renderer-storage',
   'application-menu',
   'tray-lifecycle',

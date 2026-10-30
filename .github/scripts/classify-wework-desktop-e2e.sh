@@ -103,6 +103,7 @@ core_segments=(
   native-window-startup
   renderer-crash-recovery
   native-window-chrome
+  window-background-policy
   renderer-storage
   application-menu
   tray-lifecycle
@@ -241,7 +242,7 @@ core_shards=(
   claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,collaboration-board-sorting
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence,telemetry-identity
 )
@@ -787,6 +788,14 @@ classify_wework_path() {
       select_target "core:window-lifecycle"
       select_target "core:tray-lifecycle"
       select_target "core:native-window-chrome"
+      return
+      ;;
+
+    # Windows restores precision-touchpad input through the native window
+    # visibility lifecycle, so background policy changes own this checkpoint.
+    wework/electron/src/host/window-background-policy* | \
+      wework/e2e/desktop/scenarios/window-background-policy.scenario.mjs)
+      select_target "core:window-background-policy"
       return
       ;;
 
