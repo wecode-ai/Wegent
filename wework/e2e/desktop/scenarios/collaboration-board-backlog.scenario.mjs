@@ -93,6 +93,36 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     return ids
   }
 
+  async function createFromBacklog(control, backlog, title, expectedParentId = null) {
+    await control.command('click', scoped('[data-testid="cloud-todo-column-add-' + backlog + '"]'))
+    const dialog = scoped('[data-testid="collaboration-issue-create-dialog"]')
+    await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', dialog + ' [data-testid="cloud-todo-title"]', {
+      value: title,
+    })
+    await control.command(
+      'clickWhenEnabled',
+      dialog + ' [data-testid="cloud-todo-create-confirm"]',
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+      text: title,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('waitFor', lane(backlog), {
+      text: title,
+      timeoutMs: uiTimeoutMs,
+    })
+    const snapshot = await request('/api/v1/cloud-projects/' + project.id + '/board-snapshot')
+    const created = snapshot.items.find(issue => issue.title === title)
+    assert.ok(created)
+    assert.deepEqual(created.tags, ['bug'])
+    await expectCard(control, backlog, created.id)
+    assert.equal(created.parent_id, expectedParentId)
+    return created
+  }
+
   const move = async (control, id, from, to) => {
     await dragBoardCard(
       control,
@@ -210,34 +240,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
+      await createFromBacklog(control, backlog, 'Filtered Backlog creation')
+      const issuePath = '/api/v1/cloud-projects/' + project.id + '/loop-items'
+      const parent = await request(issuePath, 'POST', { title: 'Backlog parent', tags: ['bug'] })
+      await request(issuePath, 'POST', {
+        title: 'Existing Backlog child',
+        parent_id: parent.id,
+        tags: ['bug'],
+      })
+      await reloadMainWindow(control, 'Backlog child fixtures did not reload')
+      await openCloud(control)
       await control.command(
         'click',
-        scoped('[data-testid="cloud-todo-column-add-' + backlog + '"]')
+        scoped('[data-testid="collaboration-issue-children-' + parent.id + '"]')
       )
-      const dialog = scoped('[data-testid="collaboration-issue-create-dialog"]')
-      await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', dialog + ' [data-testid="cloud-todo-title"]', {
-        value: 'Filtered Backlog creation',
-      })
-      await control.command(
-        'clickWhenEnabled',
-        dialog + ' [data-testid="cloud-todo-create-confirm"]',
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
-        text: 'Filtered Backlog creation',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
       await control.command('waitFor', lane(backlog), {
-        text: 'Filtered Backlog creation',
+        text: 'Existing Backlog child',
         timeoutMs: uiTimeoutMs,
       })
-      const snapshot = await request('/api/v1/cloud-projects/' + project.id + '/board-snapshot')
-      const created = snapshot.items.find(issue => issue.title === 'Filtered Backlog creation')
-      assert.ok(created)
-      assert.deepEqual(created.tags, ['bug'])
-      await expectCard(control, backlog, created.id)
+      await createFromBacklog(control, backlog, 'Child Backlog creation', parent.id)
       await verifyLocal(control)
     },
     async cleanup() {

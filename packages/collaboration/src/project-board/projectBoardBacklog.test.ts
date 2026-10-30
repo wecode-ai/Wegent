@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from 'vitest'
+import type { CollaborationIssue } from '../types'
 import {
   savedBoardColumns,
   unmatchedCreateDefaults,
@@ -153,6 +154,23 @@ const statuses = [
   { id: 'completed', name: 'Done', color: 'gray' as const },
 ]
 describe('Backlog creation defaults', () => {
+  it('keeps the board parent and separates child and root drafts', () => {
+    const parent: CollaborationIssue = {
+      ...item,
+      sequence_number: 1,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: 'Parent',
+      description: '',
+      priority: 'high',
+      due_at: null,
+      completed_at: null,
+      sort_order: 0,
+    }
+    const child = unmatchedCreateDefaults(view, statuses, parent)!
+    expect(child.parent).toBe(parent)
+    expect(child.draftScope).not.toBe(unmatchedCreateDefaults(view, statuses)!.draftScope)
+  })
   it('keeps the normal initial status and satisfies all filters without stage tags', () => {
     expect(
       unmatchedCreateDefaults({ ...view, filter: { tags: ['bug'], match: 'all' } }, statuses)

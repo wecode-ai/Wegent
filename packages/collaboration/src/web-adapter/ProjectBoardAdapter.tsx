@@ -515,7 +515,8 @@ export function ProjectBoardAdapter({
             savedViews.view &&
             onCreateUnmatchedIssue
           ) {
-            const defaults = unmatchedCreateDefaults(savedViews.view, statuses);
+            if (controller.currentParentId && !controller.currentParent) return null;
+            const defaults = unmatchedCreateDefaults(savedViews.view, statuses, controller.currentParent);
             return defaults ? (
               <button
                 type="button"

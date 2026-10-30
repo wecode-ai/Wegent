@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationProject, CollaborationStatus } from '../types'
+import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from '../types'
 import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardSort } from './projectBoardSorting'
 import type { CollaborationTranslate } from '../i18n'
@@ -35,6 +35,13 @@ export interface BoardViewSaveSettings {
   isDefault: boolean
   cardDisplay?: CollaborationProject['card_display']
   boardConfig?: CollaborationProject['board_config']
+}
+
+export interface BoardIssueCreateDefaults {
+  status: string
+  tags: string[]
+  draftScope: string
+  parent: CollaborationIssue | null
 }
 
 export function defaultBoardViewId(config?: ProjectBoardViews | null): string {
@@ -98,8 +105,9 @@ export function createSavedBoardView(statuses: readonly CollaborationStatus[]): 
 
 export function unmatchedCreateDefaults(
   view: SavedBoardView,
-  statuses: readonly CollaborationStatus[]
-) {
+  statuses: readonly CollaborationStatus[],
+  parent: CollaborationIssue | null = null
+): BoardIssueCreateDefaults | null {
   const statusValues = new Set(
     view.columns.filter(column => column.type === 'status').map(column => column.value)
   )
@@ -120,7 +128,12 @@ export function unmatchedCreateDefaults(
     (filterTags.length > 0 && tags.length === 0)
   )
     return null
-  return { status, tags, draftScope: `board-view:${view.id}:unmatched` }
+  return {
+    status,
+    tags,
+    parent,
+    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}`,
+  }
 }
 
 export function boardDropHint(

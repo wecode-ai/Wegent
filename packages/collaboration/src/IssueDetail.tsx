@@ -1,4 +1,5 @@
 import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
+import type { BoardIssueCreateDefaults } from './project-board/projectBoardViews'
 import { isIssueVersionConflict } from "./issue-detail/issueVersionConflict";
 import { RuntimeConversationScope } from "./conversation/RuntimeConversationScope";
 import { IssueTaskConversation } from "./issue-detail/IssueTaskConversation";
@@ -95,7 +96,7 @@ interface IssueDetailProps {
 }
 
 interface IssueCreateProps {
-  defaults?: { status: string; tags: string[]; draftScope: string };
+  defaults?: BoardIssueCreateDefaults;
   api: IssueDetailProps["api"];
   project: CollaborationProject;
   allIssues: CollaborationIssue[];
@@ -204,7 +205,7 @@ export function IssueCreate({
         mode="create"
         project={project as SharedEditorProject}
         allItems={allIssues as SharedEditorIssue[]}
-        initialParent={null}
+        initialParent={defaults?.parent ?? null}
         initialStatus={
           defaults?.status ?? project.board_config?.statuses?.[0]?.id ?? "inbox"
         }

@@ -6,6 +6,7 @@ import { bulkIssueStatus } from './platform/bulkIssueStatus'
 import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
 import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
 import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
+import type { BoardIssueCreateDefaults } from './project-board/projectBoardViews'
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -156,11 +157,7 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
-  const [createIssueDefaults, setCreateIssueDefaults] = useState<{
-    status: string;
-    tags: string[];
-    draftScope: string;
-  }>();
+  const [createIssueDefaults, setCreateIssueDefaults] = useState<BoardIssueCreateDefaults>();
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
