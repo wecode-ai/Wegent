@@ -370,6 +370,9 @@ Automatically approved requests do not create pending user cards; read-only and 
 confirmation limits remain intact. Local answer, cancellation, and expiry settlements enter
 the same native mailbox with their original turn/request identity, updating both messages
 and recovery items rather than reaching only the request observer.
+Successful requests cannot consume native content buffers early. Native completion commits
+the complete ordered content and removes that turn's buffer, clearing blocking questions
+while preserving asynchronous questions that remain unanswered across turns.
 
 Native start also establishes the content turn. The request-created callback only binds
 user-message identity. An early binding retains a pending record without claiming model

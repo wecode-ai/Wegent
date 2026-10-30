@@ -4,6 +4,42 @@
 
 use super::*;
 
+#[test]
+fn rpc_success_cannot_consume_a_native_turn_before_its_answer_settlement() {
+    let (handler, root, _) = setup("native-answer-after-rpc");
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    let question = json!({"id": 2, "method": "mcpServer/elicitation/request", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "serverName": "business", "mode": "form",
+        "message": "Choose scope", "requestedSchema": {"type": "object", "properties": {
+            "scope": {"type": "string", "enum": ["private", "public"]}
+        }}
+    }});
+    handler.route_codex_notification(question.clone());
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", Some("turn-1"));
+    assert!(handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .contains_key("task-1"));
+    let response = json!({"requestId": 2, "interactionScope": "turn-1", "answers": {"scope": {"answers": ["private"]}}});
+    let mut answered = question;
+    answered["method"] = json!("wegent/mcpElicitation/settled");
+    answered["params"]["interactionStatus"] = json!("answered");
+    answered["params"]["response"] = response.clone();
+    handler.route_codex_notification(answered);
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    assert!(!handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .contains_key("task-1"));
+    let link = handler.local_task_link("task-1").unwrap();
+    let block = &link.runtime_handle["completedTranscriptMessages"][0]["blocks"][0];
+    assert_eq!(block["render_payload"]["interactionStatus"], "answered");
+    assert_eq!(block["render_payload"]["response"], response);
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn request_observer_does_not_wait_for_native_publication() {
     use std::{

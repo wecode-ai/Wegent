@@ -434,7 +434,7 @@ fn mcp_elicitation_terminal_turn_and_expired_deadline_cannot_restore_pending_car
 
 #[tokio::test]
 async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_is_cleared() {
-    for completion_notification in [false, true] {
+    for rpc_completion_first in [false, true] {
         let (mut handler, root) = isolated_runtime_work_handler("elicitation-answered-history");
         let mut link = RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
@@ -487,17 +487,16 @@ async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_i
             }
             handler.record_active_codex_transcript_item("task-1", "turn-1", &settled);
         }
-        if completion_notification {
-            handler.persist_completed_codex_turn_from_notification(
-                "task-1",
-                &json!({
-                    "method": "turn/completed", "params": {
-                        "threadId": "thread-1",
-                        "turn": {"id": "turn-1", "status": "completed", "items": []}
-                    }
-                }),
-            );
-        } else {
+        if rpc_completion_first {
+            handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
+        }
+        handler.route_codex_notification(json!({
+            "method": "turn/completed", "params": {
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "status": "completed", "items": []}
+            }
+        }));
+        if !rpc_completion_first {
             handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
         }
         handler.clear_active_codex_transcript("task-1");

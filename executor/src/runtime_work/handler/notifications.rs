@@ -228,6 +228,14 @@ impl RuntimeWorkRpcHandler {
         status: &str,
         expected_turn_id: Option<&str>,
     ) {
+        // Native success commits its buffer at the native completion boundary.
+        if status == "completed"
+            && self
+                .local_task_link(local_task_id)
+                .is_some_and(|link| link.execution_state.is_some())
+        {
+            return;
+        }
         let mut active_items = self.active_codex_transcript_items.lock().ok();
         let active = active_items.as_mut().and_then(|items| {
             if expected_turn_id.is_some_and(|expected| {
@@ -361,10 +369,14 @@ impl RuntimeWorkRpcHandler {
             });
         }
         if let Some(active_items) = active_items.as_mut() {
-            if let Some(active) = active_items.get_mut(local_task_id) {
-                if active.turn_id == turn_id {
+            if active_items
+                .get(local_task_id)
+                .is_some_and(|active| active.turn_id == turn_id)
+            {
+                if let Some(mut active) = active_items.remove(local_task_id) {
                     active.items.clear();
                     active.user_input_requests.clear();
+                    self.set_pending_user_input_status(local_task_id, &active);
                 }
             }
         }
