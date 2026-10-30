@@ -10,6 +10,8 @@ const DINGTALK_MOBILE_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36 AliApp(DingTalk/7.6.0)'
 const CHROME_MOBILE_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36'
+const SAFARI_IOS_USER_AGENT =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
 
 test.describe('DingTalk handoff page', () => {
   test.use({
@@ -72,6 +74,26 @@ test.describe('system browser handoff page', () => {
       '/collaboration/12/issues/ISSUE-1'
     )
     await expect(page.getByTestId('dingtalk-browser-hint')).toHaveCount(0)
+  })
+})
+
+test.describe('iPhone system browser handoff page', () => {
+  test.use({
+    storageState: EMPTY_STORAGE,
+    userAgent: SAFARI_IOS_USER_AGENT,
+  })
+
+  test('uses the Wework scheme with a compatible mobile fallback', async ({ page }) => {
+    await page.goto(HANDOFF_PATH)
+
+    await expect(page.getByTestId('open-wework-button')).toHaveAttribute(
+      'href',
+      'wework://boards/12/issues/ISSUE-1'
+    )
+    await expect(page.getByTestId('open-wework-button')).toHaveAttribute(
+      'data-fallback-url',
+      'wegent://boards/12/issues/ISSUE-1'
+    )
   })
 })
 
