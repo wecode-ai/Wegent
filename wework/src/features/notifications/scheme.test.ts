@@ -15,7 +15,11 @@ describe('Wework scheme routing', () => {
     expect(destination).toEqual({ kind: 'interaction', ...address, requestKey })
     const route = new URL(weworkDestinationRoute(destination), 'https://local')
     expect(route.pathname).toBe('/pending-interactions')
-    expect(JSON.parse(route.searchParams.get('interaction')!)).toEqual([address.deviceId, address.taskId, requestKey])
+    expect(JSON.parse(route.searchParams.get('interaction')!)).toEqual([
+      address.deviceId,
+      address.taskId,
+      requestKey,
+    ])
   })
   it('keeps local project storage in the destination and navigation route', () => {
     const url = weworkIssueScheme('local-project-1', 'OFF-1', 'local')

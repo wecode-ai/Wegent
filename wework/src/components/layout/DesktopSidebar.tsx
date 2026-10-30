@@ -3870,7 +3870,6 @@ export function DesktopSidebar({
     setChatsExpanded(expanded => hasCollapsedReadTasks || !expanded)
   }
 
-
   useEffect(() => {
     if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
 

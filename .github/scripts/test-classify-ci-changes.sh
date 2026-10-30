@@ -1361,6 +1361,9 @@ wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shar
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
+
+# Keep this checkpoint expectation separate from the shared matrix literal.
+full_desktop_expected="${full_desktop_expected/native-window-startup,/native-window-startup,startup-network-change,}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
 full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
@@ -1375,6 +1378,19 @@ for path in \
   executor/src/task_runtime/mcp/context.rs; do
   assert_desktop_case "Executor path retains full coverage including deferred discovery: $path" \
     "$full_desktop_expected" "$path"
+done
+
+for path in \
+  wework/electron/src/host/renderer-startup-loader.ts \
+  wework/electron/src/host/renderer-startup-loader.test.ts \
+  wework/electron/src/host/e2e-startup-network-fault.ts \
+  wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs; do
+  assert_desktop_case "Startup interruption path selects its desktop regression: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"startup-network-change"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' "$path"
 done
 
 assert_desktop_case "latest conversation history runs its desktop regression" \
