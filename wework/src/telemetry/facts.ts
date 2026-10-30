@@ -44,3 +44,11 @@ export type WeworkTelemetryFact = AnalyticsEvent & {
 export type WeworkTelemetryEnvelope = WeworkTelemetryFact & {
   readonly eventId: string
 }
+
+export const TELEMETRY_SINK_PROTOCOL = 'telemetry-sink/v1' as const
+
+export interface WeworkTelemetrySink {
+  readonly id: string
+  readonly protocol: typeof TELEMETRY_SINK_PROTOCOL
+  accept(fact: WeworkTelemetryEnvelope): void | Promise<void>
+}

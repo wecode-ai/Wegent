@@ -115,6 +115,34 @@ test('registers Wework as the DSH root application', async () => {
   assert.equal(typeof registration.component, 'function')
 })
 
+test('registers telemetry sinks with Cordis lifecycle cleanup', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const cleanups = []
+  const owner = {
+    effect(factory) {
+      const cleanup = factory()
+      cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  const sink = {
+    id: 'internal',
+    protocol: 'telemetry-sink/v1',
+    accept() {},
+  }
+
+  runtime.service.telemetry.sinks.register(owner, sink)
+  assert.equal(runtime.service.telemetry.sinks.list()[0].id, sink.id)
+  assert.throws(
+    () => runtime.service.telemetry.sinks.register(owner, { ...sink, accept: undefined }),
+    /requires accept\(\)/
+  )
+
+  for (const cleanup of cleanups.reverse()) cleanup()
+  assert.equal(runtime.service.telemetry.sinks.list().length, 0)
+})
+
 test('projects native DSH sidebar slot entries into Wework containers', async () => {
   const client = await loadClient()
   const registrations = []

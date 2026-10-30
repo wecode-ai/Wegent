@@ -104,4 +104,51 @@ describe('telemetry dispatcher', () => {
       await flushPromises()
     }
   })
+
+  test('flushes full telemetry envelopes to sinks that register after startup', async () => {
+    const publicAccept = vi.fn()
+    const internalAccept = vi.fn()
+    let sinks: Array<{ id: string; accept: (fact: unknown) => void }> = []
+    const dispatcher = createTelemetryDispatcher(publicAccept, {
+      internalSinks: () => sinks,
+      isInternalDeliveryEnabled: () => true,
+    })
+
+    dispatcher.publish(smartAppFact('smart_app_opened'))
+    expect(publicAccept).toHaveBeenCalledWith({
+      name: 'smart_app_opened',
+      properties: { domain: 'smart_app' },
+      context: expect.any(Object),
+    })
+    expect(internalAccept).not.toHaveBeenCalled()
+
+    sinks = [{ id: 'delayed', accept: internalAccept }]
+    dispatcher.flushInternalSinks()
+    await flushPromises()
+
+    expect(internalAccept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: expect.any(String),
+        name: 'smart_app_opened',
+        context: expect.objectContaining({ smartApp: expect.any(Object) }),
+        occurredAt: '2026-09-09T00:00:00.000Z',
+      })
+    )
+  })
+
+  test('does not buffer internal facts while unified telemetry is disabled', async () => {
+    const internalAccept = vi.fn()
+    let enabled = false
+    const dispatcher = createTelemetryDispatcher(vi.fn(), {
+      internalSinks: () => [{ id: 'internal', accept: internalAccept }],
+      isInternalDeliveryEnabled: () => enabled,
+    })
+
+    dispatcher.publish(smartAppFact('smart_app_opened'))
+    enabled = true
+    dispatcher.flushInternalSinks()
+    await flushPromises()
+
+    expect(internalAccept).not.toHaveBeenCalled()
+  })
 })
