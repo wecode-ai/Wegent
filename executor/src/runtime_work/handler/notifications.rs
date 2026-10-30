@@ -28,6 +28,16 @@ fn user_input_request_key(id: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn record_async_question_notification(&self, local_task_id: &str, message: &Value) {
+        let notification = codex_notification(message);
+        if notification.method == "item/completed"
+            && super::super::codex_user_input::async_question_payload_from_item(notification.params)
+                .is_some()
+        {
+            self.set_interaction_status(local_task_id, Some(INTERACTION_AWAITING_USER_REPLY));
+        }
+    }
+
     pub(super) fn refresh_pending_user_input_status(&self, local_task_id: &str) {
         let Ok(items) = self.active_codex_transcript_items.lock() else {
             return;
@@ -790,6 +800,7 @@ impl RuntimeWorkRpcHandler {
             if !skip_active_notification && message.claim_runtime_delivery() {
                 if !route_nested {
                     self.record_background_terminal_notification(&local_task_id, &message);
+                    self.record_async_question_notification(&local_task_id, &message);
                 }
                 let mut event_request = route_request;
                 // A background command keeps its native turn even after a compaction route replaces it.

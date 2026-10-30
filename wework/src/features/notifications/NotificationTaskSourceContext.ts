@@ -11,6 +11,7 @@ export type TaskSource = Pick<
   devices?: DeviceInfo[]
   currentAddress?: RuntimeTaskAddress | null
   userId?: number
+  refresh?: () => Promise<unknown>
 }
 
 /**

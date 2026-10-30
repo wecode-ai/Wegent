@@ -6,9 +6,14 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { navigateWorkspaceTab } from '@/features/workspace-tabs/workspaceNavigation'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
+import { INTERACTIONS_TAB_ID } from './RuntimeInteractionsContext'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
+  const { t } = useTranslation('common')
+  const interactionsTitle = t('interactions.title')
+  const pendingTitle = useRef(interactionsTitle)
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
   const focusRequestRef = useRef(0)
@@ -17,10 +22,24 @@ export function WeworkSchemeBridge() {
   useLayoutEffect(() => {
     connectionRef.current = connection
     tabsRef.current = tabs
-  }, [connection, tabs])
+    pendingTitle.current = interactionsTitle
+  }, [connection, tabs, interactionsTitle])
   const open = useCallback((url: string, deferInRenderer = true): boolean => {
     const destination = parseWeworkScheme(url)
     if (!destination) return true
+    if (destination.kind === 'interaction') {
+      const currentTabs = tabsRef.current
+      const contentRoute = weworkDestinationRoute(destination)
+      const existing = currentTabs.tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
+      if (existing) currentTabs.selectTab(existing.id, { contentRoute })
+      else
+        currentTabs.openTab('auxiliary', {
+          id: INTERACTIONS_TAB_ID,
+          title: pendingTitle.current,
+          contentRoute,
+        })
+      return true
+    }
     const cloud = connectionRef.current
     if (
       destination.kind === 'board' &&

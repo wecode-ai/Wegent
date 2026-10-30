@@ -29,8 +29,8 @@
       "import": "./src/runtime.ts"
     },
     "./runtime-user-message": {
-      "types": "./src/runtime-user-message.ts",
-      "import": "./src/runtime-user-message.ts"
+      "types": "./src/runtime-user-message.d.ts",
+      "import": "./src/runtime-user-message.js"
     },
     "./runtime-user-input": {
       "types": "./src/runtime-user-input.ts",

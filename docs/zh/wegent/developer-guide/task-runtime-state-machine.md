@@ -118,6 +118,14 @@ CLI 成功退出并不能单独证明任务完成。流结束时若仍有未完�
 - pane session 必须把本地仍在 streaming 的 assistant 消息固化为 cancelled，因为取消不一定会产生正常的 `chat:done` 或 response completed 事件。
 - 只更新 runtime work 会导致输入框仍显示运行中；只更新消息流会导致侧边栏仍显示运行中。两类状态必须在同一个停止路径里同时更新。
 
+### 异步提问与等待状态
+
+Codex 的异步提问允许当前 turn 结束后继续等待用户回答。Executor 的本地执行接收器
+与全局通知路由必须在发布问题卡片之前，通过同一条逻辑持久化
+`interactionStatus: awaitingUserReply`。只发布卡片会使后续任务快照清除侧栏等待标记。
+等待状态在 turn 完成和任务存储重载后保留，并在下一条用户消息被接受时清除。
+子线程的问题不得把父任务标记为等待回答。
+
 ## 修改指南
 
 新增或修改任务运行态 UI 时：

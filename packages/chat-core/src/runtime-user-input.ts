@@ -16,6 +16,26 @@ export const CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL = '是的，执行此计划'
 export const ASYNC_REQUEST_USER_INPUT_DELIVERY = 'async'
 const IMPLEMENT_PLAN_TEXT_MARKERS = ['实施此计划', '执行此计划']
 
+/** Presentation metadata shared by native approvals and notification summaries. */
+export function requestUserInputApprovalDescription(payload: RequestUserInputPayload) {
+  const kind = payload.approvalKind ?? payload.approval_kind ?? 'command'
+  const detail =
+    kind === 'command'
+      ? payload.command
+      : kind === 'file_change'
+        ? (payload.grantRoot ?? payload.grant_root ?? payload.reason)
+        : (payload.reason ?? payload.cwd)
+  return {
+    key:
+      kind === 'file_change'
+        ? 'request_user_input.approval_file_change'
+        : kind === 'permissions'
+          ? 'request_user_input.approval_permissions'
+          : 'request_user_input.approval_command',
+    detail,
+  }
+}
+
 export function hasImplementationPlanText(text: string | null | undefined): boolean {
   const normalizedText = text?.trim()
   return Boolean(
@@ -187,10 +207,7 @@ function asyncQuestionPrompts<TAttachment, TFileChanges>(
  * lines as questions maps line to question. A single question answers with its
  * whole reply; anything else is left unattributed.
  */
-function pairQuestionsWithReply(
-  questions: string[],
-  reply: string
-): AsyncRequestUserInputReply[] {
+function pairQuestionsWithReply(questions: string[], reply: string): AsyncRequestUserInputReply[] {
   if (questions.length === 1) {
     const answer = reply.trim()
     return answer ? [{ question: questions[0], answer }] : []
@@ -200,7 +217,10 @@ function pairQuestionsWithReply(
     .map(line => line.trim())
     .filter(Boolean)
   if (lines.length !== questions.length) return []
-  return questions.map((question, index) => ({ question, answer: lines[index] }))
+  return questions.map((question, index) => ({
+    question,
+    answer: lines[index],
+  }))
 }
 
 function resolveAsyncBlock<TFileChanges>(

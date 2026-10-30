@@ -3859,7 +3859,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The encoded Markdown file link did not resolve to the workspace file path'
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterOpen = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -3922,7 +3921,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         ACTIVE_WORKBENCH_SELECTOR
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterClose = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -4327,8 +4325,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         Math.abs(sidebarHiddenPanelMetrics.left - collapsedWorkbenchMetrics.left) <= 1,
         `The expanded right workspace panel was not aligned with the collapsed workbench: ${sidebarHiddenPanelMetrics.left}px versus ${collapsedWorkbenchMetrics.left}px`
       )
-      await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
+      await control.command('pointerLeave', '[data-testid="desktop-sidebar-preview"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="desktop-sidebar-preview"][aria-hidden="true"]',
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
 
       await control.command('toggleSidebar', '')

@@ -19,9 +19,14 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     await cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
       recursive: true,
     })
-    // CI reads this fixture from its checkout without installing workspace packages.
-    const searchContractPath = 'packages/chat-core/test-fixtures/conversation-search-contract.json'
-    await cp(resolve(weworkDir, '..', searchContractPath), join(directory, searchContractPath))
+    // CI reads these runtime files from its checkout without installing workspace packages.
+    for (const runtimePath of [
+      'packages/chat-core/package.json',
+      'packages/chat-core/src/runtime-user-message.js',
+      'packages/chat-core/test-fixtures/conversation-search-contract.json',
+    ]) {
+      await cp(resolve(weworkDir, '..', runtimePath), join(directory, runtimePath))
+    }
     const { stdout } = await execute(
       process.execPath,
       [
