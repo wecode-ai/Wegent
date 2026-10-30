@@ -102,7 +102,9 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     expect(onError).toHaveBeenCalledTimes(1)
     expect(published).toBe('one')
     record('write-recovery')
+    record('write-recovery-started')
     await writeFile(source, 'two')
+    record('write-recovery-completed')
     await recoveredBuild.promise
     expect(published).toBe('two')
     expect(build).toHaveBeenCalledTimes(3)
