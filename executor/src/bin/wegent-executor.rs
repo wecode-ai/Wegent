@@ -204,7 +204,9 @@ fn main() {
             std::process::exit(2);
         }
     };
-    install_app_sidecar_lifecycle_watchdog();
+    if !args.help && !args.version {
+        install_app_sidecar_lifecycle_watchdog();
+    }
     let shell_environment = if should_hydrate_shell_environment(&args) {
         Some(wegent_executor::process_environment::hydrate_process_environment())
     } else {
@@ -256,9 +258,7 @@ fn install_app_sidecar_lifecycle_watchdog() {
     else {
         return;
     };
-    wegent_executor::logging::write_executor_log_line(&format!(
-        "app sidecar lifecycle watchdog armed fd={lifecycle_fd}"
-    ));
+    eprintln!("app sidecar lifecycle watchdog armed fd={lifecycle_fd}");
     thread::spawn(move || {
         let mut byte = 0_u8;
         loop {

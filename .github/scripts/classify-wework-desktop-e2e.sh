@@ -20,6 +20,7 @@ core_segments=(
   collaboration-runtime-reconciliation
   collaboration-issue-archive
   collaboration-board-sorting
+  collaboration-board-backlog
   collaboration-board-move-recovery
   collaboration-home-preload
   collaboration-first-use
@@ -246,7 +247,7 @@ core_shards=(
   claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,startup-network-change,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence
 )
@@ -922,6 +923,10 @@ classify_wework_path() {
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs)
+      select_target "core:collaboration-board-backlog"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
       select_target "core:collaboration-board-sorting"
       return
@@ -932,6 +937,7 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
       select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
@@ -1126,6 +1132,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
         select_target "core:collaboration-board-sorting"
+        select_target "core:collaboration-board-backlog"
         select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
@@ -1839,6 +1846,7 @@ classify_path() {
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
