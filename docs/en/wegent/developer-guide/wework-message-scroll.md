@@ -76,6 +76,10 @@ Keep these ordering and send invariants:
 - When an idle task receives a new goal, the goal and first instruction must be sent atomically through one `runtime.tasks.send`. Codex `thread/goal/set` automatically starts the goal turn, so the executor must await that turn instead of issuing another `turn/start`; otherwise the real output is associated with the wrong position while the duplicate idle turn eventually shows a “Message generation failed” error after 180 seconds.
 - Regression coverage must send a message in a long-history real Electron conversation, pause the model response, and assert that the scroller is at the bottom and the waiting indicator is fully contained by the scroll-container bounds.
 
+History navigation must retain failed turns without user-message items. When a summary explicitly reports `userMessageId: null`, clicking targets the turn's projected assistant error message instead of waiting for a nonexistent user message. Turns with an explicit user-message ID must still load and target that original message. Hover previews without prompt text show a localized turn title; turns without assistant response text show their error summary.
+
+The `latest-conversation-history` checkpoint verifies this preview, error visibility after clicking, active marker, and loading-state completion before returning to the latest turn. It reuses the existing real Codex history database fixture and CI desktop runner. Run it with `pnpm --filter wework e2e:desktop --segment latest-conversation-history`.
+
 ## Streaming Rendering Ownership
 
 Streaming text and scroll following each have exactly one scheduler. Component animation, direct scrolling, and delayed scroll timers must not compete:
