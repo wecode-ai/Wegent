@@ -114,3 +114,26 @@ def test_accepts_historical_and_explicit_defaults() -> None:
         ],
     }
     assert BoardViews.model_validate(config).default_view_id == "mixed"
+
+
+def test_backlog_is_unique_even_when_lane_names_differ() -> None:
+    config = {
+        "views": [
+            {
+                "id": "stages",
+                "name": "Stages",
+                "columns": [
+                    {"id": "backlog", "type": "unmatched", "value": "Backlog"},
+                    {"id": "design", "type": "tag", "value": "design"},
+                ],
+            }
+        ],
+    }
+    parsed = BoardViews.model_validate(config)
+    assert parsed.views[0].columns[0].type == "unmatched"
+    assert parsed.views[0].columns[0].value == "Backlog"
+    config["views"][0]["columns"].append(
+        {"id": "other", "type": "unmatched", "value": "Other"}
+    )
+    with pytest.raises(ValidationError):
+        BoardViews.model_validate(config)

@@ -95,6 +95,7 @@ interface IssueDetailProps {
 }
 
 interface IssueCreateProps {
+  defaults?: { status: string; tags: string[]; draftScope: string };
   api: IssueDetailProps["api"];
   project: CollaborationProject;
   allIssues: CollaborationIssue[];
@@ -175,6 +176,7 @@ function useBrowserIssueDetailPort(
 }
 
 export function IssueCreate({
+  defaults,
   api,
   project,
   allIssues,
@@ -203,7 +205,11 @@ export function IssueCreate({
         project={project as SharedEditorProject}
         allItems={allIssues as SharedEditorIssue[]}
         initialParent={null}
-        initialStatus={project.board_config?.statuses?.[0]?.id ?? "inbox"}
+        initialStatus={
+          defaults?.status ?? project.board_config?.statuses?.[0]?.id ?? "inbox"
+        }
+        initialTags={defaults?.tags}
+        draftScope={defaults?.draftScope}
         onClose={onClose}
         onCreated={onCreated}
         translate={editorTranslate}

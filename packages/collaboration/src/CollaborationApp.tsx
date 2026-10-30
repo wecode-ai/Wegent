@@ -156,6 +156,11 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [createIssueDefaults, setCreateIssueDefaults] = useState<{
+    status: string;
+    tags: string[];
+    draftScope: string;
+  }>();
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
@@ -246,6 +251,7 @@ export function CollaborationApp({
   };
   const requestIssueCreate = () => {
     if (!project) return;
+    setCreateIssueDefaults(undefined);
     setCreateIssueOpen(true);
   };
   useEffect(() => {
@@ -818,6 +824,10 @@ export function CollaborationApp({
                         });
                       }}
                       onCreateIssue={requestIssueCreate}
+                      onCreateUnmatchedIssue={(defaults) => {
+                        setCreateIssueDefaults(defaults);
+                        setCreateIssueOpen(true);
+                      }}
                       onDeleteIssue={
                         issueArchiveAvailable ? requestIssueArchive : undefined
                       }
@@ -1139,6 +1149,7 @@ export function CollaborationApp({
           )}
           {createIssueOpen && project && (
             <IssueCreate
+              defaults={createIssueDefaults}
               api={api}
               project={project}
               allIssues={issues}

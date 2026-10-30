@@ -453,6 +453,14 @@ get_changed_files() {
 # Get list of changed files in the commits being pushed
 CHANGED_FILES=$(get_changed_files)
 
+# Git exports checkout-local context to hooks. Preserve it for the pushed diff,
+# then isolate checks so their temporary repositories cannot target this checkout.
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+while IFS= read -r git_env_name; do
+    unset "$git_env_name"
+done < <(git rev-parse --local-env-vars)
+cd "$PROJECT_ROOT" || exit 1
+
 if [ -z "$CHANGED_FILES" ]; then
     echo -e "${GREEN}✅ No files changed, skipping checks${NC}"
     exit 0

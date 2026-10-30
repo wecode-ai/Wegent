@@ -1,3 +1,4 @@
+import { unmatchedCreateDefaults } from "../project-board/projectBoardViews";
 import {
   projectBoardDnd,
   projectBoardCollisionDetection,
@@ -112,6 +113,9 @@ interface ProjectBoardAdapterProps {
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onCreateUnmatchedIssue?(
+    defaults: NonNullable<ReturnType<typeof unmatchedCreateDefaults>>,
+  ): void;
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
   onSaveViews?(
@@ -157,6 +161,7 @@ export function ProjectBoardAdapter({
   labels,
   members,
   onCreateIssue,
+  onCreateUnmatchedIssue,
   onArchiveCompleted,
   onOpenArchive,
   onMarkRead,
@@ -505,6 +510,23 @@ export function ProjectBoardAdapter({
             : undefined
         }
         renderColumnHeaderActions={(column, columnItems, state) => {
+          if (
+            column.type === "unmatched" &&
+            savedViews.view &&
+            onCreateUnmatchedIssue
+          ) {
+            const defaults = unmatchedCreateDefaults(savedViews.view, statuses);
+            return defaults ? (
+              <button
+                type="button"
+                data-testid={`cloud-todo-column-add-${column.key}`}
+                className="flex min-h-11 items-center rounded-md px-2 text-xs text-text-muted hover:bg-background hover:text-text-primary md:h-6 md:min-h-0"
+                onClick={() => onCreateUnmatchedIssue(defaults)}
+              >
+                {translate("todo.board_view_create_unmatched")}
+              </button>
+            ) : null;
+          }
           if (
             (column.type ?? state.groupBy) !== "status" ||
             column.status !== "completed" ||

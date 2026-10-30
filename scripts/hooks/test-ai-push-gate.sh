@@ -49,6 +49,14 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "${PUSH_GATE_TEST_VERIFY_GIT_ISOLATION:-0}" = "1" ]; then
+    while IFS= read -r git_env_name; do
+        if printenv "$git_env_name" >/dev/null; then
+            echo "Quality check inherited repository-local variable: $git_env_name" >&2
+            exit 11
+        fi
+    done < <(git rev-parse --local-env-vars)
+fi
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
         '--filter @wegent/chat-core test'*)
@@ -238,12 +246,19 @@ fi
 
 : > "$CALL_LOG"
 
-AI_VERIFIED=1 \
+if ! AI_VERIFIED=1 \
 AI_PUSH_FULL_TESTS=1 \
+PUSH_GATE_TEST_VERIFY_GIT_ISOLATION=1 \
+GIT_DIR="$(git rev-parse --absolute-git-dir)" \
+GIT_WORK_TREE="$PROJECT_ROOT" \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
 refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
 EOF
+then
+    cat "$FULL_TEST_OUT"
+    exit 1
+fi
 
 if ! grep -qE '(^| )pytest tests/' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Python pytest suite."
