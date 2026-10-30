@@ -379,6 +379,10 @@ record. The history merge protects that admitted identity before cloud outcome r
 This changes only the history view, without advancing execution or creating an active
 content buffer. A leftover request binding cannot reopen a natively completed turn.
 
+A user-only preview without native identity stays pending. Complete presentation content
+does not complete a turn. A synthetic done status would survive native binding, suppress
+streaming, and prematurely mark collaboration member activities successful.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store

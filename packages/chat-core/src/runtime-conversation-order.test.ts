@@ -630,11 +630,49 @@ describe("native conversation ordering contract", () => {
       "Original prompt",
     ]);
     expect(page.turns).toHaveLength(1);
-    expect(page.turns[0]).toMatchObject({ id: null, status: "done" });
+    expect(page.turns[0]).toMatchObject({ id: null, status: "pending" });
     expect(page.turns[0].items[0]).toMatchObject({
       type: "user_message",
       message: { content: "Original prompt" },
     });
+  });
+  it("cannot complete a running member from its user-only preview before native binding", () => {
+    const message = {
+      id: "member-request",
+      role: "user" as const,
+      content: "Assigned work",
+    };
+    const preview = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      turns: [],
+      runtimeTurns: [],
+      messages: [message],
+    });
+    const native = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      messages: [message],
+      turns: [
+        {
+          id: "member-turn",
+          status: "streaming",
+          items: [
+            {
+              id: message.id,
+              type: "user_message",
+              message,
+            },
+          ],
+        },
+      ],
+    });
+    const merged = mergeRuntimeConversationTurns(preview.turns, native.turns);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ id: "member-turn", status: "streaming" });
+    expect(preview.turns[0]).toMatchObject({ id: null, status: "pending" });
   });
   it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
     const page = projectRuntimePaneTranscript({
