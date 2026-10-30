@@ -149,8 +149,11 @@ export function bindAssistantTurn(
 ): RuntimeConversationTurn[] {
   if (!action.subtaskId || !action.clientUserMessageId) return turns;
   const existingIndex = turns.findIndex((turn) => turn.id === action.subtaskId);
-  const userIndex = turns.findIndex((turn) =>
-    hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
+  const userIndex = turns.findIndex(
+    (turn) =>
+      hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!) ||
+      (turn.id === null &&
+        turn.clientUserMessageId === action.clientUserMessageId),
   );
   if (userIndex < 0) {
     // The RPC identity can arrive before the native start. Keep the join without

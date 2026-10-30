@@ -203,6 +203,29 @@ describe("native conversation ordering contract", () => {
       })[0],
     ).toMatchObject({ id: "turn", startedAt: 40_000 });
   });
+  it("binds a metadata-only pending user without starting or replacing its observed interval", () => {
+    const pending: RuntimeConversationTurn = {
+      id: null,
+      clientUserMessageId: "user",
+      status: "pending",
+      startedAt: 40_000,
+      items: [],
+    };
+    const bound = reduceRuntimeConversationTurns([pending], {
+      type: "assistant_bound",
+      subtaskId: "turn",
+      clientUserMessageId: "user",
+    });
+    expect(bound).toEqual([{ ...pending, id: "turn" }]);
+    expect(
+      reduceRuntimeConversationTurns(bound, {
+        type: "assistant_started",
+        subtaskId: "turn",
+        clientUserMessageId: null,
+        startedAt: 42_000,
+      }),
+    ).toEqual([{ ...pending, id: "turn", status: "streaming" }]);
+  });
   it("freezes the observed interval without reconstructing a millisecond endpoint from rounded native timestamps", () => {
     vi.spyOn(Date, "now").mockReturnValue(58_200);
     try {
