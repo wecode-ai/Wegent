@@ -11,6 +11,7 @@ import type {
   McpAppResource,
   RuntimeMcpAppsApi,
 } from '@/api/mcpApps'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -32,15 +33,17 @@ interface AppDocument {
   release: () => Promise<void>
 }
 
-type LeasedAppDescriptor = McpAppDescriptor & { leaseId: string }
+type SessionAppDescriptor = McpAppDescriptor & { sessionId: string }
 
 async function createAppDocument(
   html: string,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  sessionId: string
 ): Promise<AppDocument> {
   const document = await invokeDesktopHost<{ id: string; url: string }>('mcpApps.createDocument', {
     html,
     metadata,
+    sessionId,
   })
   let released: Promise<void> | undefined
   return {
@@ -67,11 +70,11 @@ export function McpAppHost({
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
-  onContext?: (context: Record<string, unknown>, leaseId: string) => Promise<void>
+  onContext?: (context: Record<string, unknown>, sessionId: string) => Promise<void>
   onDisplayModeChange?: (mode: McpUiDisplayMode, dismiss: () => void) => void
 }) {
   const { t } = useTranslation('common')
-  const [descriptor, setDescriptor] = useState<LeasedAppDescriptor>()
+  const [descriptor, setDescriptor] = useState<SessionAppDescriptor>()
   const [app, setApp] = useState<McpAppDiscovery>()
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
@@ -89,9 +92,19 @@ export function McpAppHost({
   const sentResult = useRef<McpAppResult>(undefined)
   const sentInput = useRef(false)
   const latest = useEffectEvent(() => ({ block, onMessage, onContext, mode }))
-  const requestApp = useEffectEvent((data: Partial<McpAppRequest>) =>
-    api.requestMcpApp({ ...data, address, callId: block.id })
+  const retainSession = useEffectEvent((sessionId: string) =>
+    invokeDesktopHost('mcpApps.retainSession', {
+      address,
+      callId: block.id,
+      sessionId,
+      windowLabel: getDesktopWindowLabel(),
+      target: api.getMcpAppSessionTarget?.(address),
+    })
   )
+  const requestApp = useEffectEvent(async (data: Partial<McpAppRequest>) => {
+    if (data.sessionId) await retainSession(data.sessionId)
+    return api.requestMcpApp({ ...data, address, callId: block.id })
+  })
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
   const closeApp = useCallback(async () => {
@@ -173,11 +186,14 @@ export function McpAppHost({
     if (!app || closed) return
     let active = true
     let settled = false
-    const leaseId = crypto.randomUUID()
-    const release = () => void requestApp({ method: 'release', leaseId }).catch(() => {})
-    void requestApp({ method: 'initialize', leaseId })
+    const sessionId = crypto.randomUUID()
+    const release = () =>
+      void invokeDesktopHost('mcpApps.releaseSession', { sessionId }).catch(error => {
+        console.info('[Wework] MCP App session release failed', { name: error.name })
+      })
+    void requestApp({ method: 'initialize', sessionId })
       .then(value => {
-        if (active) setDescriptor({ ...(value as McpAppDescriptor), leaseId })
+        if (active) setDescriptor({ ...(value as McpAppDescriptor), sessionId })
       })
       .catch(error => {
         if (active) setFailure(String(error.message ?? error))
@@ -214,7 +230,8 @@ export function McpAppHost({
       if (!initialMode) throw new Error(t('mcp_apps.unsupported_display_mode'))
       created = await createAppDocument(
         content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
-        metadata
+        metadata,
+        descriptor.sessionId
       )
       if (!active) {
         await created.release()
@@ -226,18 +243,8 @@ export function McpAppHost({
     void load().catch(error => {
       if (active) setFailure(String(error.message ?? error))
     })
-    const heartbeat = window.setInterval(() => {
-      if (created)
-        void Promise.all([
-          requestApp({ method: 'ping', leaseId: descriptor.leaseId }),
-          invokeDesktopHost('mcpApps.renewDocument', { id: created.id }),
-        ]).catch(error => {
-          if (active) setFailure(String(error.message ?? error))
-        })
-    }, 30000)
     return () => {
       active = false
-      window.clearInterval(heartbeat)
       if (created)
         void created.release().catch(error => {
           console.info('[Wework] MCP App document release failed', { name: error.name })
@@ -299,7 +306,7 @@ export function McpAppHost({
     teardownSent.current = false
     const request = <T,>(method: string, params?: Record<string, unknown>) => {
       if (!active) throw new Error('MCP App has been closed')
-      return requestApp({ method, params, leaseId: descriptor.leaseId }) as Promise<T>
+      return requestApp({ method, params, sessionId: descriptor.sessionId }) as Promise<T>
     }
     app.oncalltool = params => request<McpAppResult>('tools/call', params)
     app.onreadresource = params => request<McpAppResource>('resources/read', params)
@@ -357,9 +364,10 @@ export function McpAppHost({
       return {}
     }
     app.onupdatemodelcontext = async params => {
+      if (descriptor) await retainSession(descriptor.sessionId)
       const update = latest().onContext
       if (!update) throw new Error('Model context updates are unavailable')
-      await update(params, descriptor.leaseId)
+      await update(params, descriptor.sessionId)
       return {}
     }
     app.onsizechange = ({ height }) => {

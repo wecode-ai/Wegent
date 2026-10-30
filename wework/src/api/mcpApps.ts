@@ -18,11 +18,17 @@ export interface McpAppDescriptor extends McpAppDiscovery {
 export interface McpAppRequest {
   address: RuntimeTaskAddress
   callId: string
-  leaseId?: string
+  sessionId?: string
   method?: string
   params?: Record<string, unknown>
 }
+export interface McpAppSessionTarget {
+  apiBaseUrl: string
+  socketBaseUrl: string
+  socketPath: string
+}
 export interface RuntimeMcpAppsApi {
+  getMcpAppSessionTarget?: (address: RuntimeTaskAddress) => McpAppSessionTarget | undefined
   requestMcpApp: <T = unknown>(data: McpAppRequest) => Promise<T>
 }
 

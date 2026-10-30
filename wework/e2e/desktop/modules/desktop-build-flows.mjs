@@ -1,3 +1,4 @@
+import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
@@ -1197,6 +1198,7 @@ async function verifyCloudProjectFlow(
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyNativeMcpCloudRouting(control, cloudEnvironment)
   control.releaseCloudInitialResponse()
   await waitForSnapshot(
     control,

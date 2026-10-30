@@ -1,6 +1,6 @@
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
-import { verifyMcpReplacementLease } from './mcp-app-lease-regression.mjs'
+import { verifyMcpReplacementSession } from './mcp-app-session-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -362,9 +362,52 @@ export function createDesktopScenario({
       await frameAction('click', '#refresh')
       await waitText('Counter 1')
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
-      frameUrl = await verifyMcpReplacementLease(control, callId)
+      frameUrl = await verifyMcpReplacementSession(
+        control,
+        callId,
+        () => frameAction('sessions', 'body'),
+        uiTimeoutMs
+      )
       await frameAction('click', '#refresh')
       await waitText('Counter 2')
+      const oldSessions = await frameAction('sessions', 'body')
+      assert.ok(oldSessions.length > 0)
+      const oldDocumentUrl = frameUrl
+      const readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await control.awaitReadyAfter(readyCount)
+      await control.command(
+        'waitFor',
+        original + ' [data-testid="mcp-app-frame"][data-ready="true"]',
+        {
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
+      assert.equal(
+        await frameAction('document-status', 'body'),
+        404,
+        'Reload must dispose the old document'
+      )
+      const cleanupDeadline = Date.now() + uiTimeoutMs
+      let currentSessions
+      do {
+        currentSessions = await frameAction('sessions', 'body')
+        if (oldSessions.every(id => !currentSessions.includes(id))) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < cleanupDeadline)
+      assert.ok(
+        oldSessions.every(id => !currentSessions.includes(id)),
+        'Reload must release every old native app session'
+      )
+      frameUrl = await control.command(
+        'getAttribute',
+        original + ' [data-testid="mcp-app-frame"]',
+        { value: 'src' }
+      )
+      assert.notEqual(frameUrl, oldDocumentUrl)
+      await frameAction('click', '#refresh')
+      // Startup model synchronization restarts the app-server; this fixture's counter is process-local.
+      await waitText('Counter 1')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })

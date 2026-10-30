@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 
-export async function verifyMcpReplacementLease(control, callId) {
+export async function verifyMcpReplacementSession(control, callId, sessionIds, timeoutMs) {
   const gates = runtimeTransportGates(control)
   const scope = `[data-testid="mcp-app"][data-mcp-call-id="${callId}"]`
   const where = [
@@ -28,24 +28,27 @@ export async function verifyMcpReplacementLease(control, callId) {
     })
     await control.command('click', scope + ' [data-testid="mcp-app-expand"]')
     const replacement = await gates.wait('new-app-initialize')
-    const oldLease = old.value.params.leaseId
-    const newLease = replacement.value.params.leaseId
-    assert.ok(oldLease)
-    assert.ok(newLease)
-    assert.notEqual(oldLease, newLease)
+    const oldSession = old.value.params.sessionId
+    const newSession = replacement.value.params.sessionId
+    assert.ok(oldSession)
+    assert.ok(newSession)
+    assert.notEqual(oldSession, newSession)
     await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"][data-ready="true"]')
-    await gates.arm({
-      id: 'stale-app-release',
-      kind: 'response',
-      name: 'runtime.mcp_apps.request',
-      hold: false,
-      where: [
-        { path: 'params.method', equals: 'release' },
-        { path: 'params.leaseId', equals: oldLease },
-      ],
-    })
     await gates.release('old-app-initialize')
-    await gates.wait('stale-app-release')
+    const deadline = Date.now() + timeoutMs
+    let sessions
+    do {
+      sessions = await sessionIds()
+      if (!sessions.includes(oldSession)) break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    } while (Date.now() < deadline)
+    assert.equal(
+      sessions.includes(oldSession),
+      false,
+      'Late initialization must release its native instance'
+    )
+    assert.ok(sessions.includes(newSession), 'The replacement must retain its connection')
+    await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"][data-ready="true"]')
     return await control.command('getAttribute', scope + ' [data-testid="mcp-app-frame"]', {
       value: 'src',
     })

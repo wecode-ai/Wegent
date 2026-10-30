@@ -1,3 +1,4 @@
+import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
@@ -311,6 +312,8 @@ if (desktopDataPaths) {
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
+const mcpAppCleanups = new Set<() => Promise<void>>()
+let mcpAppRuntime: McpAppRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let lastMenuWindow: BrowserWindow | null = null
@@ -1786,6 +1789,16 @@ async function shutdown(): Promise<void> {
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
   await traceShutdownStep('log-retention', () => logRetention.stop())
+  await traceShutdownStep('mcp-apps', async () => {
+    const results = await Promise.allSettled([...mcpAppCleanups].map(cleanup => cleanup()))
+    for (const result of results) {
+      if (result.status === 'rejected')
+        console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+    }
+    mcpAppCleanups.clear()
+    mcpAppRuntime?.dispose()
+    mcpAppRuntime = null
+  })
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -2068,6 +2081,27 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
+          registerMcpAppCleanup: cleanup => {
+            mcpAppCleanups.add(cleanup)
+          },
+          requestMcpApp: payload => {
+            mcpAppRuntime ??= new McpAppRuntime(
+              request => {
+                if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+                return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
+              },
+              async apiBaseUrl => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+                return credential.accessToken
+              },
+              async () => {
+                const entries = await rendererStorage!.initialize({})
+                return JSON.parse(entries['wework.cloudConnection'] ?? 'null')
+              }
+            )
+            return mcpAppRuntime.request(payload)
+          },
+          executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,

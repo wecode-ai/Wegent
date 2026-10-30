@@ -49,7 +49,7 @@ const discovery = {
 }
 
 beforeEach(() => {
-  native.invoke.mockClear()
+  native.invoke.mockReset().mockResolvedValue(undefined)
   connection.start.mockReset().mockResolvedValue(undefined)
   bridges.length = 0
   toolResults.mockClear()
@@ -133,13 +133,10 @@ describe('MCP App discovery', () => {
     expect(screen.getByTestId('mcp-app')).toHaveTextContent('app')
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
-    expect(requestMcpApp).toHaveBeenCalledTimes(4)
-    expect(requestMcpApp).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: 'release',
-        leaseId: requestMcpApp.mock.calls[1][0].leaseId,
-      })
-    )
+    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(native.invoke).toHaveBeenCalledWith('mcpApps.releaseSession', {
+      sessionId: requestMcpApp.mock.calls[1][0].sessionId,
+    })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -196,7 +193,10 @@ describe('MCP App close completion', () => {
     await act(async () => {})
     await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
     await act(async () => finish(descriptor))
-    expect(requestMcpApp).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'release' }))
+    expect(native.invoke).toHaveBeenCalledWith(
+      'mcpApps.releaseSession',
+      expect.objectContaining({ sessionId: expect.any(String) })
+    )
     expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
     view.unmount()
   })
@@ -204,7 +204,7 @@ describe('MCP App close completion', () => {
   it('releases only its own initialization after a replacement host opens the same call', async () => {
     let finish!: (value: typeof descriptor) => void
     let initializations = 0
-    const requestMcpApp = vi.fn((request: { method?: string; leaseId?: string }) => {
+    const requestMcpApp = vi.fn((request: { method?: string; sessionId?: string }) => {
       if (request.method === 'discover') return Promise.resolve(discovery)
       if (request.method === 'initialize' && initializations++ === 0)
         return new Promise(resolve => {
@@ -223,13 +223,13 @@ describe('MCP App close completion', () => {
       .map(([request]) => request)
       .filter(request => request.method === 'initialize')
     expect(acquired).toHaveLength(2)
-    expect(acquired[0].leaseId).toBeTruthy()
-    expect(acquired[1].leaseId).not.toBe(acquired[0].leaseId)
+    expect(acquired[0].sessionId).toBeTruthy()
+    expect(acquired[1].sessionId).not.toBe(acquired[0].sessionId)
     await act(async () => finish(descriptor))
-    const released = requestMcpApp.mock.calls
-      .map(([request]) => request)
-      .filter(request => request.method === 'release')
-    expect(released).toEqual([expect.objectContaining({ leaseId: acquired[0].leaseId })])
+    const released = native.invoke.mock.calls
+      .filter(([method]) => method === 'mcpApps.releaseSession')
+      .map(([, request]) => request)
+    expect(released).toEqual([expect.objectContaining({ sessionId: acquired[0].sessionId })])
     expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
     replacement.unmount()
   })
@@ -336,6 +336,8 @@ describe('MCP App close completion', () => {
         })
       if (method === 'mcpApps.saveFile') return Promise.resolve({})
       if (method === 'mcpApps.releaseDocument') return Promise.resolve()
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     render(
@@ -366,6 +368,8 @@ describe('MCP App close completion', () => {
       if (method === 'mcpApps.createDocument')
         return Promise.resolve({ id: 'full-document', url: 'http://127.0.0.1:9000/full-document' })
       if (method === 'mcpApps.releaseDocument') return Promise.resolve()
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     const onDisplayModeChange = vi.fn()
@@ -417,6 +421,8 @@ describe('MCP App close completion', () => {
         return new Promise<void>(resolve => {
           finishRelease = resolve
         })
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     await act(async () =>
@@ -451,6 +457,8 @@ describe('MCP App close completion', () => {
           ? Promise.reject(new Error('Host temporarily unavailable'))
           : Promise.resolve()
       }
+      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
+        return Promise.resolve()
       throw new Error('Unexpected host method: ' + method)
     })
     await act(async () =>
