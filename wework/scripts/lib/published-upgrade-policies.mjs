@@ -3,7 +3,12 @@ import { validateUpgradeCatalog } from '../../electron/src/runtime/upgrade-polic
 
 export function publishedUpgradePolicies({ repository, platform, arch }, execute = execFileSync) {
   const readJson = args =>
-    JSON.parse(execute('gh', ['release', ...args, '--repo', repository], { encoding: 'utf8' }))
+    JSON.parse(
+      execute('gh', ['release', ...args, '--repo', repository], {
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      })
+    )
   const shared = readJson(['view', 'wework-updater', '--json', 'assets'])
   const catalogs = {}
   for (const channel of ['stable', 'beta']) {

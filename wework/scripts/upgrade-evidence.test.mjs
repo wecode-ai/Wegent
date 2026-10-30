@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -664,4 +665,26 @@ test('published policy reader rejects wrong targets and distinguishes absent bas
     ),
     {}
   )
+})
+
+test('published policies support stdout larger than the default Node buffer', () => {
+  const catalog = publishedCatalog('stable', ['0.6.0'])
+  const target = { repository: 'owner/repository', platform: 'windows', arch: 'x64' }
+  const execute = (command, args, options) => {
+    assert.equal(command, 'gh')
+    const response =
+      args[1] === 'view'
+        ? { assets: [{ name: 'components-stable-windows-x64.json' }] }
+        : { upgradePolicy: catalog }
+    return execFileSync(
+      process.execPath,
+      [
+        '-e',
+        'process.stdout.write(" ".repeat(2 * 1024 * 1024) + process.argv[1])',
+        JSON.stringify(response),
+      ],
+      options
+    )
+  }
+  assert.deepEqual(publishedUpgradePolicies(target, execute), { stable: catalog })
 })
