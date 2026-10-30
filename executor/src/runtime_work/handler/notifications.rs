@@ -849,16 +849,16 @@ impl RuntimeWorkRpcHandler {
                 let compaction_item = super::super::events::is_context_compaction_notification(
                     codex_notification(&message).params,
                 );
-                let event_request = if !route_nested
-                    && !(is_context_compaction_request(&route_request) && compaction_item)
+                let event_request = if route_nested
+                    || (is_context_compaction_request(&route_request) && compaction_item)
                 {
+                    route_request
+                } else {
                     self.request_for_codex_event(
                         &local_task_id,
                         &route_request,
                         notification_turn_id.as_deref(),
                     )
-                } else {
-                    route_request
                 };
                 event_mapper
                     .lock()
