@@ -102,6 +102,7 @@ interface TemporaryChatPanelProps {
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
+  showWorkbenchBackground?: boolean
   collapseComposerWhenIdle?: boolean
   readOnly?: boolean
   active?: boolean
@@ -133,6 +134,7 @@ export function TemporaryChatPanel({
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
+  showWorkbenchBackground = false,
   collapseComposerWhenIdle = false,
   readOnly = false,
   projectWork,
@@ -873,6 +875,7 @@ export function TemporaryChatPanel({
       emptyStateText={emptyStateText}
       expanded={expanded}
       wideComposer={wideComposer}
+      showWorkbenchBackground={showWorkbenchBackground}
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={

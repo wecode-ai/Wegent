@@ -1,3 +1,5 @@
+import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
@@ -313,6 +315,8 @@ if (desktopDataPaths) {
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
+const mcpAppCleanups = new Set<() => Promise<void>>()
+let mcpAppRuntime: McpAppRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let lastMenuWindow: BrowserWindow | null = null
@@ -437,6 +441,10 @@ const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-updat
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
 )
+const executorTransportDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'executor-transport.log'),
+  '[Wework] Executor transport diagnostic '
+)
 const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'smart-app-launch.log'),
   '[Wework] Smart app launch diagnostic '
@@ -481,6 +489,9 @@ app.on('web-contents-created', (_event, contents) => {
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void executorTransportDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write executor transport diagnostics', error)
     })
     void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write Smart app diagnostics', error)
@@ -801,14 +812,27 @@ function installDshWindowLabelHeaders(): void {
     { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
     details => {
       rendererStartupLoader.requestFailed(details)
-      if (process.env.VITE_WEWORK_E2E !== 'true') return
-      console.error('[desktop-e2e-network-error]', {
+      const diagnostic = {
         at: new Date().toISOString(),
         path: new URL(details.url).pathname,
         method: details.method,
         error: details.error,
         webContentsId: details.webContentsId,
-      })
+      }
+      if (
+        diagnostic.path === '/wework/executor/v1/rpc' &&
+        typeof details.webContentsId === 'number'
+      ) {
+        void executorTransportDiagnosticsLog
+          .record(
+            details.webContentsId,
+            '[Wework] Executor transport diagnostic ' + JSON.stringify(diagnostic)
+          )
+          .catch(error => console.warn('[Wework] Failed to write network diagnostics', error))
+      }
+      if (process.env.VITE_WEWORK_E2E === 'true') {
+        console.error('[desktop-e2e-network-error]', diagnostic)
+      }
     }
   )
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -1784,6 +1808,20 @@ async function shutdown(): Promise<void> {
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
   await traceShutdownStep('log-retention', () => logRetention.stop())
+  await traceShutdownStep('mcp-apps', async () => {
+    try {
+      const results = await settleMcpAppCleanup(mcpAppCleanups)
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+      }
+    } catch (error) {
+      console.error('[Wework] MCP App shutdown cleanup timed out', { name: (error as Error).name })
+    }
+    mcpAppCleanups.clear()
+    mcpAppRuntime?.dispose()
+    mcpAppRuntime = null
+  })
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -2066,6 +2104,24 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
+          registerMcpAppCleanup: cleanup => {
+            mcpAppCleanups.add(cleanup)
+          },
+          requestMcpApp: payload => {
+            mcpAppRuntime ??= new McpAppRuntime(
+              request => {
+                if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+                return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
+              },
+              async apiBaseUrl => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+                return credential.accessToken
+              },
+              () => readMcpAppConnection(rendererStorage!)
+            )
+            return mcpAppRuntime.request(payload)
+          },
+          executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
@@ -2078,6 +2134,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
         },
         {
+          disconnectMcpAppSession: sessionId => mcpAppRuntime?.dispose(sessionId),
           captureTarget: windowLabel =>
             windowLabel === 'main'
               ? (mainWindow?.webContents ?? null)
