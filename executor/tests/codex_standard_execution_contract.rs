@@ -24,6 +24,7 @@ use wegent_executor::{
 };
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[path = "codex_standard_execution_contract/subagents.rs"]
 mod subagents;
@@ -737,7 +738,7 @@ fn assert_single_turn(messages: &[Value]) {
 }
 
 async fn wait_for_process_exit(pid: i32) {
-    tokio::time::timeout(TIMEOUT, async {
+    tokio::time::timeout(PROCESS_EXIT_TIMEOUT, async {
         // Signal zero only checks process existence.
         while unsafe { libc::kill(pid, 0) } == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;

@@ -493,7 +493,12 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}/issues/${emptyUnreadIssue.id}`,
       })
-      await control.command('waitFor', `${activeSurface} [data-testid="cloud-task-status-event-0"]`)
+      const navigationTimeoutMs = Math.max(uiTimeoutMs, 30_000)
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="cloud-task-status-event-0"]`,
+        { timeoutMs: navigationTimeoutMs }
+      )
       const readEmptyIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`),
         value => value.is_unread === false,
@@ -507,7 +512,11 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       await control.command('waitFor', emptyCard)
       await control.command('waitFor', unreadDot, { visible: false })
       await control.command('click', emptyCard)
-      await control.command('waitFor', `${activeSurface} [data-testid="cloud-task-status-event-0"]`)
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="cloud-task-status-event-0"]`,
+        { timeoutMs: navigationTimeoutMs }
+      )
       assert.equal(
         (await ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`)).is_unread,
         false

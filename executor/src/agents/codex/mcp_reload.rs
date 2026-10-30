@@ -49,7 +49,18 @@ impl CodexAppServerClient {
             CodexThreadStart::Direct(_) => None,
         };
         if let Some(thread_id) = config_reload_resume_thread_id(plan, request, loaded.as_ref()) {
-            self.release_thread_subscription(thread_id).await?;
+            if let Err(error) = self.release_thread_subscription(thread_id).await {
+                if !super::is_codex_cloud_config_error(&error) {
+                    return Err(error);
+                }
+                // The app-server is already poisoned by a ChatGPT cloud-config
+                // timeout. The upcoming resume/turn request owns the auth
+                // fallback and app-server restart, so do not fail here.
+                log_executor_event(
+                    "codex thread unsubscribe skipped after cloud config failure",
+                    &[("thread_id", thread_id.to_owned()), ("error", error)],
+                );
+            }
         }
         Ok(())
     }

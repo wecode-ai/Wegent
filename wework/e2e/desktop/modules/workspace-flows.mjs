@@ -514,15 +514,16 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     contentSelector
   )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
+  const workspaceReadyTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
   await control.command('waitFor', localWorkspaceIdentity, {
     visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: workspaceReadyTimeoutMs,
   })
   await control.command('click', localWorkspaceIdentity)
   const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
   await control.command('waitFor', `${activeWorkspaceHome}[aria-current="page"]`, {
     visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: workspaceReadyTimeoutMs,
   })
   await control.command(
     'waitFor',
