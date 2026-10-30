@@ -368,6 +368,11 @@ After a native turn starts, successful, cancelled, and failed RPC results releas
 resources without repeating terminal events or changing the execution snapshot. Admission
 failures before native start still settle the request and report the error.
 
+The overload recovery loop reports its exit through the same notification channel on
+cancellation, Goal mutation, or error, carrying the failed turn's identity. Only the matching
+recovery can settle; an old recovery exit cannot stop a newer turn. A successful native
+restart clears the pending exit notification. RPC completion does not settle recovery.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store

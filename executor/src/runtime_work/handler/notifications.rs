@@ -829,6 +829,9 @@ impl RuntimeWorkRpcHandler {
                     }
                     let native = codex_notification(&message);
                     self.apply_native_lifecycle(&local_task_id, &route_request, &message);
+                    if native.method == "runtime/overloadRecoverySettled" {
+                        return;
+                    }
                     if native.method == "turn/started" {
                         if let Some(turn_id) = codex_notification_turn_id(&message) {
                             let accepted = self

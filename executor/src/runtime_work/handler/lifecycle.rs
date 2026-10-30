@@ -131,6 +131,7 @@ impl RuntimeWorkRpcHandler {
                 | "thread/goal/updated"
                 | "thread/goal/cleared"
                 | "error"
+                | "runtime/overloadRecoverySettled"
         ) || !is_root_codex_turn_event(notification.params)
             || self.store.read_task(task_id, |link| {
                 codex_notification_thread_id(message)
@@ -139,8 +140,8 @@ impl RuntimeWorkRpcHandler {
         {
             return;
         }
-        if matches!(notification.method.as_str(), "error")
-            && notification.params["willRetry"] == true
+        if (notification.method == "error" && notification.params["willRetry"] == true)
+            || notification.method == "runtime/overloadRecoverySettled"
         {
             self.apply_native_recovery(task_id, request, message);
             return;
@@ -375,6 +376,7 @@ impl RuntimeWorkRpcHandler {
         message: &CodexNotification,
     ) {
         let turn_id = codex_notification_turn_id(message);
+        let settled = message["method"] == "runtime/overloadRecoverySettled";
         let mut changed = false;
         let updated = self.store.update_task(task_id, |link| {
             let Some(mut state) = native_execution_state(link) else {
@@ -385,11 +387,16 @@ impl RuntimeWorkRpcHandler {
                 || state.turn_id.is_some()
                 || state.outcome.as_deref() != Some("failed")
                 || state.process_generation != Some(message.process_generation())
+                || (settled && state.phase != NativeExecutionPhase::Recovering)
             {
                 return;
             }
-            state.phase = NativeExecutionPhase::Recovering;
-            state.execution_outcome = None;
+            state.phase = if settled {
+                NativeExecutionPhase::Idle
+            } else {
+                NativeExecutionPhase::Recovering
+            };
+            state.execution_outcome = settled.then(|| "cancelled".into());
             state.updated_at = now_ms();
             state.revision = next_runtime_event_sequence().to_string();
             state.native_sequence = message.sequence();
@@ -398,6 +405,9 @@ impl RuntimeWorkRpcHandler {
         });
         if let Some(link) = updated.filter(|_| changed) {
             self.publish_native_execution(task_id, request, link);
+            if settled {
+                return;
+            }
             let mut event_request = request.clone();
             if let Some(turn_id) = &turn_id {
                 event_request.subtask_id = turn_id.clone();

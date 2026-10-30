@@ -38,6 +38,46 @@ fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit(
 }
 
 #[test]
+fn recovery_exit_settles_only_its_own_failed_turn() {
+    for next_turn in [false, true] {
+        let (handler, root, _) = setup("native-recovery-exit");
+        handler.route_codex_notification(notification("turn/started", "turn-1"));
+        let mut failed = notification("turn/completed", "turn-1");
+        failed["params"]["turn"]["status"] = json!("failed");
+        handler.route_codex_notification(failed);
+        handler.route_codex_notification(json!({"method": "error", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "willRetry": true,
+            "error": {"codexErrorInfo": "serverOverloaded"}
+        }}));
+        if next_turn {
+            handler.route_codex_notification(notification("turn/started", "turn-2"));
+        }
+        let before = handler.local_task_link("task-1").unwrap().execution_state;
+        handler.route_codex_notification(
+            json!({"method": "runtime/overloadRecoverySettled", "params": {
+                "threadId": "thread-1", "turnId": "turn-1"
+            }}),
+        );
+        let after = handler
+            .local_task_link("task-1")
+            .unwrap()
+            .execution_state
+            .unwrap();
+        if next_turn {
+            assert_eq!(Some(after), before);
+        } else {
+            assert_eq!(
+                after.phase,
+                crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+            );
+            assert_eq!(after.outcome.as_deref(), Some("failed"));
+            assert_eq!(after.execution_outcome.as_deref(), Some("cancelled"));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn rpc_results_do_not_repeat_native_terminal_events() {
     for (status, next_turn) in [
         ("completed", false),

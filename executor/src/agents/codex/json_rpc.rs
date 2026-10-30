@@ -169,7 +169,10 @@ impl JsonRpcConnection {
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
-        let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
+        let mut overload_recovery = super::overload_recovery::OverloadRecovery::new(
+            self.runtime_notifications.clone(),
+            notifications.clone(),
+        );
         let mut recovering_goal = false;
         loop {
             let mut message = if waiting_for_initial_progress {

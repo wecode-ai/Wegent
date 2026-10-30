@@ -37,6 +37,41 @@ fn state() -> CodexRunState {
     state
 }
 
+#[tokio::test]
+async fn recovery_scope_exit_notifies_the_native_owner_without_an_observer() {
+    for restarted in [false, true] {
+        let hub = super::super::CodexNotificationHub::new();
+        let mut receiver = hub.subscribe_runtime();
+        let mut recovery = OverloadRecovery::new(Some(hub.clone()), None);
+        recovery.observe(&overload_error(), &state());
+        assert!(matches!(
+            recovery.observe(&completed("failed"), &state()),
+            RecoveryAction::Retry { .. }
+        ));
+        if restarted {
+            recovery.observe(
+                &json!({"method": "turn/started", "params": {
+                    "threadId": "root-thread", "turn": {"id": "next-turn"}
+                }}),
+                &state(),
+            );
+        }
+        drop(recovery);
+        drop(hub);
+        let message = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap();
+        if restarted {
+            assert!(message.is_none());
+        } else {
+            let message = message.unwrap();
+            assert_eq!(message["method"], "runtime/overloadRecoverySettled");
+            assert_eq!(message["params"]["threadId"], "root-thread");
+            assert_eq!(message["params"]["turnId"], "failed-turn");
+        }
+    }
+}
+
 #[test]
 fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
     let mut recovery = OverloadRecovery::default();

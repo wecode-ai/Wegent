@@ -2643,7 +2643,10 @@ async fn read_shared_turn_notifications(
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
-    let mut overload_recovery = overload_recovery::OverloadRecovery::default();
+    let mut overload_recovery = overload_recovery::OverloadRecovery::new(
+        options.runtime_notifications.clone(),
+        options.notifications.clone(),
+    );
     let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
         // A user can resume and finish a Goal while overload backoff is sleeping.
