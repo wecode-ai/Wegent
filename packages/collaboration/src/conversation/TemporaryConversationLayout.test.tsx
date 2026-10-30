@@ -18,12 +18,13 @@ describe('shared temporary conversation layout', () => {
     act(() => root.unmount())
     container.remove()
   })
-  function render(count: number) {
+  function render(count: number, showWorkbenchBackground = false) {
     act(() =>
       root.render(
         <TemporaryConversationLayout
           messageCount={count}
           emptyStateText="暂无会话消息"
+          showWorkbenchBackground={showWorkbenchBackground}
           translate={createCollaborationTranslator('zh-CN')}
           composer={<textarea defaultValue="保留草稿" />}
         >
@@ -47,5 +48,14 @@ describe('shared temporary conversation layout', () => {
     expect(container.querySelector('[data-testid="message-area"]')).not.toBeNull()
     expect(container.querySelector('textarea')).toBe(input)
     expect(input.value).toBe('尚未发送')
+  })
+  it('keeps the composer surface translucent when the workbench background is visible', () => {
+    render(0, true)
+
+    const composerShell = container.querySelector(
+      '[data-testid="right-workspace-chat-composer-shell"]'
+    )
+    expect(composerShell?.className).toContain('bg-transparent')
+    expect(composerShell?.className).not.toContain('bg-background')
   })
 })

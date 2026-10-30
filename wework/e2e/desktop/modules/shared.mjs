@@ -29,7 +29,7 @@ import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
-import { shouldPromptInitialTelemetryConsent } from './telemetry-consent.mjs'
+import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -526,6 +526,8 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'failure_stage',
   'locale',
   'os',
+  'platform',
+  'telemetry_source',
   'release_channel',
   'runtime_mode',
   'startup_id',
@@ -631,12 +633,8 @@ const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
 const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
-const USES_INTERNAL_TELEMETRY =
-  RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
-const VERIFIES_INITIAL_TELEMETRY_CONSENT = shouldPromptInitialTelemetryConsent(
-  SELECTED_DESKTOP_SEGMENT,
-  USES_INTERNAL_TELEMETRY
-)
+const VERIFIES_INITIAL_TELEMETRY_CONSENT =
+  shouldAcceptInitialTelemetryConsent(SELECTED_DESKTOP_SEGMENT)
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
@@ -1951,7 +1949,6 @@ export {
   DESKTOP_FROM_SEGMENT,
   SELECTED_DESKTOP_SEGMENT,
   RUNS_PLUGIN_E2E,
-  USES_INTERNAL_TELEMETRY,
   VERIFIES_INITIAL_TELEMETRY_CONSENT,
   scriptDir,
   weworkDir,

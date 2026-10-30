@@ -11,8 +11,4 @@ function shouldAcceptInitialTelemetryConsent(selectedCheckpoint) {
   return !selectedCheckpoint || TELEMETRY_CONSENT_CHECKPOINTS.has(selectedCheckpoint)
 }
 
-function shouldPromptInitialTelemetryConsent(selectedCheckpoint, usesInternalTelemetry) {
-  return !usesInternalTelemetry && shouldAcceptInitialTelemetryConsent(selectedCheckpoint)
-}
-
-export { shouldAcceptInitialTelemetryConsent, shouldPromptInitialTelemetryConsent }
+export { shouldAcceptInitialTelemetryConsent }

@@ -37,7 +37,6 @@ test('injects the same-origin DSH application runtime configuration', () => {
     WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111',
     WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: 'false',
     WEWORK_E2E_POSTHOG_KEY: 'posthog-test-key',
-    WEWORK_E2E_TELEMETRY_DISTRIBUTION: 'internal',
     WEWORK_E2E_SEED_LOCAL_MODELS: 'true',
     WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '20',
     WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
@@ -53,7 +52,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
   assert.ok(html.includes('"controlToken":"control-token"'))
   assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))
   assert.ok(html.includes('"posthogKey":"posthog-test-key"'))
-  assert.ok(html.includes('"telemetryDistribution":"internal"'))
+  assert.ok(!html.includes('"telemetryDistribution"'))
   assert.ok(html.includes('"localModelsCatalogReady":false'))
   assert.ok(html.includes('"seedLocalModels":true'))
   assert.ok(html.includes('"transcriptPageSize":20'))
@@ -119,4 +118,13 @@ test('allows plugin development E2E to use an isolated control label', () => {
   assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))
   assert.ok(html.includes('"windowLabel":"plugin-development-example"'))
   assert.ok(!html.includes('"disabled":true'))
+})
+
+test('passes the verification identity mode through the desktop runtime configuration', () => {
+  const html = injectRuntimeConfig('<html><head></head><body></body></html>', {
+    WEWORK_E2E_TELEMETRY_IDENTITY: 'email_prefix',
+  })
+  assert.ok(html.includes('"telemetryIdentity":"email_prefix"'))
+  const defaultHtml = injectRuntimeConfig('<html><head></head><body></body></html>', {})
+  assert.ok(!defaultHtml.includes('"telemetryIdentity"'))
 })

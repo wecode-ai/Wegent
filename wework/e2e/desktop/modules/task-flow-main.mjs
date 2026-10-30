@@ -240,7 +240,6 @@ import {
   UNSENT_BLANK_TASK_DRAFT,
   UNSENT_FIRST_TASK_DRAFT,
   UNSENT_SECOND_TASK_DRAFT,
-  USES_INTERNAL_TELEMETRY,
   VERIFIES_INITIAL_TELEMETRY_CONSENT,
   VIEW_IMAGE_ONLY,
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
@@ -1382,9 +1381,6 @@ async function main() {
       WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
       WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
-      ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
-        ? { WEWORK_E2E_TELEMETRY_DISTRIBUTION: 'internal' }
-        : {}),
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
       WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
@@ -1597,7 +1593,7 @@ async function main() {
         MODEL_API_KEY,
         'desktop-e2e@wework.local',
       ])
-    } else if (!USES_INTERNAL_TELEMETRY) {
+    } else {
       await declineInitialTelemetryConsent(control)
     }
     if (RUNS_PLUGIN_E2E && !shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {

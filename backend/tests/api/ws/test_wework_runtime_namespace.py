@@ -1176,3 +1176,44 @@ async def test_project_comment_execution_requires_authentication(monkeypatch):
     result = await namespace.on_project_chat_comment_execute("anonymous", {})
     assert result["ok"] is False
     assert result["error"]["code"] == "UNAUTHENTICATED"
+
+
+@pytest.mark.asyncio
+async def test_mcp_app_disconnect_uses_the_authenticated_owner_and_exact_instance(
+    monkeypatch,
+):
+    namespace = WeworkRuntimeNamespace()
+    rpc = AsyncMock(return_value={})
+    monkeypatch.setattr(wework_runtime_namespace, "relay_ipc_request", rpc)
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value={"user_id": 7})
+    )
+    params = {
+        "address": {"taskId": "task"},
+        "callId": "call",
+        "sessionId": "instance",
+        "method": "retain",
+    }
+    response = await namespace.on_runtime_request(
+        "native-owner",
+        {
+            "id": "retain",
+            "device_id": "device",
+            "method": "runtime.mcp_apps.request",
+            "params": params,
+        },
+    )
+    assert response["ok"] is True
+    await namespace.on_disconnect("native-owner")
+    assert rpc.await_count == 2
+    assert rpc.await_args.kwargs == {
+        "user_id": 7,
+        "device_id": "device",
+        "method": "runtime.mcp_apps.request",
+        "params": {
+            **params,
+            "address": {"taskId": "task", "deviceId": "device"},
+            "method": "release",
+        },
+        "timeout_seconds": 75,
+    }
