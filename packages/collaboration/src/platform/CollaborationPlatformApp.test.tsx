@@ -3905,7 +3905,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(leader?.textContent).toBe(agent.name);
   });
 
-  it('keeps the root template dialog mounted when a later group fails to create', async () => {
+  it.each([true, false])('finishes root group creation before navigation refresh (partial failure: %s)', async failLater => {
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
       configurable: true,
       value(this: HTMLDialogElement) { this.open = true },
@@ -3926,8 +3926,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     }))
     await templateStore.save(document, member.user_id)
     const { api } = createApi({ initialWorkspaces: [localWorkspace, workspace, groupWorkspace] })
-    vi.mocked(api.workspaces!.createCollaborationGroup)
-      .mockResolvedValueOnce(collaborationGroup)
+    const createGroup = vi.mocked(api.workspaces!.createCollaborationGroup)
+      .mockResolvedValue(collaborationGroup)
+    if (failLater) createGroup.mockResolvedValueOnce(collaborationGroup)
       .mockRejectedValueOnce(new Error('Second group unavailable'))
     await render(<PlatformHarness api={api} templateStore={templateStore}
       currentUser={{ id: member.user_id, name: member.user_name }}
@@ -3947,11 +3948,21 @@ describe("CollaborationPlatformApp real component flow", () => {
           `agent:${agent.team_id}`)
       }
     }
+    const listWorkspaces = vi.mocked(api.workspaces!.list)
+    const navigationReads = listWorkspaces.mock.calls.length
+    listWorkspaces.mockImplementation(() => new Promise(() => {}))
     await click(byTestId('template-bindings-apply'))
     await flush()
-    expect(api.workspaces!.createCollaborationGroup).toHaveBeenCalledTimes(2)
-    expect(byTestId('collaboration-template-dialog').textContent).toContain('部分小组已添加')
-    expect((byTestId('template-bindings-apply') as HTMLButtonElement).disabled).toBe(true)
+    expect(createGroup).toHaveBeenCalledTimes(failLater ? 2 : 3)
+    if (failLater) {
+      expect(listWorkspaces).toHaveBeenCalledTimes(navigationReads)
+      expect(byTestId('collaboration-template-dialog').textContent).toContain('部分小组已添加')
+      expect((byTestId('template-bindings-apply') as HTMLButtonElement).disabled).toBe(true)
+      await click(byTestId('template-bindings-cancel'))
+      await click(byTestId('collaboration-group-create-cancel'))
+    }
+    expect(listWorkspaces).toHaveBeenCalledTimes(navigationReads + 1)
+    expect(container.querySelector('[data-testid="collaboration-template-dialog"]')).toBeNull()
   })
 
   it("creates a team in the workspace selected from the unified view", async () => {

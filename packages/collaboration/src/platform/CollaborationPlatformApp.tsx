@@ -1635,6 +1635,7 @@ function RootTeamEditor({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLElement>(null);
+  const hasCreatedGroups = useRef(false);
   useEffect(() => {
     if (!groupId || loading || error) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -1701,7 +1702,7 @@ function RootTeamEditor({
           workspace.id,
           input,
         );
-        await onCreated();
+        hasCreatedGroups.current = true;
         return created;
       },
       async updateCollaborationGroup(groupId, input) {
@@ -1794,7 +1795,13 @@ function RootTeamEditor({
       detailPresentation={groupId ? "dialog" : "page"}
       showGroupCollection={Boolean(groupId)}
       onCreateOpenChange={(open) => {
-        if (!groupId && !open) onClose();
+        if (!groupId && !open) {
+          onClose();
+          if (hasCreatedGroups.current) {
+            hasCreatedGroups.current = false;
+            void onCreated();
+          }
+        }
       }}
     />
   );
