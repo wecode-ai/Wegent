@@ -46,6 +46,9 @@ mod local_history_tests;
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
 
+#[path = "async_question_tests.rs"]
+mod async_question_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
