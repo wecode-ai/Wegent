@@ -253,6 +253,7 @@ export function runtimeConversationMessageHasStartedTurn(
   return (touchEntry(turnsByConversation, key) ?? []).some(
     turn =>
       turn.id !== null &&
+      turn.status !== 'pending' &&
       (turn.clientUserMessageId === messageId ||
         turn.items.some(item => item.type === 'user_message' && item.id === messageId))
   )

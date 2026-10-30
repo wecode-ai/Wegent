@@ -153,8 +153,18 @@ export function bindAssistantTurn(
     hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
   );
   if (userIndex < 0) {
+    // The RPC identity can arrive before the native start. Keep the join without
+    // claiming that execution or assistant content has started.
     return existingIndex < 0
-      ? turns
+      ? [
+          ...turns,
+          {
+            id: action.subtaskId,
+            clientUserMessageId: action.clientUserMessageId,
+            items: [],
+            status: "pending",
+          },
+        ]
       : replaceAt(turns, existingIndex, {
           ...turns[existingIndex],
           clientUserMessageId: action.clientUserMessageId,

@@ -308,7 +308,12 @@ function reconcileAcceptedQueuedMessages(key: string, turns: RuntimeConversation
     message =>
       message.status !== 'sending' ||
       message.deliveryMode !== 'message' ||
-      !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+      !turns.some(
+        turn =>
+          turn.id !== null &&
+          turn.status !== 'pending' &&
+          turnContainsClientUserMessage(turn, message.id)
+      )
   )
   if (remaining.length === queuedMessages.length) return
   cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
