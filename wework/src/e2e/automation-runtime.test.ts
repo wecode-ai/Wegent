@@ -99,6 +99,25 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
+  test('registers before polling and stops when the server retires the client', async () => {
+    let register!: (response: Response) => void
+    const registration = new Promise<Response>(resolve => {
+      register = resolve
+    })
+    const fetch = vi.fn((url: string) => {
+      if (url.endsWith('/ready')) return registration
+      return Promise.resolve(new Response(null, { status: 410 }))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:43111/ready')
+    register(new Response('{}'))
+    await client
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[1][0]).toContain('/commands?clientId=')
+  })
+
   test.each([
     { html: 'interrupted', query: 'interrupted', text: 'interrupted', occurrence: 0 },
     {
@@ -330,43 +349,59 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
-  test('stops frame sampling explicitly after the observed action completes', async () => {
-    const root = document.createElement('div')
-    root.dataset.testid = 'metrics-sampling-root'
-    document.body.append(root)
-    const commands = [
-      { id: 'start-metrics', action: 'startElementMetricsSampling', value: '10000' },
-      { id: 'stop-metrics', action: 'stopElementMetricsSampling' },
-    ]
-    const results: Array<{ ok: boolean; value?: string }> = []
-    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
-      if (url.includes('/commands?')) {
-        const command = commands.shift()
-        if (!command) return new Promise<Response>(() => {})
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              ...command,
-              selector: '[data-testid="metrics-sampling-root"]',
-            })
+  test.each(['element', 'scroll'])(
+    'stops %s sampling explicitly after the observed action completes',
+    async kind => {
+      const root = document.createElement('div')
+      root.dataset.testid = 'metrics-sampling-root'
+      document.body.append(root)
+      const commands =
+        kind === 'element'
+          ? [
+              { id: 'start-metrics', action: 'startElementMetricsSampling', value: '10000' },
+              { id: 'stop-metrics', action: 'stopElementMetricsSampling' },
+            ]
+          : [
+              {
+                id: 'start-scroll',
+                action: 'startScrollStabilitySampling',
+                value: JSON.stringify({
+                  durationMs: 10000,
+                  scrollerSelector: '[data-testid="metrics-sampling-root"]',
+                }),
+              },
+              { id: 'stop-scroll', action: 'stopScrollStabilitySampling' },
+            ]
+      const results: Array<{ ok: boolean; value?: string }> = []
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          const command = commands.shift()
+          if (!command) return new Promise<Response>(() => {})
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ...command,
+                selector: '[data-testid="metrics-sampling-root"]',
+              })
+            )
           )
-        )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      try {
+        await vi.waitFor(() => expect(results).toHaveLength(2))
+        expect(results.every(result => result.ok)).toBe(true)
+        const sample = JSON.parse(results[1].value!)
+        expect(sample.done).toBe(true)
+        expect(sample.frames.length).toBeGreaterThan(0)
+        expect(sample.frames.at(-1).time).toBeLessThan(10000)
+      } finally {
+        root.remove()
       }
-      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
-      return Promise.resolve(new Response('{}'))
-    })
-    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
-    try {
-      await vi.waitFor(() => expect(results).toHaveLength(2))
-      expect(results.every(result => result.ok)).toBe(true)
-      const sample = JSON.parse(results[1].value!)
-      expect(sample.done).toBe(true)
-      expect(sample.frames.length).toBeGreaterThan(0)
-      expect(sample.frames.at(-1).time).toBeLessThan(10000)
-    } finally {
-      root.remove()
     }
-  })
+  )
 
   test('does not turn an acknowledgement failure into a failed UI action', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})

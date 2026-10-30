@@ -7,6 +7,7 @@ const translate = vi.hoisted(() => (key: string) => key)
 const native = vi.hoisted(() => ({ invoke: vi.fn() }))
 const connection = vi.hoisted(() => ({ start: vi.fn() }))
 const bridges = vi.hoisted(() => [] as Array<Record<string, unknown>>)
+const toolResults = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: native.invoke }))
 vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
@@ -20,7 +21,9 @@ vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
       queueMicrotask(() => this.oninitialized?.())
     }
     async sendToolInput() {}
-    async sendToolResult() {}
+    async sendToolResult(result: unknown) {
+      toolResults(result)
+    }
     async setHostContext() {}
     async teardownResource() {}
     async close() {}
@@ -42,6 +45,7 @@ beforeEach(() => {
   native.invoke.mockClear()
   connection.start.mockReset().mockResolvedValue(undefined)
   bridges.length = 0
+  toolResults.mockClear()
 })
 
 describe('MCP App discovery', () => {
@@ -100,6 +104,49 @@ describe('MCP App close completion', () => {
     result: { content: [] },
     arguments: {},
   }
+
+  it('preserves widget state across equivalent transcript results and sends actual changes', async () => {
+    native.invoke.mockResolvedValue({
+      id: 'document',
+      url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
+    })
+    const api = { requestMcpApp: vi.fn().mockResolvedValue(descriptor) }
+    const output = { content: [], structuredContent: { count: 1 } }
+    const block = { ...running, status: 'done' as const, toolOutput: output }
+    const view = render(<McpAppHost block={block} address={address} api={api} />)
+    await act(async () => {})
+    expect(toolResults).toHaveBeenCalledTimes(1)
+
+    await act(async () =>
+      view.rerender(
+        <McpAppHost
+          block={{ ...block, toolOutput: structuredClone(output) }}
+          address={address}
+          api={api}
+        />
+      )
+    )
+    expect(toolResults).toHaveBeenCalledTimes(1)
+
+    const changed = { content: [], structuredContent: { count: 2 } }
+    await act(async () =>
+      view.rerender(
+        <McpAppHost block={{ ...block, toolOutput: changed }} address={address} api={api} />
+      )
+    )
+    expect(toolResults).toHaveBeenCalledTimes(2)
+    await act(async () =>
+      view.rerender(
+        <McpAppHost
+          block={{ ...block, status: 'error', toolOutput: changed }}
+          address={address}
+          api={api}
+        />
+      )
+    )
+    expect(toolResults).toHaveBeenCalledTimes(3)
+    expect(toolResults).toHaveBeenLastCalledWith({ ...changed, isError: true })
+  })
 
   it('loads the app document only after the message transport is connected', async () => {
     let finish!: () => void
