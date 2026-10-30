@@ -189,6 +189,19 @@ export async function verifyIssueTranscriptTransfer({
     transcriptProtocolVersion: 2,
     limit: 5,
   }
+  // Older HTTP clients still expect one canonical JSON response. Backend must
+  // use device chunks internally instead of asking Socket.IO to carry the page.
+  const legacy = await request('/api/runtime-work/transcript', {
+    ...address,
+    projectSession: query.projectSession,
+    limit: query.limit,
+  })
+  assert.equal(legacy.transcriptProtocolVersion, undefined)
+  assert.ok(Array.isArray(legacy.turns), 'Legacy HTTP history must retain canonical turns')
+  assert.ok(
+    JSON.stringify(legacy).includes(JSON.stringify(OUTPUT).slice(1, -1)),
+    'Legacy HTTP history must preserve the complete output beyond the device relay limit'
+  )
   const chunks = []
   let offset = 0
   let snapshotId
