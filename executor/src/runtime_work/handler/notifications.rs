@@ -799,6 +799,12 @@ impl RuntimeWorkRpcHandler {
                     return;
                 }
                 if !route_nested && is_root_codex_turn_event(codex_notification(&message).params) {
+                    if !crate::agents::prepare_codex_runtime_notification(
+                        &route_request,
+                        &mut message,
+                    ) {
+                        return;
+                    }
                     let native = codex_notification(&message);
                     self.apply_native_lifecycle(&local_task_id, &route_request, &message);
                     if native.method == "turn/started" {
@@ -833,6 +839,7 @@ impl RuntimeWorkRpcHandler {
                     }
                     self.record_async_question_notification(&local_task_id, &message);
                     if codex_notification_requires_user_input(&message)
+                        || message["method"] == "mcpServer/elicitation/request"
                         || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
                         || message["method"]
                             == super::super::codex_user_input::APPROVAL_SETTLED_METHOD

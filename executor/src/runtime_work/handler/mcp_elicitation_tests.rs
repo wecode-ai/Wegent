@@ -47,6 +47,49 @@ fn assert_interaction_status(handler: &RuntimeWorkRpcHandler, expected: Option<&
 }
 
 #[test]
+fn runtime_owner_uses_the_effective_profile_for_mcp_approval_visibility() {
+    for (label, profile, visible) in [
+        (
+            "full",
+            crate::agents::CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            false,
+        ),
+        (
+            "workspace",
+            crate::agents::CODEX_WORKSPACE_PERMISSION_PROFILE,
+            true,
+        ),
+        (
+            "read-only",
+            crate::agents::CODEX_READ_ONLY_PERMISSION_PROFILE,
+            true,
+        ),
+    ] {
+        let (handler, root) = interaction_handler(&format!("mcp-profile-{label}"));
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+        let mut approval = self::request();
+        approval["params"]["_meta"] = json!({"codex_approval_kind": "mcp_tool_call"});
+        handler.route_codex_notification(approval);
+        let active = handler.active_codex_transcript_items.lock().unwrap();
+        assert_eq!(
+            active["task-1"].items.len(),
+            usize::from(visible),
+            "{profile}"
+        );
+        drop(active);
+        assert_interaction_status(
+            &handler,
+            visible.then_some(INTERACTION_WAITING_FOR_USER_INPUT),
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer() {
     let (handler, root) = interaction_handler("ordinary-refresh-history");
     let ordinary = ordinary_request(json!(1), "turn-1");

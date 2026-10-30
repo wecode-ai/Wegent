@@ -33,6 +33,49 @@ fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
 }
 
 #[test]
+fn runtime_notification_preparation_preserves_stand_in_approval_limits() {
+    let request = serde_json::from_value(json!({"origin": {
+        "type": "dingtalk_work", "initiatedBy": "stand_in", "askBeforeAct": true
+    }}))
+    .unwrap();
+    let mut message = json!({"id": 1, "method": "item/commandExecution/requestApproval", "params": {
+        "availableDecisions": ["accept", "acceptForSession", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["touch"]}}]
+    }});
+    assert!(prepare_codex_runtime_notification(&request, &mut message));
+    assert_eq!(message["params"]["standInSingleApproval"], true);
+    let result = codex_approval_result(
+        &message,
+        &json!({"answers": {
+            "__codex_approval": {"answers": ["allow_session"]}
+        }}),
+    )
+    .unwrap();
+    assert_eq!(result["decision"], "decline");
+}
+
+#[tokio::test]
+async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut observer = hub.subscribe_all();
+    hub.send(json!({"method": "turn/started"})).await;
+    let start = runtime.recv().await.unwrap();
+    observer.recv().await.unwrap();
+    let settled: CodexNotification = json!({"method": "wegent/mcpElicitation/settled"}).into();
+    let sequence = settled.sequence();
+    hub.send_runtime(settled).await;
+    hub.send(json!({"method": "turn/completed"})).await;
+    let observed = runtime.recv().await.unwrap();
+    assert_eq!(observed["method"], "wegent/mcpElicitation/settled");
+    assert_eq!(observed.sequence(), sequence);
+    assert!(start.sequence() < sequence);
+    let end = runtime.recv().await.unwrap();
+    assert_eq!(end["method"], "turn/completed");
+    assert!(sequence < end.sequence());
+    assert_eq!(observer.recv().await.unwrap()["method"], "turn/completed");
+}
+
+#[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(

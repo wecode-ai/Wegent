@@ -274,12 +274,11 @@ impl JsonRpcConnection {
                 }
             }
             super::elicitation::prepare(&mut message);
-            if stand_in_single_approval {
-                super::restrict_stand_in_approval(&mut message);
-            }
-            let auto_approve_mcp_tool_call =
-                auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
-            if !auto_approve_mcp_tool_call {
+            if super::prepare_runtime_notification(
+                &mut message,
+                auto_approve_mcp_tool_calls,
+                stand_in_single_approval,
+            ) {
                 if let Some(sender) = &notifications {
                     let _ = sender.send(message.clone().into());
                 }

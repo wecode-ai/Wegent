@@ -799,6 +799,15 @@ impl CodexAppServerClient {
             .subscribe_runtime())
     }
 
+    async fn publish_runtime_notification(&self, message: CodexNotification) -> Result<(), String> {
+        self.existing_process()
+            .await?
+            .notifications
+            .send_runtime(message)
+            .await;
+        Ok(())
+    }
+
     pub(crate) async fn subscribe_thread_notifications(
         &self,
         thread_id: &str,
@@ -1382,18 +1391,7 @@ impl CodexNotificationHub {
 
     async fn send(&self, message: Value) {
         let message = CodexNotification::from(message);
-        let subscribers = {
-            let mut subscribers = self
-                .runtime
-                .lock()
-                .expect("runtime notification registry poisoned");
-            subscribers.retain(|subscriber| !subscriber.is_closed());
-            subscribers.clone()
-        };
-        // The lifecycle owner applies backpressure instead of dropping native events.
-        for subscriber in subscribers {
-            let _ = subscriber.send(message.clone()).await;
-        }
+        self.send_runtime(message.clone()).await;
         let _ = self.all.send(message.clone());
         let thread_id =
             stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
@@ -1410,6 +1408,21 @@ impl CodexNotificationHub {
         }
         for sender in threads.values() {
             let _ = sender.send(message.clone());
+        }
+    }
+
+    async fn send_runtime(&self, message: CodexNotification) {
+        let subscribers = {
+            let mut subscribers = self
+                .runtime
+                .lock()
+                .expect("runtime notification registry poisoned");
+            subscribers.retain(|subscriber| !subscriber.is_closed());
+            subscribers.clone()
+        };
+        // The lifecycle owner applies backpressure instead of dropping native events.
+        for subscriber in subscribers {
+            let _ = subscriber.send(message.clone()).await;
         }
     }
 }
@@ -2863,13 +2876,11 @@ async fn read_shared_turn_notifications(
                 }
             }
         }
-        elicitation::prepare(&mut message);
-        if options.stand_in_single_approval {
-            restrict_stand_in_approval(&mut message);
-        }
-        let auto_approve_mcp_tool_call =
-            options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
-        if !auto_approve_mcp_tool_call {
+        if prepare_runtime_notification(
+            &mut message,
+            options.auto_approve_mcp_tool_calls,
+            options.stand_in_single_approval,
+        ) {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message.clone());
             }
@@ -3254,8 +3265,11 @@ fn spawn_shared_approval_response(
                 (json!({}), "cancelled")
             };
             let result = codex_approval_result(&message, &response)?;
+            let settled: CodexNotification =
+                elicitation::settled(&message, status, Some(&response)).into();
+            client.publish_runtime_notification(settled.clone()).await?;
             if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                let _ = sender.send(elicitation::settled(&message, status, Some(&response)).into());
+                let _ = sender.send(settled);
             }
             client.send_response(request_id, result).await
         }
@@ -3461,8 +3475,7 @@ fn spawn_shared_mcp_server_elicitation_response(
     let correlation_key = interaction_value_key(&request_id)
         .ok_or_else(|| "mcpServer/elicitation/request has invalid JSON-RPC id".to_owned())?;
     // Keep settlement visibility identical to the initial request notification.
-    let notifications = notifications
-        .filter(|_| !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message)));
+    let visible = !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message));
     let client = client.clone();
     let message = message.clone();
     tokio::spawn(async move {
@@ -3475,11 +3488,15 @@ fn spawn_shared_mcp_server_elicitation_response(
             )
             .await?
             {
-                if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                    let _ = sender.send(
+                if visible {
+                    let settled: CodexNotification =
                         elicitation::settled(&message, result.status, result.response.as_ref())
-                            .into(),
-                    );
+                            .into();
+                    client.publish_runtime_notification(settled.clone()).await?;
+                    if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade())
+                    {
+                        let _ = sender.send(settled);
+                    }
                 }
                 client.send_response(request_id, result.result).await?;
             }
@@ -6126,6 +6143,28 @@ pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value
 
 fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+}
+
+pub(crate) fn prepare_codex_runtime_notification(
+    request: &ExecutionRequest,
+    message: &mut Value,
+) -> bool {
+    prepare_runtime_notification(
+        message,
+        codex_auto_approve_mcp_tool_calls(request),
+        crate::runtime_work::stand_in_requires_confirmation(request),
+    )
+}
+
+fn prepare_runtime_notification(
+    message: &mut Value,
+    auto_approve_mcp_tool_calls: bool,
+    single_approval: bool,
+) -> bool {
+    if single_approval {
+        restrict_stand_in_approval(message);
+    }
+    !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message))
 }
 
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {

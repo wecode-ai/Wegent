@@ -365,6 +365,12 @@ so congestion cannot discard events. Ordinary broadcast serves observers such as
 prediction. Request cleanup does not wait for native publication; no completion handshake
 or timeout fallback connects the two lifetimes. The sole native owner retains source order.
 
+Interaction notifications reuse the execution entry point's effective permission profile.
+Automatically approved requests do not create pending user cards; read-only and stand-in
+confirmation limits remain intact. Local answer, cancellation, and expiry settlements enter
+the same native mailbox with their original turn/request identity, updating both messages
+and recovery items rather than reaching only the request observer.
+
 Native start also establishes the content turn. The request-created callback only binds
 user-message identity. An early binding retains a pending record without claiming model
 execution has started. Binding may also arrive after content or even completion, but cannot
