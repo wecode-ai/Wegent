@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+# Xvfb process creation does not prove that its display accepts connections.
+attempt=0
+while ! xprop -root >/dev/null 2>&1; do
+  if [ "$attempt" -ge 100 ]; then
+    echo "Xvfb did not accept connections on $DISPLAY" >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.05
+done
+
 openbox >&2 &
 openbox_pid=$!
 trap 'kill "$openbox_pid" 2>/dev/null || true; wait "$openbox_pid" 2>/dev/null || true' EXIT

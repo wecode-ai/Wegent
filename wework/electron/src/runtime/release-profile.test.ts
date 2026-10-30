@@ -1,8 +1,13 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { currentCoreProfile, selectReleaseProfile } from './release-profile.js'
+import {
+  cloneReleaseProfile,
+  currentCoreProfile,
+  profileRevision,
+  selectReleaseProfile,
+} from './release-profile.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -43,4 +48,29 @@ test('preserves the original physical profile before selecting a release', async
   expect((await lstat(baseline)).isDirectory()).toBe(true)
   expect(await readFile(join(baseline, 'package.json'), 'utf8')).toContain('"1"')
   expect(await readFile(join(original, 'package.json'), 'utf8')).toContain('"2"')
+})
+
+test('cloning an active profile pointer isolates rollback changes from the live release', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-profile-clone-'))
+  roots.push(root)
+  const live = join(root, 'live-profile')
+  await mkdir(live)
+  await writeFile(join(live, 'package.json'), '{"version":"new"}')
+  const component = join(root, 'component')
+  await mkdir(component)
+  await symlink(
+    component,
+    join(live, 'component'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+  const pointer = join(root, 'active-profile')
+  await symlink(live, pointer, process.platform === 'win32' ? 'junction' : 'dir')
+  const before = await profileRevision(pointer)
+  const cloned = join(root, 'rollback-profile')
+  expect(await cloneReleaseProfile(pointer, cloned)).toBe(before)
+  expect((await lstat(cloned)).isSymbolicLink()).toBe(false)
+  expect(await readlink(join(cloned, 'component'))).toBe(await readlink(join(live, 'component')))
+  await writeFile(join(cloned, 'package.json'), '{"version":"old"}')
+  expect(await readFile(join(pointer, 'package.json'), 'utf8')).toBe('{"version":"new"}')
+  expect(await profileRevision(pointer)).toBe(before)
 })

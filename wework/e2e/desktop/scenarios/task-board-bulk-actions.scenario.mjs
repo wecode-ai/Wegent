@@ -115,6 +115,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', 'body[data-board-cursor-policy="arrow"]')
       await captureScreenshot(control, 'task-board-bulk-actions-01-review.png', 'body')
 
       await control.command('click', '[data-testid="task-board-batch-confirm-review"]')
@@ -123,6 +124,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        await control.command(
+          'getComputedStyleValue',
+          '[data-testid="task-board-batch-confirm-review-confirm"]',
+          { value: 'cursor' }
+        ),
+        'default',
+        'Board cursor policy did not reach the portaled confirmation dialog'
+      )
       await control.command('click', '[data-testid="task-board-batch-confirm-review-confirm"]')
       await waitForElementCount(
         control,

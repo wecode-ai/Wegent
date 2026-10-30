@@ -356,7 +356,7 @@ export class AppUpdateService {
       JSON.stringify({
         release,
         storeRoot: this.options.store.root,
-        sourceProfile: currentCoreProfile(this.options.dataDirectory),
+        sourceProfile: await realpath(currentCoreProfile(this.options.dataDirectory)),
       })
     )
     const environment = { ...process.env }
@@ -505,6 +505,15 @@ export class AppUpdateService {
       ...this.progress,
       phase: 'failed',
       failure: { message: error instanceof Error ? error.message : String(error) },
+    }
+    try {
+      this.options.log?.({
+        event: 'release-operation-failed',
+        stopping: this.stopping,
+        message: this.progress.failure?.message,
+      })
+    } catch {
+      console.error('[app-update] failed to persist release operation failure')
     }
     this.options.onInstallFailure?.(error, this.stopping)
   }

@@ -226,6 +226,7 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   let rendered = false
   let selected = false
   let saved = false
+  let assigneeClickAction
   const control = {
     async command(action, selector) {
       if (
@@ -237,7 +238,10 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
       if (selector === trigger) {
         detailInteraction.resolve()
         if (action === 'waitFor') await detailRendered.promise
-        if (action === 'click') assert.ok(rendered, 'The creation panel is still saving')
+        if (action === 'click' || action === 'clickWhenEnabled') {
+          assert.ok(rendered, 'The creation panel is still saving')
+          assigneeClickAction = action
+        }
       }
       if (action === 'click' && selector === option) selected = true
       if (action === 'clickWhenEnabled' && selector.endsWith('[data-testid="cloud-todo-save"]')) {
@@ -270,6 +274,7 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   detailRendered.resolve()
 
   assert.deepEqual(await outcome, { value: issue })
+  assert.equal(assigneeClickAction, 'clickWhenEnabled')
   assert.ok(selected)
   assert.ok(saved)
 })

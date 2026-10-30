@@ -18,6 +18,8 @@ An invocation loads an MCP App only when its record, tool definition, or result 
 
 After the initialization handshake, apps receive tool arguments and results. The executor preserves JSON object insertion order when forwarding opaque app metadata, including manifests whose serialized bytes are checked by the app. The host preserves `content`, `structuredContent`, and `_meta` separately and does not add result metadata to model context.
 
+Transcript refreshes do not resend equivalent tool results to an initialized app, preserving state updated by app tool callbacks. Changes to result content or error status still send an update.
+
 Apps can call their source server's tools, read resources, send conversation messages, update model context, and request inline, fullscreen, or picture-in-picture presentation. Read-only Issue execution views omit app conversation messaging; replies still originate from the Issue. Other conversation messages require confirmation. App tool calls use the source-bound native Codex channel without an additional annotation-based confirmation dialog. App-only tools remain callable by apps; model-only tools are excluded.
 
 State-preserving DOM moves keep app browsing contexts alive when virtualized tool rows leave the viewport. Closing an app or leaving its task releases the bridge and temporary document. Model context is stored by source invocation and included in later messages as untrusted app data.
