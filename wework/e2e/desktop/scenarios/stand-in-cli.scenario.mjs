@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   return {
@@ -27,11 +28,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       const dependency = provider.dependencies.find(item => item.alias === 'dingtalk')
       const origin = await control.command('getLocationOrigin', 'body')
       const invoke = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `cli-boundary-${method}`, method, params }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+          timeoutMs: uiTimeoutMs,
         })
         return response.json()
       }

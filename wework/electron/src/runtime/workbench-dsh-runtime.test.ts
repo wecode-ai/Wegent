@@ -12,6 +12,50 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('workbench DSH runtime', () => {
+  test('uses the current host bridge rather than a stale runtime copy', async () => {
+    const fixture = await decisionRouteFixture('workbench-current-host-')
+    const options = decisionRouteOptions(fixture)
+    const currentPlugins = join(fixture.root.path, 'current-plugins')
+    const currentHost = join(currentPlugins, 'wework-electron-host')
+    await mkdir(currentHost, { recursive: true })
+    const launch = await prepareWorkbenchDshLaunch({
+      ...options,
+      environment: { ...options.environment, WEWORK_CORE_PLUGIN_ROOT: currentPlugins },
+    })
+    expect(options.run.mock.calls.some(([, args]) => args.includes(`file:${currentHost}`))).toBe(
+      true
+    )
+    expect(
+      options.run.mock.calls.some(([, args]) =>
+        args.includes(`file:${join(fixture.runtimeRoot, 'plugins', 'wework-electron-host')}`)
+      )
+    ).toBe(false)
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe('1')
+    await fixture.root.remove()
+  })
+
+  test('refuses a privileged host bridge on a Runtime without browser authentication', async () => {
+    const fixture = await decisionRouteFixture('workbench-legacy-host-')
+    const options = decisionRouteOptions(fixture)
+    await writeFile(
+      join(fixture.runtimeRoot, 'runtime.json'),
+      JSON.stringify({
+        dshVersion: '0.1.0-rc.8',
+        role: 'workbench',
+        sourceFingerprint: 'a'.repeat(64),
+      })
+    )
+    options.manifest.requirements.dsh = '0.1.0-rc.8'
+    await writeFile(
+      join(fixture.runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+      JSON.stringify({ version: '0.1.0-rc.8' })
+    )
+    await expect(prepareWorkbenchDshLaunch(options)).rejects.toThrow(
+      'trusted Electron host bridge requires DSH'
+    )
+    expect(options.run).not.toHaveBeenCalled()
+    await fixture.root.remove()
+  })
   test('selects client modules for both current and legacy app requirements', () => {
     expect(workbenchClientRendererPackage('0.2.0-rc.2')).toBe('@deepseek-ai/dsh-client-ui-renderer')
     expect(workbenchClientRendererPackage('>=0.1.0-rc.8')).toBe(
@@ -58,6 +102,52 @@ describe('workbench DSH runtime', () => {
     expect(() =>
       injectModelProviderPatch('- id: agent-default-model\n  config:\n    provider: fixture\n')
     ).toThrow('Smart app exposes an incomplete provider/model pair')
+  })
+
+  test.each(['- id: [unterminated\n', 'plugins: []\n'])(
+    'rejects an invalid model patch before injecting routes: %s',
+    source => {
+      expect(() => injectModelProviderPatch(source)).toThrow('Smart app model patch')
+    }
+  )
+
+  test('rejects invalid model YAML before installing or launching DSH', async () => {
+    const fixture = await decisionRouteFixture('workbench-invalid-model-patch-')
+    const options = decisionRouteOptions(fixture)
+    await writeFile(
+      join(options.packagePath, 'profile-bundle', 'cordis.patch.yml'),
+      '- id: [unterminated\n'
+    )
+    try {
+      await expect(
+        prepareWorkbenchDshLaunch({
+          ...options,
+          modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+          additionalModels: [
+            {
+              modelKey: 'extra',
+              displayName: 'Extra',
+              baseUrl: 'http://127.0.0.1:9000/v1/harness-router/extra-token',
+            },
+          ],
+        })
+      ).rejects.toThrow('Smart app model patch')
+      expect(options.run).not.toHaveBeenCalled()
+      const settings = await readFile(
+        join(
+          options.dataDirectory,
+          'harness-apps',
+          'instances',
+          options.installationId,
+          'settings.yaml'
+        ),
+        'utf8'
+      )
+      expect(settings).toContain('/v1/harness-router/default-token')
+      expect(settings).toContain('/v1/harness-router/extra-token')
+    } finally {
+      await fixture.root.remove()
+    }
   })
 
   test('makes the managed Node executable available to pnpm subprocesses', async () => {

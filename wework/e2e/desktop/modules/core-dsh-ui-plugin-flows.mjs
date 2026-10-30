@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -192,6 +193,7 @@ export async function verifyCoreDshUiPluginComposition({
     }
 
     const plugins = await invokeCoreDshPluginCapability(
+      control,
       rendererOrigin,
       'runtime.installCoreDshPlugin',
       {
@@ -300,6 +302,7 @@ export async function verifyCoreDshUiPluginComposition({
   await assertDemoPluginVisible(control)
 
   const afterUninstall = await invokeCoreDshPluginCapability(
+    control,
     rendererOrigin,
     'runtime.uninstallCoreDshPlugin',
     { name: DEMO_PLUGIN.name }
@@ -314,7 +317,7 @@ export async function verifyCoreDshUiPluginComposition({
   rendererOrigin = await control.command('getLocationOrigin', 'body')
   await assertDemoPluginAbsent(control)
 
-  const inventory = await readCoreDshPlugins(rendererOrigin)
+  const inventory = await readCoreDshPlugins(control, rendererOrigin)
   for (const plugin of UI_PLUGINS) {
     const installed = inventory.find(item => item.name === plugin.name)
     assert.ok(installed, `${plugin.name} was missing from the final Core DSH plugin inventory`)
@@ -478,6 +481,7 @@ async function installDemoPlugin({ control, pluginSource, rendererOrigin, restar
   assert.ok(pluginSource, `${DEMO_PLUGIN.name} source is unavailable`)
   await assertDemoPluginAbsent(control)
   const plugins = await invokeCoreDshPluginCapability(
+    control,
     rendererOrigin,
     'runtime.installCoreDshPlugin',
     { spec: `file:${pluginSource}` }
@@ -721,10 +725,15 @@ async function assertInstalledFeatureVisible(control, plugin) {
 }
 
 async function setPluginEnabledAndRestart(control, origin, restartDesktopApp, plugin, enabled) {
-  const plugins = await invokeCoreDshPluginCapability(origin, 'runtime.setCoreDshPluginEnabled', {
-    name: plugin.name,
-    enabled,
-  })
+  const plugins = await invokeCoreDshPluginCapability(
+    control,
+    origin,
+    'runtime.setCoreDshPluginEnabled',
+    {
+      name: plugin.name,
+      enabled,
+    }
+  )
   const updated = plugins.find(item => item.name === plugin.name)
   assert.ok(updated, `${plugin.name} was absent after changing enabled state`)
   assert.equal(updated.enabled, enabled, `${plugin.name} enabled state did not change`)
@@ -771,8 +780,9 @@ async function waitForSlotState(control, predicate) {
   assert.fail(`Core DSH slot state did not settle: ${JSON.stringify(lastSlots)}`)
 }
 
-async function invokeCoreDshPluginCapability(origin, capability, params = {}) {
-  const response = await fetch(`${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
+async function invokeCoreDshPluginCapability(control, origin, capability, params = {}) {
+  const response = await fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ capability, params }),
@@ -791,8 +801,8 @@ async function invokeCoreDshPluginCapability(origin, capability, params = {}) {
   return payload.result
 }
 
-async function readCoreDshPlugins(origin) {
-  return invokeCoreDshPluginCapability(origin, 'runtime.listCoreDshPlugins')
+async function readCoreDshPlugins(control, origin) {
+  return invokeCoreDshPluginCapability(control, origin, 'runtime.listCoreDshPlugins')
 }
 
 async function resolveCoreUiPluginSources(runtimeRoot, pluginsRoot) {

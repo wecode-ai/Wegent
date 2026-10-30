@@ -184,6 +184,18 @@ export async function executeVerificationControlCommand(
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
     }
+    case 'fetchLocalRuntime': {
+      const bridge = (
+        window as Window & {
+          weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
+        }
+      ).weworkElectronVerification
+      if (!bridge) throw new Error('Runtime verification bridge is unavailable')
+      return {
+        handled: true,
+        value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
+      }
+    }
     case 'localConnectorAuth':
       return { handled: true, value: await localConnectorAuth(command) }
     case 'clickAt':
