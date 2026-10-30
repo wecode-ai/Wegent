@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
-    file \
     gnupg \
     gh \
     git \
@@ -33,7 +32,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxss1 \
     mysql-server \
     openbox \
-    pcmanfm \
     python3 \
     python3-venv \
     redis-server \
@@ -41,18 +39,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     umoci \
     x11-utils \
-    xdg-utils \
     xvfb \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \
     "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
-
-# Native log-folder actions need a real directory handler inside the Xvfb session.
-RUN XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory \
-  && test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop \
-  && test "$(xdg-mime query filetype /tmp)" = inode/directory
 
 RUN npm install --global "pnpm@${PNPM_VERSION}" \
   && curl --proto '=https' --tlsv1.2 -LsSf \
