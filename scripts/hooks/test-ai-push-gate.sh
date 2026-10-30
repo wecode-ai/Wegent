@@ -55,7 +55,7 @@ if [ "${PUSH_GATE_TEST_VERIFY_GIT_ISOLATION:-0}" = "1" ]; then
             echo "Quality check inherited repository-local variable: $git_env_name" >&2
             exit 11
         fi
-    done < <(git rev-parse --local-env-vars; printf '%s\n' WEGENT_APP_LIFECYCLE_FD WEGENT_APP_IPC_ENDPOINT WEGENT_APP_IPC_OWNER_TOKEN WEGENT_APP_IPC_TOKEN)
+    done < <(git rev-parse --local-env-vars; printf '%s\n' WEGENT_APP_LIFECYCLE_FD WEGENT_APP_IPC_ENDPOINT WEGENT_APP_IPC_OWNER_TOKEN WEGENT_APP_IPC_TOKEN WEGENT_PLUGIN_RUNTIME_TARGET WEGENT_CAPABILITIES_HOME)
 fi
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
@@ -255,6 +255,8 @@ WEGENT_APP_LIFECYCLE_FD=99 \
 WEGENT_APP_IPC_ENDPOINT=parent-workbench \
 WEGENT_APP_IPC_OWNER_TOKEN=test-owner \
 WEGENT_APP_IPC_TOKEN=test-connection \
+WEGENT_PLUGIN_RUNTIME_TARGET=codex \
+WEGENT_CAPABILITIES_HOME=/parent-capabilities \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
 refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA

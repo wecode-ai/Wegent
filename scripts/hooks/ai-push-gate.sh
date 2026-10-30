@@ -463,7 +463,7 @@ done < <(git rev-parse --local-env-vars)
 # the workbench that invoked this hook.
 while IFS= read -r check_env_name; do
     case "$check_env_name" in
-        WEGENT_APP_*|WEGENT_RUNTIME_INSTANCE_ID|WEGENT_TASK_ID|WEGENT_TASK_WORKSPACE)
+        WEGENT_APP_*|WEGENT_RUNTIME_INSTANCE_ID|WEGENT_TASK_ID|WEGENT_TASK_WORKSPACE|WEGENT_PLUGIN_RUNTIME_TARGET|WEGENT_CAPABILITIES_HOME)
             unset "$check_env_name"
             ;;
     esac
@@ -473,7 +473,6 @@ export WEGENT_WORKBENCH_HOME="$TEMP_DIR/workbench"
 export WEGENT_EXECUTOR_HOME="$TEMP_DIR/executor"
 export WEGENT_CODEX_HOME="$TEMP_DIR/codex"
 export WEGENT_CLAUDE_HOME="$TEMP_DIR/claude"
-export WEGENT_CAPABILITIES_HOME="$TEMP_DIR/capabilities"
 export WEGENT_EXECUTOR_PROJECTS_DIR="$TEMP_DIR/projects"
 export LOCAL_WORKSPACE_ROOT="$TEMP_DIR/projects"
 export WORKSPACE_ROOT="$TEMP_DIR/projects"
