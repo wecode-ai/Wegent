@@ -22,6 +22,7 @@ vi.mock('@wegent/collaboration/conversation', async importOriginal => ({
       data-testid="visible-conversation"
       data-search-message-id={props.searchTarget?.messageId ?? ''}
       data-search-navigation-paused={String(Boolean(props.searchNavigationPaused))}
+      data-history-loading-mode={props.historyLoadingMode ?? 'automatic'}
     >
       {props.hasMoreBefore ? (
         <button
@@ -90,14 +91,38 @@ afterEach(() => {
 })
 
 describe('conversation search context', () => {
+  test('keeps live history manually accessible during find without changing hidden-pane behavior', async () => {
+    const props = { ...fixture(), searchPage: null }
+    const view = render(<ScrollableMessageArea {...props} autoScrollSuspended />)
+    const conversation = screen.getByTestId('visible-conversation')
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'automatic')
+    view.rerender(<ScrollableMessageArea {...props} />)
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'manual')
+    expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
+    await act(async () => fireEvent.click(screen.getByTestId('context-before-control')))
+    expect(props.onLoadMoreBefore).toHaveBeenCalledOnce()
+    expect(props.onLoadSearchContext).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('conversation-find-close-button'))
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'automatic')
+  })
+
   test('loads only the requested context edge and restores the live conversation when closed', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const props = fixture()
     render(<ScrollableMessageArea {...props} />)
     expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Live conversation footer' })).toBeInTheDocument()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'automatic'
+    )
 
     await openSearch()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'manual'
+    )
     expect(screen.getByText('needle first reply')).toBeInTheDocument()
     expect(screen.getByTestId('context-before-control')).toBeEnabled()
     expect(screen.getByTestId('load-newer-runtime-transcript-button')).toBeEnabled()
@@ -120,6 +145,10 @@ describe('conversation search context', () => {
     const releases = vi.mocked(props.onReleaseSearchPage!).mock.calls.length
     fireEvent.click(screen.getByTestId('conversation-find-close-button'))
     expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'automatic'
+    )
     expect(screen.getByRole('button', { name: 'Live conversation footer' })).toBeInTheDocument()
     expect(screen.queryByText('needle first reply')).not.toBeInTheDocument()
     expect(screen.queryByTestId('load-newer-runtime-transcript-button')).not.toBeInTheDocument()

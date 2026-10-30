@@ -5,13 +5,23 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Run all platforms or one platform for focused diagnosis"
+        type: choice
+        default: all
+        options:
+          - all
+          - macos-15
+          - macos-15-intel
+          - windows-latest
 
 permissions:
   contents: read
 
 jobs:
   upgrade-and-rollback:
-    name: Upgrade and rollback (${{ matrix.name }})
+    name: Upgrade and rollback (${{ matrix.runner == 'macos-15' && 'macOS arm64' || matrix.runner == 'macos-15-intel' && 'macOS x64' || 'Windows x64' }})
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     concurrency:
       group: wework-upgrade-${{ github.ref }}-${{ matrix.runner }}
@@ -19,15 +29,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: macOS arm64
-            runner: macos-15
-          - name: macOS x64
-            runner: macos-15-intel
-          - name: Windows x64
-            runner: windows-latest
+        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.runner != 'all' && inputs.runner != '' && format('["{0}"]', inputs.runner) || '["macos-15", "macos-15-intel", "windows-latest"]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    # Measured Intel cold builds plus five serial real-package checkpoints exceed 75 minutes.
+    timeout-minutes: ${{ matrix.runner == 'macos-15-intel' && 90 || 75 }}
     defaults:
       run:
         shell: bash

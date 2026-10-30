@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import {
   assistantMessage,
   createSse,
@@ -92,15 +93,19 @@ export function createDesktopScenario({
         /^codex-sandbox:\/\/[a-f0-9-]+\.web-sandbox\.oaiusercontent\.com\/mcp-app\.html$/
       )
       const frameAction = async (action, selector, value) => {
-        const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            capability: 'e2e.mcpAppFrame',
-            params: { url: frameUrl, action, selector, value },
-          }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
-        })
+        const response = await fetchLocalRuntime(
+          control,
+          `${origin}/wework/electron-host/v1/invoke`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              capability: 'e2e.mcpAppFrame',
+              params: { url: frameUrl, action, selector, value },
+            }),
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         const result = await response.json()
         assert.equal(result.ok, true, JSON.stringify(result.error))
         return result.result

@@ -43,7 +43,11 @@ export async function verifyLegacySearch(control, timeoutMs) {
   const findInput = '[data-testid="conversation-find-input"]'
   const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
-  await control.command('waitFor', loadOlder, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', '[data-testid="assistant-message-content"]', {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })
@@ -104,7 +108,10 @@ export async function verifyLegacySearch(control, timeoutMs) {
   )
   await verifyTerminalHistorySearch(control, timeoutMs)
   await control.command('nativePress', findInput, { key: 'Escape' })
-  await control.command('waitFor', loadOlder)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
+  )
   await control.command('waitFor', '[data-testid="assistant-message-content"]', {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })

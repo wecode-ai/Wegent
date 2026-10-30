@@ -8,6 +8,17 @@ Prepare downloads, extraction, component composition, and plugin profiles while 
 
 ## Backward-compatible manifests
 
+Formal releases build and verify candidate packages, generate update manifests, and only then
+create the version tag and Release. Verification or manifest failures do not consume a tag.
+macOS arm64 and Windows x64 independently verify real-package upgrades and rollbacks.
+macOS x64 adopts arm64's successful version paths and minimum source version without running
+release upgrade/rollback E2E. Its records retain x64 package hashes and download URLs, with
+`verification.kind=architecture-equivalence`, `arch=arm64`, and both arm64 package hashes
+declaring the evidence source. Source and target revisions must respectively match arm64;
+missing historical x64 package records block publication. The three-platform PR mechanism
+regression suite remains independent. Per-architecture release verification rules below apply
+to macOS arm64 and Windows x64; macOS x64 uses this explicit architecture equivalence policy.
+
 Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json` endpoints and fields. Add `upgradePolicy` to the component manifest. Each target declares `minSourceVersion`; exact source-to-target edges carry delivered-package hashes and upgrade/rollback evidence.
 
 Legacy clients ignore the new fields and continue updating directly to their advertised latest version. Enforcement begins when the client contains the new implementation. Pre-protocol clients are outside the new E2E matrix; do not pin their channel to a bridge.
@@ -25,6 +36,8 @@ Keep active Goal recovery journals when the executor or app-server stops. A comp
 Compatible rollback switches directly. Incompatible rollback after the target opened data requires confirmation before snapshot restoration and preserves newer data separately. Failure before opening mutable data can return directly to the previous release. Snapshots cover registered migration-owned stores, including task SQLite/WAL/SHM, desktop preferences, renderer storage, and transcript-sync state. Never restore repositories, cloud records, or personal credentials. Register additional migrated stores together with restore coverage.
 
 Plugin configuration changes invalidate preparation. Recheck before switching instead of repairing large installations after restart.
+
+Resolve only the active profile's root pointer before cloning, copying the physical directory while preserving internal dependency links. Copying the root link would let rollback preparation mutate the running release's profile. Pass the resolved source profile to older preparation entries as well, so packages with the old clone implementation still receive an isolated copy.
 
 Confirmed manual rollback records its transaction direction independently. After an interruption, resume rollback instead of treating the target's earlier healthy marker as a new startup confirmation.
 
@@ -60,6 +73,11 @@ The existing `app-update-full` checkpoint shares the real-package scenario and r
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
+The upgrade workflow covers all three platforms by default; manual dispatches can select one
+`runner` for focused diagnosis. Intel Mac cold builds plus five serial real-package checkpoints
+have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
+75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
+
 ## Native launcher linker
 
 Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
@@ -86,10 +104,24 @@ Persisting a board execution address precedes native session readiness. Confirm 
 reaches its model within the runtime startup budget before starting the separate ten-second UI
 assertion budget.
 
-`wework/upgrade-policy.json` declares the current target's floor and `sourceVersions`. The initial protocol release may have no incoming edges; subsequent releases must verify at least one. A source may remain fixed rather than tracking the immediately preceding release.
+`wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
 
-Release jobs create complete portable packages, download declared immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
+CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
+
+| Fixed baseline X | Previous release | Publication decision |
+| --- | --- | --- |
+| Passes | Passes | Retain X and publish both verified edges |
+| Fails or is not a registered verification source | Passes | Raise the minimum to the previous release and publish only successful edges |
+| Any result | Fails | Block publication without advancing rolling manifests |
+
+Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
+
+Persist the confirmed floor and exact edges in each target channel's `upgradePolicy`. Publish immutable version assets before promoting rolling manifests. The next release reads X from that catalog and retains or raises it automatically, without writing version lists back to source. Stable publication verifies Stable and Beta independently; Beta publication advances only Beta. All platform jobs must succeed before publication. Always retain CI decision summaries and failure logs, distinguishing unavailable baselines, failed verification, and blocked publication; do not retry to hide failures.
+
+Resolve extracted source directories to physical paths before invoking old packages: aliases such as macOS `/var` and `/private/var` must not cause package identity mismatches. Retain candidate packages as CI artifacts before verification and upload successful evidence separately. Publication still requires every platform job to pass and validates the evidence before promoting manifests. Failed runs can then be reproduced with the same signed archive without rebuilding or changing its identity. Retain UI snapshots and failure explanations while excluding credential directories, browser partitions and session storage.
+
+Release jobs create complete portable packages, download the automatically selected immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
 
 Upload immutable target assets and evidence before promoting rolling manifests. Any required pair failure blocks promotion. Compatibility declarations, minimum versions, and unit tests cannot replace real release-pair evidence.
 
-A source may come from another channel, such as Beta to Stable. Verify a new edge under the target channel; import the source node without copying the other channel's edges. Bind evidence to the channel and require an immutable package hash across channels.
+Beta may import a Stable source only after verifying a new edge under Beta, without copying Stable's edges. Bind evidence to the channel and require an immutable package hash across channels. Stable catalogs reject Beta nodes and Beta minimum versions. Rollback restores the previous healthy local release rather than selecting an older release from the published catalog.

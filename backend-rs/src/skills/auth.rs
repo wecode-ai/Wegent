@@ -9,10 +9,12 @@
 //! Bearer API key, user session JWT, then task token fallback. Rejects with
 //! the source-compatible 401 details.
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+#[cfg(test)]
+use jsonwebtoken::Algorithm;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
 
@@ -176,6 +178,10 @@ impl ApiKeyRow {
 struct SkillIdentityTokenClaims {
     user_id: i64,
     user_name: String,
+    #[allow(dead_code)]
+    runtime_type: serde_json::Value,
+    #[allow(dead_code)]
+    runtime_name: serde_json::Value,
     #[serde(rename = "type")]
     token_type: Option<String>,
 }
@@ -184,9 +190,12 @@ struct SkillIdentityTokenClaims {
 #[derive(Debug, Deserialize)]
 struct TaskTokenClaims {
     user_id: i64,
-    #[serde(default)]
     #[allow(dead_code)]
-    user_name: String,
+    user_name: serde_json::Value,
+    #[allow(dead_code)]
+    task_id: serde_json::Value,
+    #[allow(dead_code)]
+    subtask_id: serde_json::Value,
     #[serde(rename = "type")]
     token_type: Option<String>,
 }
@@ -201,33 +210,14 @@ fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
     keys
 }
 
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
-/// Decode a JWT with the active key, then legacy decode-only keys
-/// (`app.core.jwt_compat.decode_pyjwt`).
+/// Task and Skill identity tokens use PyJWT, unlike user-session JOSE JWTs.
 fn decode_jwt<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &str) -> Result<T, ()> {
-    let mut validation = Validation::new(algorithm(config));
-    validation.validate_aud = false;
-    // Task tokens carry `exp`, but a missing claim must not fail decode on
-    // its own (python-jose only validates `exp` when present unless required).
-    validation.required_spec_claims.clear();
-    validation.validate_exp = false;
-    let mut last_error = None;
-    for key_bytes in decoding_keys(config) {
-        let key = DecodingKey::from_secret(&key_bytes);
-        match decode::<T>(token, &key, &validation) {
-            Ok(token) => return Ok(token.claims),
-            Err(error) => last_error = Some(error),
-        }
-    }
-    let _ = last_error;
-    Err(())
+    crate::jwt_compat::decode_pyjwt(
+        token,
+        decoding_keys(config),
+        crate::auth::algorithm(config).ok_or(())?,
+    )
+    .ok_or(())
 }
 
 /// `verify_jwt_token_with_db`: session JWT -> user by `sub` (user_name).
@@ -239,8 +229,8 @@ async fn verify_jwt_with_db<M>(
 where
     M: Mysql,
 {
-    let claims = match decode_jwt::<SessionClaims>(config, token) {
-        Ok(claims) if claims.is_user_session_payload() => claims,
+    let claims = match crate::auth::decode_session_claims(config, token) {
+        Some(claims) if claims.is_user_session_payload() => claims,
         _ => return Ok(None),
     };
     let Some(user_name) = claims.username() else {
@@ -303,13 +293,7 @@ fn extract_bearer(authorization: Option<&str>) -> String {
     let Some(header) = authorization else {
         return String::new();
     };
-    if let Some(token) = header.strip_prefix("Bearer ") {
-        return token.trim().to_string();
-    }
-    if let Some(token) = header.strip_prefix("bearer ") {
-        return token.trim().to_string();
-    }
-    header.trim().to_string()
+    header.strip_prefix("Bearer ").unwrap_or(header).to_string()
 }
 
 /// An authentication failure with the source-compatible 401 body.
@@ -394,11 +378,12 @@ where
     match get_current_user(config, mysql, headers).await {
         Ok(user) => Ok(user),
         Err(auth_error) => {
-            let token = extract_bearer(headers.header("authorization"));
-            if token.is_empty() {
+            // Python's Skill identity fallback uses OAuth2, unlike the flexible chain above.
+            let Some(token) = crate::auth::bearer_credential(headers.header("authorization"))
+            else {
                 return Err(auth_error);
-            }
-            let Some(claims) = verify_skill_identity_token(config, &token) else {
+            };
+            let Some(claims) = verify_skill_identity_token(config, token) else {
                 return Err(auth_error);
             };
             let user: Option<UserRow> = mysql
@@ -431,7 +416,8 @@ pub fn is_runtime_skill_download(
         return false;
     }
     is_api_key(&token)
-        || decode_jwt::<TaskTokenClaims>(config, &token).is_ok()
+        || decode_jwt::<TaskTokenClaims>(config, &token)
+            .is_ok_and(|claims| claims.token_type.as_deref() == Some("task_token"))
         || verify_skill_identity_token(config, &token).is_some()
 }
 
@@ -491,7 +477,7 @@ mod tests {
     #[test]
     fn extracts_bearer_tokens() {
         assert_eq!(extract_bearer(Some("Bearer abc")), "abc");
-        assert_eq!(extract_bearer(Some("bearer abc")), "abc");
+        assert_eq!(extract_bearer(Some("bearer abc")), "bearer abc");
         assert_eq!(extract_bearer(Some("abc")), "abc");
         assert_eq!(extract_bearer(None), "");
     }
@@ -512,13 +498,17 @@ mod tests {
     }
 
     #[test]
-    fn decodes_task_tokens_and_rejects_other_types() {
-        let token = token_for(json!({"user_id": 1, "type": "task_token", "subtask_id": 2}));
+    fn decodes_pyjwt_claims_before_task_purpose_validation() {
+        let token = token_for(
+            json!({"user_id": 1, "user_name": "u", "task_id": 1, "subtask_id": 2, "type": "task_token"}),
+        );
         let claims: TaskTokenClaims = decode_jwt(&config(), &token).unwrap();
         assert_eq!(claims.user_id, 1);
         assert_eq!(claims.token_type.as_deref(), Some("task_token"));
 
-        let other_type = token_for(json!({"user_id": 1, "type": "skill_identity"}));
+        let other_type = token_for(
+            json!({"user_id": 1, "user_name": "u", "task_id": 1, "subtask_id": 2, "type": "skill_identity"}),
+        );
         let claims: TaskTokenClaims = decode_jwt(&config(), &other_type).unwrap();
         assert_eq!(claims.token_type.as_deref(), Some("skill_identity"));
     }
@@ -527,7 +517,7 @@ mod tests {
     fn verifies_skill_identity_tokens_by_type_and_claims() {
         let token = token_for(json!({
             "type": "skill_identity", "user_id": 7, "user_name": "alice",
-            "runtime_type": "executor", "runtime_name": "task-1", "iat": 1, "exp": 2
+            "runtime_type": "executor", "runtime_name": "task-1", "iat": 1, "exp": jsonwebtoken::get_current_timestamp() + 600
         }));
         let claims = verify_skill_identity_token(&config(), &token).unwrap();
         assert_eq!(claims.user_id, 7);
@@ -545,7 +535,9 @@ mod tests {
 
     #[test]
     fn runtime_download_detects_executor_credentials() {
-        let task = token_for(json!({"user_id": 1, "type": "task_token"}));
+        let task = token_for(
+            json!({"user_id": 1, "user_name": "u", "task_id": 1, "subtask_id": 2, "type": "task_token"}),
+        );
         let bearer: &'static str = Box::leak(format!("Bearer {task}").into_boxed_str());
         assert!(is_runtime_skill_download(&config(), &headers(Some(bearer))));
         assert!(is_runtime_skill_download(
@@ -561,7 +553,8 @@ mod tests {
     #[test]
     fn runtime_download_accepts_skill_identity_tokens() {
         let token = token_for(json!({
-            "type": "skill_identity", "user_id": 7, "user_name": "alice"
+            "type": "skill_identity", "user_id": 7, "user_name": "alice",
+            "runtime_type": "executor", "runtime_name": "task-1"
         }));
         let bearer: &'static str = Box::leak(format!("Bearer {token}").into_boxed_str());
         assert!(is_runtime_skill_download(&config(), &headers(Some(bearer))));
@@ -590,5 +583,164 @@ mod tests {
             key_type: "personal".to_string(),
         };
         assert!(expired.is_expired());
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    use super::*;
+
+    fn config() -> AuthConfig {
+        AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_identity_uses_its_own_oauth2_fallback() {
+        let token = crate::jwt_compat::tests::sign(
+            &serde_json::json!({"type":"skill_identity", "user_id":7, "user_name":"u",
+                "runtime_type":"executor", "runtime_name":"task-1"}),
+            b"test-key",
+        );
+        for (scheme, expected_queries, runtime) in [
+            ("Bearer", 1, true),
+            ("bearer", 1, false),
+            ("bEaReR", 1, false),
+            ("raw", 0, true),
+            ("Basic", 0, false),
+        ] {
+            let authorization = if scheme == "raw" {
+                token.clone()
+            } else {
+                format!("{scheme} {token}")
+            };
+            let headers = crate::headers::OwnedHeaders::from_pairs([(
+                "authorization",
+                Some(authorization.as_str()),
+            )]);
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                get_current_user_or_skill_query_identity(&config(), &mysql, &headers.view())
+                    .await
+                    .is_err()
+            );
+            let queries = mysql.queries();
+            assert_eq!(queries.len(), expected_queries, "{scheme}");
+            if let Some(query) = queries.first() {
+                assert_eq!(query.first_integer, Some(7));
+            }
+            assert_eq!(
+                is_runtime_skill_download(&config(), &headers.view()),
+                runtime
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_identity_fallback_does_not_normalize_the_session_chain() {
+        let session = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let authorization = format!("bearer {session}");
+        let headers = crate::headers::OwnedHeaders::from_pairs([(
+            "authorization",
+            Some(authorization.as_str()),
+        )]);
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        assert!(
+            get_current_user_or_skill_query_identity(&config(), &mysql, &headers.view())
+                .await
+                .is_err()
+        );
+        assert!(mysql.queries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_entry_point_only_looks_up_python_accepted_tokens() {
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert!(
+                verify_jwt_with_db(&config(), &mysql, &token)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(!mysql.queries().is_empty(), expected, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_api_key_does_not_fall_through_to_session() {
+        let session = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let authorization = format!("Bearer {session}");
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", Some(authorization.as_str())),
+            ("x-api-key", Some("wg-invalid-test-key")),
+        ]);
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let error = get_current_user(&config(), &mysql, &headers.view())
+            .await
+            .expect_err("invalid API key must fail");
+        assert_eq!(error.detail, "Invalid or expired API key");
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].sql.contains("FROM api_keys"));
+    }
+
+    #[test]
+    fn task_identity_requires_python_dictionary_fields() {
+        let claims = serde_json::json!({"user_id":1, "user_name":"u",
+            "task_id":1, "subtask_id":2, "type":"task_token"});
+        for field in ["task_id", "subtask_id", "user_name"] {
+            let mut missing = claims.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            let token = crate::jwt_compat::tests::sign(&missing, b"test-key");
+            assert!(
+                decode_jwt::<TaskTokenClaims>(&config(), &token).is_err(),
+                "{field}"
+            );
+        }
+        let mut nullable = claims;
+        nullable["task_id"] = serde_json::Value::Null;
+        let token = crate::jwt_compat::tests::sign(&nullable, b"test-key");
+        assert!(decode_jwt::<TaskTokenClaims>(&config(), &token).is_ok());
+    }
+
+    #[tokio::test]
+    async fn expired_task_tokens_cannot_bypass_failed_session_authentication() {
+        let now = jsonwebtoken::get_current_timestamp();
+        for delta in [
+            serde_json::json!({"exp":now-300}),
+            serde_json::json!({"nbf":now+300}),
+            serde_json::json!({"iat":now+300}),
+            serde_json::json!({"type":"wework_refresh"}),
+        ] {
+            let mut claims = serde_json::json!({"user_id":1,"user_name":"u",
+                "task_id":1,"subtask_id":2,"type":"task_token"});
+            claims
+                .as_object_mut()
+                .unwrap()
+                .extend(delta.as_object().unwrap().clone());
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            let authorization = format!("Bearer {token}");
+            let headers = crate::headers::OwnedHeaders::from_pairs([(
+                "authorization",
+                Some(authorization.as_str()),
+            )]);
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                get_current_user_or_skill_query_identity(&config(), &mysql, &headers.view())
+                    .await
+                    .is_err(),
+                "{delta}"
+            );
+            assert!(mysql.queries().is_empty(), "{delta}");
+            assert!(
+                !is_runtime_skill_download(&config(), &headers.view()),
+                "{delta}"
+            );
+        }
     }
 }
