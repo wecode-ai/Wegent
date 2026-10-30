@@ -7,15 +7,19 @@ use brz_http::Method;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-fn scrape() -> String {
+pub(crate) fn scrape() -> String {
     let mut output = String::new();
     std::io::Read::read_to_string(&mut brz_metrics::PrometheusReader::new(), &mut output).unwrap();
     output
 }
 
-async fn serve_objects(listener: TcpListener, count: usize) -> Vec<(String, Vec<u8>)> {
+pub(crate) async fn serve_objects(
+    listener: TcpListener,
+    mut remaining: usize,
+    counted_path_prefix: &str,
+) -> Vec<(String, Vec<u8>)> {
     let mut requests = Vec::new();
-    for _ in 0..count {
+    while remaining > 0 {
         let (socket, _) = listener.accept().await.unwrap();
         let mut socket = BufReader::new(socket);
         let mut request_line = String::new();
@@ -47,6 +51,14 @@ async fn serve_objects(listener: TcpListener, count: usize) -> Vec<(String, Vec<
             .write_all(response.as_bytes())
             .await
             .unwrap();
+        if request_line
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .starts_with(counted_path_prefix)
+        {
+            remaining -= 1;
+        }
         requests.push((request_line, body));
     }
     requests
@@ -56,7 +68,7 @@ async fn serve_objects(listener: TcpListener, count: usize) -> Vec<(String, Vec<
 async fn object_operations_aggregate_metrics_without_changing_wire_requests() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(serve_objects(listener, 8));
+    let server = tokio::spawn(serve_objects(listener, 8, "/"));
     let client = HttpClient::builder()
         .read_timeout(Duration::from_secs(5))
         .configure(|builder| builder.no_proxy())

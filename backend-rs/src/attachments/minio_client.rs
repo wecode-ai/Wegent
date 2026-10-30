@@ -374,7 +374,7 @@ pub fn build_client() -> anyhow::Result<HttpClient> {
 
 #[cfg(test)]
 #[path = "minio_client_metrics_tests.rs"]
-mod metrics_tests;
+pub(crate) mod metrics_tests;
 
 #[cfg(test)]
 mod tests {
