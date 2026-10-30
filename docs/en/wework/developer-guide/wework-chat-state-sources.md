@@ -383,6 +383,10 @@ A user-only preview without native identity stays pending. Complete presentation
 does not complete a turn. A synthetic done status would survive native binding, suppress
 streaming, and prematurely mark collaboration member activities successful.
 
+A queued marker does not establish that optional queuePosition metadata has rendered.
+Desktop E2E waits for the position element before reading it, then preserves numeric and
+ordering assertions. Waiting for the queued icon is not an equivalent prerequisite.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store
