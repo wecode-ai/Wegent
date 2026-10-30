@@ -117,7 +117,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
   ...Object.fromEntries(
-    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/app-upgrade.scenario.mjs'])
+    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
@@ -470,6 +470,13 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
     nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+    if (
+      ['app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
+      env.WEWORK_E2E_UPGRADE_THIN_PAIR
+    ) {
+      nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR
+      nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN
+    }
   }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
@@ -579,6 +586,16 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
+    }
+  }
+  if (upgradeRequested && nextEnvironment.WEWORK_E2E_UPGRADE_PAIR) {
+    const pair = JSON.parse(await readFile(nextEnvironment.WEWORK_E2E_UPGRADE_PAIR, 'utf8'))
+    if (pair.kind === 'regression' && pair.thinPairFile && pair.thinSource?.executable) {
+      nextEnvironment = {
+        ...nextEnvironment,
+        WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
+        WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource.executable,
+      }
     }
   }
   const [build, codexBinary] = await Promise.all([
