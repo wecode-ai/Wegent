@@ -355,9 +355,12 @@ export class RuntimeTaskLifecycleStore {
           currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
         ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
-    const streamingTurn = transcript.turns.findLast(
-      turn => turn.status === 'pending' || turn.status === 'streaming'
-    )
+    // Only the latest canonical turn can identify the current execution.
+    const latestTurn = transcript.turns.at(-1)
+    const streamingTurn =
+      latestTurn?.status === 'pending' || latestTurn?.status === 'streaming'
+        ? latestTurn
+        : undefined
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
