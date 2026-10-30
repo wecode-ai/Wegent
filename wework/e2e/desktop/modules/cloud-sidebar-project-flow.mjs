@@ -52,15 +52,19 @@ export async function verifyCloudSidebarGitClone(control, workspacePath, homePat
 
   await control.command('fill', '[data-testid="remote-project-git-branch-input"]', { value: '' })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+  // Opening the cloned workspace navigates away from the cloud work page.
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('desktop-workbench-main') &&
+      !snapshot.testIds.includes('standalone-folder-project-dialog'),
+    'The cloud work sidebar clone did not open the project in the workbench'
+  )
+  await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: targetPath })
+  await control.command('navigate', 'body', { value: '/cloud-work' })
   await control.command('waitFor', '[data-testid="cloud-work-projects-section"]', {
     text: targetPath,
   })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('standalone-folder-project-dialog'),
-    'The cloud work sidebar clone did not close after adding the project'
-  )
-  await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: targetPath })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]')
 }
