@@ -124,7 +124,9 @@ An ordinary MCP tool invocation does not establish that a visual app exists. The
 
 `executor-transport.log` in the Electron log directory records local RPC request IDs, methods, elapsed time, and failure stages: `fetch_failed`, `body_parse_failed`, or `rpc_failed`. MCP discovery failures also record call IDs, task IDs, and tool status. Chromium local RPC network errors record the path, window identity, and `net::ERR_*` code without request bodies, cookies, or authentication data. Correlate request IDs with DSH and executor logs, then correlate window identity and time with Chromium errors. `Failed to fetch` alone does not establish a server business error or a specific network cause.
 
-The desktop CI `mcp-apps` checkpoint covers real app loading, resource failure recovery, ordinary historical calls, and the absence of cards after Chromium cancels a real discovery request, followed by network recovery. Fault injection is restricted to isolated E2E runs and never replaces Runtime responses.
+Each app initialization creates an independent `leaseId` carried by heartbeats, app requests, and release. The executor keys connection leases by session, source invocation, and lease identity. Cleanup after an old initialization completes cannot remove its replacement's lease or schedule unsubscribe while another instance holds a lease.
+
+The desktop CI `mcp-apps` checkpoint covers real app loading, resource failure recovery, ordinary historical calls, lease replacement after late initialization, and the absence of cards after Chromium cancels a real discovery request, followed by network recovery. Fault injection is restricted to isolated E2E runs and never replaces Runtime responses.
 
 ### Executor Startup Environment and Codex Home Initialization
 

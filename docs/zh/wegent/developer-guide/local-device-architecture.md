@@ -124,7 +124,9 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 Electron 日志目录中的 `executor-transport.log` 保存本地 RPC 的请求 ID、方法、耗时和失败阶段：`fetch_failed`、`body_parse_failed` 或 `rpc_failed`。MCP 探测失败另记录调用 ID、任务 ID 和工具状态。Chromium 本地 RPC 网络错误记录路径、窗口标识和 `net::ERR_*` 错误码，不记录请求正文、Cookie 或认证信息。先按请求 ID 对照 DSH 和 executor 日志，再用窗口标识及时间对照 Chromium 错误；仅凭 `Failed to fetch` 不能认定为服务端业务错误或某一种网络故障。
 
-桌面 CI 的 `mcp-apps` 检查点覆盖真实应用加载、资源失败重试、普通历史调用，以及通过 Chromium 取消真实探测请求后的无卡片状态和网络恢复。故障注入只在隔离 E2E 环境启用，不替换 Runtime 响应。
+每次应用初始化创建独立的 `leaseId`，心跳、应用调用和释放都携带该身份。Executor 按会话、源调用和租约身份保存连接租约；旧初始化迟到后的释放不能移除替代实例的租约，也不能在其他实例仍持有租约时安排取消订阅。
+
+桌面 CI 的 `mcp-apps` 检查点覆盖真实应用加载、资源失败重试、普通历史调用、初始化迟到后的租约替换，以及通过 Chromium 取消真实探测请求后的无卡片状态和网络恢复。故障注入只在隔离 E2E 环境启用，不替换 Runtime 响应。
 
 ### Executor 启动环境与 Codex Home 初始化
 

@@ -32,6 +32,8 @@ interface AppDocument {
   release: () => Promise<void>
 }
 
+type LeasedAppDescriptor = McpAppDescriptor & { leaseId: string }
+
 async function createAppDocument(
   html: string,
   metadata: Record<string, unknown>
@@ -65,11 +67,11 @@ export function McpAppHost({
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
-  onContext?: (context: Record<string, unknown>) => Promise<void>
+  onContext?: (context: Record<string, unknown>, leaseId: string) => Promise<void>
   onDisplayModeChange?: (mode: McpUiDisplayMode, dismiss: () => void) => void
 }) {
   const { t } = useTranslation('common')
-  const [descriptor, setDescriptor] = useState<McpAppDescriptor>()
+  const [descriptor, setDescriptor] = useState<LeasedAppDescriptor>()
   const [app, setApp] = useState<McpAppDiscovery>()
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
@@ -170,19 +172,23 @@ export function McpAppHost({
   useEffect(() => {
     if (!app || closed) return
     let active = true
-    void requestApp({ method: 'initialize' })
+    let settled = false
+    const leaseId = crypto.randomUUID()
+    const release = () => void requestApp({ method: 'release', leaseId }).catch(() => {})
+    void requestApp({ method: 'initialize', leaseId })
       .then(value => {
-        if (active) setDescriptor(value as McpAppDescriptor)
+        if (active) setDescriptor({ ...(value as McpAppDescriptor), leaseId })
       })
       .catch(error => {
         if (active) setFailure(String(error.message ?? error))
       })
       .finally(() => {
-        // A closed host must not retain a lease acquired by a late initialization.
-        if (!active) void requestApp({ method: 'release' }).catch(() => {})
+        settled = true
+        if (!active) release()
       })
     return () => {
       active = false
+      if (settled) release()
     }
   }, [app, closed])
 
@@ -223,7 +229,7 @@ export function McpAppHost({
     const heartbeat = window.setInterval(() => {
       if (created)
         void Promise.all([
-          requestApp({ method: 'ping' }),
+          requestApp({ method: 'ping', leaseId: descriptor.leaseId }),
           invokeDesktopHost('mcpApps.renewDocument', { id: created.id }),
         ]).catch(error => {
           if (active) setFailure(String(error.message ?? error))
@@ -236,7 +242,6 @@ export function McpAppHost({
         void created.release().catch(error => {
           console.info('[Wework] MCP App document release failed', { name: error.name })
         })
-      void requestApp({ method: 'release' }).catch(() => {})
     }
   }, [descriptor, closed, t])
 
@@ -294,7 +299,7 @@ export function McpAppHost({
     teardownSent.current = false
     const request = <T,>(method: string, params?: Record<string, unknown>) => {
       if (!active) throw new Error('MCP App has been closed')
-      return requestApp({ method, params }) as Promise<T>
+      return requestApp({ method, params, leaseId: descriptor.leaseId }) as Promise<T>
     }
     app.oncalltool = params => request<McpAppResult>('tools/call', params)
     app.onreadresource = params => request<McpAppResource>('resources/read', params)
@@ -354,7 +359,7 @@ export function McpAppHost({
     app.onupdatemodelcontext = async params => {
       const update = latest().onContext
       if (!update) throw new Error('Model context updates are unavailable')
-      await update(params)
+      await update(params, descriptor.leaseId)
       return {}
     }
     app.onsizechange = ({ height }) => {
@@ -438,7 +443,7 @@ export function McpAppHost({
             : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
       }
     >
-      {(mode !== 'fullscreen' || closed || panelDismissed || failure) && (
+      {(mode !== 'fullscreen' || closed || panelDismissed || failure || !document) && (
         <div className="flex h-9 items-center gap-2 border-b border-border px-3">
           <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
           {failure && (

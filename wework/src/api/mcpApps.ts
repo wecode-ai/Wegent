@@ -18,6 +18,7 @@ export interface McpAppDescriptor extends McpAppDiscovery {
 export interface McpAppRequest {
   address: RuntimeTaskAddress
   callId: string
+  leaseId?: string
   method?: string
   params?: Record<string, unknown>
 }

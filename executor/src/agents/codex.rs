@@ -1275,7 +1275,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
-    mcp_app_leases: HashMap<(String, String), Instant>,
+    mcp_app_leases: HashMap<(String, String, Option<String>), Instant>,
     thread_generations: HashMap<String, u64>,
     thread_mcp_configurations: HashMap<String, Map<String, Value>>,
     idle_thread_generations: HashMap<String, u64>,

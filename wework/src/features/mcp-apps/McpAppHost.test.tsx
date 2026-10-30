@@ -133,7 +133,13 @@ describe('MCP App discovery', () => {
     expect(screen.getByTestId('mcp-app')).toHaveTextContent('app')
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
-    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(requestMcpApp).toHaveBeenCalledTimes(4)
+    expect(requestMcpApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'release',
+        leaseId: requestMcpApp.mock.calls[1][0].leaseId,
+      })
+    )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -193,6 +199,39 @@ describe('MCP App close completion', () => {
     expect(requestMcpApp).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'release' }))
     expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
     view.unmount()
+  })
+
+  it('releases only its own initialization after a replacement host opens the same call', async () => {
+    let finish!: (value: typeof descriptor) => void
+    let initializations = 0
+    const requestMcpApp = vi.fn((request: { method?: string; leaseId?: string }) => {
+      if (request.method === 'discover') return Promise.resolve(discovery)
+      if (request.method === 'initialize' && initializations++ === 0)
+        return new Promise(resolve => {
+          finish = resolve
+        })
+      return Promise.resolve(descriptor)
+    })
+    native.invoke.mockResolvedValue({ id: 'replacement', url: 'http://127.0.0.1/replacement' })
+    const api = { requestMcpApp }
+    const old = render(<McpAppHost block={running} address={address} api={api} />)
+    await act(async () => {})
+    old.unmount()
+    const replacement = render(<McpAppHost block={running} address={address} api={api} />)
+    await act(async () => {})
+    const acquired = requestMcpApp.mock.calls
+      .map(([request]) => request)
+      .filter(request => request.method === 'initialize')
+    expect(acquired).toHaveLength(2)
+    expect(acquired[0].leaseId).toBeTruthy()
+    expect(acquired[1].leaseId).not.toBe(acquired[0].leaseId)
+    await act(async () => finish(descriptor))
+    const released = requestMcpApp.mock.calls
+      .map(([request]) => request)
+      .filter(request => request.method === 'release')
+    expect(released).toEqual([expect.objectContaining({ leaseId: acquired[0].leaseId })])
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
+    replacement.unmount()
   })
 
   it('preserves widget state across equivalent transcript results and sends actual changes', async () => {

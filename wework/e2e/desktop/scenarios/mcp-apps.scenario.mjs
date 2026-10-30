@@ -1,5 +1,6 @@
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
+import { verifyMcpReplacementLease } from './mcp-app-lease-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -361,6 +362,9 @@ export function createDesktopScenario({
       await frameAction('click', '#refresh')
       await waitText('Counter 1')
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
+      frameUrl = await verifyMcpReplacementLease(control, callId)
+      await frameAction('click', '#refresh')
+      await waitText('Counter 2')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })

@@ -70,9 +70,18 @@ impl RuntimeWorkRpcHandler {
         let call_id = string_field(&payload, "callId")
             .ok_or_else(|| app_error("Missing source invocation"))?;
         let discovering = payload["method"].is_null() || payload["method"] == "discover";
+        let lease_id = payload
+            .get("leaseId")
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty() && id.len() <= 128 && id.is_ascii())
+                    .ok_or_else(|| app_error("Invalid MCP App lease identity"))
+            })
+            .transpose()?;
         if payload["method"] == "release" {
             self.codex_app_server
-                .set_mcp_app_lease(&thread_id, &call_id, false)
+                .set_mcp_app_lease(&thread_id, &call_id, lease_id, false)
                 .await;
             return Ok(json!({}));
         }
@@ -146,7 +155,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(descriptor());
         }
         self.codex_app_server
-            .set_mcp_app_lease(&thread_id, &call_id, true)
+            .set_mcp_app_lease(&thread_id, &call_id, lease_id, true)
             .await;
         let method = payload["method"].as_str().unwrap_or("initialize");
         let params = &payload["params"];
