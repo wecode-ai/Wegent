@@ -245,12 +245,7 @@ fn canonical_upstream_api_format(api_format: &str) -> String {
 pub(crate) fn upstream_from_model_config(
     model_config: &Value,
 ) -> Result<Option<LocalModelProxyUpstream>, String> {
-    let api_format = canonical_upstream_api_format(
-        &non_empty_string(model_config, "upstream_api_format")
-            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-            .or_else(|| non_empty_string(model_config, "api_format"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-    );
+    let api_format = model_upstream_api_format(model_config);
     let codex_request_mode = model_config
         .get("codex_request_mode")
         .map(|value| serde_json::from_value::<CodexRequestMode>(value.clone()))
@@ -296,11 +291,7 @@ pub(crate) fn upstream_from_model_config(
         model_id: non_empty_string(model_config, "model_id")
             .or_else(|| non_empty_string(model_config, "modelId")),
         routing_model_id: None,
-        max_output_tokens: model_config
-            .get("max_output_tokens")
-            .or_else(|| model_config.get("maxOutputTokens"))
-            .and_then(Value::as_u64)
-            .filter(|value| *value > 0),
+        max_output_tokens: model_max_output_tokens(model_config),
         model_context_window: model_config
             .get("model_context_window")
             .or_else(|| model_config.get("context_window"))
@@ -308,6 +299,35 @@ pub(crate) fn upstream_from_model_config(
             .and_then(Value::as_u64)
             .filter(|value| *value > 0),
     }))
+}
+
+fn model_upstream_api_format(model_config: &Value) -> String {
+    canonical_upstream_api_format(
+        &non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+    )
+}
+
+/// Use the same output reservation for proxy requests and Codex compaction.
+pub(crate) fn model_max_output_tokens(model_config: &Value) -> Option<u64> {
+    ["max_output_tokens", "maxOutputTokens"]
+        .iter()
+        .filter_map(|key| model_config.get(key))
+        .find_map(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str()?.trim().parse().ok())
+                .filter(|value| *value > 0)
+        })
+        .or_else(|| {
+            matches!(
+                model_upstream_api_format(model_config).as_str(),
+                "openai-chat-completions" | "anthropic-messages"
+            )
+            .then_some(DEFAULT_MAX_OUTPUT_TOKENS)
+        })
 }
 
 fn non_empty_string(value: &Value, key: &str) -> Option<String> {
@@ -2622,6 +2642,43 @@ mod tests {
         assert!(!fields
             .values()
             .any(|value| value.contains("secret-description")));
+    }
+
+    #[test]
+    fn output_budget_matches_protocol_defaults_and_validates_aliases() {
+        for protocol in [
+            "openai-chat-completions",
+            "chat/completions",
+            "anthropic-messages",
+            "messages",
+        ] {
+            let config =
+                json!({"base_url": "https://example.com", "upstream_api_format": protocol});
+            assert_eq!(model_max_output_tokens(&config), Some(96_000));
+            assert_eq!(
+                upstream_from_model_config(&config)
+                    .unwrap()
+                    .unwrap()
+                    .max_output_tokens,
+                Some(96_000)
+            );
+        }
+        assert_eq!(
+            model_max_output_tokens(&json!({"api_format": "responses"})),
+            None
+        );
+        assert_eq!(
+            model_max_output_tokens(
+                &json!({"max_output_tokens": false, "maxOutputTokens": "8000"})
+            ),
+            Some(8_000)
+        );
+        assert_eq!(
+            model_max_output_tokens(
+                &json!({"max_output_tokens": 16_000, "maxOutputTokens": 8_000})
+            ),
+            Some(16_000)
+        );
     }
 
     #[test]

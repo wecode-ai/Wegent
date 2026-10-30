@@ -121,3 +121,19 @@ test('updates the selected window client after a renderer reload', async t => {
   await register(control, 'main', 'main-2')
   assert.equal(control.activeControlClientId, 'main-2')
 })
+
+test('retires unknown and replaced clients instead of starting an empty poll loop', async t => {
+  const control = await startControl(t)
+  const unknown = await fetch(`${control.controlUrl}/commands?clientId=unknown&wait=1`)
+  assert.equal(unknown.status, 410)
+  await register(control, 'main', 'main-1')
+  const arrived = new Promise(resolve => control.controlServer.once('request', resolve))
+  const waiting = fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  await arrived
+  assert.equal(control.controlLongPolls.has('main-1'), true)
+  await register(control, 'main', 'main-2')
+  assert.equal((await waiting).status, 410)
+  const replaced = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  assert.equal(replaced.status, 410)
+  assert.equal(control.controlLongPolls.size, 0)
+})

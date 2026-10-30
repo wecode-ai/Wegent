@@ -4,15 +4,23 @@ import os
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from threading import Barrier
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
+    LoopItemComment,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
@@ -29,6 +37,97 @@ from app.services.workspaces.storage import (
     ensure_resource_grant,
     workspace_kind_payload,
 )
+from tests.utils.collaboration import authorize_project
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [None, 1])
+@pytest.mark.parametrize("change", ["revoke_grant", "restrict_issue"])
+async def test_transcript_continuation_observes_committed_permission_changes(
+    mysql_url: str, monkeypatch: pytest.MonkeyPatch, version: int | None, change: str
+) -> None:
+    """A separate writer must invalidate the next chunk under REPEATABLE READ."""
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services import runtime_work_service
+    from app.services.project_chat.session_access import resolve_project_transcript
+    from tests.services.test_project_comment_execution import create_scenario
+    from tests.services.test_runtime_transcript_transport import (
+        packed_transcript_chunks,
+    )
+
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+
+    @contextmanager
+    def read_session() -> Iterator[Session]:
+        with Session(engine, autoflush=False) as db:
+            yield db
+
+    monkeypatch.setattr(
+        runtime_work_service, "get_db_session", read_session, raising=False
+    )
+    try:
+        with Session(engine, expire_on_commit=False) as setup:
+            owner = User(user_name="transcript-owner", password_hash="unused")
+            member = User(user_name="transcript-reader", password_hash="unused")
+            setup.add_all([owner, member])
+            setup.commit()
+            scenario = create_scenario(setup, member, owner, monkeypatch)
+            scenario.issue.created_by_user_id = owner.id
+            setup.commit()
+            request = RuntimeTranscriptRequest(
+                deviceId="admin-cloud",
+                taskId="original-session",
+                projectSession={
+                    "projectId": str(scenario.project.id),
+                    "issueId": scenario.issue.id,
+                },
+                transcriptProtocolVersion=version,
+            )
+            caller_id, grant_id, issue_id = (
+                member.id,
+                scenario.grant.id,
+                scenario.issue.id,
+            )
+
+        _, packets = packed_transcript_chunks()
+        with Session(engine, expire_on_commit=False) as caller:
+            assert caller.connection().get_isolation_level() == "REPEATABLE READ"
+            resolve_project_transcript(caller, caller_id, request)
+            initial_transaction = caller.get_transaction()
+            assert initial_transaction is not None
+
+            async def revoke_after_first_packet(**_values: Any) -> dict[str, Any]:
+                if scenario.rpc.await_count > 1:
+                    return packets[scenario.rpc.await_count - 1]
+                with Session(engine) as writer:
+                    if change == "revoke_grant":
+                        writer.delete(writer.get(ResourceMember, grant_id))
+                    else:
+                        issue = writer.get(LoopItem, issue_id)
+                        issue.metadata_json = {
+                            **(issue.metadata_json or {}),
+                            "security_level": "related",
+                        }
+                    writer.commit()
+                with Session(engine) as observer:
+                    with pytest.raises(HTTPException) as denied:
+                        resolve_project_transcript(observer, caller_id, request)
+                    assert denied.value.status_code == 404
+                assert caller.get_transaction() is initial_transaction
+                resolve_project_transcript(caller, caller_id, request)
+                return packets[0]
+
+            scenario.rpc.side_effect = revoke_after_first_packet
+            with pytest.raises(HTTPException) as denied:
+                await runtime_work_service.get_runtime_transcript(
+                    db=caller, user_id=caller_id, address=request
+                )
+            assert denied.value.status_code == 404
+            assert scenario.rpc.await_count == 1
+            assert caller.get_transaction() is initial_transaction
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture
@@ -183,6 +282,81 @@ def test_independent_project_creation_does_not_lock_absent_parent_grants(
                 pool.submit(create_project, workspace_id) for workspace_id in (11, 12)
             ]
             assert len({future.result(timeout=20) for future in futures}) == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
+def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        owner = User(id=1, user_name="assignment-owner", password_hash="unused")
+        db.add(owner)
+        db.flush()
+        project_ids = []
+        for index in range(2):
+            project = CloudProject(
+                public_id=str(uuid.uuid4()),
+                project_key=f"ASSIGN{index}",
+                name=f"Assignment {index}",
+                created_by_user_id=1,
+                metadata_json={},
+            )
+            authorize_project(db, project)
+            project_ids.append(project.id)
+        db.commit()
+
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(_db, _cursor, statement, _params, context, _many) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
+        values = context.compiled_parameters[0] if context.compiled_parameters else {}
+        if values.get("resource_type") == "comment":
+            ready.wait()
+
+    def create_issue(project_id: str) -> str:
+        with Session(engine, autoflush=False) as db:
+            project = cloud_project_service.get(db, project_id, 1)
+            user = db.get(User, 1)
+            result = loop_item_provider_router.create(
+                db, project, user, LoopItemCreate(title="Concurrent first assignment")
+            )
+            return result.internal_item.id
+
+    # Independent Issues must both reach their first assignment insert without
+    # waiting for a range lock held by the other transaction.
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create_issue, project_id) for project_id in project_ids
+            ]
+            errors = [future.exception(timeout=30) for future in futures]
+            assert not any(errors), f"Concurrent first assignments failed: {errors!r}"
+            issue_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            comments = (
+                db.query(LoopItemComment)
+                .filter(LoopItemComment.loop_item_id.in_(issue_ids))
+                .all()
+            )
+            assert len(comments) == 2
+            assert all(
+                comment.metadata_json["target_id"] == "1" for comment in comments
+            )
+            rows = (
+                db.query(LoopItemActiveAssignment)
+                .filter(LoopItemActiveAssignment.parent_id.in_(issue_ids))
+                .all()
+            )
+            assert len(rows) == 4
+            assert {row.loop_item_id for row in rows if row.loop_item_id} == {
+                comment.id for comment in comments
+            }
     finally:
         sa.event.remove(engine, "before_cursor_execute", synchronize)
         engine.dispose()

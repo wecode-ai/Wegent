@@ -47,6 +47,17 @@ test('plans exact verified hops rather than using the highest version directly',
 test('a minimum source version alone does not grant upgrade permission', () => {
   assert.equal(planUpgrade(catalogFixture(), '0.9.5'), null)
 })
+
+test('Stable catalogs contain only Stable releases and floors; Beta accepts both', () => {
+  const catalog = catalogFixture()
+  catalog.edges = []
+  catalog.releases[0].version = '1.0.0-beta.1'
+  assert.throws(() => validateUpgradeCatalog(catalog), /Invalid Wework upgrade release/)
+  assert.equal(validateUpgradeCatalog({ ...catalog, channel: 'beta' }).releases.length, 3)
+  catalog.releases[0].version = '1.0.0'
+  catalog.releases[0].minSourceVersion = '0.9.0-beta.1'
+  assert.throws(() => validateUpgradeCatalog(catalog), /Invalid Wework upgrade release/)
+})
 test('a verified destination need not be the globally newest release', () => {
   const catalog = catalogFixture()
   catalog.edges = catalog.edges.slice(0, 1)

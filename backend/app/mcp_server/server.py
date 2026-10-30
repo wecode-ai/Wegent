@@ -29,6 +29,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from mcp.server.fastmcp import FastMCP
@@ -1028,12 +1029,16 @@ def get_mcp_system_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     Returns:
         MCP server configuration dictionary
     """
-    # Use API_PREFIX to ensure correct path (e.g., /api/mcp/system)
-    api_prefix = settings.API_PREFIX or ""
-    mcp_path = f"{api_prefix}{SYSTEM_MCP_MOUNT_PATH}"
+    backend = urlsplit(backend_url.strip())
+    base_path = backend.path.rstrip("/")
+    api_prefix = _normalize_prefix(settings.API_PREFIX or "")
+    # BACKEND_INTERNAL_URL may already include the configured API prefix.
+    if api_prefix and not base_path.endswith(api_prefix):
+        base_path = f"{base_path}{api_prefix}"
+    mcp_url = backend._replace(path=f"{base_path}{SYSTEM_MCP_MOUNT_PATH}").geturl()
     return _build_streamable_http_config(
         name="wegent-system",
-        url=f"{backend_url}{mcp_path}",
+        url=mcp_url,
         auth_token=auth_token,
         timeout=60,
     )
