@@ -374,9 +374,7 @@ export function upsertAssistantText(
   contentMode: "delta" | "snapshot" | undefined,
   offset: number | undefined,
 ): RuntimeConversationItem[] {
-  const index = items.findIndex(
-    (item) => item.type === "assistant_text" && item.id === itemId,
-  );
+  const index = items.findIndex((item) => item.id === itemId);
   if (index < 0) {
     return [
       ...items,
@@ -392,7 +390,18 @@ export function upsertAssistantText(
       },
     ];
   }
-  const current = items[index];
+  const existing = items[index];
+  const current =
+    existing.type === "block" && existing.block.type === "text"
+      ? {
+          id: existing.id,
+          position: existing.position,
+          type: "assistant_text" as const,
+          content: existing.block.content ?? "",
+          createdAt: new Date(existing.block.createdAt).toISOString(),
+          streamTextOffset: undefined,
+        }
+      : existing;
   if (current.type !== "assistant_text") return items;
   if (contentMode === "snapshot") {
     return replaceAt(items, index, {
@@ -439,7 +448,7 @@ export function applyCompletedAssistantContent(
   );
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: itemId ?? `runtime-final:${turnId ?? "pending"}`,
+      id: itemId ?? items[matchingProcessTextIndex].id,
       type: "assistant_text",
       content,
       createdAt: new Date().toISOString(),
@@ -513,9 +522,9 @@ export function upsertBlocks(
   if (!blocks?.length) return items;
   let next = items;
   for (const block of blocks) {
-    const exactIndex = next.findIndex(
-      (item) => item.type === "block" && item.id === block.id,
-    );
+    const exactIndex = next.findIndex((item) => item.id === block.id);
+    if (next[exactIndex]?.type === "assistant_text" && block.type === "text")
+      continue;
     const contextCompactionIndex =
       exactIndex < 0 && isContextCompactionBlock(block)
         ? next.findIndex(
@@ -599,7 +608,7 @@ export function upsertRuntimeBlock(
   if (existingIndex >= 0) {
     if (
       items[existingIndex]?.type === "assistant_text" &&
-      (turnStatus === "done" || block.type === "text")
+      turnStatus === "done"
     ) {
       return items;
     }

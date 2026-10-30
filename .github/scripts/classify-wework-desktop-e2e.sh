@@ -106,6 +106,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  startup-network-change
   renderer-crash-recovery
   native-window-chrome
   window-background-policy
@@ -244,7 +245,7 @@ core_shards=(
   project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle
   stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes
-  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
+  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,startup-network-change,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
@@ -595,6 +596,14 @@ classify_wework_path() {
     wework/electron/src/host/startup-splash* | \
       wework/electron/src/shell/startup-splash/*)
       select_target "core:native-window-startup"
+      return
+      ;;
+
+    # Keep startup interruption recovery covered when its host implementation changes.
+    wework/electron/src/host/renderer-startup-loader* | \
+      wework/electron/src/host/e2e-startup-network-fault* | \
+      wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs)
+      select_target "core:startup-network-change"
       return
       ;;
 

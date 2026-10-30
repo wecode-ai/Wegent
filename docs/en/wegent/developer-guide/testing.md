@@ -333,6 +333,15 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Desktop E2E element mounting and subsequent value polling each use the shared
+  step budget. Mounting must not consume the entire value loop before its first
+  read; retain actual-value diagnostics and exact-match assertions.
+- After routing control commands back from another window, explicitly restore
+  native window focus before checking virtualized content. Control routing does
+  not bring a native window to the foreground.
+- Desktop teardown observes both exit events and operating-system liveness and
+  always checks the entire process group. Timeouts retain the PID, exit status,
+  and Linux kernel process state without relaxing cleanup assertions.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns
