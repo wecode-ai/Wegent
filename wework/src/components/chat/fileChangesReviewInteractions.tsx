@@ -1,6 +1,7 @@
 import { Check, Loader2, MessageSquare, Minus, Undo2 } from 'lucide-react'
 import type { GitPatchAction } from '@/api/environment'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeComposingEvent } from '@/lib/ime'
 import type { DiffCommentSelection } from './fileChangesReviewUtils'
 
 export function ReviewPatchActionButton({
@@ -71,6 +72,19 @@ export function DiffCommentComposer({
         data-testid="file-changes-review-comment-input"
         value={comment}
         onChange={event => onCommentChange(event.target.value)}
+        onKeyDown={event => {
+          if (isImeComposingEvent(event)) return
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            onCancel()
+            return
+          }
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && comment.trim()) {
+            event.preventDefault()
+            onSubmit()
+          }
+        }}
         placeholder={t('file_changes.comment_placeholder')}
         className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none keyboard:focus:border-primary"
       />
