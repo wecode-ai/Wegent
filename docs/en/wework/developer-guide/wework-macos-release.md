@@ -26,6 +26,13 @@ temporary runtime directories and uploads desktop E2E diagnostics retained for
 seven days. Use those logs to establish the root cause instead of hiding a
 failure through reruns or weaker E2E assertions.
 
+If `ERR_NETWORK_CHANGED` interrupts an entry script, stylesheet, or main document
+from the same Core DSH origin during initial loading, Electron reloads that page
+once before confirming completion. A repeated interruption enters the existing
+startup error path. The `startup-network-change` checkpoint interrupts one real
+script request through Chromium's protocol error API and verifies that the
+recovered workbench can continue opening a task.
+
 ## macOS app icons
 
 macOS bundles include both the existing `wework/resources/icons/icon.icns` and

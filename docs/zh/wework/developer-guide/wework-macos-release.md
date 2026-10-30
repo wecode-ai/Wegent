@@ -22,6 +22,11 @@ Harness Runtime 的原生依赖按
 保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
 E2E 断言隐藏失败。
 
+主页面加载期间，同一 Core DSH 来源的入口脚本、样式或主文档若被
+`ERR_NETWORK_CHANGED` 中断，Electron 会重新加载该主页面一次，再确认加载
+完成；连续中断则进入原有启动错误处理。`startup-network-change` 检查点通过
+Chromium 协议错误接口中断一次真实脚本请求，验证恢复后工作台能够打开新任务输入界面。
+
 ## macOS 应用图标
 
 macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
