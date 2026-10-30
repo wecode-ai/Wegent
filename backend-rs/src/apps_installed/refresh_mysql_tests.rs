@@ -420,14 +420,8 @@ async fn a_disconnect_during_refresh_is_not_revived() {
                 }
             });
             assert_eq!(
-                refresh::write_json_if_grant(
-                    &mysql,
-                    stale.kinds_id,
-                    &renewed,
-                    "old-refresh",
-                    "",
-                )
-                .await
+                refresh::write_json_if_grant(&mysql, stale.kinds_id, &renewed, "old-refresh", "",)
+                    .await
                     .unwrap(),
                 0
             );

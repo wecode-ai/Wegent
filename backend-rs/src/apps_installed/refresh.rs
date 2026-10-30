@@ -681,9 +681,15 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
         let document = json!({"spec": {"status": "connected"}});
 
-        write_json_if_grant(&mysql, 42, &document, "refresh-ciphertext", "access-ciphertext")
-            .await
-            .unwrap();
+        write_json_if_grant(
+            &mysql,
+            42,
+            &document,
+            "refresh-ciphertext",
+            "access-ciphertext",
+        )
+        .await
+        .unwrap();
 
         let writes = mysql.writes();
         assert_eq!(writes.len(), 1);
