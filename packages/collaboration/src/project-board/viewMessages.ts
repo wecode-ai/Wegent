@@ -82,6 +82,8 @@ export const boardViewMessages = {
     'todo.board_view_create_unmatched': 'New Issue',
     'todo.board_view_unmatched_hint':
       'Issues matching no other lane in this view. At most one per view.',
+    'todo.board_drop_unmatched_filter':
+      'Removing stage tags would break this view’s filters. Move not allowed.',
     'todo.board_drop_unmatched': 'Remove this view’s stage tags; keep other tags and status',
     'todo.board_drop_unmatched_status':
       'The current status matches another lane. Change the status first.',

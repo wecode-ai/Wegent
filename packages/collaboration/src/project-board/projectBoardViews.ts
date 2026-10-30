@@ -128,11 +128,19 @@ export function unmatchedCreateDefaults(
     (filterTags.length > 0 && tags.length === 0)
   )
     return null
+  const draftRules = JSON.stringify({
+    status,
+    tags,
+    columns: view.columns
+      .filter(column => column.type !== 'unmatched')
+      .map(column => [column.type, column.value]),
+    filter: { tags: filterTags, match: view.filter?.match ?? 'all' },
+  })
   return {
     status,
     tags,
     parent,
-    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}`,
+    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`,
   }
 }
 

@@ -4,7 +4,9 @@
 
 import { describe, expect, it } from 'vitest'
 import type { CollaborationIssue } from '../types'
+import { createCollaborationTranslator } from '../i18n'
 import {
+  boardDropHint,
   savedBoardColumns,
   unmatchedCreateDefaults,
   type SavedBoardView,
@@ -153,7 +155,48 @@ const statuses = [
   { id: 'inbox', name: 'Inbox', color: 'gray' as const },
   { id: 'completed', name: 'Done', color: 'gray' as const },
 ]
+it('explains filter-blocked Backlog drops in both languages', () => {
+  const filtered = savedBoardColumns(
+    { ...view, filter: { tags: ['design'] } },
+    [],
+    []
+  )
+  for (const locale of ['en', 'zh-CN'] as const) {
+    const hint = boardDropHint(
+      { ...item, tags: ['design'] },
+      filtered[0],
+      filtered[1],
+      'status',
+      createCollaborationTranslator(locale)
+    )
+    expect(hint).toBe(
+      locale === 'en'
+        ? 'Removing stage tags would break this view’s filters. Move not allowed.'
+        : '移除阶段标签后将不满足当前视图筛选，无法移入'
+    )
+  }
+})
 describe('Backlog creation defaults', () => {
+  it('isolates saved drafts when a lane claims a saved tag or filters change', () => {
+    const original = unmatchedCreateDefaults(view, statuses)!
+    const changed = unmatchedCreateDefaults(
+      { ...view, columns: [...view.columns, { id: 'bugs', type: 'tag', value: 'bug' }] },
+      statuses
+    )!
+    expect(changed.tags).toEqual(original.tags)
+    expect(changed.draftScope).not.toBe(original.draftScope)
+    const filtered = { ...view, filter: { tags: ['bug'], match: 'any' as const } }
+    const before = unmatchedCreateDefaults(filtered, statuses)!
+    const after = unmatchedCreateDefaults(
+      { ...filtered, filter: { tags: ['bug', 'priority'], match: 'any' } },
+      statuses
+    )!
+    expect(after.tags).toEqual(before.tags)
+    expect(after.draftScope).not.toBe(before.draftScope)
+    expect(unmatchedCreateDefaults({ ...view, name: 'Planning' }, statuses)!.draftScope).toBe(
+      original.draftScope
+    )
+  })
   it('keeps the board parent and separates child and root drafts', () => {
     const parent: CollaborationIssue = {
       ...item,
