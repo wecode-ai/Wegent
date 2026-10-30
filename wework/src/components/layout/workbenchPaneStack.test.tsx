@@ -99,6 +99,7 @@ function Stack({
   retainedResourceKeys = [],
   workbenchVisible = true,
   followActivePane = false,
+  showWorkbenchBackground = false,
 }: {
   activePane: WorkbenchPaneIdentity
   activeTestId?: string | null
@@ -107,6 +108,7 @@ function Stack({
   retainedResourceKeys?: string[]
   workbenchVisible?: boolean
   followActivePane?: boolean
+  showWorkbenchBackground?: boolean
 }) {
   const availablePaneByKey = new Map(
     availablePanes.map(pane => [getWorkbenchPaneKey(pane), pane] as const)
@@ -127,6 +129,7 @@ function Stack({
       <SplitWorkbenchPaneStack
         activePane={activePane}
         layout={renderedLayout}
+        showWorkbenchBackground={showWorkbenchBackground}
         validRuntimeKeys={[...availablePaneByKey.keys()]}
         retainedResourceKeys={retainedResourceKeys}
         activeTestId={activeTestId}
@@ -175,6 +178,36 @@ describe('SplitWorkbenchPaneStack', () => {
     expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-visible', 'true')
     expect(screen.queryByTestId(/^workbench-pane-title-/)).not.toBeInTheDocument()
     expect(screen.getAllByTestId('active-pane')).toHaveLength(1)
+  })
+
+  it('keeps panes opaque when no workbench background is configured', () => {
+    render(<Stack activePane={paneOne} />)
+
+    const pane = screen.getByTestId('active-pane').closest('section')
+
+    expect(pane).toHaveClass('bg-background')
+    expect(pane).not.toHaveClass('bg-transparent')
+  })
+
+  it('makes panes transparent so the workbench background shows through', () => {
+    render(<Stack activePane={paneOne} showWorkbenchBackground />)
+
+    const pane = screen.getByTestId('active-pane').closest('section')
+
+    expect(pane).toHaveClass('bg-transparent')
+    expect(pane).not.toHaveClass('bg-background')
+  })
+
+  it('applies the background mode to every pane in a split layout', () => {
+    persistTwoPaneLayout()
+    render(<Stack activePane={paneOne} showWorkbenchBackground />)
+
+    const panes = screen
+      .getAllByTestId(/^workbench-pane-/)
+      .filter(element => element.tagName === 'SECTION')
+
+    expect(panes).toHaveLength(2)
+    panes.forEach(pane => expect(pane).toHaveClass('bg-transparent'))
   })
 
   it('keeps the focused pane active for task-scoped resources while its workspace tab is hidden', () => {

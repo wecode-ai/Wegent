@@ -85,3 +85,46 @@ def test_group_card_content_prepends_visible_mentions(monkeypatch) -> None:
     assert result["success"] is True
     assert captured["card_param_map"]["content"] == "@陈波\n\nBuild failed"
     assert captured["mention_user_ids"] == ["41068:陈波"]
+
+
+def test_group_card_keeps_unresolved_staff_ids_visible(monkeypatch) -> None:
+    """Unresolved staff IDs stay in the card so the gap is obvious."""
+    sender = DingTalkRobotSender("client-id", "client-secret")
+    captured = {}
+
+    async def fake_send_card(**kwargs):
+        captured.update(kwargs)
+        return {"success": True, "outTrackId": "track-1"}
+
+    async def fake_mark_finished(**kwargs):
+        return None
+
+    monkeypatch.setattr(sender, "send_card", fake_send_card)
+    monkeypatch.setattr(sender, "_mark_card_finished", fake_mark_finished)
+
+    asyncio.run(
+        sender.send_ai_card_notification(
+            user_id="group",
+            title="Daily report",
+            content="Build failed",
+            card_template_id="template-1",
+            open_space_id="dtv1.card//IM_GROUP.group-1",
+            mention_user_ids=["41068:陈波", "220750"],
+        )
+    )
+
+    assert captured["card_param_map"]["content"] == "@陈波 @220750\n\nBuild failed"
+    assert captured["mention_user_ids"] == ["41068:陈波", "220750"]
+
+
+def test_sender_uses_configured_api_base_url() -> None:
+    """Private deployments can point the sender at another DingTalk endpoint."""
+    sender = DingTalkRobotSender(
+        "client-id",
+        "client-secret",
+        api_base_url="http://127.0.0.1:18080/",
+    )
+
+    assert sender.api_base_url == "http://127.0.0.1:18080"
+    default_sender = DingTalkRobotSender("client-id", "client-secret")
+    assert default_sender.api_base_url == DingTalkRobotSender.BASE_URL

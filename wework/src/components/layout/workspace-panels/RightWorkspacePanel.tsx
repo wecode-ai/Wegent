@@ -920,6 +920,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
             onSelectChat={onSelectChat}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'review' ? (
           <FileChangesReviewPanel
@@ -939,7 +940,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             onAddCodeComment={onAddCodeComment}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
-          <PlanWorkspacePanel content={planContent ?? ''} />
+          <PlanWorkspacePanel
+            content={planContent ?? ''}
+            showWorkbenchBackground={showWorkbenchBackground}
+          />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'subagents' ? (
           subagentPanel
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
@@ -1007,6 +1011,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               initialAddress={getChatInitialAddress?.(tab)}
               onAddressChange={address => onChatAddressChange?.(tab, address)}
               expanded={expanded && activeView === tab}
+              showWorkbenchBackground={showWorkbenchBackground}
               onRestoreConversation={onRestoreConversation}
               testId={
                 activeView === tab
@@ -1373,13 +1378,22 @@ function RightWorkspaceTabIcon({
   )
 }
 
-function PlanWorkspacePanel({ content }: { content: string }) {
+function PlanWorkspacePanel({
+  content,
+  showWorkbenchBackground,
+}: {
+  content: string
+  showWorkbenchBackground: boolean
+}) {
   const { t } = useTranslation('common')
 
   return (
     <section
       data-testid="workspace-plan-panel"
-      className="min-h-0 flex-1 overflow-y-auto bg-background px-8 py-6"
+      className={cn(
+        'min-h-0 flex-1 overflow-y-auto px-8 py-6',
+        showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
+      )}
     >
       <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
         {content.trim() ? (
@@ -1405,6 +1419,7 @@ function RightWorkspaceLauncher({
   onSelectBrowser,
   onSelectFiles,
   onSelectChat,
+  showWorkbenchBackground,
 }: {
   canOpenReview: boolean
   canBrowseFiles: boolean
@@ -1416,6 +1431,7 @@ function RightWorkspaceLauncher({
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onSelectChat: () => void
+  showWorkbenchBackground: boolean
 }) {
   const { t } = useTranslation('common')
   const platform = getPlatform()
@@ -1435,6 +1451,7 @@ function RightWorkspaceLauncher({
               icon={PanelRight}
               label={titleOfWeworkWorkspaceSidebarTab(descriptor, t)}
               onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
+              showWorkbenchBackground={showWorkbenchBackground}
             />
           ))}
         {workspaceActions.map(action => (
@@ -1446,6 +1463,7 @@ function RightWorkspaceLauncher({
             shortcut={action.shortcut}
             onClick={() => void action.onSelect()}
             disabled={action.disabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ))}
         <RightWorkspaceLauncherItem
@@ -1455,12 +1473,14 @@ function RightWorkspaceLauncher({
           shortcut={getRightWorkspaceShortcuts(platform).review}
           onClick={onSelectReview}
           disabled={!canOpenReview}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-terminal-option"
           icon={SquareTerminal}
           label={t('workbench.terminal', '终端')}
           onClick={onSelectTerminal}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-browser-option"
@@ -1468,6 +1488,7 @@ function RightWorkspaceLauncher({
           label={t('workbench.browser')}
           shortcut={getRightWorkspaceShortcuts(platform).browser}
           onClick={onSelectBrowser}
+          showWorkbenchBackground={showWorkbenchBackground}
         />
         {allowTemporaryChat && (
           <RightWorkspaceLauncherItem
@@ -1476,6 +1497,7 @@ function RightWorkspaceLauncher({
             label={t('workbench.workspace_tab_chat', '临时聊天')}
             shortcut={getRightWorkspaceShortcuts(platform).chat}
             onClick={onSelectChat}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )}
         {canBrowseFiles && (
@@ -1485,6 +1507,7 @@ function RightWorkspaceLauncher({
             label={t('workbench.workspace_tab_files', '文件')}
             shortcut={getRightWorkspaceShortcuts(platform).files}
             onClick={onSelectFiles}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )}
       </div>
@@ -1498,6 +1521,7 @@ function RightWorkspaceLauncherItem({
   shortcut,
   disabled,
   onClick,
+  showWorkbenchBackground,
   'data-testid': testId,
 }: {
   icon: ComponentType<{ className?: string }>
@@ -1505,6 +1529,7 @@ function RightWorkspaceLauncherItem({
   shortcut?: string
   disabled?: boolean
   onClick: () => void
+  showWorkbenchBackground: boolean
   'data-testid': string
 }) {
   return (
@@ -1513,7 +1538,12 @@ function RightWorkspaceLauncherItem({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className={cn(
+        'flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+        showWorkbenchBackground
+          ? 'border border-border/45 bg-surface/20 hover:bg-background/30'
+          : 'bg-surface hover:bg-muted'
+      )}
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>

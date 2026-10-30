@@ -14,6 +14,7 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
+import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -117,7 +118,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
   ...Object.fromEntries(
-    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/app-upgrade.scenario.mjs'])
+    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
@@ -147,7 +148,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
-  'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
+  'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
@@ -383,6 +384,7 @@ const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
 const openboxPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
+const allocateXvfbDisplay = createXvfbDisplayAllocator()
 
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -391,6 +393,7 @@ function formatDuration(durationMs) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
+/** Run one checkpoint with an isolated display and retain fully drained failure evidence. */
 function runTaskFlow(args, env, label) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()
@@ -404,7 +407,9 @@ function runTaskFlow(args, env, label) {
       ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
-      env,
+      env: isolateDisplay
+        ? { ...env, WEWORK_E2E_XVFB_SERVER_NUM: String(allocateXvfbDisplay()) }
+        : env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -431,7 +436,8 @@ function runTaskFlow(args, env, label) {
       clearInterval(heartbeat)
       reject(error)
     })
-    child.once('exit', (code, signal) => {
+    // Drain startup stderr before capturing failure details; exit can precede it.
+    child.once('close', (code, signal) => {
       clearInterval(heartbeat)
       rejectRecordedCheckpointFailure({
         code: code ?? 1,
@@ -470,6 +476,13 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
     nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+    if (
+      ['app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
+      env.WEWORK_E2E_UPGRADE_THIN_PAIR
+    ) {
+      nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR
+      nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN
+    }
   }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
@@ -579,6 +592,16 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
+    }
+  }
+  if (upgradeRequested && nextEnvironment.WEWORK_E2E_UPGRADE_PAIR) {
+    const pair = JSON.parse(await readFile(nextEnvironment.WEWORK_E2E_UPGRADE_PAIR, 'utf8'))
+    if (pair.kind === 'regression' && pair.thinPairFile && pair.thinSource?.executable) {
+      nextEnvironment = {
+        ...nextEnvironment,
+        WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
+        WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource.executable,
+      }
     }
   }
   const [build, codexBinary] = await Promise.all([

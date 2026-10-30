@@ -121,7 +121,10 @@ class ExecutionDispatcher:
             await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
-            target = self.router.route(request, device_id)
+            target = self.router.route(
+                request,
+                await self._resolve_device_route_id(request, device_id),
+            )
             logger.info(
                 f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
@@ -397,6 +400,32 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
             )
 
+    async def _resolve_device_route_id(
+        self, request: ExecutionRequest, device_id: Optional[str]
+    ) -> Optional[str]:
+        """Resolve a logical App device to its registered Socket.IO route."""
+        if (
+            not device_id
+            or not request.user
+            or request.user.get("id") is None
+            or self._has_fork_workspace_archive(request)
+        ):
+            return device_id
+
+        from app.services.device.identity import device_connection_route_id
+        from app.services.device_service import device_service
+
+        def resolve() -> Optional[str]:
+            with SessionLocal() as db:
+                device = device_service.get_device_by_device_id(
+                    db,
+                    user_id=request.user["id"],
+                    device_id=device_id,
+                )
+                return device_connection_route_id(device) if device else device_id
+
+        return await asyncio.to_thread(resolve)
+
     async def _set_subtask_executor(
         self,
         subtask_id: int,
@@ -614,11 +643,15 @@ class ExecutionDispatcher:
         """
 
         async def _emit() -> None:
-            await sio.emit(
-                target.event,
-                payload,
-                room=target.room,
-                namespace=target.namespace,
+            from app.services.execution.device_socketio import (
+                publish_device_execution,
+            )
+
+            await publish_device_execution(
+                event=target.event,
+                namespace=target.namespace or "/",
+                room=target.room or "",
+                payload=payload,
             )
 
         await run_in_main_loop(_emit)
