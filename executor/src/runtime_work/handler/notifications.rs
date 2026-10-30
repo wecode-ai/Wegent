@@ -28,8 +28,8 @@ fn user_input_request_key(id: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn register_scoped_child_route(&self, parent: &str, child: &str) {
-        if parent == child {
+    pub(super) fn register_scoped_child_route(&self, parent_turn: &ActiveCodexTurn, child: &str) {
+        if parent_turn.thread_id == child {
             return;
         }
         let mut routing = self
@@ -39,11 +39,12 @@ impl RuntimeWorkRpcHandler {
         if routing.routes.contains_key(child) {
             return;
         }
-        let Some(parent) = routing.routes.get(parent) else {
+        let Some(parent) = routing.routes.get(&parent_turn.thread_id) else {
             return;
         };
         let local_task_id = parent.local_task_id.clone();
-        let request = parent.request.clone();
+        let mut request = parent.request.clone();
+        request.subtask_id = parent_turn.turn_id.clone();
         let event_mapper = parent.event_mapper.clone();
         let active = parent.active;
         let generation = next_thread_event_route_generation(&mut routing);
@@ -758,11 +759,20 @@ impl RuntimeWorkRpcHandler {
         for child_thread_id in &child_thread_ids {
             if !routing.routes.contains_key(child_thread_id) {
                 let generation = next_thread_event_route_generation(&mut routing);
+                let request = if route_nested {
+                    route_request.clone()
+                } else {
+                    self.request_for_codex_event(
+                        &local_task_id,
+                        &route_request,
+                        notification_turn_id.as_deref(),
+                    )
+                };
                 routing.routes.insert(
                     child_thread_id.clone(),
                     RuntimeThreadEventRoute {
                         local_task_id: local_task_id.clone(),
-                        request: route_request.clone(),
+                        request,
                         event_mapper: event_mapper.clone(),
                         active: route_active,
                         nested: true,

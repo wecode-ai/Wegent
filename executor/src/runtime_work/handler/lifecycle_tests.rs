@@ -63,6 +63,52 @@ fn native_completion_publishes_full_result_once_without_an_rpc_callback() {
 }
 
 #[test]
+fn native_child_output_uses_its_parent_turn_before_rpc_binding() {
+    let (mut handler, root, _) = setup("native-child-before-rpc-binding");
+    let (sender, mut events) = broadcast::channel(32);
+    handler.event_tx = Some(sender);
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(json!({"method": "item/completed", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "item": {
+            "id": "spawn", "type": "collabAgentToolCall", "tool": "spawnAgent",
+            "receiverThreadIds": ["child"], "status": "completed",
+            "agentsStates": {"child": {"status": "running"}}
+        }
+    }}));
+    handler.route_codex_notification(json!({"method": "item/started", "params": {
+        "threadId": "child", "turnId": "child-turn", "item": {
+            "id": "child-tool", "type": "commandExecution", "command": "echo child",
+            "status": "inProgress"
+        }
+    }}));
+    let mut child_blocks = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if event["payload"]["data"]["block"]["id"] == "child-tool" {
+            child_blocks.push(event);
+        }
+    }
+    assert_eq!(child_blocks.len(), 1);
+    assert_eq!(child_blocks[0]["payload"]["subtaskId"], "turn-1");
+    assert_eq!(
+        child_blocks[0]["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-child"
+    );
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    handler.route_codex_notification(notification("turn/started", "turn-2"));
+    while events.try_recv().is_ok() {}
+    handler.route_codex_notification(json!({"method": "item/completed", "params": {
+        "threadId": "child", "turnId": "child-turn", "item": {
+            "id": "child-tool", "type": "commandExecution", "command": "echo child",
+            "status": "completed", "aggregatedOutput": "child output"
+        }
+    }}));
+    let completion = events.try_recv().unwrap();
+    assert_eq!(completion["event"], "response.block.updated");
+    assert_eq!(completion["payload"]["subtaskId"], "turn-1");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rpc_success_cannot_consume_a_native_turn_before_its_answer_settlement() {
     let (handler, root, _) = setup("native-answer-after-rpc");
     handler.route_codex_notification(notification("turn/started", "turn-1"));

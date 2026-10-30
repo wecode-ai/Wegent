@@ -990,7 +990,7 @@ impl RuntimeWorkRpcHandler {
         if let (Some(turn), Some(thread)) =
             (active_turn.as_ref(), codex_notification_thread_id(&message))
         {
-            self.register_scoped_child_route(&turn.thread_id, &thread);
+            self.register_scoped_child_route(turn, &thread);
         }
         // Request resources do not depend on the independently owned native publication.
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
