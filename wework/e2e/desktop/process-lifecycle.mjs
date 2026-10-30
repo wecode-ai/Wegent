@@ -27,28 +27,52 @@ export function processIsAliveFromLinuxStat(stat) {
   return !DEAD_LINUX_PROCESS_STATES.has(state)
 }
 
-function withTimeout(promise, timeoutMs, message) {
+async function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+  let wake
   let timeout
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-  })
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout))
+  const onExit = () => wake?.()
+  child.once('exit', onExit)
+  const startedAt = Date.now()
+  try {
+    while (child.exitCode === null && child.signalCode === null) {
+      if (Number.isInteger(child.pid) && !processIsAlive(child.pid)) return
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(
+          `Timed out waiting for process ${child.pid ?? 'unknown'} to exit: ${JSON.stringify(processExitDiagnostics(child))}`
+        )
+      }
+      await new Promise(resolvePromise => {
+        wake = resolvePromise
+        timeout = setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS)
+      })
+      clearTimeout(timeout)
+    }
+  } finally {
+    clearTimeout(timeout)
+    child.off('exit', onExit)
+  }
 }
 
-function waitForProcessExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return withTimeout(
-    new Promise(resolvePromise => {
-      const onExit = () => resolvePromise()
-      child.once('exit', onExit)
-      if (child.exitCode !== null || child.signalCode !== null) {
-        child.off('exit', onExit)
-        resolvePromise()
-      }
-    }),
-    timeoutMs,
-    `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
-  )
+function processExitDiagnostics(child) {
+  const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
+  if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
+  try {
+    const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trim()
+      .split(/\s+/)
+    diagnostics.linux = {
+      state: fields[0],
+      parentProcessId: fields[1],
+      processGroupId: fields[2],
+      sessionId: fields[3],
+    }
+  } catch (error) {
+    diagnostics.linux = { readError: error.code ?? String(error) }
+  }
+  return diagnostics
 }
 
 export function processGroupHasLiveMembersFromLinuxStats(stats, processGroupId) {
@@ -232,7 +256,6 @@ export async function stopProcessGroup(child) {
     } catch {
       signalProcessGroup(processGroupId, 'SIGKILL')
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-      return
     }
   }
   if (await waitForProcessGroupExit(processGroupId, PROCESS_GROUP_GRACE_PERIOD_MS)) return
