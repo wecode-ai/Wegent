@@ -329,6 +329,16 @@ impl RecordingRedis {
             .count()
     }
 
+    fn cancel_get_after(&self, marker: &str) -> bool {
+        let calls = self.calls();
+        let Some(index) = calls.iter().position(|call| call == marker) else {
+            return false;
+        };
+        calls[index + 1..]
+            .iter()
+            .any(|call| call.starts_with("GET chat:cancel:"))
+    }
+
     fn mark_cancelled(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -818,8 +828,8 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the completed result survives the in-drain cancellation"
     );
     assert!(
-        redis.count("GET chat:cancel:") >= 2,
-        "the same poll keeps issuing GETs through the drain: {:?}",
+        redis.cancel_get_after("GET chat:task_streaming:424242"),
+        "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
     let subtask_reads = mysql
