@@ -647,7 +647,7 @@ class ExecutionDispatcher:
                 publish_device_execution,
             )
 
-            publish_device_execution(
+            await publish_device_execution(
                 event=target.event,
                 namespace=target.namespace or "/",
                 room=target.room or "",

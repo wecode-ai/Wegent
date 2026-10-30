@@ -60,7 +60,7 @@ def _normalize_mention_ids(raw: str) -> list[str]:
             continue
         head, _separator, _display_name = user_id.replace("：", ":").partition(":")
         head = head.strip(_MENTION_ID_EDGE_PUNCTUATION)
-        if not head or not head.isdigit():
+        if not head or not (head.isascii() and head.isdigit()):
             continue
         result.append(head)
     return result
@@ -120,11 +120,12 @@ def parse_notification_directives(message: str | None) -> NotificationDirectives
     lines = message.rstrip().splitlines()
     silent = False
     mention_ids: list[str] = []
+    matched_any = False
 
     while lines:
         line = lines[-1]
         if not line.strip():
-            if silent or mention_ids:
+            if matched_any:
                 lines.pop()
                 continue
             break
@@ -137,6 +138,7 @@ def parse_notification_directives(message: str | None) -> NotificationDirectives
 
         silent = silent or line_silent
         mention_ids.extend(line_mentions)
+        matched_any = True
         if remainder:
             lines[-1] = remainder
             break

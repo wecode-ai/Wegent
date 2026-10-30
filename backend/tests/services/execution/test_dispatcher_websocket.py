@@ -4,6 +4,9 @@
 
 """Tests for WebSocket dispatch loop handling."""
 
+import asyncio
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -62,7 +65,8 @@ async def test_dispatch_allows_app_device_task_execution() -> None:
     dispatch.assert_awaited_once()
 
 
-def test_worker_device_dispatch_uses_cross_process_message(
+@pytest.mark.asyncio
+async def test_worker_device_dispatch_uses_cross_process_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A worker must not consume its own event in an empty local room."""
@@ -75,9 +79,15 @@ def test_worker_device_dispatch_uses_cross_process_message(
         def close(self):
             return None
 
-    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: FakeRedis())
+    options = {}
 
-    publish_device_execution(
+    def create_client(*_args, **kwargs):
+        options.update(kwargs)
+        return FakeRedis()
+
+    monkeypatch.setattr("redis.from_url", create_client)
+
+    await publish_device_execution(
         event="task:execute",
         namespace="/local-executor",
         room="device:9:device-1",
@@ -93,6 +103,56 @@ def test_worker_device_dispatch_uses_cross_process_message(
     assert message["room"] == "device:9:device-1"
     assert message["data"] == [{"task_id": 1}]
     assert message["host_id"]
+    assert options["socket_timeout"] == 1.0
+    assert options["socket_connect_timeout"] == 1.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["slow", "error", "timeout"])
+async def test_device_publish_keeps_main_loop_responsive(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingRedis:
+        def publish(self, _channel, _message):
+            started.set()
+            if failure == "error":
+                raise RuntimeError("Redis unavailable")
+            if failure == "slow":
+                time.sleep(0.15)
+                return
+            release.wait(2)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: BlockingRedis())
+    monkeypatch.setattr(
+        "app.services.execution.device_socketio._REDIS_PUBLISH_TIMEOUT_SECONDS",
+        0.05,
+    )
+    publishing = asyncio.create_task(
+        publish_device_execution(
+            event="task:execute",
+            namespace="/",
+            room="room",
+            payload={},
+        )
+    )
+    await asyncio.to_thread(started.wait, 1)
+    heartbeat_started = time.monotonic()
+    await asyncio.sleep(0.01)
+    heartbeat_delay = time.monotonic() - heartbeat_started
+
+    assert heartbeat_delay < 0.1
+    if failure == "slow":
+        await publishing
+    else:
+        with pytest.raises((RuntimeError, TimeoutError)):
+            await publishing
+    release.set()
 
 
 async def test_app_device_routes_to_record_scoped_socket_room(

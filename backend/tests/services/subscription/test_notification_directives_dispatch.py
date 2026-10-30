@@ -90,7 +90,7 @@ async def test_dispatch_passes_silent_control_without_leaking_marker(monkeypatch
         subscription_id=1,
         execution_id=2,
         subscription_display_name="Daily alert",
-        result_summary="Nothing changed today.\n\n[静默]",
+        result_summary="Nothing changed today.\n[静默]\n\n【@列表：】",
         status="COMPLETED",
     )
 

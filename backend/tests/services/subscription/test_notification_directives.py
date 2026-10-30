@@ -148,6 +148,26 @@ def test_parse_notification_directives_drops_empty_or_non_staff_mentions(
 
 
 @pytest.mark.parametrize(
+    ("message", "expected_silent", "expected_mentions"),
+    [
+        ("Report\n【静默】\n\n【@列表：】", True, ()),
+        ("Report\n【静默】\n\n【@列表：张三】", True, ()),
+        ("Report\n【@列表:900101】\n\n【@列表：】", False, ("900101",)),
+        ("Report\n\n【静默】\n\n【@列表:900101】", True, ("900101",)),
+    ],
+)
+def test_parse_notification_directives_scans_across_consumed_markers(
+    message: str, expected_silent: bool, expected_mentions: tuple[str, ...]
+) -> None:
+    directives = parse_notification_directives(message)
+
+    assert directives.content == "Report"
+    assert directives.silent is expected_silent
+    assert directives.mention_staff_ids == expected_mentions
+    assert strip_notification_directives(directives.content) == "Report"
+
+
+@pytest.mark.parametrize(
     "message",
     [
         "Nothing changed today.\n静默",

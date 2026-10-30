@@ -55,6 +55,40 @@ fn mention_ids(raw: &str) -> Vec<String> {
         .collect()
 }
 
+pub(crate) const GROUP_NOTIFICATION_CONTROL_INSTRUCTION: &str = concat!(
+    "群通知控制（仅影响已绑定的群聊，不影响私聊）：",
+    "控制说明必须放在【】中，并作为回答最后一行单独输出。",
+    "如果本次不需要发送群聊通知，请输出“【静默】”；",
+    "如果需要在群聊中 @指定用户，请输出",
+    "“【@列表:1234,1235】”或“【mention:1234,1235】”，",
+    "将 staffId 替换为实际工号。",
+    "这些控制标记只用于通知路由，不要写进正文或其他位置。"
+);
+
+pub(crate) fn append_group_notification_instruction(
+    prompt: &str,
+    subscription: &serde_json::Value,
+) -> String {
+    let has_bound_group = subscription["_internal"]["notification_channel_bindings"]
+        .as_object()
+        .is_some_and(|bindings| {
+            bindings.values().any(|config| {
+                config["bind_group"] == true
+                    && config["group_conversation_id"]
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty())
+            })
+        });
+    if has_bound_group {
+        format!(
+            "{}\n\n---\n\n{GROUP_NOTIFICATION_CONTROL_INSTRUCTION}",
+            prompt.trim_end()
+        )
+    } else {
+        prompt.to_string()
+    }
+}
+
 pub(crate) fn parse(message: &str) -> Directives {
     let mut content = message.trim_end().to_string();
     let mut result = Directives::default();
@@ -127,6 +161,58 @@ mod tests {
             let parsed = parse(message);
             assert_eq!(parsed.content, "Report");
             assert!(parsed.mentions.is_empty());
+        }
+    }
+
+    #[test]
+    fn scans_across_empty_and_invalid_controls() {
+        for (message, silent, mentions) in [
+            ("Report\n【静默】\n\n【@列表：】", true, vec![]),
+            ("Report\n【静默】\n\n【@列表：张三】", true, vec![]),
+            (
+                "Report\n【@列表:900101】\n\n【@列表：】",
+                false,
+                vec!["900101"],
+            ),
+            (
+                "Report\n\n【静默】\n\n【@列表:900101】",
+                true,
+                vec!["900101"],
+            ),
+        ] {
+            let parsed = parse(message);
+            assert_eq!(parsed.content, "Report");
+            assert_eq!(parsed.silent, silent);
+            assert_eq!(parsed.mentions, mentions);
+            assert_eq!(strip(Some(parsed.content)).as_deref(), Some("Report"));
+        }
+    }
+
+    #[test]
+    fn appends_instruction_only_for_a_bound_group() {
+        let bound = serde_json::json!({
+            "_internal": {"notification_channel_bindings": {
+                "9": {"bind_group": true, "group_conversation_id": "conversation-1"}
+            }}
+        });
+        let prompt = append_group_notification_instruction("Check the service.\n", &bound);
+        assert!(prompt.starts_with("Check the service.\n\n---\n\n"));
+        assert!(prompt.contains("【静默】"));
+        assert!(prompt.contains("【@列表:1234,1235】"));
+
+        for subscription in [
+            serde_json::json!({}),
+            serde_json::json!({"_internal": {"notification_channel_bindings": {
+                "9": {"bind_group": false, "group_conversation_id": "conversation-1"}
+            }}}),
+            serde_json::json!({"_internal": {"notification_channel_bindings": {
+                "9": {"bind_group": true, "group_conversation_id": ""}
+            }}}),
+        ] {
+            assert_eq!(
+                append_group_notification_instruction("Check the service.", &subscription),
+                "Check the service."
+            );
         }
     }
 }
