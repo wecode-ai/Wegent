@@ -2011,6 +2011,13 @@ fn emit_request_user_input_block(
         payload
             .entry("interactionScope".to_owned())
             .or_insert_with(|| json!(request.subtask_id));
+        // An async question is answered by the next user message, not by the
+        // tool's accepted acknowledgement. Until then it is still pending.
+        if payload.get("delivery").and_then(Value::as_str) == Some("async") {
+            payload
+                .entry("interactionStatus".to_owned())
+                .or_insert_with(|| json!("pending"));
+        }
     }
     emit_response_event(
         event_tx,
@@ -5391,6 +5398,7 @@ mod tests {
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["delivery"], "async");
         assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert_eq!(block["render_payload"]["interactionStatus"], "pending");
         assert_eq!(
             block["render_payload"]["questions"][0]["question"],
             "Which state jitters?"

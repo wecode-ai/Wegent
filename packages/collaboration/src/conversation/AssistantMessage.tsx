@@ -204,7 +204,6 @@ export function AssistantMessage({
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
-    !hasPendingAsyncQuestion &&
     ((isProcessingOnlyBeforeGuidance && !isActiveTurn) ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
