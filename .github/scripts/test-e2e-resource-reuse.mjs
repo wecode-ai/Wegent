@@ -94,6 +94,60 @@ test("native Android coverage reuses the platform host and retains the SDK befor
   assert(!native.run.includes("docker run"));
 });
 
+for (const timeoutStatus of [0, 124]) {
+  test(`native Android ADB connection has a deadline and fails before boot polling (${timeoutStatus})`, () => {
+    const root = mkdtempSync(join(tmpdir(), "android-adb-deadline-"));
+    try {
+      const calls = join(root, "calls.json");
+      writeFileSync(
+        join(root, "timeout"),
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.TIMEOUT_CALLS, JSON.stringify(process.argv.slice(2)))\nprocess.exit(${timeoutStatus})\n`,
+      );
+      chmodSync(join(root, "timeout"), 0o755);
+      const source = readFileSync(
+        resolve(".github/scripts/run-wework-mobile-android-e2e.sh"),
+        "utf8",
+      );
+      const wait = source
+        .split("emulator_pid=$!\n")[1]
+        .split("booted=false\n")[0];
+      const result = spawnSync(
+        "bash",
+        ["-eu", "-c", `serial=emulator-5556\n${wait}\nprintf 'connected'`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${root}:${process.env.PATH}`,
+            TIMEOUT_CALLS: calls,
+          },
+        },
+      );
+      assert.deepEqual(JSON.parse(readFileSync(calls, "utf8")), [
+        "--kill-after=5s",
+        "180s",
+        "adb",
+        "-s",
+        "emulator-5556",
+        "wait-for-device",
+      ]);
+      if (timeoutStatus === 0) {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, "connected");
+      } else {
+        assert.equal(result.status, 1);
+        assert.equal(result.stdout, "");
+        assert.match(
+          result.stderr,
+          /did not connect to ADB within 180 seconds/,
+        );
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("platform image reuse checks the registry before starting a builder", () => {
   const result = spawnSync(
     "ruby",

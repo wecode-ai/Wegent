@@ -45,7 +45,10 @@ printf 'no\n' | avdmanager create avd --force --name wework-mobile-e2e --package
   -memory 1536 -cores 2 \
   > "$artifact_dir/emulator.log" 2>&1 &
 emulator_pid=$!
-adb -s "$serial" wait-for-device
+if ! timeout --kill-after=5s 180s adb -s "$serial" wait-for-device; then
+  printf 'Android emulator did not connect to ADB within 180 seconds\n' >&2
+  exit 1
+fi
 booted=false
 for ((attempt = 0; attempt < 180; attempt++)); do
   if [[ "$(adb -s "$serial" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]; then
