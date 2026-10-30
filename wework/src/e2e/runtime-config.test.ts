@@ -1,5 +1,9 @@
+import { createElement } from 'react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { seedDesktopE2ERuntime } from './automation'
+import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { runDesktopControlClient, seedDesktopE2ERuntime } from './automation'
 import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
@@ -16,12 +20,19 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  cleanup()
   window.sessionStorage.clear()
   window.localStorage.removeItem('wework.cloudConnection')
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
   await loadDesktopE2ERuntimeConfig()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
+
+function CloudIdentity() {
+  const cloud = useCloudConnection()
+  return createElement('span', { 'data-testid': 'cloud-user-id' }, cloud.user?.id)
+}
 
 describe('desktop E2E account session reuse', () => {
   test('retains the selected account across renderer configuration reloads only', async () => {
@@ -82,5 +93,71 @@ describe('desktop E2E account session reuse', () => {
 
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
     expect(window.localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
+  test('restores each selected identity from native preferences after renderer reload', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    let preferences = {
+      cloudConnection: {
+        backendUrl: 'https://cloud.example',
+        apiBaseUrl: 'https://cloud.example/api',
+        socketBaseUrl: 'https://cloud.example',
+        socketPath: '/socket.io',
+        user: { id: 1, user_name: 'owner' },
+        connectedAt: new Date().toISOString(),
+      },
+    }
+    for (const [token, user] of [
+      ['recipient-token', { id: 2, user_name: 'recipient' }],
+      ['owner-token', { id: 1, user_name: 'owner' }],
+    ] as const) {
+      let polls = 0
+      let nativeReads = 0
+      let nativeWriteStarted = false
+      let finishNativeWrite!: () => void
+      const nativeWrite = new Promise<void>(resolve => {
+        finishNativeWrite = resolve
+      })
+      const results: Array<{ ok: boolean }> = []
+      vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          return ++polls === 1
+            ? Response.json({ id: token, action: 'setCloudSessionToken', value: token })
+            : new Response(null, { status: 410 })
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        if (url === '/wework/electron-host/v1/invoke') {
+          const request = JSON.parse(String(options?.body))
+          if (request.capability === 'preferences.get') nativeReads += 1
+          if (request.capability === 'preferences.update') {
+            nativeWriteStarted = true
+            await nativeWrite
+            preferences = { ...preferences, ...request.params.patch }
+          }
+          return Response.json({ ok: true, result: preferences })
+        }
+        if (url.endsWith('/users/me')) return Response.json(user)
+        return Response.json({ web_url: 'https://cloud.example' })
+      })
+
+      const switching = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      await waitFor(() => expect(nativeWriteStarted).toBe(true))
+      expect(results).toHaveLength(0)
+      finishNativeWrite()
+      await switching
+
+      expect(results).toEqual([expect.objectContaining({ ok: true })])
+      expect(preferences.cloudConnection.user.id).toBe(user.id)
+      expect(preferences.cloudConnection).not.toHaveProperty('token')
+      await loadDesktopE2ERuntimeConfig()
+      await seedDesktopE2ERuntime()
+      const view = render(createElement(CloudConnectionProvider, null, createElement(CloudIdentity)))
+      await waitFor(() => expect(nativeReads).toBeGreaterThan(0))
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-user-id')).toHaveTextContent(String(user.id))
+      )
+      expect(JSON.parse(window.localStorage.getItem('wework.cloudConnection')!).user.id).toBe(user.id)
+      view.unmount()
+    }
   })
 })

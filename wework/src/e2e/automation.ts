@@ -530,11 +530,9 @@ function resolveDesktopE2EModelServerUrl(
   )
 }
 
-async function seedDesktopE2ECloudConnection(
-  runtimeConfig: DesktopE2ERuntimeConfig
-): Promise<void> {
+async function seedDesktopE2ECloudConnection(runtimeConfig: DesktopE2ERuntimeConfig) {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
-  if (!backendUrl) return
+  if (!backendUrl) return null
   const config = normalizeCloudBackendUrl(backendUrl)
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
@@ -543,12 +541,14 @@ async function seedDesktopE2ECloudConnection(
   })
   if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
   const user = await response.json()
-  saveStoredCloudConnection({
+  const connection = {
     ...config,
     webUrl: config.backendUrl,
     user,
     connectedAt: new Date().toISOString(),
-  })
+  }
+  saveStoredCloudConnection(connection)
+  return connection
 }
 
 export async function seedDesktopE2ERuntime(): Promise<void> {
@@ -2411,9 +2411,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await flushDesktopLocalStoragePersistence()
       return JSON.stringify(config)
     }
-    case 'setCloudSessionToken':
+    case 'setCloudSessionToken': {
       setDesktopE2ECloudSessionToken(command.value ?? '')
+      const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
+      if (!connection) throw new Error('Cloud session switching requires a backend URL')
+      // The provider restores native preferences after the renderer bootstrap.
+      await updateAppPreferences({ cloudConnection: connection })
       return ''
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {

@@ -589,6 +589,26 @@ mod tests {
         json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+00:00");
         let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
         assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00Z"));
+    }
+
+    #[test]
+    fn expiration_tracks_relative_utc_times() {
+        let now = chrono::Utc::now();
+        for (expires_at, expected) in [
+            (now + chrono::Duration::days(1), false),
+            (now - chrono::Duration::days(1), true),
+        ] {
+            let mut json = subscription_json();
+            json["_internal"]["expires_at"] = json!(expires_at.to_rfc3339());
+            let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
+            assert_eq!(item.is_expired, expected);
+        }
+    }
+
+    #[test]
+    fn no_expiration_is_not_expired() {
+        let item = convert_to_subscription_in_db(&kind_row(subscription_json()), &HashMap::new());
+        assert!(item.expires_at.is_none());
         assert!(!item.is_expired);
     }
 
