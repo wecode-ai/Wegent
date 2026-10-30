@@ -95,6 +95,7 @@ async function verifyCodexCatalogOverride(control, modelId) {
   await control.command('waitFor', '[data-testid="model-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
   await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
   await control.command('clickWhenEnabled', editSelector)
   await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
@@ -120,6 +121,7 @@ async function verifyCodexCatalogOverride(control, modelId) {
   await control.command('waitFor', '[data-testid="model-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
   await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
   await control.command('waitFor', rowSelector, {
     text: '已自定义',
@@ -205,6 +207,10 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues, posture =
       `The initial telemetry request contained an unexpected event: ${event.event}`
     )
     assert.ok(event.properties && typeof event.properties === 'object')
+    assert.ok(['mac', 'win', 'linux'].includes(event.properties.platform))
+    assert.equal(event.properties.platform, event.properties.os)
+    assert.equal(event.properties.event_schema_version, 1)
+    assert.equal(event.properties.telemetry_source, 'wework')
     for (const propertyName of Object.keys(event.properties)) {
       assert.equal(
         TELEMETRY_SAFE_PROPERTY_KEYS.has(propertyName),

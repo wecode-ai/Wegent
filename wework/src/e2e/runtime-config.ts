@@ -9,6 +9,7 @@ export interface DesktopE2ERuntimeConfig {
   modelServerUrl?: string
   posthogHost?: string
   posthogKey?: string
+  telemetryIdentity?: string
   seedLocalModels?: boolean
   telemetryPolicy?: 'anonymous' | 'identified'
   transcriptPageSize?: number

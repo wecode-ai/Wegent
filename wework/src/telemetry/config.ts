@@ -4,24 +4,24 @@ import { getPlatform } from '@/lib/platform'
 import { telemetryPolicy } from '@extensions/telemetry-policy'
 import type { CommonTelemetryProperties } from './events'
 
+import {
+  parseTelemetryIdentity,
+  parseTelemetryContextFields,
+  type TelemetryContextField,
+} from './collectionPolicy'
+
 const SESSION_ID_KEY = 'wework.telemetry.session-id.v1'
 
-export type TelemetryDistribution = 'public' | 'internal'
-
 export interface TelemetryConfig {
-  distribution: TelemetryDistribution
+  contextFields: readonly TelemetryContextField[]
+  identity: 'anonymous' | 'email_prefix'
+  source: string
   environment: string
   posthogHost: string
   posthogKey: string
   releaseChannel: string
   sentryDsn: string
   sentryTracesSampleRate: number
-}
-
-function telemetryDistribution(value: string): TelemetryDistribution {
-  if (!value || value === 'public') return 'public'
-  if (value === 'internal') return 'internal'
-  throw new Error(`Unsupported telemetry distribution: ${value}`)
 }
 
 function env(name: keyof ImportMetaEnv): string {
@@ -36,8 +36,13 @@ function sampleRate(value: string): number {
 
 export function getTelemetryConfig(): TelemetryConfig {
   const desktopE2ERuntimeConfig = getDesktopE2ERuntimeConfig()
+  const identity = parseTelemetryIdentity(
+    desktopE2ERuntimeConfig.telemetryIdentity || env('VITE_WEWORK_TELEMETRY_IDENTITY')
+  )
   return {
-    distribution: telemetryDistribution(env('VITE_WEWORK_TELEMETRY_DISTRIBUTION')),
+    contextFields: parseTelemetryContextFields(env('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS')),
+    identity,
+    source: env('VITE_WEWORK_TELEMETRY_SOURCE') || 'wework',
     environment: env('VITE_WEWORK_TELEMETRY_ENVIRONMENT') || import.meta.env.MODE,
     posthogHost:
       desktopE2ERuntimeConfig.posthogHost ||
@@ -70,6 +75,9 @@ export function getCommonTelemetryProperties(): CommonTelemetryProperties {
     arch: architecture(),
     locale: navigator.language || 'unknown',
     os: getPlatform(),
+    platform: getPlatform(),
+    event_schema_version: 1,
+    telemetry_source: config.source,
     release_channel: config.releaseChannel,
     runtime_mode: getRuntimeConfig().runtimeMode,
     telemetry_session_id: telemetrySessionId(),

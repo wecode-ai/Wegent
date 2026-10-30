@@ -10,15 +10,46 @@ Wework separates product analytics, desktop error diagnostics, and service obser
 - Sentry receives React WebView errors and Electron main-process exceptions.
 - Backend services and Executors continue to export traces and metrics through the OpenTelemetry Collector.
 
+## Unified delivery and collection policy
+
+All deployments share event definitions, projection, consent and the PostHog client. Business observations enter through `TelemetryAgent`; task lifecycle emitters use the same client directly; durable stand-in facts use its receipt-capable SDK transport.
+
+Defaults are `contextFields=[]`, and `identity=anonymous`. Account identity and raw app/plugin/tool identifiers are excluded. Anonymous installation IDs remain stable correlation identifiers.
+
+Identity configuration accepts one string; only the application context field list uses a JSON array. Unknown values are rejected:
+
+| Variable                               | Default     | Supported values                                                                                                                                                  |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_WEWORK_TELEMETRY_IDENTITY`       | `anonymous` | `anonymous`, `email_prefix`; the latter preserves an authenticated account's email-prefix `distinct_id`, with anonymous events when unavailable                   |
+| `VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS` | `[]`        | `smart_app_key`, `smart_app_name`, `smart_app_version`, `smart_app_source`, `plugin_key`, `plugin_marketplace`, `plugin_version`, `tool_name`, `tool_duration_ms` |
+| `VITE_WEWORK_TELEMETRY_SOURCE`         | `wework`    | Source label for report filtering                                                                                                                                 |
+
+The receiver and project remain configured by `VITE_WEWORK_POSTHOG_HOST` and `VITE_WEWORK_POSTHOG_KEY`. Packaging CI maps the corresponding `WEWORK_*` variables to build configuration; host and key retain their existing secrets. Field selection never overrides consent, enables person profiles or Session Replay, or relaxes Sentry sanitization. Consent and settings display selected additional fields.
+
+### User identifier and application dimensions
+
+`VITE_WEWORK_TELEMETRY_IDENTITY` accepts one string that selects the event's `distinct_id`:
+
+- `anonymous`: use an anonymous installation identifier without reading the account email by default.
+- `email_prefix`: use the authenticated account's email prefix, with an anonymous installation identifier when unavailable. Switching accounts or logging out updates the identifier; full email, user names and account IDs are not attached as additional properties.
+
+Select application dimensions separately through `VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS`. The four `smart_app_*` fields describe the app key, name, version and source. When enabled, app opening reads the installation catalog so restored routes retain dimensions before runtime caches are populated. The default policy does not read application identity for telemetry.
+
+Events include `platform`, `os`, `event_schema_version` and configurable `telemetry_source`. Reports can filter by source label and release channel. The receiver must support client-origin CORS requests and the SDK ingestion protocol.
+
+Durable stand-in facts retain the identifier, receiving project and collection policy captured at handoff. Replays preserve UUID, occurrence time and identifier. Records are not replayed across destination or policy changes, preventing queued data from reaching a different receiver.
+
 ## Privacy Boundary
 
 On first launch, Wework explicitly asks whether the user allows anonymous usage and error-diagnostic data to be shared. Frontend and native telemetry remain disabled until the user makes a choice. The choice can later be changed under Settings > General > Privacy; disabling telemetry stops both client SDKs, clears unsent events, and resets the analytics identity.
+
+The send boundary checks both consent and the current SDK instance, blocking queued batches, retries, and shutdown flushes after consent is revoked. Re-enabling telemetry creates a fresh instance; old instances cannot resume sending.
 
 Product analytics events must never contain chats, prompts, model responses, code, file names, file paths, repository names, terminal content, credentials, or authentication data. Product code may only call `src/telemetry/client.ts`; it must not call the PostHog or Sentry SDK directly. New events must be added to both `AnalyticsEventMap` and the runtime property allowlist.
 
 Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Electron Sentry events remove requests, users, breadcrumbs, extra context, original exception text, source excerpts, local file paths, and local variables. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries, fragments, and credentials are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
 
-Public Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag stored in localStorage and a per-session `telemetry_session_id`; PostHog uses the SDK-generated `distinct_id` and `$session_id`. These identifiers are anonymous, independent of the authenticated account, and rotated when telemetry is disabled so data collected after re-enabling cannot be linked to data from before revocation. Product distributions that need identified analytics provide the account identity and client IP through the telemetry policy described below.
+Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag and a per-session `telemetry_session_id`. PostHog uses the configured `distinct_id` and SDK session identifier. The default account identifier is anonymous; explicitly selecting `email_prefix` associates product events with that account prefix. Disabling telemetry resets SDK analysis identity and stops collection; an account-derived prefix remains stable across sessions when that mode is enabled.
 
 ## Distribution Telemetry Policy
 
@@ -33,6 +64,8 @@ Public Wework ships the anonymous policy only: no person profiles, no client IP,
 The policy covers identity and client IP only: the event catalog, property allowlist, and scrubbing logic are identical for every distribution, and chats, prompts, model responses, code, file contents, file paths, terminal output, and screenshots must never be reported by any distribution. When a distribution enables person profiles it must also point the PostHog project's person display name at the person property it sets, otherwise the list still shows the distinct id.
 
 Desktop E2E verifies both postures from one build. The `telemetry-consent` checkpoint keeps the public anonymous policy: no account identity, `$geoip_disable` stays `true`, and no event may create a person profile. The `telemetry-identity` checkpoint sets `WEWORK_E2E_TELEMETRY_POLICY=identified` to run the distribution policy fixture in `src/e2e/telemetry-policy-fixture.ts`, then asserts that `$identify` reports the username as its distinct id with a `username` person property, that product events after identification reuse that distinct id, that `$geoip_disable` is `false` and person profiles are allowed, and that no request body carries the account email. The fixture only exists when `VITE_WEWORK_E2E=true`; production builds statically remove that branch.
+
+`VITE_WEWORK_TELEMETRY_IDENTITY=email_prefix` and the telemetry policy are two mutually exclusive identified paths: the former swaps the event distinct id for the account prefix before sending, while the latter creates a person profile through `$identify` and stores only the person properties the policy names. A distribution should enable one of them, otherwise the same events are attributed by two identities at once.
 
 ## Event Catalog
 

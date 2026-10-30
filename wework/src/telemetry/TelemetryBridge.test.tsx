@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   updateAppPreferences: vi.fn().mockResolvedValue(undefined),
   officialRelease: true,
-  distribution: 'public' as 'public' | 'internal',
   electronRuntime: false,
   cloudUser: null as { id: number; user_name: string; email: string } | null,
   identityForUsers: [] as Array<{ id: number; user_name: string; email: string } | null>,
@@ -61,7 +60,10 @@ vi.mock('@extensions/telemetry-policy', () => ({
 }))
 
 vi.mock('./config', () => ({
-  getTelemetryConfig: () => ({ distribution: mocks.distribution }),
+  getTelemetryConfig: () => ({
+    contextFields: [],
+    identity: 'anonymous',
+  }),
   isOfficialReleaseBuild: () => mocks.officialRelease,
 }))
 
@@ -83,7 +85,6 @@ describe('TelemetryBridge', () => {
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
     mocks.officialRelease = true
-    mocks.distribution = 'public'
     mocks.electronRuntime = false
     mocks.cloudUser = null
     mocks.identityForUsers = []
@@ -297,15 +298,10 @@ describe('TelemetryBridge', () => {
     })
   })
 
-  it('disables the public telemetry client and hides consent in internal builds', async () => {
-    mocks.distribution = 'internal'
-    mocks.preferences.preferences.telemetryConsentAsked = false
-
+  it('honors a saved refusal on every build', async () => {
+    mocks.preferences.preferences.telemetryEnabled = false
     render(<TelemetryBridge />)
-
     await waitFor(() => expect(mocks.installTelemetry).toHaveBeenCalledWith(false))
-    expect(mocks.setTelemetryEnabled).not.toHaveBeenCalled()
-    expect(mocks.updateAppPreferences).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
+    expect(mocks.track).not.toHaveBeenCalled()
   })
 })

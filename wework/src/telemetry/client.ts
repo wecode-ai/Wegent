@@ -1,3 +1,5 @@
+import type { WeworkTelemetryContext } from './facts'
+import { telemetryContextProperties, telemetryDeliveryScope, telemetryDistinctId } from './identity'
 import { useSyncExternalStore } from 'react'
 import type { CaptureResult, PostHog } from 'posthog-js'
 import { telemetryPolicy } from '@extensions/telemetry-policy'
@@ -26,6 +28,9 @@ const IDENTIFIED_ACCOUNT_KEY = 'wework.telemetry.identified-account.v1'
 const STAND_IN_COLLECTION_SINCE_KEY = 'wework.stand-in-telemetry-enabled-since'
 const MAX_QUEUED_EVENTS = 100
 const COMMON_EVENT_PROPERTY_KEYS = [
+  'event_schema_version',
+  'telemetry_source',
+  'platform',
   'app_version',
   'arch',
   'locale',
@@ -163,6 +168,7 @@ function sanitizePostHogCapture(capture: CaptureResult | null): CaptureResult | 
   }
   const eventName = capture.event as AnalyticsEventName
   const allowedPropertyKeys = new Set<string>([
+    ...getTelemetryConfig().contextFields,
     ...COMMON_EVENT_PROPERTY_KEYS,
     ...POSTHOG_TRANSPORT_PROPERTY_KEYS,
     ...ANALYTICS_EVENT_PROPERTY_KEYS[eventName],
@@ -204,7 +210,8 @@ async function initPostHog(): Promise<void> {
   const config = getTelemetryConfig()
   if (!config.posthogKey) return
   const module = await import('posthog-js')
-  posthog = module.default.init(config.posthogKey, {
+  if (!enabled) return
+  const sdk = new module.PostHog().init(config.posthogKey, {
     api_host: config.posthogHost,
     autocapture: false,
     capture_pageleave: false,
@@ -224,6 +231,16 @@ async function initPostHog(): Promise<void> {
     request_batching: true,
     before_send: sanitizePostHogCapture,
   })
+  posthog = sdk
+  const send = sdk._send_request.bind(sdk)
+  // Batch, retry and shutdown flushes must all respect the current consent.
+  sdk._send_request = options => {
+    if (!enabled || posthog !== sdk) {
+      options.callback?.({ statusCode: 403 })
+      return
+    }
+    send(options)
+  }
   // Leave a persisted account alone until the app tells us which account this
   // session belongs to; applying it here would rotate the identity of a
   // signed-in user on every restart.
@@ -498,13 +515,20 @@ export function applyTelemetryIdentity(nextIdentity: TelemetryIdentity | null): 
 
 export function track<EventName extends AnalyticsEventName>(
   name: EventName,
-  properties: AnalyticsEventMap[EventName]
+  properties: AnalyticsEventMap[EventName],
+  context?: WeworkTelemetryContext
 ): void {
   if (!enabled) return
   const allowedProperties = sanitizeAnalyticsProperties(name, properties)
+  const distinctId = telemetryDistinctId(posthog?.get_distinct_id() ?? '')
   const event: QueuedAnalyticsEvent<EventName> = {
     name,
-    properties: { ...commonTelemetryProperties(), ...allowedProperties },
+    properties: {
+      ...commonTelemetryProperties(),
+      ...allowedProperties,
+      ...telemetryContextProperties(context),
+      ...(distinctId ? { distinct_id: distinctId } : {}),
+    },
   }
   if (posthog) {
     schedulePostHogCapture(event)
@@ -514,8 +538,8 @@ export function track<EventName extends AnalyticsEventName>(
   void initialize()
 }
 
-export function trackEvent(event: AnalyticsEvent): void {
-  track(event.name, event.properties)
+export function trackEvent(event: AnalyticsEvent & { context?: WeworkTelemetryContext }): void {
+  track(event.name, event.properties, event.context)
 }
 
 export function captureError(error: unknown): void {
@@ -554,6 +578,7 @@ async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   }
   posthog?.reset(true)
   posthog?.opt_out_capturing()
+  await posthog?.shutdown()
   sentry?.setUser(null)
   await sentry?.close(0)
   identity = null
@@ -613,29 +638,35 @@ export function sanitizeAnalyticsProperties<EventName extends AnalyticsEventName
   )
 }
 
-export interface DurablePublicIdentity {
+export interface DurableTelemetryIdentity {
   readonly distinctId: string
+  readonly scope: string
   readonly common: CommonTelemetryProperties
 }
 
-export async function durablePublicIdentity(): Promise<DurablePublicIdentity | null> {
+export async function durableTelemetryIdentity(): Promise<DurableTelemetryIdentity | null> {
   if (!enabled) return null
   await initialize()
   if (!enabled || !posthog) return null
-  return { distinctId: posthog.get_distinct_id(), common: { ...commonTelemetryProperties() } }
+  return {
+    distinctId: telemetryDistinctId(posthog.get_distinct_id()),
+    scope: telemetryDeliveryScope(),
+    common: { ...commonTelemetryProperties() },
+  }
 }
 
 /** Keep the durable queue until the SDK transport confirms HTTP acceptance. */
-export async function deliverDurablePublicEvent(
+export async function deliverDurableEvent(
   event: AnalyticsEvent,
   id: string,
   occurredAt: string,
-  identity: DurablePublicIdentity
-): Promise<boolean> {
+  identity: DurableTelemetryIdentity
+): Promise<boolean | 'identity_mismatch'> {
   if (!enabled) return false
   await initialize()
   const sdk = posthog
-  if (!enabled || !sdk || sdk.get_distinct_id() !== identity.distinctId) return false
+  if (!enabled || !sdk || telemetryDeliveryScope() !== identity.scope) return false
+  if (telemetryDistinctId(sdk.get_distinct_id()) !== identity.distinctId) return 'identity_mismatch'
   const timestamp = new Date(occurredAt)
   const properties = sdk.calculateEventProperties(
     event.name,
@@ -685,8 +716,15 @@ function updateStandInCollectionBoundary(allow: boolean) {
     return
   }
   localStorage.removeItem(STAND_IN_COLLECTION_SINCE_KEY)
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith('wework.stand-in-telemetry:public:')) localStorage.removeItem(key)
+  const keys = []
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key) keys.push(key)
+  }
+  for (const key of keys) {
+    if (key.startsWith('wework.stand-in-telemetry:')) {
+      localStorage.removeItem(key)
+    }
   }
 }
 

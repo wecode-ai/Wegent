@@ -531,6 +531,8 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'failure_stage',
   'locale',
   'os',
+  'platform',
+  'telemetry_source',
   'release_channel',
   'runtime_mode',
   'startup_id',
