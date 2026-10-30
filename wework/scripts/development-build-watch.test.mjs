@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { test, expect, vi, onTestFinished } from 'vitest'
+import { test, expect, vi, onTestFailed, onTestFinished } from 'vitest'
 import { watch } from 'node:fs'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
@@ -53,8 +53,12 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     await writeFile(source, 'one')
     let published = ''
     const trace = []
+    let nativeWatchReady = false
     const startedAt = performance.now()
     const record = event => trace.push({ elapsedMs: performance.now() - startedAt, ...event })
+    onTestFailed(() => {
+      process.stderr.write(`[development-build-watch] ${JSON.stringify({ checkout, trace })}\n`)
+    })
     const failedBuild = Promise.withResolvers()
     const recoveredBuild = Promise.withResolvers()
     const onError = vi.fn(error => {
@@ -78,19 +82,31 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       debounceMs: 20,
       watchDirectory(directory, options, callback) {
         return watch(directory, options, (event, filename) => {
+          nativeWatchReady = true
           record({ stage: 'native-event', event, filename: String(filename) })
           callback(event, filename)
         })
       },
     })
     onTestFinished(async () => {
-      if (published !== 'two') {
-        process.stderr.write(`[development-build-watch] ${JSON.stringify({ checkout, trace })}\n`)
-      }
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
     })
     expect(published).toBe('one')
+    // macOS fs.watch can return before its native subscription is active:
+    // https://github.com/nodejs/node/issues/52601
+    // Probe ignored output until a native event acknowledges the subscription.
+    let probe = 0
+    await expect
+      .poll(async () => {
+        if (!nativeWatchReady) {
+          await writeFile(path.join(output, '.watch-ready'), String(++probe))
+        }
+        return nativeWatchReady
+      })
+      .toBe(true)
+    record({ stage: 'watch-ready', probes: probe })
+    expect(build).toHaveBeenCalledTimes(1)
     record({ stage: 'write-invalid-started' })
     await writeFile(source, 'invalid')
     record({ stage: 'write-invalid-completed' })

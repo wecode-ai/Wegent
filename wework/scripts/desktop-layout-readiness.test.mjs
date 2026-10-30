@@ -7,9 +7,9 @@ import {
 
 afterEach(() => vi.useRealTimers())
 
-async function withPollingClock(run) {
+async function withPollingClock(run, elapsedMs = 150) {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
-  const [result] = await Promise.all([run(), vi.advanceTimersByTimeAsync(150)])
+  const [result] = await Promise.all([run(), vi.advanceTimersByTimeAsync(elapsedMs)])
   return result
 }
 
@@ -57,6 +57,19 @@ for (const [property, waitForMetric] of [
       waitForMetric(control, '[data-testid="layout-surface"]', value => value === 200, 'Layout'),
       /2 matching elements/
     )
+  })
+
+  test(`${property} wait uses the shared step budget when no timeout is specified`, async () => {
+    const metrics = await withPollingClock(() => {
+      const startedAt = Date.now()
+      const control = {
+        async command() {
+          return JSON.stringify([{ [property]: Date.now() - startedAt >= 2000 ? 200 : 100 }])
+        },
+      }
+      return waitForMetric(control, 'section', value => value === 200, 'Layout')
+    }, 2100)
+    assert.equal(metrics[property], 200)
   })
 
   test(`${property} wait returns an already matching surface without an extra observation window`, async () => {

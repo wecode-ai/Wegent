@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 async function waitForElementMetric(
   control,
@@ -29,10 +30,22 @@ async function waitForElementMetric(
   )
 }
 
-export function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
+export function waitForElementWidth(
+  control,
+  selector,
+  predicate,
+  description,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   return waitForElementMetric(control, selector, 'width', predicate, description, timeoutMs)
 }
 
-export function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
+export function waitForElementTop(
+  control,
+  selector,
+  predicate,
+  description,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   return waitForElementMetric(control, selector, 'top', predicate, description, timeoutMs)
 }
