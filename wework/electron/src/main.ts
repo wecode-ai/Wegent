@@ -63,6 +63,8 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
+import { requestE2ERuntime } from './host/e2e-runtime-request.js'
+import { dshBrowserAuthenticationCookies } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -1633,6 +1635,16 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
 }
 
 function installIpc(): void {
+  if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    ipcMain.handle('e2e:runtime-request', (event, input) => {
+      if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Runtime verification requires a Wework main frame')
+      }
+      return requestE2ERuntime(process.env, input, url =>
+        dshBrowserAuthenticationCookies(session.defaultSession, url)
+      )
+    })
+  }
   ipcMain.handle('startup-recovery:retry', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-retry', 'started')

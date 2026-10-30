@@ -15,7 +15,6 @@ import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
-import { withXvfbDiagnostics } from './xvfb-diagnostics.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -381,7 +380,8 @@ const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
-const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
+const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
+const openboxPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 const allocateXvfbDisplay = createXvfbDisplayAllocator()
@@ -395,36 +395,21 @@ function formatDuration(durationMs) {
 
 /** Run one checkpoint with an isolated display and retain fully drained failure evidence. */
 function runTaskFlow(args, env, label) {
-  if (process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true') {
-    return withXvfbDiagnostics(logPath => spawnTaskFlow(args, env, label, logPath), label)
-  }
-  return spawnTaskFlow(args, env, label)
-}
-
-/** Launch a checkpoint and wait for its process and captured streams to close. */
-function spawnTaskFlow(args, env, label, xvfbLogPath) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()
     let lastOutputAt = startedAt
     let resultDir = null
     let outputTail = ''
     let stderrTail = ''
-    const isolateDisplay = Boolean(xvfbLogPath)
-    const command = isolateDisplay ? 'xvfb-run' : process.execPath
+    const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
+    const command = isolateDisplay ? 'sh' : process.execPath
     const commandArgs = isolateDisplay
-      ? [
-          `--server-num=${allocateXvfbDisplay()}`,
-          `--error-file=${xvfbLogPath}`,
-          '--server-args=-noreset -screen 0 1280x720x24',
-          'sh',
-          isolatedXvfbPath,
-          process.execPath,
-          taskFlowPath,
-          ...args,
-        ]
+      ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
-      env,
+      env: isolateDisplay
+        ? { ...env, WEWORK_E2E_XVFB_SERVER_NUM: String(allocateXvfbDisplay()) }
+        : env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 

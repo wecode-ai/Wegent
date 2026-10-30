@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { fetchLocalRuntime } from './runtime-request.mjs'
 
 export async function currentExecutorPid(control) {
   const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
@@ -19,12 +20,12 @@ function hasRestartedProtocol(logContent, pid) {
   )
 }
 
-async function bridgeIsReady(origin, timeoutMs) {
+async function bridgeIsReady(control, origin, timeoutMs) {
   try {
     // This endpoint succeeds only after the bridge caches its negotiated method list.
-    const response = await fetch(`${origin}/wework/executor/v1`, {
+    const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1`, {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(timeoutMs),
+      timeoutMs,
     })
     return response.ok
   } catch (error) {
@@ -50,7 +51,7 @@ export async function waitForRestartedExecutor({
       pid &&
       pid !== originalPid &&
       hasRestartedProtocol(logContent, pid) &&
-      (await bridgeIsReady(origin, Math.max(1, timeoutMs - (Date.now() - startedAt))))
+      (await bridgeIsReady(control, origin, Math.max(1, timeoutMs - (Date.now() - startedAt))))
     ) {
       return pid
     }
