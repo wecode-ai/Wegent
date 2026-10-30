@@ -103,6 +103,8 @@ async fn create_due(
             .unwrap_or(""),
         chrono::Local::now(),
     )?;
+    let prompt =
+        super::directives::append_group_notification_instruction(&prompt, &snapshot.json.0);
     Ok(app.mysql.with_transaction(async|tx|{
         let row:Option<Subscription>=tx.fetch_optional(format!("SELECT {SUBSCRIPTION_COLUMNS} FROM kinds WHERE id=? AND kind='Subscription' AND is_active=1 FOR UPDATE"),(snapshot.id,)).await?;
         let Some(mut row)=row else{return Ok(None)};if row.json.0["_internal"]["enabled"]==false||model::datetime(&row.json.0["_internal"]["next_execution_time"]).is_none_or(|next|next>now){return Ok(None)}

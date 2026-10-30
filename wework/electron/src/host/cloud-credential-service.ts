@@ -2,8 +2,6 @@ import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from '
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { cloudFetch } from './cloud-http.js'
-
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
 
 interface StoredCloudCredential {
@@ -62,7 +60,7 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly request: typeof fetch = cloudFetch
+    private readonly request?: typeof fetch
   ) {}
 
   /**
@@ -74,7 +72,8 @@ export class CloudCredentialService {
    */
   private async requestWithTimeout(endpoint: string, init: RequestInit): Promise<Response> {
     try {
-      return await this.request(endpoint, {
+      const request = this.request ?? (await import('./cloud-http.js')).cloudFetch
+      return await request(endpoint, {
         ...init,
         signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
       })
