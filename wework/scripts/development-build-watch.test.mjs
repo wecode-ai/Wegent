@@ -106,14 +106,22 @@ test('starts the initial build only after directory subscriptions are ready', as
   const readiness = Promise.withResolvers()
   const build = vi.fn()
   const close = vi.fn()
+  const onError = vi.fn()
+  let notify
   const starting = watchDevelopmentBuild({
     directories: [root],
     files: [],
     build,
-    onError: vi.fn(),
-    watchDirectory: () => ({ ready: readiness.promise, on: vi.fn(), close }),
+    onError,
+    watchDirectory: (_directory, _options, callback) => {
+      notify = callback
+      return { ready: readiness.promise, on: vi.fn(), close }
+    },
   })
+  notify('change', 'entry.js')
+  notify('change', undefined)
   expect(build).not.toHaveBeenCalled()
+  expect(onError).not.toHaveBeenCalled()
   readiness.resolve()
   const watcher = await starting
   try {

@@ -72,6 +72,8 @@ export async function watchDevelopmentBuild({
         ignored: filename => excluded(path.resolve(filename), directory),
       },
       (_event, filename) => {
+        // The initial build reads all inputs after subscriptions become ready.
+        if (!inputChanged) return
         if (!filename) return schedule()
         const name = String(filename)
         const resolved =
