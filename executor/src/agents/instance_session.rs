@@ -229,14 +229,7 @@ fn migrate_at(source: &Path, target: &Path, kind: AgentKind, id: &str) -> Result
     {
         return Err("Native session changed during migration".to_owned());
     }
-    let published = target.join(directory);
-    if published.exists() {
-        // Recovery after the directory rename but before agent.json publication.
-        verify_existing_tree(&staging.path().join(directory), &published, 0)?;
-    } else {
-        fs::rename(staging.path().join(directory), &published)
-            .map_err(|error| error.to_string())?;
-    }
+    publish_session(&staging.path().join(directory), &target.join(directory))?;
     Ok(json!({"id":id, "path":relative, "engine":format!("{kind:?}")}))
 }
 
@@ -321,22 +314,37 @@ fn file_digest(path: &Path) -> Result<Vec<u8>, String> {
     Ok(digest.finalize().to_vec())
 }
 
-fn verify_existing_tree(staged: &Path, existing: &Path, depth: usize) -> Result<(), String> {
-    let mut staged_files = Vec::new();
-    let mut existing_files = Vec::new();
-    collect_snapshot(staged, &mut staged_files, depth)?;
-    collect_snapshot(existing, &mut existing_files, depth)?;
-    staged_files.sort_by(|a, b| a.0.cmp(&b.0));
-    existing_files.sort_by(|a, b| a.0.cmp(&b.0));
-    if staged_files.len() != existing_files.len() {
-        return Err("Existing native session import conflicts with source".to_owned());
-    }
-    for ((left, lm), (right, rm)) in staged_files.iter().zip(&existing_files) {
-        if left.strip_prefix(staged).ok() != right.strip_prefix(existing).ok()
-            || lm.is_dir() != rm.is_dir()
-            || (lm.is_file() && file_digest(left)? != file_digest(right)?)
-        {
-            return Err("Existing native session import conflicts with source".to_owned());
+/// Publish one staged session into an Agent Home that other tasks also use.
+/// The Home keeps unrelated sessions, so an import only merges its own files:
+/// identical entries are already published, and any other collision is a real
+/// conflict that must not overwrite the Home's history.
+fn publish_session(staged: &Path, published_root: &Path) -> Result<(), String> {
+    fs::create_dir_all(published_root).map_err(|error| error.to_string())?;
+    let mut entries = Vec::new();
+    collect_snapshot(staged, &mut entries, 0)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    for (path, metadata) in entries {
+        let relative = path
+            .strip_prefix(staged)
+            .map_err(|error| error.to_string())?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let published = published_root.join(relative);
+        let existing = match fs::symlink_metadata(&published) {
+            Ok(existing) => Some(existing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        match (metadata.is_dir(), existing) {
+            (true, None) => fs::create_dir(&published).map_err(|error| error.to_string())?,
+            (true, Some(existing)) if existing.is_dir() => {}
+            (false, None) => copy_private_file(&path, &published)?,
+            (false, Some(existing))
+                if existing.is_file() && file_digest(&path)? == file_digest(&published)? => {}
+            _ => {
+                return Err("Existing native session import conflicts with source".to_owned());
+            }
         }
     }
     Ok(())
@@ -522,6 +530,141 @@ fn copy_private_tree(source: &Path, target: &Path, depth: usize) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn claude_record(session_id: &str) -> String {
+        format!("{{\"sessionId\":\"{session_id}\",\"type\":\"user\"}}\n")
+    }
+
+    fn codex_record(thread_id: &str) -> String {
+        format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\"}}}}\n")
+    }
+
+    #[test]
+    fn migration_merges_a_claude_session_into_a_home_with_other_sessions() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("global-claude");
+        let home = root.path().join("agent-home");
+        let id = "session-new";
+        let session = source
+            .join("projects/-workspace")
+            .join(format!("{id}.jsonl"));
+        fs::create_dir_all(session.parent().unwrap()).unwrap();
+        fs::write(&session, claude_record(id)).unwrap();
+        let companions = session.with_extension("").join("tool-results");
+        fs::create_dir_all(&companions).unwrap();
+        fs::write(companions.join("result.txt"), "tool output\n").unwrap();
+        let other = home.join("projects/-other/other.jsonl");
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::write(&other, claude_record("other")).unwrap();
+
+        let published = migrate_at(&source, &home, AgentKind::ClaudeCode, id).unwrap();
+
+        assert_eq!(published["id"], id);
+        assert_eq!(
+            published["path"].as_str().unwrap(),
+            format!("projects/-workspace/{id}.jsonl")
+        );
+        assert_eq!(
+            fs::read_to_string(home.join(format!("projects/-workspace/{id}.jsonl"))).unwrap(),
+            claude_record(id)
+        );
+        assert_eq!(
+            fs::read_to_string(
+                home.join(format!("projects/-workspace/{id}/tool-results/result.txt"))
+            )
+            .unwrap(),
+            "tool output\n"
+        );
+        // Sessions owned by other tasks stay untouched.
+        assert_eq!(fs::read_to_string(&other).unwrap(), claude_record("other"));
+    }
+
+    #[test]
+    fn migration_merges_a_codex_rollout_into_a_home_with_other_sessions() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("codex-home");
+        let home = root.path().join("agent-home");
+        let id = "thread-new";
+        let session = source.join(format!(
+            "sessions/2026/10/29/rollout-2026-10-29T10-00-00-{id}.jsonl"
+        ));
+        fs::create_dir_all(session.parent().unwrap()).unwrap();
+        fs::write(&session, codex_record(id)).unwrap();
+        let other = home.join("sessions/2026/10/28/rollout-2026-10-28T10-00-00-thread-old.jsonl");
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::write(&other, codex_record("thread-old")).unwrap();
+
+        migrate_at(&source, &home, AgentKind::CodeX, id).unwrap();
+
+        assert_eq!(fs::read_to_string(&session).unwrap(), codex_record(id));
+        assert_eq!(
+            fs::read_to_string(home.join(format!(
+                "sessions/2026/10/29/rollout-2026-10-29T10-00-00-{id}.jsonl"
+            )))
+            .unwrap(),
+            codex_record(id)
+        );
+        assert_eq!(
+            fs::read_to_string(&other).unwrap(),
+            codex_record("thread-old")
+        );
+    }
+
+    #[test]
+    fn migration_replays_an_interrupted_publish_without_rewriting_the_session() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("global-claude");
+        let home = root.path().join("agent-home");
+        let id = "session-recover";
+        let session = source
+            .join("projects/-workspace")
+            .join(format!("{id}.jsonl"));
+        fs::create_dir_all(session.parent().unwrap()).unwrap();
+        fs::write(&session, claude_record(id)).unwrap();
+        // The caller always creates the Agent Home before importing.
+        fs::create_dir_all(&home).unwrap();
+
+        migrate_at(&source, &home, AgentKind::ClaudeCode, id).unwrap();
+        let published = home.join(format!("projects/-workspace/{id}.jsonl"));
+        let before = fs::metadata(&published).unwrap();
+
+        migrate_at(&source, &home, AgentKind::ClaudeCode, id).unwrap();
+
+        assert_eq!(fs::read_to_string(&published).unwrap(), claude_record(id));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let after = fs::metadata(&published).unwrap();
+            assert_eq!(before.ino(), after.ino());
+        }
+    }
+
+    #[test]
+    fn migration_rejects_a_different_session_at_the_same_path() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("global-claude");
+        let home = root.path().join("agent-home");
+        let id = "session-conflict";
+        let session = source
+            .join("projects/-workspace")
+            .join(format!("{id}.jsonl"));
+        fs::create_dir_all(session.parent().unwrap()).unwrap();
+        fs::write(&session, claude_record(id)).unwrap();
+        let published = home.join(format!("projects/-workspace/{id}.jsonl"));
+        fs::create_dir_all(published.parent().unwrap()).unwrap();
+        fs::write(&published, claude_record("different")).unwrap();
+
+        let error = migrate_at(&source, &home, AgentKind::ClaudeCode, id).unwrap_err();
+
+        assert_eq!(
+            error,
+            "Existing native session import conflicts with source"
+        );
+        assert_eq!(
+            fs::read_to_string(&published).unwrap(),
+            claude_record("different")
+        );
+    }
 
     #[test]
     fn claude_resume_requires_a_unique_valid_transcript_in_the_selected_home() {
