@@ -36,6 +36,30 @@ export const STARTUP_ACTIVITY_MIN_INTERVAL_MS = 80
 
 const DEFAULT_STAGE_TIMEOUT_MS = 60_000
 
+export interface StartupProgressTiming {
+  slowAfterMs: number
+  stageTimeoutMs: number
+}
+
+/** Keeps real startup clocks observable without lengthening the desktop suite. */
+export function desktopE2EStartupTiming(
+  environment: NodeJS.ProcessEnv
+): StartupProgressTiming | null {
+  if (environment.VITE_WEWORK_E2E !== 'true' || !environment.WEWORK_E2E_CONTROL_URL) return null
+  const slowAfterMs = Number(environment.WEWORK_E2E_STARTUP_SLOW_AFTER_MS)
+  const stageTimeoutMs = Number(environment.WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS)
+  if (
+    !Number.isInteger(slowAfterMs) ||
+    !Number.isInteger(stageTimeoutMs) ||
+    slowAfterMs <= 0 ||
+    stageTimeoutMs <= slowAfterMs ||
+    stageTimeoutMs > DEFAULT_STAGE_TIMEOUT_MS
+  ) {
+    return null
+  }
+  return { slowAfterMs, stageTimeoutMs }
+}
+
 /**
  * Mirrors the real Electron startup sequence. Labels stay user-facing: every
  * stage describes the work happening right now instead of a generic animation.
@@ -155,7 +179,8 @@ export class StartupProgressReporter {
 
   constructor(
     private readonly publish: (update: StartupProgressUpdate) => void,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly timing: StartupProgressTiming | null = null
   ) {}
 
   report(stageId: string): void {
@@ -171,7 +196,10 @@ export class StartupProgressReporter {
         (total, stage) => total + stage.weight,
         0
       ),
-      stage: STARTUP_PROGRESS_STAGES[index],
+      stage: {
+        ...STARTUP_PROGRESS_STAGES[index],
+        ...(this.timing ? { timeoutMs: this.timing.stageTimeoutMs } : {}),
+      },
       startedAt: this.now(),
     }
     this.stageHistory.push(this.current)

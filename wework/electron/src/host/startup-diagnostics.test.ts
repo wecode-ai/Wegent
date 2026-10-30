@@ -48,6 +48,8 @@ describe('startup diagnostics', () => {
       failure: {
         message: 'DSH startup timed out',
         stack: 'Error: DSH startup timed out\n    at start (dsh-runtime.ts:42:11)',
+        source: 'host-startup',
+        stage: 'core-dsh',
       },
       runtimeError: 'DSH startup timed out',
       runtimeState: { coreDshPid: null },
@@ -65,6 +67,8 @@ describe('startup diagnostics', () => {
     expect(diagnostics).toContain('components')
     expect(diagnostics).toContain('DSH startup timed out')
     expect(diagnostics).toContain('dsh-runtime.ts:42:11')
+    expect(diagnostics).toContain('Source: host-startup')
+    expect(diagnostics).toContain('Stage: core-dsh')
     expect(diagnostics).toContain('wework-main.log')
     expect(diagnostics).toContain('wework-startup-bootstrap.log')
     expect(diagnostics).toContain('"coreDshPid": null')
@@ -157,6 +161,125 @@ describe('startup diagnostics', () => {
     expect(diagnostics).toContain('wework-main.log')
     expect(diagnostics).toContain('app-update.log')
     expect(diagnostics).not.toContain('noise-0.log')
+  })
+
+  test('includes every current startup source before selecting rotated logs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    const currentNames = [
+      'wework-main.log',
+      'renderer-startup.log',
+      'executor.log',
+      'dsh-core-runtime.log',
+      'app-update.log',
+    ]
+    for (const name of currentNames) await writeFile(join(root, name), `${name}-current\n`)
+    const bootstrapPath = join(root, 'wework-startup-bootstrap.log')
+    await writeFile(bootstrapPath, 'bootstrap-current\n')
+    for (let index = 1; index <= 12; index += 1) {
+      await writeFile(join(root, `wework-main.log.${index}`), 'rotated-main\n')
+      await writeFile(join(root, `executor.log.${index}`), 'rotated-executor\n')
+    }
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [root],
+      extraLogPaths: [bootstrapPath],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogFiles: 6,
+    })
+
+    for (const name of currentNames) expect(diagnostics).toContain(`${name}-current`)
+    expect(diagnostics).toContain('bootstrap-current')
+    expect(diagnostics).not.toContain('rotated-main')
+    expect(diagnostics).not.toContain('rotated-executor')
+  })
+
+  test('finds the first error between the old head window and the included tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'dsh-core-runtime.log'),
+      `${'startup noise\n'.repeat(6_000)}fatal: middle startup error api_key=middle-secret\n${'later noise\n'.repeat(6_000)}latest-tail-marker\n`
+    )
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [root],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogTailBytes: 256,
+    })
+
+    expect(diagnostics).toContain(
+      '[first error before the included tail] fatal: middle startup error'
+    )
+    expect(diagnostics).toContain('dsh-core-runtime.log: fatal: middle startup error')
+    expect(diagnostics).toContain('latest-tail-marker')
+    expect(diagnostics).not.toContain('middle-secret')
+  })
+
+  test('reports a bounded first-error scan without dropping the recent tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'wework-main.log'),
+      `${'startup noise\n'.repeat(100)}fatal: outside scan budget\n${'later noise\n'.repeat(100)}latest-tail-marker\n`
+    )
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [root],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogTailBytes: 128,
+      maxLogScanBytes: 256,
+    })
+
+    expect(diagnostics).toContain('first-error scan limited to 256 B')
+    expect(diagnostics).toContain('latest-tail-marker')
+    expect(diagnostics).not.toContain('outside scan budget')
+  })
+
+  test.each([
+    { offset: 64 * 1024 - 1, error: 'fatal: chunk boundary error' },
+    { offset: 64 * 1024 - 8, error: 'fatal: 启动失败 at chunk boundary' },
+  ])('keeps a complete error line across scan chunks ($offset)', async ({ offset, error }) => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-startup-diagnostics-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'wework-main.log'),
+      `${'x'.repeat(offset - 1)}\n${error}\n${'later noise\n'.repeat(100)}latest-tail-marker\n`
+    )
+
+    const diagnostics = await buildStartupDiagnostics({
+      appName: 'Wework',
+      appVersion: '0.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '24.0.0',
+      logDirectories: [root],
+      progress: { current: null, history: [] },
+      failure: null,
+      maxLogTailBytes: 128,
+    })
+
+    expect(diagnostics).toContain(`[first error before the included tail] ${error}`)
+    expect(diagnostics).toContain('latest-tail-marker')
+    expect(diagnostics).not.toContain('�')
   })
 })
 

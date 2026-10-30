@@ -1,5 +1,6 @@
-import { open, readdir, stat } from 'node:fs/promises'
+import { open, readdir, stat, type FileHandle } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 import { redactLog } from '../runtime/rotating-log.js'
 import type { StartupProgressUpdate } from './startup-progress.js'
@@ -8,6 +9,8 @@ export interface StartupFailureSnapshot {
   message: string
   stack?: string
   pluginName?: string | null
+  source?: string
+  stage?: string
 }
 
 export interface StartupDiagnosticsOptions {
@@ -30,6 +33,7 @@ export interface StartupDiagnosticsOptions {
   now?: () => number
   maxLogFiles?: number
   maxLogTailBytes?: number
+  maxLogScanBytes?: number
 }
 
 interface LogFile {
@@ -40,15 +44,19 @@ interface LogFile {
 
 const DEFAULT_MAX_LOG_FILES = 12
 const DEFAULT_MAX_LOG_TAIL_BYTES = 96 * 1024
+const DEFAULT_MAX_LOG_SCAN_BYTES = 8 * 1024 * 1024
+const LOG_SCAN_CHUNK_BYTES = 64 * 1024
+const MAX_ERROR_LINE_CHARACTERS = 4 * 1024
 const MAX_ERROR_LINES = 60
-// Keep the logs that explain a failed start ahead of rotated noise when the
-// file budget is exhausted.
+// Reserve the file budget for current startup sources before rotated logs.
 const PRIORITY_LOG_NAMES = [
   'wework-main.log',
   'renderer-startup.log',
   'executor.log',
   'dsh-core-runtime.log',
   'app-update.log',
+  'wework-startup-bootstrap.log',
+  'runtime-launch.log',
 ] as const
 const ERROR_LINE_PATTERN =
   /\b(error|failed|failure|fatal|exception|timeout|timed out|refused|crash|exit(?:ed)? code|EADDRINUSE|ENOENT|EACCES)\b/i
@@ -60,7 +68,11 @@ export async function buildStartupDiagnostics(options: StartupDiagnosticsOptions
     options.extraLogPaths ?? [],
     options.maxLogFiles ?? DEFAULT_MAX_LOG_FILES
   )
-  const tails = await readLogTails(logFiles, options.maxLogTailBytes ?? DEFAULT_MAX_LOG_TAIL_BYTES)
+  const tails = await readLogTails(
+    logFiles,
+    options.maxLogTailBytes ?? DEFAULT_MAX_LOG_TAIL_BYTES,
+    options.maxLogScanBytes ?? DEFAULT_MAX_LOG_SCAN_BYTES
+  )
   const sections = [
     'Wework startup diagnostics',
     '====================',
@@ -123,6 +135,7 @@ async function collectLogFiles(
   maxFiles: number
 ): Promise<LogFile[]> {
   const files = new Map<string, LogFile>()
+  const explicitPaths = new Set(extraPaths.map(path => resolve(path)))
   for (const path of extraPaths) {
     const resolved = resolve(path)
     const metadata = await stat(resolved).catch(() => null)
@@ -155,7 +168,9 @@ async function collectLogFiles(
   }
   return [...files.values()]
     .sort((left, right) => {
-      const priority = logPriority(basename(left.path)) - logPriority(basename(right.path))
+      const priority =
+        logPriority(basename(left.path), explicitPaths.has(left.path)) -
+        logPriority(basename(right.path), explicitPaths.has(right.path))
       return priority !== 0
         ? priority
         : right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path)
@@ -167,10 +182,13 @@ function isLogName(name: string): boolean {
   return /\.log(?:\.\d+|\.bak)?$/i.test(name) || /\.log\.[^.]+$/i.test(name)
 }
 
-function logPriority(name: string): number {
-  const base = name.replace(/\.\d+$|\.bak$/i, '')
-  const index = PRIORITY_LOG_NAMES.indexOf(base as (typeof PRIORITY_LOG_NAMES)[number])
-  return index === -1 ? PRIORITY_LOG_NAMES.length : index
+function logPriority(name: string, explicit: boolean): number {
+  const index = PRIORITY_LOG_NAMES.indexOf(
+    name.toLowerCase() as (typeof PRIORITY_LOG_NAMES)[number]
+  )
+  if (index !== -1) return index
+  if (explicit) return PRIORITY_LOG_NAMES.length
+  return PRIORITY_LOG_NAMES.length + (/\.log$/i.test(name) ? 1 : 2)
 }
 
 function formatProgress(
@@ -212,6 +230,8 @@ function formatFailure(
   const lines: string[] = []
   if (failure) {
     if (failure.pluginName) lines.push(`Plugin: ${failure.pluginName}`)
+    if (failure.source) lines.push(`Source: ${failure.source}`)
+    if (failure.stage) lines.push(`Stage: ${failure.stage}`)
     lines.push(`Message: ${failure.message}`)
     if (failure.stack) lines.push('', failure.stack)
   }
@@ -232,17 +252,19 @@ function formatRuntimeState(runtimeState: unknown): string {
 
 interface LogWindow {
   tail: string
-  /** First matching error outside the included tail, so truncation cannot hide it. */
+  /** First matching error before the included tail, within the scan budget. */
   firstErrorLine: string | null
+  firstErrorScanLimit?: number
 }
 
 async function readLogTails(
   files: readonly LogFile[],
-  maxTailBytes: number
+  maxTailBytes: number,
+  maxScanBytes: number
 ): Promise<Map<string, LogWindow>> {
   const windows = new Map<string, LogWindow>()
   for (const file of files) {
-    windows.set(file.path, await readLogWindow(file.path, maxTailBytes))
+    windows.set(file.path, await readLogWindow(file.path, maxTailBytes, maxScanBytes))
   }
   return windows
 }
@@ -259,6 +281,12 @@ function formatLogFiles(files: readonly LogFile[], tails: ReadonlyMap<string, Lo
       `path: ${file.path}`,
       ...(window?.firstErrorLine
         ? [`[first error before the included tail] ${window.firstErrorLine}`, '']
+        : []),
+      ...(window?.firstErrorScanLimit !== undefined
+        ? [
+            `[first-error scan limited to ${formatBytes(window.firstErrorScanLimit)}; middle log content was not scanned]`,
+            '',
+          ]
         : []),
       window?.tail.trimEnd() || '(empty)'
     )
@@ -287,7 +315,11 @@ function formatRecentErrorLines(
   return matches.length > 0 ? matches.join('\n') : '(no error lines found in recent logs)'
 }
 
-async function readLogWindow(path: string, maxBytes: number): Promise<LogWindow> {
+async function readLogWindow(
+  path: string,
+  maxBytes: number,
+  maxScanBytes: number
+): Promise<LogWindow> {
   try {
     const handle = await open(path, 'r')
     try {
@@ -299,18 +331,8 @@ async function readLogWindow(path: string, maxBytes: number): Promise<LogWindow>
       const tail = tailBuffer.toString('utf8')
       if (tailStart === 0) return { tail, firstErrorLine: null }
 
-      const headLength = Math.min(tailStart, maxBytes)
-      const headBuffer = Buffer.alloc(headLength)
-      await handle.read(headBuffer, 0, headLength, 0)
-      const headError = headBuffer
-        .toString('utf8')
-        .split('\n')
-        .map(line => line.trim())
-        .find(line => ERROR_LINE_PATTERN.test(line))
-      return {
-        tail,
-        firstErrorLine: headError && !tail.includes(headError) ? headError : null,
-      }
+      const scan = await scanFirstErrorLine(handle, tailStart, maxScanBytes)
+      return { tail, ...scan }
     } finally {
       await handle.close()
     }
@@ -320,6 +342,44 @@ async function readLogWindow(path: string, maxBytes: number): Promise<LogWindow>
       firstErrorLine: null,
     }
   }
+}
+
+async function scanFirstErrorLine(
+  handle: FileHandle,
+  endPosition: number,
+  maxBytes: number
+): Promise<Omit<LogWindow, 'tail'>> {
+  const scanLength = Math.max(0, Math.min(endPosition, maxBytes))
+  const buffer = Buffer.alloc(Math.min(scanLength, LOG_SCAN_CHUNK_BYTES))
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  let position = 0
+  while (position < scanLength) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, scanLength - position),
+      position
+    )
+    if (bytesRead === 0) break
+    position += bytesRead
+    const lines = (pending + decoder.write(buffer.subarray(0, bytesRead))).split('\n')
+    pending = lines.pop() ?? ''
+    const firstErrorLine = findErrorLine(lines)
+    if (firstErrorLine) return { firstErrorLine }
+  }
+  return {
+    firstErrorLine: findErrorLine([pending + decoder.end()]),
+    ...(position < endPosition ? { firstErrorScanLimit: position } : {}),
+  }
+}
+
+function findErrorLine(lines: readonly string[]): string | null {
+  const line = lines.find(line => ERROR_LINE_PATTERN.test(line))?.trim()
+  if (!line) return null
+  return line.length > MAX_ERROR_LINE_CHARACTERS
+    ? `${line.slice(0, MAX_ERROR_LINE_CHARACTERS)}… [truncated]`
+    : line
 }
 
 function formatDuration(milliseconds: number): string {

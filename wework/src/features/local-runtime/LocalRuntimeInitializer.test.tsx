@@ -492,8 +492,9 @@ describe('LocalRuntimeInitializer', () => {
   })
 
   test('shows startup error and retries initialization', async () => {
+    const startupError = new Error('stdio unavailable')
     ensureMock
-      .mockRejectedValueOnce(new Error('stdio unavailable'))
+      .mockRejectedValueOnce(startupError)
       .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
 
     Object.defineProperty(navigator, 'userAgent', {
@@ -510,7 +511,11 @@ describe('LocalRuntimeInitializer', () => {
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
     expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
     await waitFor(() =>
-      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed')
+      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed', {
+        message: 'stdio unavailable',
+        stack: startupError.stack,
+        source: 'local_runtime_initialize',
+      })
     )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))

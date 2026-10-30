@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { promisify } from 'node:util'
-
-import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 export function parseStartupEvents(log) {
   return [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)].flatMap(match => {
@@ -92,372 +87,186 @@ export async function waitForStartupProgressEvidence({
   assert.fail(`Durable startup progress did not finish through splash close:\n${log}`)
 }
 
-// Runs the production splash, preload, IPC progress channel, and stylesheet in
-// an isolated Electron process. It verifies the real renderer contract rather
-// than a browser-only mock of the startup screen.
-export async function verifyStartupSplashProgress({ appBinary, resultDir, electronRoot }) {
-  const root = join(resultDir, 'startup-splash-progress')
-  await mkdir(root, { recursive: true })
-  const input = {
-    root,
-    electronRoot: electronRoot ?? join(dirname(appBinary), 'resources', 'app.asar'),
-  }
-  const scriptPath = join(root, 'verify.cjs')
-  await writeFile(
-    scriptPath,
-    `(${runSplashProgressVerification.toString()})().catch(async error => {
-    const fs = require('node:fs/promises');
-    const path = require('node:path');
-    const input = JSON.parse(process.argv[2]);
-    await fs.writeFile(path.join(input.root, 'evidence.json'), JSON.stringify({ error: error.stack }));
-    require('electron').app.exit(1);
-  });`
-  )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
-  const environment = { ...process.env }
-  delete environment.ELECTRON_RUN_AS_NODE
-  await promisify(execFile)(
-    require('electron'),
-    [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
-    {
-      env: environment,
-      timeout: 60_000,
-      maxBuffer: 1024 * 1024,
-    }
-  )
+async function inspectSplash(control) {
+  return JSON.parse(await control.command('inspectStartupSplash', 'body'))
+}
 
-  const evidence = JSON.parse(await readFile(join(root, 'evidence.json'), 'utf8'))
-  assert.equal(evidence.error, undefined, evidence.error)
-  const {
-    normal,
-    slow,
-    timeout,
-    timeoutCopy,
-    failure,
-    failureCopy,
-    copiedDiagnostics,
-    missingLogs,
-    firstErrorPreserved,
-  } = evidence
+async function waitForSplash(control, predicate, description) {
+  const deadline = Date.now() + 10_000
+  let state
+  do {
+    state = await inspectSplash(control)
+    if (predicate(state)) return state
+    await delay(50)
+  } while (Date.now() < deadline)
+  assert.fail(`${description}: ${JSON.stringify(state)}`)
+}
 
-  // The copy action must carry every startup log source, not just the UI text.
-  assert.deepEqual(
-    missingLogs,
-    [],
-    `The copied startup diagnostics missed log sources: ${missingLogs.join(', ')}`
+async function waitForHandlerLog(logPath, afterBytes, step, status) {
+  const deadline = Date.now() + 10_000
+  do {
+    const log = (await readFile(logPath)).subarray(afterBytes).toString('utf8')
+    const event = parseStartupEvents(log).find(
+      event => event.step === step && event.status === status
+    )
+    if (event) return event
+    await delay(50)
+  } while (Date.now() < deadline)
+  assert.fail(`The real ${step} handler did not log ${status}`)
+}
+
+async function clickSplash(control, testId) {
+  await control.command('clickStartupSplash', 'body', { value: testId })
+}
+
+async function copyDiagnostics(control, testId, logPath) {
+  const afterBytes = (await readFile(logPath)).length
+  await clickSplash(control, testId)
+  await waitForHandlerLog(logPath, afterBytes, 'startup-diagnostics-copy', 'completed')
+  await waitForSplash(
+    control,
+    state => /诊断信息已复制|Diagnostics copied/.test(state.toastText),
+    'Copying real startup diagnostics did not confirm success'
   )
-  assert.equal(
-    firstErrorPreserved,
-    true,
-    'The copied startup diagnostics lost the first error line of a truncated log'
-  )
+  const diagnostics = await control.command('getClipboardText', 'body')
   for (const section of [
     'Wework startup diagnostics',
+    '[Startup result]',
     '[Startup progress]',
+    '[Failure]',
     '[Log directories]',
     '[Log files]',
+    'wework-main.log',
+    'executor.log',
+    'dsh-core-runtime.log',
   ]) {
-    assert.ok(
-      copiedDiagnostics.includes(section),
-      `The copied startup diagnostics missed the ${section} section`
+    assert.ok(diagnostics.includes(section), `Copied diagnostics omitted ${section}`)
+  }
+  assert.match(diagnostics, /renderer-startup-ready/)
+  return diagnostics
+}
+
+async function verifyOpenLogs(control, testId, logPath, blockedDirectory) {
+  const beforeSuccess = (await readFile(logPath)).length
+  await clickSplash(control, testId)
+  const completed = await waitForHandlerLog(
+    logPath,
+    beforeSuccess,
+    'startup-diagnostics-open-logs',
+    'completed'
+  )
+  await control.command('setStartupLogPath', 'body', { value: blockedDirectory })
+  try {
+    await rm(blockedDirectory, { recursive: true })
+    await writeFile(blockedDirectory, 'A real file cannot be opened as the log directory.\n')
+    const beforeFailure = (await readFile(logPath)).length
+    await clickSplash(control, testId)
+    const failed = await waitForHandlerLog(
+      logPath,
+      beforeFailure,
+      'startup-diagnostics-open-logs',
+      'failed'
     )
-  }
-
-  assertIncludesAny(
-    normal.stepCount,
-    ['检查本地组件', 'Checking local components'],
-    'The splash did not show the current startup stage'
-  )
-  assertIncludesAny(
-    normal.activity,
-    ['index.js'],
-    'The splash did not show the file currently being scanned'
-  )
-  assert.equal(normal.activityAriaHidden, 'true', 'Activity text must not be announced repeatedly')
-  assert.ok(
-    Number.parseFloat(normal.activityFontSize) <= 10,
-    `Activity text is too prominent: ${normal.activityFontSize}`
-  )
-  assert.ok(
-    colorAlpha(normal.activityColor) <= 0.3,
-    `Activity text is too opaque: ${normal.activityColor}`
-  )
-  assert.ok(
-    Number(normal.progressNow) > 0 && Number(normal.progressNow) < 100,
-    `The startup progress did not advance: ${normal.progressNow}`
-  )
-
-  assert.equal(slow.slowHidden, false, 'The slow-startup note did not appear')
-  assert.equal(slow.timeoutHidden, true, 'The timeout reminder appeared before its stage budget')
-  assert.equal(slow.recoveryHidden, true, 'Recovery actions appeared for a slow but running stage')
-  assertIncludesAny(
-    slow.title,
-    ['启动比预期慢', 'Startup is taking longer than expected'],
-    'The splash did not switch to the slow-startup title'
-  )
-
-  assert.equal(timeout.slowHidden, true, 'The slow note stayed visible with the timeout reminder')
-  assert.equal(timeout.timeoutHidden, false, 'The slow-stage reminder did not appear')
-  assert.equal(timeout.recoveryHidden, true, 'Recovery actions appeared for a soft timeout')
-  assert.equal(
-    timeout.timeoutActionsHidden,
-    false,
-    'The timeout state did not offer diagnostics and log recovery'
-  )
-  assertIncludesAny(
-    timeout.timeoutTitle,
-    ['首次启动可能较慢', 'First startup can take longer'],
-    'The timeout state did not show the first-startup reminder'
-  )
-  assert.ok(
-    !includesAny(timeout.title, ['启动超时', 'Startup timed out']),
-    `The timeout state still shows the removed headline: ${timeout.title}`
-  )
-  assert.ok(
-    !timeout.progressClassName.includes('is-timed-out'),
-    'The progress bar still uses the removed timeout styling'
-  )
-  assert.equal(
-    timeoutCopy.requests,
-    1,
-    'Copying diagnostics from the timeout state did not reach IPC'
-  )
-  assert.ok(
-    includesAny(timeoutCopy.toastText, ['诊断信息已复制', 'Diagnostics copied']),
-    `The timeout diagnostics copy did not confirm success: ${timeoutCopy.toastText}`
-  )
-
-  assert.equal(failure.failureHidden, false, 'The failure note did not appear')
-  assert.equal(failure.recoveryHidden, false, 'Recovery actions did not appear for a failure')
-  assert.equal(
-    failure.timeoutActionsHidden,
-    true,
-    'The soft-timeout actions stayed visible after a hard failure'
-  )
-  assertIncludesAny(
-    failure.title,
-    ['Wework 启动失败', 'Wework could not start'],
-    'The splash did not show the failure title'
-  )
-  assert.equal(
-    failureCopy.requests,
-    2,
-    'Copying diagnostics from the failure state did not reach IPC'
-  )
-  assert.ok(
-    includesAny(failureCopy.toastText, ['诊断信息已复制', 'Diagnostics copied']),
-    `The failure diagnostics copy did not confirm success: ${failureCopy.toastText}`
-  )
-}
-
-async function runSplashProgressVerification() {
-  const fs = require('node:fs/promises')
-  const path = require('node:path')
-  const { pathToFileURL } = require('node:url')
-  const { app, BrowserWindow, clipboard, ipcMain } = require('electron')
-  const input = JSON.parse(process.argv[2])
-  const diagnosticsCopyRequests = []
-  const logDirectory = path.join(input.root, 'diagnostics-logs')
-  const executorLogDirectory = path.join(input.root, 'executor-logs')
-  await fs.mkdir(logDirectory, { recursive: true })
-  await fs.mkdir(executorLogDirectory, { recursive: true })
-  const logFiles = {
-    main: { path: path.join(logDirectory, 'wework-main.log'), marker: 'main-process-log-marker' },
-    renderer: {
-      path: path.join(logDirectory, 'renderer-startup.log'),
-      marker: 'renderer-startup-marker',
-    },
-    update: { path: path.join(logDirectory, 'app-update.log'), marker: 'app-update-marker' },
-    executor: {
-      path: path.join(executorLogDirectory, 'executor.log'),
-      marker: 'executor-log-marker',
-    },
-    bootstrap: {
-      path: path.join(logDirectory, 'wework-startup-bootstrap.log'),
-      marker: 'bootstrap-log-marker',
-    },
-  }
-  await Promise.all(
-    Object.values(logFiles).map(file => fs.writeFile(file.path, `${file.marker}\n`))
-  )
-  // Overflow the included tail so the first error only survives through the
-  // dedicated "first error" capture.
-  const firstErrorLine = 'fatal: first startup error EACCES'
-  const filler = Array.from(
-    { length: 4000 },
-    (_, index) => `noise ${index} ${'x'.repeat(64)}`
-  ).join('\n')
-  await fs.writeFile(logFiles.main.path, `${firstErrorLine}\n${filler}\n${logFiles.main.marker}\n`)
-  const diagnosticsProgress = () => ({
-    index: 2,
-    total: 9,
-    completedWeight: 10,
-    startedAt: Date.now() - 5_000,
-    stage: {
-      id: 'components',
-      label: { en: 'Checking local components', zh: '检查本地组件' },
-      detail: { en: 'Scanning local component files…', zh: '正在扫描本地组件文件…' },
-      weight: 15,
-      expectedMs: 2_500,
-      timeoutMs: 60_000,
-    },
-  })
-  let dist = ''
-  ipcMain.handle('startup-diagnostics:copy', async () => {
-    diagnosticsCopyRequests.push(Date.now())
-    const { buildStartupDiagnostics } = await import(
-      pathToFileURL(path.join(dist, 'host', 'startup-diagnostics.js')).href
+    const snapshot = await waitForSplash(
+      control,
+      state => /无法打开日志目录|Could not open the log folder/.test(state.toastText),
+      'A real log-directory error did not reach the splash'
     )
-    const text = await buildStartupDiagnostics({
-      appName: 'Wework',
-      appVersion: '0.0.0-e2e',
-      platform: process.platform,
-      arch: process.arch,
-      nodeVersion: process.versions.node,
-      logDirectories: [logDirectory, executorLogDirectory],
-      extraLogPaths: [logFiles.bootstrap.path],
-      progress: { current: diagnosticsProgress(), history: [diagnosticsProgress()] },
-      failure: { message: 'simulated startup failure' },
-      runtimeError: null,
-      runtimeState: null,
-    })
-    clipboard.writeText(text)
-    return { ok: true, characters: text.length }
-  })
-  ipcMain.handle('startup-diagnostics:open-logs', () => ({ ok: true }))
-  app.setPath('userData', path.join(input.root, 'user-data'))
-  await app.whenReady()
-  const metadata = JSON.parse(
-    await fs.readFile(path.join(input.electronRoot, 'package.json'), 'utf8')
-  )
-  dist = path.join(input.electronRoot, path.dirname(metadata.main))
-  const splash = new BrowserWindow({
-    show: false,
-    width: 720,
-    height: 600,
-    webPreferences: {
-      preload: path.join(dist, 'startup-splash-preload.cjs'),
-      contextIsolation: true,
-      sandbox: true,
-      backgroundThrottling: false,
-    },
-  })
-  await splash.loadFile(path.join(dist, 'shell/startup-splash/index.html'))
-  splash.showInactive()
-
-  const send = update => splash.webContents.send('startup-progress:update', update)
-  const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
-  const readState = () =>
-    splash.webContents.executeJavaScript(`(() => {
-      const activity = document.querySelector('#splash-activity')
-      const activityStyle = getComputedStyle(activity)
-      return {
-        title: document.querySelector('#splash-title').textContent,
-        stepCount: document.querySelector('#splash-step-count').textContent,
-        activity: activity.textContent,
-        activityAriaHidden: activity.getAttribute('aria-hidden'),
-        activityColor: activityStyle.color,
-        activityFontSize: activityStyle.fontSize,
-        slowHidden: document.querySelector('#startup-slow').hidden,
-        timeoutHidden: document.querySelector('#startup-timeout').hidden,
-        timeoutTitle: document.querySelector('#startup-timeout-title').textContent,
-        timeoutActionsHidden: document.querySelector('#startup-timeout-actions').hidden,
-        failureHidden: document.querySelector('#startup-failure').hidden,
-        recoveryHidden: document.querySelector('#startup-recovery').hidden,
-        toastText: document.querySelector('#startup-toast').textContent,
-        progressClassName: document.querySelector('#splash-progress').className,
-        progressNow: document.querySelector('#splash-progress').getAttribute('aria-valuenow'),
-      }
-    })()`)
-
-  const stage = {
-    id: 'components',
-    label: { en: 'Checking local components', zh: '检查本地组件' },
-    detail: {
-      en: 'Scanning local component files…',
-      zh: '正在扫描本地组件文件…',
-    },
-    weight: 15,
-    expectedMs: 2_500,
-    timeoutMs: 60_000,
+    return { completed, failed, toastText: snapshot.toastText }
+  } finally {
+    await control.command('setStartupLogPath', 'body')
+    await rm(blockedDirectory, { force: true })
+    await mkdir(blockedDirectory)
   }
-  const update = (elapsedMs, activity) => ({
-    index: 2,
-    total: 9,
-    completedWeight: 10,
-    startedAt: Date.now() - elapsedMs,
-    stage,
-    ...(activity ? { activity } : {}),
+}
+
+// Uses the running CI application, its main handlers, its native splash, and
+// its durable logs. The test changes timer budgets, never startup state.
+export async function verifyStartupSplashProgress({
+  control,
+  resultDir,
+  restartDesktopApp,
+  userDataDirectory,
+}) {
+  assert.ok(restartDesktopApp, 'Startup diagnostics require the desktop restart hook')
+  const root = join(resultDir, 'startup-splash-progress')
+  const logPath = join(userDataDirectory, 'logs', 'wework-main.log')
+  await mkdir(root, { recursive: true })
+  const blockedDirectory = join(root, 'log-directory-is-a-file')
+  await mkdir(blockedDirectory)
+  await restartDesktopApp({
+    appEnvironmentOverrides: {
+      WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000',
+      WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '500',
+      WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '5000',
+    },
   })
-
-  send(
-    update(5_000, {
-      kind: 'scan',
-      path: 'plugins/@wegent/ai-fleet-defense/dist/client/index.js',
-    })
+  const slow = await waitForSplash(
+    control,
+    state => state.progress?.stage.id === 'renderer' && !state.slowHidden && state.timeoutHidden,
+    'The real startup stage did not show its slow state before its timeout budget'
   )
-  await wait(300)
-  const normal = await readState()
-
-  send(update(31_000))
-  await wait(300)
-  const slow = await readState()
-
-  send(update(61_000))
-  await wait(300)
-  const timeout = await readState()
-  await splash.webContents.executeJavaScript(
-    'document.querySelector(\'[data-testid="startup-timeout-copy-button"]\').click()'
+  assert.equal(slow.failure, null)
+  assert.equal(slow.recoveryHidden, true)
+  assert.match(slow.title, /启动比预期慢|Startup is taking longer than expected/)
+  assert.equal(slow.activityAriaHidden, 'true')
+  assert.ok(Number.parseFloat(slow.activityFontSize) >= 11)
+  assert.ok(Number(slow.progressNow) > 0 && Number(slow.progressNow) < 100)
+  const timeout = await waitForSplash(
+    control,
+    state => !state.timeoutHidden && !state.timeoutActionsHidden,
+    'The real startup timer did not show diagnostics actions'
   )
-  await wait(300)
-  const timeoutCopy = { requests: diagnosticsCopyRequests.length, ...(await readState()) }
-
-  await splash.webContents.executeJavaScript(
-    "window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: {} }))"
+  assert.equal(timeout.failure, null)
+  assert.equal(timeout.recoveryHidden, true)
+  assert.match(timeout.timeoutTitle, /首次启动可能较慢|First startup can take longer/)
+  const timeoutDiagnostics = await copyDiagnostics(control, 'startup-timeout-copy-button', logPath)
+  assert.match(timeoutDiagnostics, /\[Startup result\]\nStartup is slow: stage renderer/)
+  assert.match(timeoutDiagnostics, /\(no startup failure recorded\)/)
+  const timeoutOpenLogs = await verifyOpenLogs(
+    control,
+    'startup-timeout-open-logs-button',
+    logPath,
+    blockedDirectory
   )
-  await wait(300)
-  const failure = await readState()
-  await splash.webContents.executeJavaScript(
-    'document.querySelector(\'[data-testid="startup-copy-diagnostics-button"]\').click()'
+
+  // A React exception crosses the production error boundary and failure route.
+  await control.command('crashRenderer', 'body')
+  const failure = await waitForSplash(
+    control,
+    state => !state.failureHidden && !state.recoveryHidden,
+    'The renderer error did not become a real startup failure'
   )
-  await wait(300)
-  const failureCopy = { requests: diagnosticsCopyRequests.length, ...(await readState()) }
-  const copiedDiagnostics = clipboard.readText()
-  const missingLogs = Object.entries(logFiles)
-    .filter(([, file]) => !copiedDiagnostics.includes(file.marker))
-    .map(([name]) => name)
-  const firstErrorPreserved = copiedDiagnostics.includes(firstErrorLine)
-
-  await fs.writeFile(
-    path.join(input.root, 'evidence.json'),
-    `${JSON.stringify(
-      {
-        normal,
-        slow,
-        timeout,
-        timeoutCopy,
-        failure,
-        failureCopy,
-        copiedDiagnostics,
-        missingLogs,
-        firstErrorPreserved,
-      },
-      null,
-      2
-    )}\n`
+  assert.equal(failure.timeoutHidden, true)
+  assert.equal(failure.failure?.message, 'Desktop E2E intentional renderer crash')
+  assert.equal(failure.failure?.source, 'renderer_mount')
+  assert.equal(failure.failure?.stage, 'renderer')
+  assert.match(failure.failure?.stack ?? '', /Desktop E2E intentional renderer crash/)
+  const failureDiagnostics = await copyDiagnostics(
+    control,
+    'startup-copy-diagnostics-button',
+    logPath
   )
-  app.exit(0)
-}
-
-function includesAny(value, candidates) {
-  return candidates.some(candidate => String(value).includes(candidate))
-}
-
-function assertIncludesAny(value, candidates, message) {
-  assert.ok(includesAny(value, candidates), `${message}: ${value}`)
-}
-
-function colorAlpha(color) {
-  const match = /rgba?\([^)]*?,\s*([0-9.]+)\)/.exec(String(color))
-  return match ? Number(match[1]) : 1
+  assert.match(failureDiagnostics, /Desktop E2E intentional renderer crash/)
+  assert.match(
+    failureDiagnostics,
+    /\[Startup result\]\nStartup failed: Desktop E2E intentional renderer crash/
+  )
+  assert.doesNotMatch(failureDiagnostics, /\[Startup result\]\nStartup is in progress/)
+  assert.match(failureDiagnostics, /Source: renderer_mount/)
+  assert.match(failureDiagnostics, /Stage: renderer/)
+  assert.match(failureDiagnostics, /renderer-startup\.log/)
+  assert.match(failureDiagnostics, /\[renderer:error\]/)
+  const failureOpenLogs = await verifyOpenLogs(
+    control,
+    'startup-open-logs-button',
+    logPath,
+    blockedDirectory
+  )
+  await writeFile(join(root, 'timeout-diagnostics.txt'), timeoutDiagnostics)
+  await writeFile(join(root, 'failure-diagnostics.txt'), failureDiagnostics)
+  await writeFile(
+    join(root, 'evidence.json'),
+    `${JSON.stringify({ slow, timeout, timeoutOpenLogs, failure, failureOpenLogs }, null, 2)}\n`
+  )
 }

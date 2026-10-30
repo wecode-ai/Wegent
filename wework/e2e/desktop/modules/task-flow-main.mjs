@@ -1525,7 +1525,16 @@ async function main() {
         'Wework did not persist a valid Electron device identity before restart'
       )
       const readyCountBeforeRestart = control.readyCount
-      await stopDesktopAppProcess(app)
+      const forceSnapshot = options?.forceStop
+        ? JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+        : null
+      if (forceSnapshot) {
+        await writeFile(
+          join(resultDir, 'forced-restart-process-tree.json'),
+          JSON.stringify(forceSnapshot, null, 2)
+        )
+      }
+      await stopDesktopAppProcess(app, { forceSnapshot })
       await beforeStart?.()
       if (typeof options === 'object' && options?.appEnvironmentOverrides) {
         activeAppEnvironment = {

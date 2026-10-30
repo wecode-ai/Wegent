@@ -24,7 +24,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
-import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import {
+  crashOwnedProcessTree,
+  processIsAlive,
+  stopProcess,
+  stopProcessGroup,
+} from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
@@ -1037,8 +1042,13 @@ async function commandOutputAsync(command, args, options = {}) {
   })
 }
 
-async function stopDesktopAppProcess(app) {
+async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
   if (!app) return
+  if (forceSnapshot) {
+    await crashOwnedProcessTree(app, forceSnapshot)
+    if (app.launcher) await stopProcess(app.launcher)
+    return
+  }
   if (!app.launcher) {
     await stopProcessGroup(app)
     return

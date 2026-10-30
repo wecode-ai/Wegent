@@ -3,11 +3,35 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   STARTUP_PROGRESS_STAGES,
   StartupProgressReporter,
+  desktopE2EStartupTiming,
   startupProgressTotalWeight,
   type StartupProgressUpdate,
 } from './startup-progress.js'
 
 describe('startup progress', () => {
+  test('shortens only real timers in a controlled desktop E2E process', () => {
+    const environment = {
+      VITE_WEWORK_E2E: 'true',
+      WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+      WEWORK_E2E_STARTUP_SLOW_AFTER_MS: '500',
+      WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '1200',
+    }
+    const timing = desktopE2EStartupTiming(environment)
+    expect(timing).toEqual({ slowAfterMs: 500, stageTimeoutMs: 1200 })
+    expect(desktopE2EStartupTiming({ ...environment, VITE_WEWORK_E2E: 'false' })).toBeNull()
+    expect(desktopE2EStartupTiming({ ...environment, WEWORK_E2E_CONTROL_URL: '' })).toBeNull()
+    expect(
+      desktopE2EStartupTiming({ ...environment, WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '100' })
+    ).toBeNull()
+    const reporter = new StartupProgressReporter(vi.fn(), () => 1234, timing)
+    reporter.report('renderer')
+    expect(reporter.currentUpdate()).toMatchObject({
+      startedAt: 1234,
+      stage: { id: 'renderer', timeoutMs: 1200 },
+    })
+    expect(STARTUP_PROGRESS_STAGES.at(-1)?.timeoutMs).toBe(60_000)
+  })
+
   test('uses one bounded progress budget across every startup stage', () => {
     expect(STARTUP_PROGRESS_STAGES.length).toBeGreaterThan(1)
     expect(startupProgressTotalWeight()).toBe(100)

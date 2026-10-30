@@ -1,4 +1,6 @@
-const SLOW_AFTER_MS = 30_000
+const requestedSlowAfterMs = Number(new URLSearchParams(window.location.search).get('slowAfterMs'))
+const SLOW_AFTER_MS =
+  Number.isInteger(requestedSlowAfterMs) && requestedSlowAfterMs > 0 ? requestedSlowAfterMs : 30_000
 const DEFAULT_STAGE_TIMEOUT_MS = 60_000
 
 const FALLBACK_UPDATE = {

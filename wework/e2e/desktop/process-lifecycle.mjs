@@ -246,6 +246,95 @@ export function windowsTaskkillArguments(processId) {
   return ['/PID', String(processId), '/T', '/F']
 }
 
+function ownedCrashTargets(child, snapshot) {
+  if (
+    !Number.isSafeInteger(child?.pid) ||
+    snapshot?.applicationPid !== child.pid ||
+    snapshot.platform !== process.platform ||
+    !Number.isFinite(snapshot.capturedAt) ||
+    snapshot.capturedAt > Date.now() ||
+    Date.now() - snapshot.capturedAt > PROCESS_STOP_TIMEOUT_MS ||
+    !Array.isArray(snapshot.degraded) ||
+    snapshot.degraded.length > 0 ||
+    !Array.isArray(snapshot.processes)
+  ) {
+    throw new Error('An application crash requires its complete owned process snapshot')
+  }
+  const parents = new Map()
+  for (const record of snapshot.processes) {
+    if (
+      !Number.isSafeInteger(record.pid) ||
+      record.pid <= 0 ||
+      parents.has(record.pid) ||
+      !Number.isFinite(record.startedAt) ||
+      record.startedAt <= 0 ||
+      record.startedAt > Date.now()
+    ) {
+      throw new Error(
+        'The owned crash snapshot requires unique process identities and creation times'
+      )
+    }
+    parents.set(record.pid, record.parentPid)
+  }
+  if (!parents.has(child.pid)) throw new Error('The crash snapshot is missing its application')
+  for (const pid of parents.keys()) {
+    const visited = new Set()
+    let current = pid
+    while (current !== child.pid) {
+      if (!parents.has(current) || visited.has(current)) {
+        throw new Error(`Crash target ${pid} is outside the isolated application tree`)
+      }
+      visited.add(current)
+      current = parents.get(current)
+    }
+  }
+  return [child.pid, ...[...parents.keys()].filter(pid => pid !== child.pid)]
+}
+
+export async function crashOwnedProcessTree(child, snapshot) {
+  const targets = ownedCrashTargets(child, snapshot)
+  if (process.platform === 'win32') {
+    await stopWindowsProcessTree(child)
+  } else {
+    const frozen = []
+    try {
+      // Freeze every owned process before closing any pipe can settle native turns.
+      for (const pid of targets) {
+        try {
+          process.kill(pid, 'SIGSTOP')
+          frozen.push(pid)
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error
+        }
+      }
+      for (const pid of frozen.toReversed()) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error
+        }
+      }
+    } catch (error) {
+      // Leave a diagnosable live application if the crash injection is rejected.
+      for (const pid of frozen) {
+        try {
+          process.kill(pid, 'SIGCONT')
+        } catch (resumeError) {
+          if (resumeError?.code !== 'ESRCH') throw resumeError
+        }
+      }
+      throw error
+    }
+  }
+  const startedAt = Date.now()
+  while (targets.some(processIsAlive)) {
+    if (Date.now() - startedAt >= PROCESS_STOP_TIMEOUT_MS) {
+      throw new Error('The isolated application process tree survived its injected crash')
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+}
+
 async function stopWindowsProcessTree(child) {
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
   const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {

@@ -207,7 +207,6 @@ describe('StartupSplash', () => {
     expect(html).toContain('document.documentElement.dataset.theme = theme')
     expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(script).toContain('const SLOW_AFTER_MS = 30_000')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')
     expect(script).toContain('weworkStartupDiagnostics')
@@ -258,6 +257,7 @@ describe('StartupSplash', () => {
     const documentElement = element('documentElement')
 
     runInNewContext(script, {
+      URLSearchParams,
       document: {
         activeElement: null,
         body: element('body'),
@@ -274,6 +274,7 @@ describe('StartupSplash', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
+        location: { search: '' },
         addEventListener: (event: string, listener: () => void) => {
           windowListeners.set(event, listener)
         },
@@ -303,113 +304,125 @@ describe('StartupSplash', () => {
     expect(retry).not.toHaveBeenCalled()
   })
 
-  test('shows slow and timeout states for the active startup stage', async () => {
-    const electronRoot =
-      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const script = await readFile(
-      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
-      'utf8'
-    )
-    const elements = new Map<string, FakeSplashElement>()
-    const element = (selector: string) => {
-      const existing = elements.get(selector)
-      if (existing) return existing
-      const created = new FakeSplashElement()
-      elements.set(selector, created)
-      return created
-    }
-    let progressListener: ((update: unknown) => void) | undefined
-    const interval = vi.fn()
+  test.each([
+    { search: '', slowAfterMs: 30_000 },
+    { search: '?slowAfterMs=500', slowAfterMs: 500 },
+    { search: '?slowAfterMs=invalid', slowAfterMs: 30_000 },
+    { search: '?slowAfterMs=-1', slowAfterMs: 30_000 },
+    { search: '?slowAfterMs=0', slowAfterMs: 30_000 },
+    { search: '?slowAfterMs=1.5', slowAfterMs: 30_000 },
+  ])(
+    'shows slow and timeout states with timer query "$search"',
+    async ({ search, slowAfterMs }) => {
+      const electronRoot =
+        basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+      const script = await readFile(
+        join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
+        'utf8'
+      )
+      const elements = new Map<string, FakeSplashElement>()
+      const element = (selector: string) => {
+        const existing = elements.get(selector)
+        if (existing) return existing
+        const created = new FakeSplashElement()
+        elements.set(selector, created)
+        return created
+      }
+      let progressListener: ((update: unknown) => void) | undefined
+      const interval = vi.fn()
 
-    runInNewContext(script, {
-      document: {
-        activeElement: null,
-        body: element('body'),
-        documentElement: element('documentElement'),
-        querySelector: (selector: string) => element(selector),
-        querySelectorAll: () => [],
-      },
-      HTMLElement: FakeSplashElement,
-      navigator: { language: 'en-US' },
-      performance: { now: () => 0 },
-      requestAnimationFrame: vi.fn(),
-      window: {
-        addEventListener: vi.fn(),
-        matchMedia: () => ({ matches: true }),
+      runInNewContext(script, {
+        URLSearchParams,
+        document: {
+          activeElement: null,
+          body: element('body'),
+          documentElement: element('documentElement'),
+          querySelector: (selector: string) => element(selector),
+          querySelectorAll: () => [],
+        },
+        HTMLElement: FakeSplashElement,
+        navigator: { language: 'en-US' },
+        performance: { now: () => 0 },
         requestAnimationFrame: vi.fn(),
-        setInterval: interval,
-        setTimeout: vi.fn(),
-        weworkStartupProgress: {
-          onUpdate: (listener: (update: unknown) => void) => {
-            progressListener = listener
+        window: {
+          location: { search },
+          addEventListener: vi.fn(),
+          matchMedia: () => ({ matches: true }),
+          requestAnimationFrame: vi.fn(),
+          setInterval: interval,
+          setTimeout: vi.fn(),
+          weworkStartupProgress: {
+            onUpdate: (listener: (update: unknown) => void) => {
+              progressListener = listener
+            },
           },
         },
-      },
-    })
+      })
 
-    const update = (index: number, elapsedMs: number, timeoutMs: number) => ({
-      index,
-      total: 9,
-      completedWeight: index * 10,
-      startedAt: Date.now() - elapsedMs,
-      stage: {
-        id: `stage-${index}`,
-        label: { en: `Stage ${index}`, zh: `步骤 ${index}` },
-        detail: { en: `Working on stage ${index}`, zh: `正在处理步骤 ${index}` },
-        weight: 10,
-        expectedMs: 1_000,
-        timeoutMs,
-      },
-    })
+      const update = (index: number, elapsedMs: number, timeoutMs: number) => ({
+        index,
+        total: 9,
+        completedWeight: index * 10,
+        startedAt: Date.now() - elapsedMs,
+        stage: {
+          id: `stage-${index}`,
+          label: { en: `Stage ${index}`, zh: `步骤 ${index}` },
+          detail: { en: `Working on stage ${index}`, zh: `正在处理步骤 ${index}` },
+          weight: 10,
+          expectedMs: 1_000,
+          timeoutMs,
+        },
+      })
 
-    expect(progressListener).toBeTypeOf('function')
-    progressListener?.(update(1, 5_000, 60_000))
-    expect(element('#startup-slow').hidden).toBe(true)
-    expect(element('#startup-timeout').hidden).toBe(true)
-    expect(element('#startup-timeout-actions').hidden).toBe(true)
-    expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
-    expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
-    expect(element('#splash-activity').textContent).toBe('Working on stage 1')
+      expect(progressListener).toBeTypeOf('function')
+      progressListener?.(update(1, Math.min(5_000, slowAfterMs / 2), 60_000))
+      expect(element('#startup-slow').hidden).toBe(true)
+      expect(element('#startup-timeout').hidden).toBe(true)
+      expect(element('#startup-timeout-actions').hidden).toBe(true)
+      expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
+      expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
+      expect(element('#splash-activity').textContent).toBe('Working on stage 1')
 
-    progressListener?.({
-      ...update(1, 1_000, 60_000),
-      activity: { kind: 'scan', path: 'plugins/foo/bar/index.js' },
-    })
-    expect(element('#splash-activity').textContent).toBe('Scanning plugins/foo/bar/index.js')
+      progressListener?.({
+        ...update(1, 1_000, 60_000),
+        activity: { kind: 'scan', path: 'plugins/foo/bar/index.js' },
+      })
+      expect(element('#splash-activity').textContent).toBe('Scanning plugins/foo/bar/index.js')
 
-    progressListener?.({
-      ...update(1, 1_000, 60_000),
-      activity: { kind: 'scan', path: `plugins/${'segment/'.repeat(10)}index.js` },
-    })
-    const shortenedActivity = element('#splash-activity').textContent
-    expect(shortenedActivity.startsWith('Scanning …/')).toBe(true)
-    expect(shortenedActivity.endsWith('index.js')).toBe(true)
-    expect(shortenedActivity.length).toBeLessThanOrEqual(60)
+      progressListener?.({
+        ...update(1, 1_000, 60_000),
+        activity: { kind: 'scan', path: `plugins/${'segment/'.repeat(10)}index.js` },
+      })
+      const shortenedActivity = element('#splash-activity').textContent
+      expect(shortenedActivity.startsWith('Scanning …/')).toBe(true)
+      expect(shortenedActivity.endsWith('index.js')).toBe(true)
+      expect(shortenedActivity.length).toBeLessThanOrEqual(60)
 
-    progressListener?.(update(1, 31_000, 60_000))
-    expect(element('#startup-slow').hidden).toBe(false)
-    expect(element('#startup-timeout').hidden).toBe(true)
-    expect(element('#startup-timeout-actions').hidden).toBe(true)
-    expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
+      progressListener?.(update(1, slowAfterMs + 1_000, 60_000))
+      expect(element('#startup-slow').hidden).toBe(false)
+      expect(element('#startup-timeout').hidden).toBe(true)
+      expect(element('#startup-timeout-actions').hidden).toBe(true)
+      expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
 
-    progressListener?.(update(1, 61_000, 60_000))
-    expect(element('#startup-slow').hidden).toBe(true)
-    expect(element('#startup-timeout').hidden).toBe(false)
-    expect(element('#startup-timeout-actions').hidden).toBe(false)
-    expect(element('#startup-timeout-title').textContent).toBe('First startup can take longer')
-    expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
-    expect(element('#startup-recovery').hidden).toBe(true)
+      progressListener?.(update(1, 61_000, 60_000))
+      expect(element('#startup-slow').hidden).toBe(true)
+      expect(element('#startup-timeout').hidden).toBe(false)
+      expect(element('#startup-timeout-actions').hidden).toBe(false)
+      expect(element('#startup-timeout-title').textContent).toBe('First startup can take longer')
+      expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
+      expect(element('#startup-recovery').hidden).toBe(true)
 
-    progressListener?.(update(2, 1_000, 60_000))
-    expect(element('#startup-slow').hidden).toBe(true)
-    expect(element('#startup-timeout').hidden).toBe(true)
-    expect(element('#startup-timeout-actions').hidden).toBe(true)
-    expect(element('#startup-recovery').hidden).toBe(true)
-    expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
-    expect(element('#splash-step-count').textContent).toBe('Step 3 of 9 · Stage 2')
-    expect(element('#splash-activity').textContent).toBe('Working on stage 2')
-    expect(interval).toHaveBeenCalledWith(expect.any(Function), 100)
-  })
+      progressListener?.(update(2, Math.min(1_000, slowAfterMs / 2), 60_000))
+      expect(element('#startup-slow').hidden).toBe(true)
+      expect(element('#startup-timeout').hidden).toBe(true)
+      expect(element('#startup-timeout-actions').hidden).toBe(true)
+      expect(element('#startup-recovery').hidden).toBe(true)
+      expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
+      expect(element('#splash-step-count').textContent).toBe('Step 3 of 9 · Stage 2')
+      expect(element('#splash-activity').textContent).toBe('Working on stage 2')
+      expect(interval).toHaveBeenCalledWith(expect.any(Function), 100)
+    }
+  )
 
   test('copies diagnostics and opens the log folder from the timeout actions', async () => {
     const electronRoot =
@@ -430,6 +443,7 @@ describe('StartupSplash', () => {
     const openLogs = vi.fn(async () => ({ ok: true }))
 
     runInNewContext(script, {
+      URLSearchParams,
       document: {
         activeElement: null,
         body: element('body'),
@@ -442,6 +456,7 @@ describe('StartupSplash', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
+        location: { search: '' },
         addEventListener: vi.fn(),
         matchMedia: () => ({ matches: true }),
         requestAnimationFrame: vi.fn(),

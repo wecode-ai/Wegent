@@ -406,6 +406,51 @@ describe('Process explorer capabilities', () => {
   })
 })
 
+describe('startup renderer capabilities', () => {
+  test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
+    const rendererStartupFailed = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })
+    const failure = {
+      message: 'Could not read the task database',
+      stack: 'Error: Could not read the task database\n    at loadTasks',
+      source: 'task_list',
+    }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', failure)
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith(failure)
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', {})
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith({
+      message: 'Desktop frontend failed to initialize',
+      source: 'renderer_initialize',
+    })
+  })
+
+  test('restricts startup test actions to desktop E2E and visible diagnostics controls', async () => {
+    const startupSplashClick = vi.fn(async () => undefined)
+    const { router } = createIsolatedClipboardRouter(true, { startupSplashClick })
+    const original = process.env.VITE_WEWORK_E2E
+    try {
+      process.env.VITE_WEWORK_E2E = 'false'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+          testId: 'startup-timeout-copy-button',
+        })
+      ).rejects.toThrow('disabled')
+      process.env.VITE_WEWORK_E2E = 'true'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', { testId: 'startup-retry' })
+      ).rejects.toThrow('Unsupported startup splash action')
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+        testId: 'startup-timeout-copy-button',
+      })
+      expect(startupSplashClick).toHaveBeenCalledOnce()
+      expect(startupSplashClick).toHaveBeenCalledWith('startup-timeout-copy-button')
+    } finally {
+      if (original === undefined) delete process.env.VITE_WEWORK_E2E
+      else process.env.VITE_WEWORK_E2E = original
+    }
+  })
+})
+
 describe('Core DSH runtime capabilities', () => {
   test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
     const stored = { workbenchMode: 'developer' }
