@@ -132,25 +132,6 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     request_id: &str,
     message_id: Option<i64>,
 ) -> Result<Collected, String> {
-    collect_with_read_timeout(
-        ctx,
-        target_url,
-        request,
-        request_id,
-        message_id,
-        STREAM_TIMEOUT,
-    )
-    .await
-}
-
-async fn collect_with_read_timeout<M: Mysql, R: Redis + Clone>(
-    ctx: &ConsumerContext<'_, M, R>,
-    target_url: &str,
-    request: &ExecutionRequest,
-    request_id: &str,
-    message_id: Option<i64>,
-    read_timeout: Duration,
-) -> Result<Collected, String> {
     let Some(redis) = ctx.redis else {
         return Err("Connection error.".to_string());
     };
@@ -170,7 +151,6 @@ async fn collect_with_read_timeout<M: Mysql, R: Redis + Clone>(
         redis,
         &mut emitter,
         cancel_key.as_str(),
-        read_timeout,
     )
     .await;
 
@@ -254,7 +234,6 @@ async fn read_stream<M: Mysql, R: Redis>(
     redis: &R,
     emitter: &mut StatusUpdatingEmitter<R>,
     cancel_key: &str,
-    read_timeout: Duration,
 ) -> Result<Collected, Failure> {
     let mut content = String::new();
     // `_wait_for_sse_cancellation` is created before `stream_open_task`
@@ -284,7 +263,6 @@ async fn read_stream<M: Mysql, R: Redis>(
             message_id,
             emitter,
             &mut content,
-            read_timeout,
         );
         tokio::pin!(open);
         if already_cancelled {
@@ -346,7 +324,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     message_id: Option<i64>,
     emitter: &mut StatusUpdatingEmitter<R>,
     content: &mut String,
-    read_timeout: Duration,
 ) -> Result<StreamEnd, Failure> {
     let url = format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/'));
     // The source's OpenAI/httpx client uses a 300-second per-read timeout
@@ -354,23 +331,15 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     // `brz-http` default is 400 ms per socket read, which aborts an SSE stream
     // at its first recorded inter-chunk gap (up to ~1.2 s in the recording).
     let client = HttpClient::builder()
-        .read_timeout(read_timeout)
+        .read_timeout(STREAM_TIMEOUT)
         .build()
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
     let payload = dispatch::assemble(request, true, false);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
-    let http_request = client
-        .post(&url)
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?
-        .header("content-type", "application/json")
-        .header("accept", dispatch::OPENAI_ACCEPT)
-        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-        .header("X-Request-ID", request_id);
-    // The Source client identity (`AsyncOpenAI`) on the streaming path; the
-    // executor-manager dispatch applies the same shared set.
-    let mut response = dispatch::apply_openai_client_headers(http_request)
-        .json(&body)
-        .send()
+    let http_request = stream_request(&client, &url, &body, request_id)
+        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+    let mut response = client
+        .execute(http_request)
         .await
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
 
@@ -407,7 +376,7 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             }
         };
         let chunk = chunk
-            .map_err(|error| Failure::persisted(stream_transport_error(&error, read_timeout)))?;
+            .map_err(|error| Failure::persisted(stream_transport_error(&error, STREAM_TIMEOUT)))?;
         let Some(chunk) = chunk else { break };
         for event in frames.push(&chunk) {
             event_count += 1;
@@ -467,6 +436,28 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         persist: true,
         error_code: Some("sse_stream_no_terminal"),
     })
+}
+
+/// Build the Chat Shell SSE request without a total request deadline.
+///
+/// `read_timeout` on the client bounds inactivity between chunks. A request
+/// deadline would also cap healthy streams that keep producing events.
+pub(super) fn stream_request(
+    client: &HttpClient,
+    url: &str,
+    body: &Value,
+    request_id: &str,
+) -> brz_http::Result<brz_http::Request> {
+    let request = client
+        .post(url)?
+        .header("content-type", "application/json")
+        .header("accept", dispatch::OPENAI_ACCEPT)
+        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
+        .header("X-Request-ID", request_id)
+        .json(body);
+    // The Source client identity (`AsyncOpenAI`) on the streaming path; the
+    // executor-manager dispatch applies the same shared set.
+    dispatch::apply_openai_client_headers(request).build()
 }
 
 /// `_drain_terminal_stream`: finish the HTTP response framing after a

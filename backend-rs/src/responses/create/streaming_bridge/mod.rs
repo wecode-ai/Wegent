@@ -41,7 +41,7 @@ use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
 use super::seam::BodyStream;
-use super::sse_sync::{SseFrames, drain_terminal_stream, stream_transport_error};
+use super::sse_sync::{SseFrames, drain_terminal_stream, stream_request, stream_transport_error};
 use super::streaming::framing_events;
 
 /// `session_manager._get_cancel_key` (`chat:cancel:{subtask_id}`).
@@ -281,18 +281,11 @@ impl Bridge {
         // source's poller has already used that slot for the reads above.
         self.poll.tick().await;
         self.registered = true;
-        let request = self
+        let request = stream_request(&self.http, &self.url, &self.body, &self.request_id)
+            .map_err(|_| "Connection error.".to_string())?;
+        let response = self
             .http
-            .post(&self.url)
-            .map_err(|_| "Connection error.".to_string())?
-            .header("content-type", "application/json")
-            .header("accept", dispatch::OPENAI_ACCEPT)
-            .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-            .header("X-Request-ID", self.request_id.as_str());
-        // Same Source client identity as every other model-gateway call.
-        let response = dispatch::apply_openai_client_headers(request)
-            .json(&self.body)
-            .send()
+            .execute(request)
             .await
             .map_err(|_| "Connection error.".to_string())?;
         if !response.status().is_success() {
