@@ -11,7 +11,11 @@ import { RuntimeEventProxy } from '../modules/runtime-event-proxy.mjs'
 import { createRuntimeReconciliationModel } from '../modules/runtime-reconciliation-model.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
-import { reloadMainWindow, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  selectCollaborationDomain,
+  waitForWorkbenchDebugState,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
@@ -537,6 +541,97 @@ export async function createDesktopScenario({
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
   }
 
+  async function verifyUnphasedReplyAndReplayedStarts(control, testCase) {
+    const taskId = testCase.execution.runtimeTaskId
+    const after = proxy.events.length
+    const trigger = await emit('wework:project_chat:message:send', {
+      projectId: String(project.id),
+      taskId: testCase.issue.id,
+      clientMessageId: randomUUID(),
+      content: testCase.unphasedPrompt,
+      replyToMessageId: testCase.activityId,
+      mentions: [],
+    })
+    await emit(
+      'wework:project_chat:comment:execute',
+      {
+        projectId: String(project.id),
+        taskId: testCase.issue.id,
+        triggerMessageId: trigger.messageId,
+      },
+      modelResponseTimeoutMs
+    )
+    const terminal = await proxy.waitForEvent(
+      entry => entry.event === 'response.completed' && entry.payload.taskId === taskId,
+      { after, timeoutMs: modelResponseTimeoutMs }
+    )
+    assert.equal(terminal.payload.data.value, testCase.unphasedText)
+    assert.equal(terminal.payload.data.valueOrigin, 'final')
+    const activity = await until(
+      () => messages(testCase),
+      values =>
+        values.find(row => row.status === 'completed' && row.content === testCase.unphasedText),
+      'The unphased native answer did not reach the persisted activity',
+      modelResponseTimeoutMs
+    )
+    await openIssue(control, testCase)
+    await control.command(
+      'click',
+      `${CONTENT} [data-testid="cloud-task-activity-execution-badge-${activity.messageId}"]`
+    )
+    const opened = await until(
+      async () => ({
+        debug: JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+        openButtonCount: Number(
+          await control.command(
+            'getElementCount',
+            `${CONTENT} [data-testid="ai-chat-open-runtime-task"]`
+          )
+        ),
+      }),
+      value =>
+        value.debug.workbench?.currentRuntimeTask?.taskId === taskId || value.openButtonCount > 0,
+      'The completed execution did not expose its Runtime conversation'
+    )
+    if (opened.openButtonCount > 0) {
+      await control.command('click', `${CONTENT} [data-testid="ai-chat-open-runtime-task"]`)
+    }
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+        snapshot.workbench.activeLifecycle?.turn.phase === 'idle' &&
+        snapshot.workbench.lifecycleCurrentTaskRunning === false,
+      'The completed native conversation was not idle'
+    )
+    const starts = proxy.events.filter(
+      entry => entry.event === 'response.created' && entry.payload.taskId === taskId
+    )
+    assert.ok(starts.length >= 3, 'The real session must expose each completed turn start')
+    for (const start of starts) {
+      await proxy.replay(start)
+      const replayedAt = Date.now()
+      await until(
+        async () => {
+          const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          assert.equal(snapshot.workbench.lifecycleCurrentTaskRunning, false)
+          assert.equal(snapshot.workbench.activeLifecycle.turn.phase, 'idle')
+          return Date.now() - replayedAt
+        },
+        elapsed => elapsed >= 500,
+        'A replayed start reactivated the settled Runtime conversation'
+      )
+      await control.command('waitFor', `${CONTENT} [data-testid="send-message-button"]`, {
+        visible: true,
+        stableMs: 500,
+      })
+      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.equal(snapshot.testIds.includes('thinking-indicator'), false)
+    }
+    assert.equal(testCase.unphasedRequests, 1)
+    evidence.push({ unphasedFinal: true, replayedStarts: starts.length })
+  }
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
@@ -569,6 +664,7 @@ export async function createDesktopScenario({
         // Finish every controlled writer order before opening the fixture project.
         for (const testCase of cases) await verifyRefresh(control, testCase)
         await verifyStaleTerminals(control, cases.at(-1))
+        await verifyUnphasedReplyAndReplayedStarts(control, cases.at(-1))
       } finally {
         model.release()
         await writeFile(

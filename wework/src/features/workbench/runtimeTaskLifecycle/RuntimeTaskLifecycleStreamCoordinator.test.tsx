@@ -864,7 +864,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     }
   )
 
-  test('settles a terminal turn recovered by an older transcript request', async () => {
+  test('ignores streaming history for a settled turn while its terminal transcript is pending', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -910,8 +910,9 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       })
     })
     expect(store.getTask(address)?.turn).toMatchObject({
-      id: 'turn-1',
-      phase: 'streaming',
+      id: null,
+      phase: 'idle',
+      outcome: 'succeeded',
     })
 
     await act(async () => {

@@ -33,10 +33,13 @@ function modelCase(marker, order) {
     continuePrompt: `${marker}_CONTINUE`,
     continuePrefix: `${marker}_NEW_TURN_RUNNING`,
     continueText: `${marker}_NEW_TURN_RUNNING ${marker}_NEW_TURN_COMPLETE`,
+    unphasedPrompt: `${marker}_UNPHASED_REPLY`,
+    unphasedText: `${marker}_UNPHASED_FINAL_ANSWER`,
     initialGate: deferred(),
     continueGate: deferred(),
     initialRequests: 0,
     continueRequests: 0,
+    unphasedRequests: 0,
   }
 }
 
@@ -86,7 +89,18 @@ export function createRuntimeReconciliationModel({ marker, orders }) {
         )
         return true
       }
-      const continuation = latestUserInput(body).includes(testCase.continuePrompt)
+      const latestInput = latestUserInput(body)
+      if (latestInput.includes(testCase.unphasedPrompt)) {
+        testCase.unphasedRequests += 1
+        assert.equal(testCase.unphasedRequests, 1, 'The unphased reply invoked its model twice')
+        const stream = streamingTextEvents(id, testCase.unphasedText)
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([...stream.start, streamDelta(stream, testCase.unphasedText), ...stream.finish])
+        )
+        return true
+      }
+      const continuation = latestInput.includes(testCase.continuePrompt)
       const counter = continuation ? 'continueRequests' : 'initialRequests'
       testCase[counter] += 1
       assert.equal(testCase[counter], 1, 'A reconciliation case invoked its model more than once')
@@ -111,6 +125,7 @@ export function createRuntimeReconciliationModel({ marker, orders }) {
         issueId: testCase.issue?.id,
         initialRequests: testCase.initialRequests,
         continueRequests: testCase.continueRequests,
+        unphasedRequests: testCase.unphasedRequests,
       })),
   }
 }

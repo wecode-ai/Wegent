@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::codex_item::{
+    is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
+    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type,
+};
+
 use serde_json::Value;
 
-use super::util::{
-    codex_wrapped_item_payload, is_codex_context_compaction_item_type, is_codex_tool_item_type,
-    is_codex_tool_output_item_type, is_likely_codex_tool_item_type,
-    is_likely_codex_tool_output_item_type, item_type,
-};
+use super::util::{codex_wrapped_item_payload, item_type};
 
 pub(crate) struct CodexNotification<'a> {
     pub(crate) method: String,

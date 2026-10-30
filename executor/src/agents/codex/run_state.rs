@@ -4,9 +4,14 @@
 
 use serde_json::Value;
 
+#[cfg(test)]
+#[path = "run_state_tests.rs"]
+mod tests;
+
 use super::diagnostics::{json_string_field, serialized_json_len};
 use super::{codex_error_message, extract_text, message_params, CodexResponseValueOrigin};
 use crate::{
+    codex_item::is_substantive_process_item_type,
     codex_phase::{codex_phase_is_final, codex_phase_is_process, CodexAgentMessagePhaseTracker},
     logging::log_executor_event,
     runner::ExecutionOutcome,
@@ -21,6 +26,7 @@ pub(super) struct CodexRunState {
     pending_text: String,
     pending_message_id: Option<String>,
     pending_message_saw_delta: bool,
+    pending_unphased_final_candidate: bool,
     agent_message_phases: CodexAgentMessagePhaseTracker,
     root_thread_id: Option<String>,
     goal_status: Option<String>,
@@ -99,6 +105,7 @@ impl CodexRunState {
         self.pending_text.clear();
         self.pending_message_id = None;
         self.pending_message_saw_delta = false;
+        self.pending_unphased_final_candidate = false;
         self.agent_message_phases = CodexAgentMessagePhaseTracker::default();
     }
 
@@ -145,6 +152,7 @@ impl CodexRunState {
                 }
                 self.agent_message_phases
                     .observe_item(message_params(message));
+                self.observe_process_activity(message_params(message));
                 None
             }
             Some("item/agentMessage/delta") => {
@@ -159,6 +167,7 @@ impl CodexRunState {
                 if self.is_subagent_message(params) {
                     return None;
                 }
+                self.observe_process_activity(params);
                 self.append_completed_message(params);
                 self.agent_message_phases.forget_item(params);
                 None
@@ -208,11 +217,25 @@ impl CodexRunState {
     }
 
     fn append_delta(&mut self, params: &Value) {
-        self.agent_message_phases.phase_for_delta(params);
+        let phase = self.agent_message_phases.phase_for_delta(params);
         if let Some(delta) = params.get("delta").and_then(Value::as_str) {
             self.begin_pending_message(codex_item_id(params), true);
             self.pending_text.push_str(delta);
             self.pending_message_saw_delta = true;
+            self.pending_unphased_final_candidate = phase.is_none();
+        }
+    }
+
+    fn observe_process_activity(&mut self, params: &Value) {
+        let item = params.get("item").unwrap_or(params);
+        let item_type = item
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('_', "")
+            .to_ascii_lowercase();
+        if is_substantive_process_item_type(&item_type) {
+            self.pending_unphased_final_candidate = false;
         }
     }
 
@@ -236,6 +259,7 @@ impl CodexRunState {
             self.begin_pending_message(codex_item_id(params), false);
             self.pending_text = text;
             self.pending_message_saw_delta = false;
+            self.pending_unphased_final_candidate = false;
             return;
         }
         if item
@@ -248,6 +272,7 @@ impl CodexRunState {
         if let Some(text) = extract_text(item) {
             let item_id = codex_item_id(params);
             if !codex_phase_is_final(phase.as_deref()) {
+                self.pending_unphased_final_candidate = phase.is_none();
                 if self.pending_message_saw_delta
                     && final_message_ids_match(self.pending_message_id.as_deref(), item_id)
                 {
@@ -297,7 +322,7 @@ impl CodexRunState {
         self.pending_message_saw_delta = false;
     }
 
-    fn completed(&self, params: &Value) -> ExecutionOutcome {
+    fn completed(&mut self, params: &Value) -> ExecutionOutcome {
         let status = params
             .get("turn")
             .and_then(|turn| turn.get("status"))
@@ -306,13 +331,20 @@ impl CodexRunState {
             .unwrap_or("completed")
             .to_ascii_lowercase();
         match status.as_str() {
-            "completed" | "complete" | "succeeded" => ExecutionOutcome::Completed {
-                content: if self.final_text.is_empty() {
-                    self.pending_text.clone()
-                } else {
-                    self.final_text.clone()
-                },
-            },
+            "completed" | "complete" | "succeeded" => {
+                if self.final_text.is_empty() && self.pending_unphased_final_candidate {
+                    self.final_text = std::mem::take(&mut self.pending_text);
+                    self.final_message_id = self.pending_message_id.take();
+                    self.final_message_saw_delta = self.pending_message_saw_delta;
+                }
+                ExecutionOutcome::Completed {
+                    content: if self.final_text.is_empty() {
+                        self.pending_text.clone()
+                    } else {
+                        self.final_text.clone()
+                    },
+                }
+            }
             "cancelled" | "canceled" | "interrupted" => {
                 ExecutionOutcome::Cancelled { message: status }
             }

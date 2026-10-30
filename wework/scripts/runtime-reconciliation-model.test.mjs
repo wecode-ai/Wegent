@@ -211,3 +211,22 @@ test('an unknown Issue in the scenario fails instead of completing with Ready', 
   assert.equal(response.status, 500)
   assert.match(await response.text(), /Unknown reconciliation Issue/)
 })
+
+test('the unphased reply preserves text while omitting phase throughout the model protocol', async t => {
+  const { model, request } = await fixture(t)
+  const testCase = model.cases[0]
+  testCase.issue = { id: 'RACE-1' }
+  const response = await request(
+    modelRequest([
+      userInput(assignmentPrompt(testCase.issue.id)),
+      userInput(testCase.unphasedPrompt),
+    ])
+  )
+  assert.equal(response.status, 200)
+  const events = sseEvents(await response.text())
+  const itemEvents = events.filter(event => event.item?.type === 'message')
+  assert.equal(itemEvents.length, 2)
+  assert.ok(itemEvents.every(event => !Object.hasOwn(event.item, 'phase')))
+  assert.equal(events.at(-1).response.output[0].content[0].text, testCase.unphasedText)
+  assert.equal(testCase.unphasedRequests, 1)
+})

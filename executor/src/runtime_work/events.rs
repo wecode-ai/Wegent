@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::codex_item::is_codex_context_compaction_item_type;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::{AtomicU64, Ordering},
@@ -36,8 +38,8 @@ use super::{
         workbench_block_from_notification,
     },
     util::{
-        extract_text, is_codex_context_compaction_item_type, is_completed_plan_item, item_id,
-        item_type, normalize_runtime_goal_timestamps, now_ms, raw_string_field, runtime_task_title,
+        extract_text, is_completed_plan_item, item_id, item_type,
+        normalize_runtime_goal_timestamps, now_ms, raw_string_field, runtime_task_title,
         string_field,
     },
 };
