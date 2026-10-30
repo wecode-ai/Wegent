@@ -7,6 +7,8 @@ const posthogMocks = vi.hoisted(() => ({
   optIn: vi.fn(),
   optOut: vi.fn(),
   reset: vi.fn(),
+  send: vi.fn(),
+  shutdown: vi.fn(),
 }))
 const sentryMocks = vi.hoisted(() => ({
   browserTracingIntegration: vi.fn(() => ({ name: 'browser-tracing' })),
@@ -18,8 +20,8 @@ const sentryMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('posthog-js', () => ({
-  default: {
-    init: posthogMocks.init,
+  PostHog: class {
+    init = posthogMocks.init
   },
 }))
 
@@ -36,6 +38,9 @@ describe('telemetry client', () => {
     Object.values(posthogMocks).forEach(mock => mock.mockReset())
     Object.values(sentryMocks).forEach(mock => mock.mockReset())
     posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
+      get_distinct_id: () => 'anonymous',
       capture: posthogMocks.capture,
       opt_in_capturing: posthogMocks.optIn,
       opt_out_capturing: posthogMocks.optOut,
@@ -433,7 +438,8 @@ describe('telemetry client', () => {
     const productionResource = 'http://localhost/assets/index-public.js?workspace=private#fragment'
     const developmentResource =
       'http://localhost:1420/node_modules/.vite/deps/legacy-desktop-event.js?v=private'
-    const unsupportedPrivateResource = 'internal-app://localhost/Users/private/repository/secret.js'
+    const unsupportedPrivateResource =
+      'untrusted-app://localhost/Users/private/repository/secret.js'
     const legacyDesktopEventModule = 'legacy-desktop/api/event'
     const sentryConfig = sentryMocks.init.mock.calls[0]?.[0]
     const sanitized = sentryConfig?.beforeSend?.(
@@ -777,11 +783,48 @@ describe('telemetry client', () => {
 
     expect(posthogMocks.reset).toHaveBeenCalledWith(true)
     expect(posthogMocks.optOut).toHaveBeenCalled()
+    expect(posthogMocks.shutdown).toHaveBeenCalledOnce()
     expect(posthogMocks.reset.mock.invocationCallOrder[0]).toBeLessThan(
       posthogMocks.optOut.mock.invocationCallOrder[0]
     )
     expect(sentryMocks.setUser).toHaveBeenCalledWith(null)
     expect(sentryMocks.close).toHaveBeenCalledWith(0)
+  })
+
+  test('blocks queued SDK sends during shutdown and after re-enabling', async () => {
+    const oldSdk = {
+      get_distinct_id: () => 'anonymous',
+      capture: posthogMocks.capture,
+      opt_in_capturing: posthogMocks.optIn,
+      opt_out_capturing: posthogMocks.optOut,
+      reset: posthogMocks.reset,
+      _send_request: posthogMocks.send,
+      shutdown: vi.fn(() => {
+        oldSdk._send_request(request)
+        return Promise.resolve()
+      }),
+    }
+    const callback = vi.fn()
+    const request = { url: 'https://example.invalid/e/', callback }
+    const newSend = vi.fn()
+    const newSdk = { ...oldSdk, _send_request: newSend, shutdown: vi.fn() }
+    posthogMocks.init.mockReturnValueOnce(oldSdk).mockReturnValueOnce(newSdk)
+    const { installTelemetry, setTelemetryEnabled } = await import('./client')
+    await installTelemetry(true)
+    oldSdk._send_request(request)
+    expect(posthogMocks.send).toHaveBeenCalledOnce()
+    posthogMocks.send.mockClear()
+
+    await setTelemetryEnabled(false)
+    expect(oldSdk.shutdown).toHaveBeenCalledOnce()
+    expect(callback).toHaveBeenCalledWith({ statusCode: 403 })
+    expect(posthogMocks.send).not.toHaveBeenCalled()
+
+    await setTelemetryEnabled(true)
+    oldSdk._send_request(request)
+    expect(posthogMocks.send).not.toHaveBeenCalled()
+    newSdk._send_request(request)
+    expect(newSend).toHaveBeenCalledWith(request)
   })
 
   test('re-initializes SDKs with fresh instances after disable and re-enable', async () => {
@@ -807,7 +850,7 @@ describe('telemetry client', () => {
   })
 })
 
-describe('durable public stand-in transport', () => {
+describe('durable stand-in transport', () => {
   const uuid = '12345678-1234-4234-8234-123456789012'
   const event = {
     name: 'stand_in_execution_completed' as const,
@@ -832,6 +875,7 @@ describe('durable public stand-in transport', () => {
   test('uses SDK transport receipts and preserves UUID, occurrence time and anonymous identity', async () => {
     const send = vi.fn(options => options.callback({ statusCode: 200 }))
     posthogMocks.init.mockReturnValue({
+      shutdown: posthogMocks.shutdown,
       opt_in_capturing: vi.fn(),
       get_distinct_id: () => 'anonymous',
       calculateEventProperties: (_name: string, properties: object) => ({
@@ -844,13 +888,18 @@ describe('durable public stand-in transport', () => {
       },
       _send_request: send,
     })
-    const { installTelemetry, durablePublicIdentity, deliverDurablePublicEvent } =
+    const { installTelemetry, durableTelemetryIdentity, deliverDurableEvent } =
       await import('./client')
     await installTelemetry(true)
-    const identity = (await durablePublicIdentity())!
-    expect(await deliverDurablePublicEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(
-      true
-    )
+    const identity = (await durableTelemetryIdentity())!
+    expect(
+      await deliverDurableEvent(event, uuid, '2026-10-27T00:00:00.000Z', {
+        ...identity,
+        distinctId: 'another-account',
+      })
+    ).toBe('identity_mismatch')
+    expect(send).not.toHaveBeenCalled()
+    expect(await deliverDurableEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(true)
     const request = send.mock.calls[0]![0]
     expect(request.url).toBe('https://posthog.invalid/custom-events/')
     expect(request.data.uuid).toBe(uuid)
@@ -860,14 +909,14 @@ describe('durable public stand-in transport', () => {
     expect(request.noRetries).toBe(true)
     expect(request).not.toHaveProperty('timestampMode')
     send.mockImplementation(options => options.callback({ statusCode: 503 }))
-    expect(await deliverDurablePublicEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(
-      false
-    )
+    expect(await deliverDurableEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(false)
     expect(send.mock.calls[0]![0].data).toEqual(send.mock.calls[1]![0].data)
   })
 
-  test('validates numeric durations and clears all pending public queues on opt-out', async () => {
+  test('validates numeric durations and clears all pending queues on opt-out', async () => {
     posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
       opt_in_capturing: vi.fn(),
       opt_out_capturing: vi.fn(),
       reset: vi.fn(),
@@ -880,10 +929,137 @@ describe('durable public stand-in transport', () => {
         sanitizeAnalyticsProperties(event.name, { ...event.properties, duration_ms })
       ).not.toHaveProperty('duration_ms')
     }
-    localStorage.setItem('wework.stand-in-telemetry:public:old-account', 'pending')
-    localStorage.setItem('wework.stand-in-telemetry:public:offline-device', 'pending')
+    localStorage.setItem('wework.stand-in-telemetry:old-account', 'pending')
+    localStorage.setItem('wework.stand-in-telemetry:offline-device', 'pending')
     await setTelemetryEnabled(false)
-    expect(localStorage.getItem('wework.stand-in-telemetry:public:old-account')).toBeNull()
-    expect(localStorage.getItem('wework.stand-in-telemetry:public:offline-device')).toBeNull()
+    expect(localStorage.getItem('wework.stand-in-telemetry:old-account')).toBeNull()
+    expect(localStorage.getItem('wework.stand-in-telemetry:offline-device')).toBeNull()
+  })
+})
+
+describe('configured identity on the shared telemetry transport', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllEnvs()
+    localStorage.clear()
+    posthogMocks.capture.mockReset()
+    posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
+      get_distinct_id: () => 'anonymous-installation',
+      opt_in_capturing: vi.fn(),
+      capture: posthogMocks.capture,
+    })
+    vi.stubEnv('VITE_WEWORK_POSTHOG_KEY', 'test-project')
+  })
+
+  test('defaults to anonymous task events even when logged in', async () => {
+    const { setTelemetryUser } = await import('./identity')
+    const { installTelemetry, track } = await import('./client')
+    setTelemetryUser({ id: 7, email: 'alice@example.invalid' })
+    await installTelemetry(true)
+    track('task_completed', { duration_ms: 123, execution_target: 'local', result: 'failure' })
+    await flushPostHogCaptures()
+    const properties = posthogMocks.capture.mock.calls[0][1]
+    expect(properties.distinct_id).toBe('anonymous-installation')
+    expect(properties).not.toHaveProperty('email')
+    expect(properties).not.toHaveProperty('user_id')
+    expect(JSON.stringify(properties)).not.toContain('Alice')
+  })
+
+  test('uses the configured user identifier and application dimensions through the same client', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_IDENTITY', 'email_prefix')
+    vi.stubEnv(
+      'VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS',
+      '["smart_app_key","smart_app_name","smart_app_version","smart_app_source"]'
+    )
+    const { setTelemetryUser } = await import('./identity')
+    const { installTelemetry, track, trackEvent } = await import('./client')
+    setTelemetryUser({ id: 7, email: 'alice@example.invalid' })
+    await installTelemetry(true)
+    track('task_completed', { duration_ms: 123, execution_target: 'local', result: 'failure' })
+    trackEvent({
+      name: 'smart_app_opened',
+      properties: { domain: 'smart_app' },
+      context: {
+        smartApp: { key: 'research', name: 'Research', source: 'market', version: '1.0.0' },
+      },
+    })
+    await flushPostHogCaptures()
+    const captures = posthogMocks.capture.mock.calls
+    for (const [, properties] of captures) {
+      expect(properties).toMatchObject({
+        distinct_id: 'alice',
+        event_schema_version: 1,
+      })
+      for (const field of ['email', 'email_prefix', 'user_id', 'user_name'])
+        expect(properties).not.toHaveProperty(field)
+    }
+    expect(captures[1][1]).toMatchObject({
+      smart_app_key: 'research',
+      smart_app_name: 'Research',
+      smart_app_version: '1.0.0',
+      smart_app_source: 'market',
+    })
+    const beforeSend = posthogMocks.init.mock.calls.at(-1)[1].before_send
+    expect(
+      beforeSend({
+        event: 'smart_app_opened',
+        properties: { ...captures[1][1], email: 'forbidden@example.invalid', prompt: 'secret' },
+      }).properties
+    ).not.toHaveProperty('email')
+  })
+
+  test('sends all supported Smart App navigation and installation events with their business fields', async () => {
+    const { installTelemetry, trackEvent } = await import('./client')
+    await installTelemetry(true)
+    const facts = [
+      ['smart_app_marketplace_opened', {}],
+      ['smart_app_owned_opened', {}],
+      ['smart_app_opened', {}],
+      ['smart_app_install_succeeded', {}],
+      ['smart_app_install_failed', { failure_stage: 'install' }],
+      ['smart_app_update_succeeded', {}],
+      ['smart_app_update_failed', { failure_stage: 'download' }],
+      ['smart_app_zip_import_succeeded', {}],
+      ['smart_app_zip_import_failed', { failure_stage: 'preview' }],
+    ] as const
+    for (const [name, properties] of facts)
+      trackEvent({ name, properties: { domain: 'smart_app', ...properties } } as Parameters<
+        typeof trackEvent
+      >[0])
+    await flushPostHogCaptures()
+    const beforeSend = posthogMocks.init.mock.calls.at(-1)[1].before_send
+    for (let index = 0; index < facts.length; index++) {
+      const [event, properties] = posthogMocks.capture.mock.calls[index]
+      const sanitized = beforeSend({ event, properties })
+      expect(sanitized.event).toBe(facts[index][0])
+      expect(sanitized.properties).toMatchObject({
+        domain: 'smart_app',
+        ...facts[index][1],
+        event_schema_version: 1,
+        platform: properties.os,
+        telemetry_source: 'wework',
+      })
+    }
+  })
+
+  test('captures identity at event time and clears it for subsequent events on logout', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_IDENTITY', 'email_prefix')
+    const { setTelemetryUser } = await import('./identity')
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+    setTelemetryUser({ id: 7, email: 'alice@example.invalid' })
+    track('task_started', { execution_target: 'local' })
+    setTelemetryUser({ id: 8, email: 'bob@example.invalid' })
+    track('task_started', { execution_target: 'local' })
+    setTelemetryUser(null)
+    track('task_started', { execution_target: 'local' })
+    await flushPostHogCaptures()
+    expect(posthogMocks.capture.mock.calls.map(([, props]) => props.distinct_id)).toEqual([
+      'alice',
+      'bob',
+      'anonymous-installation',
+    ])
   })
 })

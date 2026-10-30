@@ -11,8 +11,10 @@ import {
 jest.mock('node:child_process', () => ({ execFile: jest.fn() }))
 jest.mock('node:util', () => ({ promisify: jest.fn(() => jest.fn()) }))
 
-const execute = jest.mocked(promisify).mock.results[0].value as jest.Mock
+// The mounted repository directory name differs between checkouts and CI.
 const repository = resolve(__dirname, '../../../..')
+
+const execute = jest.mocked(promisify).mock.results[0].value as jest.Mock
 const identity = {
   operation: 'inspect' as const,
   task_id: 29,
