@@ -42,7 +42,12 @@ import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
-import { AppearanceProvider, useAppearance } from '@/features/appearance'
+import {
+  AppearanceProvider,
+  getWorkbenchBackground,
+  useAppearance,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
@@ -920,6 +925,11 @@ function browserWorkspaceTabStorageScope(): string {
 function AppShell() {
   const { t } = useTranslation('common')
   const dshContext = useDshClientContext()
+  const appearanceContext = useOptionalAppearance()
+  const workbenchBackground = appearanceContext?.appearance
+    ? getWorkbenchBackground(appearanceContext.appearance, appearanceContext.resolvedMode)
+    : null
+  const hasWorkbenchBackground = Boolean(workbenchBackground?.imagePath)
   const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const appPreferences = useAppPreferencesState()
   const { pathname: path, search } = useCurrentLocation()
@@ -1298,7 +1308,9 @@ function AppShell() {
                 ? 'overflow-visible bg-transparent'
                 : isWorkspaceWindow
                   ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-                  : 'overflow-hidden bg-surface',
+                  : hasWorkbenchBackground
+                    ? 'overflow-hidden bg-transparent'
+                    : 'overflow-hidden bg-surface',
               titlebarOverlaysContent ? 'relative' : 'flex flex-col'
             )}
           >

@@ -965,6 +965,10 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/telemetry-policy.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-telemetry.scenario.mjs)
+      select_target "core:stand-in-telemetry"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
