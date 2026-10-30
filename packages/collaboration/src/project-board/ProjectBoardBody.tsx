@@ -41,7 +41,9 @@ export function ProjectBoardScrollArea({
 }
 
 export interface ProjectBoardColumn {
-  type?: ProjectBoardGroupBy
+  type?: ProjectBoardGroupBy | 'unmatched'
+  unmatchedColumns?: readonly ProjectBoardColumn[]
+  unmatchedFilter?: { tags?: string[]; match?: 'any' | 'all' }
   dotClass: string
   groupValue: string
   key: string

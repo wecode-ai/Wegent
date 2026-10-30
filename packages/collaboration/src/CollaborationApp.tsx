@@ -6,6 +6,7 @@ import { bulkIssueStatus } from './platform/bulkIssueStatus'
 import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
 import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
 import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
+import type { BoardIssueCreateDefaults } from './project-board/projectBoardViews'
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -156,6 +157,7 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [createIssueDefaults, setCreateIssueDefaults] = useState<BoardIssueCreateDefaults>();
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
@@ -246,6 +248,7 @@ export function CollaborationApp({
   };
   const requestIssueCreate = () => {
     if (!project) return;
+    setCreateIssueDefaults(undefined);
     setCreateIssueOpen(true);
   };
   useEffect(() => {
@@ -818,6 +821,10 @@ export function CollaborationApp({
                         });
                       }}
                       onCreateIssue={requestIssueCreate}
+                      onCreateUnmatchedIssue={(defaults) => {
+                        setCreateIssueDefaults(defaults);
+                        setCreateIssueOpen(true);
+                      }}
                       onDeleteIssue={
                         issueArchiveAvailable ? requestIssueArchive : undefined
                       }
@@ -1139,6 +1146,7 @@ export function CollaborationApp({
           )}
           {createIssueOpen && project && (
             <IssueCreate
+              defaults={createIssueDefaults}
               api={api}
               project={project}
               allIssues={issues}
