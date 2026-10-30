@@ -331,9 +331,8 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
       1
     )
   }
-  // Creating the issue persists through the API before the detail panel
-  // finishes rendering, so wait for the properties trigger instead of racing it.
-  await control.command('waitFor', trigger, { timeoutMs: uiTimeoutMs })
+  // The list API can observe the new row before the create request finishes.
+  await control.command('waitFor', trigger, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('click', trigger)
   assert.equal(
     await control.command('getComputedStyleValue', input, { value: 'opacity' }),

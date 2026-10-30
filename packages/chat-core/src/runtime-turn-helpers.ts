@@ -5,12 +5,18 @@ import type {
   WorkbenchMessage,
 } from "./runtime-conversation";
 export const RUNTIME_RECONNECTING_TOOL_NAME = "runtime_reconnecting";
-export function isRuntimeRateLimitWaitBlock(block: ProcessingBlock): boolean {
+export function isRuntimeRetryWaitBlock(block: ProcessingBlock): boolean {
   return (
     block.type === "tool" &&
     block.toolName === RUNTIME_RECONNECTING_TOOL_NAME &&
     block.status !== "done" &&
-    block.status !== "error" &&
+    block.status !== "error"
+  );
+}
+export function isRuntimeRateLimitWaitBlock(block: ProcessingBlock): boolean {
+  return (
+    isRuntimeRetryWaitBlock(block) &&
+    block.type === "tool" &&
     block.toolInput?.retry_reason === "rate_limit"
   );
 }

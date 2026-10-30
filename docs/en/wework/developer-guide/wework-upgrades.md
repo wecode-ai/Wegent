@@ -8,6 +8,17 @@ Prepare downloads, extraction, component composition, and plugin profiles while 
 
 ## Backward-compatible manifests
 
+Formal releases build and verify candidate packages, generate update manifests, and only then
+create the version tag and Release. Verification or manifest failures do not consume a tag.
+macOS arm64 and Windows x64 independently verify real-package upgrades and rollbacks.
+macOS x64 adopts arm64's successful version paths and minimum source version without running
+release upgrade/rollback E2E. Its records retain x64 package hashes and download URLs, with
+`verification.kind=architecture-equivalence`, `arch=arm64`, and both arm64 package hashes
+declaring the evidence source. Source and target revisions must respectively match arm64;
+missing historical x64 package records block publication. The three-platform PR mechanism
+regression suite remains independent. Per-architecture release verification rules below apply
+to macOS arm64 and Windows x64; macOS x64 uses this explicit architecture equivalence policy.
+
 Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json` endpoints and fields. Add `upgradePolicy` to the component manifest. Each target declares `minSourceVersion`; exact source-to-target edges carry delivered-package hashes and upgrade/rollback evidence.
 
 Legacy clients ignore the new fields and continue updating directly to their advertised latest version. Enforcement begins when the client contains the new implementation. Pre-protocol clients are outside the new E2E matrix; do not pin their channel to a bridge.
