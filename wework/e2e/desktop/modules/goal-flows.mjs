@@ -57,6 +57,7 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -105,13 +106,24 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.goal.cleared',
   })
-  // The versioned task snapshot also carries the authoritative Goal status.
-  await control.command('dropNextRuntimeEvent', 'body', {
-    value: 'runtime.turn.updated',
+  const gates = runtimeTransportGates(control)
+  // Match the cleared snapshot rather than consuming an unrelated in-flight update.
+  await gates.arm({
+    id: 'missing-goal-cleared-snapshot',
+    kind: 'event',
+    name: 'runtime.turn.updated',
+    holdFollowing: true,
+    where: [
+      { path: 'payload.taskId', equals: goalTaskId },
+      { path: 'payload.data.task.goalStatus', equals: null },
+    ],
   })
   // A refreshed task list can independently repair the sidebar from the same snapshot.
-  await control.command('holdLocalExecutorRequests', 'body', {
-    value: JSON.stringify({ method: 'runtime.tasks.list', phase: 'after-response' }),
+  await gates.arm({
+    id: 'missing-goal-task-list',
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    holdFollowing: true,
   })
   try {
     const clearResponse = JSON.parse(
@@ -120,6 +132,7 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
       })
     )
     assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+    await gates.wait('missing-goal-cleared-snapshot')
     const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.equal(
       staleSnapshot.testIds.includes('goal-status-bar'),
@@ -134,7 +147,7 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
 
     await control.command('dispatchRuntimeEventLagged', 'body')
   } finally {
-    await control.command('releaseLocalExecutorRequestHold', 'body')
+    await gates.reset()
   }
   await waitForSnapshot(
     control,

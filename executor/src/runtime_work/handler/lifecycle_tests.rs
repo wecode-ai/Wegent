@@ -27,6 +27,30 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
 }
 
 #[tokio::test]
+async fn recovered_content_uses_native_turn_identity_before_request_callback_registration() {
+    let (mut handler, root, mut request) = setup("native-recovery-content-identity");
+    let (sender, mut receiver) = broadcast::channel(32);
+    handler.event_tx = Some(sender);
+    request.subtask_id = "task-1-context-compact".into();
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, false);
+    handler.route_codex_notification(notification("turn/started", "recovered-turn"));
+    handler.route_codex_notification(json!({"method":"item/started", "params": {
+        "threadId":"thread-1", "turnId":"recovered-turn", "item": {
+            "id":"recovered-text", "type":"agentMessage", "phase":"final_answer", "text":""
+        }
+    }}));
+    handler.route_codex_notification(json!({"method":"item/agentMessage/delta", "params": {
+        "threadId":"thread-1", "turnId":"recovered-turn", "itemId":"recovered-text", "delta":"recovered output"
+    }}));
+    let delta = std::iter::from_fn(|| receiver.try_recv().ok())
+        .find(|event| event["event"] == "response.output_text.delta")
+        .unwrap();
+    assert_eq!(delta["payload"]["subtaskId"], "recovered-turn");
+    assert_eq!(delta["payload"]["data"]["delta"], "recovered output");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn passive_goal_updates_cannot_replace_the_admitted_recovery_request() {
     let (handler, root, request) = setup("native-goal-recovery-request");
     let (cancel, _cancelled) = oneshot::channel();
@@ -76,6 +100,11 @@ async fn native_execution_survives_summary_projection_but_is_not_restored_from_d
         .unwrap()
         .execution_state
         .is_none());
+    handler.route_codex_notification(json!({"method":"thread/goal/cleared", "params": {
+        "threadId":"thread-1"
+    }}));
+    let cleared = handler.get_task(&json!({"taskId":"task-1"})).unwrap();
+    assert_eq!(cleared["task"].get("goalStatus"), Some(&Value::Null));
     let _ = fs::remove_dir_all(root);
 }
 

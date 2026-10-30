@@ -20,6 +20,30 @@ describe('createRuntimeChatStream', () => {
     localStorage.clear()
   })
 
+  test('subscribes when native lifecycle is the only requested event', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onRuntimeTurnUpdated = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+    stream.subscribe({ onRuntimeTurnUpdated })
+    await Promise.resolve()
+    expect(subscribe).toHaveBeenCalledTimes(1)
+    listener({
+      event: 'runtime.turn.updated',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: 'native-turn',
+        data: { status: 'started', turnId: 'native-turn' },
+      },
+    })
+    expect(onRuntimeTurnUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'task-1', turnId: 'native-turn', status: 'started' })
+    )
+  })
+
   test('delivers chat events when plugin telemetry observation throws', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

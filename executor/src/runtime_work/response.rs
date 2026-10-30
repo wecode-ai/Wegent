@@ -674,7 +674,7 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
-    if let Some(state) = native_state {
+    if let Some(state) = native_state.as_ref() {
         task.insert("executionState".to_owned(), json!(state));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
@@ -694,8 +694,8 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     if let Some(turn_status) = link.turn_status.clone() {
         task.insert("turnStatus".to_owned(), Value::String(turn_status));
     }
-    if let Some(goal_status) = link.goal_status.clone() {
-        task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    if link.goal_status.is_some() || native_state.is_some() {
+        task.insert("goalStatus".to_owned(), json!(link.goal_status));
     }
     if let Some(goal_execution_status) = link.goal_execution_status.clone() {
         task.insert(

@@ -95,6 +95,33 @@ pub(crate) fn emit_response_event(
         }
         return;
     };
+    if codex_stream_debug_enabled()
+        && matches!(
+            event,
+            "response.created" | "response.output_text.delta" | "runtime.turn.updated"
+        )
+    {
+        log_executor_event(
+            "runtime response identity",
+            &[
+                ("event", event.to_owned()),
+                ("local_task_id", local_task_id.to_owned()),
+                ("subtask_id", request.subtask_id.clone()),
+                (
+                    "turn_id",
+                    data["turnId"].as_str().unwrap_or_default().to_owned(),
+                ),
+                (
+                    "item_id",
+                    data["item_id"].as_str().unwrap_or_default().to_owned(),
+                ),
+                (
+                    "delta_bytes",
+                    data["delta"].as_str().map_or(0, str::len).to_string(),
+                ),
+            ],
+        );
+    }
     let mut payload = json!({
         "type": "event",
         "event": event,
@@ -1799,7 +1826,7 @@ fn text_fingerprint(value: &str) -> String {
     format!("{hash:08x}")
 }
 
-fn is_context_compaction_notification(params: &Value) -> bool {
+pub(crate) fn is_context_compaction_notification(params: &Value) -> bool {
     let item = params
         .get("item")
         .or_else(|| params.get("turn"))
