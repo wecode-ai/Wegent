@@ -4008,8 +4008,9 @@ class DesktopE2EServer {
           ])
           return
         }
-        const answered = inputUserMessageTexts(body).some(text =>
-          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        // Codex also forwards bootstrap instructions as user-role text.
+        const answered = inputUserMessageTexts(body).some(
+          text => text.trim() === REQUEST_USER_INPUT_ASYNC_ANSWER
         )
         this.writeSse(response, [
           responseCreated(responseId),
