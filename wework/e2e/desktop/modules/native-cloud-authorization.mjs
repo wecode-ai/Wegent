@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
+import { nativeCloudCredentialSnapshot } from './native-cloud-credential-snapshot.mjs'
 
 // Run with the packaged Electron Node runtime so CI needs no loose host build.
 const { CloudCredentialService } = await import(
@@ -7,13 +8,15 @@ const { CloudCredentialService } = await import(
 )
 let input = ''
 for await (const chunk of process.stdin) input += chunk
-const { apiBaseUrl, authToken, userDataDirectory, clear } = JSON.parse(input)
+const { apiBaseUrl, authToken, userDataDirectory, snapshotId, clear } = JSON.parse(input)
 const credentials = new CloudCredentialService(userDataDirectory, fetch)
+const snapshot = nativeCloudCredentialSnapshot(userDataDirectory, snapshotId)
 if (clear) {
-  await credentials.clear()
+  await snapshot.restore()
   process.stdout.write('cleared')
   process.exit(0)
 }
+await snapshot.capture()
 const created = await fetch(`${apiBaseUrl}/auth/wework/sessions`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },

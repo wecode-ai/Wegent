@@ -20,7 +20,16 @@ impl CodexAppServerClient {
         if active {
             state.mcp_app_sessions.insert(key);
         } else {
-            state.mcp_app_sessions.remove(&key);
+            if state.mcp_app_sessions.remove(&key) {
+                log_executor_event(
+                    "codex MCP App session released",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("call_id", call_id.to_owned()),
+                        ("app_session_id", session_id.to_owned()),
+                    ],
+                );
+            }
             if let Some(generation) = state
                 .idle_thread_generations
                 .get(thread_id)

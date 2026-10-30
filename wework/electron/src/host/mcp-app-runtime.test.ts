@@ -106,3 +106,10 @@ it('disposes a cleanup client even when acquisition never succeeded', async () =
   runtime.dispose()
   expect(cloud.dispose).toHaveBeenCalledOnce()
 })
+
+it('reports malformed cloud settings without echoing stored data', async () => {
+  const { readMcpAppConnection } = await import('./mcp-app-runtime.js')
+  const storage = { read: async () => ({ 'wework.cloudConnection': 'private-invalid-setting' }) }
+  await expect(readMcpAppConnection(storage)).rejects.toThrow('Stored cloud connection is invalid')
+  expect(await readMcpAppConnection({ read: async () => ({}) })).toBeNull()
+})

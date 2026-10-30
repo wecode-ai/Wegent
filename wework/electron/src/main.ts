@@ -1,4 +1,5 @@
-import { McpAppRuntime } from './host/mcp-app-runtime.js'
+import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
@@ -1790,10 +1791,14 @@ async function shutdown(): Promise<void> {
   )
   await traceShutdownStep('log-retention', () => logRetention.stop())
   await traceShutdownStep('mcp-apps', async () => {
-    const results = await Promise.allSettled([...mcpAppCleanups].map(cleanup => cleanup()))
-    for (const result of results) {
-      if (result.status === 'rejected')
-        console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+    try {
+      const results = await settleMcpAppCleanup(mcpAppCleanups)
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+      }
+    } catch (error) {
+      console.error('[Wework] MCP App shutdown cleanup timed out', { name: (error as Error).name })
     }
     mcpAppCleanups.clear()
     mcpAppRuntime?.dispose()
@@ -2094,10 +2099,7 @@ async function configureDesktopRuntime(): Promise<void> {
                 const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
                 return credential.accessToken
               },
-              async () => {
-                const entries = await rendererStorage!.initialize({})
-                return JSON.parse(entries['wework.cloudConnection'] ?? 'null')
-              }
+              () => readMcpAppConnection(rendererStorage!)
             )
             return mcpAppRuntime.request(payload)
           },
@@ -2114,6 +2116,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
         },
         {
+          disconnectMcpAppSession: sessionId => mcpAppRuntime?.dispose(sessionId),
           captureTarget: windowLabel =>
             windowLabel === 'main'
               ? (mainWindow?.webContents ?? null)

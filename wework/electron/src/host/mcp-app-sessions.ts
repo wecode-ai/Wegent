@@ -70,7 +70,13 @@ export class McpAppSessions {
     try {
       await ready
     } catch (error) {
-      await this.release(id)
+      const failed = this.sessions.get(id)
+      if (failed) failed.generation = null
+      await this.release(id).catch(cleanupError => {
+        console.info('[Wework] MCP App acquisition cleanup failed', {
+          name: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+        })
+      })
       throw error
     }
   }
@@ -108,5 +114,24 @@ export class McpAppSessions {
       throw error
     })
     return session.releasing
+  }
+}
+
+/** Use the host's standard five-second process stop grace period. */
+export async function settleMcpAppCleanup(
+  cleanups: Iterable<() => Promise<void>>,
+  timeoutMs = 5_000
+): Promise<PromiseSettledResult<void>[]> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      Promise.allSettled([...cleanups].map(cleanup => Promise.resolve().then(cleanup))),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('MCP App cleanup timed out')), timeoutMs)
+        timer.unref()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

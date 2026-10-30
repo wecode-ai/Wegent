@@ -118,3 +118,19 @@ it('keeps ownership during subframe navigation and same-document routing', async
   expect(request).toHaveBeenCalledTimes(1)
   await sessions.dispose()
 })
+
+it('preserves the first retain failure and retries it after failed cleanup', async () => {
+  const request = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Original retain failure'))
+    .mockRejectedValueOnce(new Error('Cleanup transport failure'))
+    .mockResolvedValue({})
+  const sessions = new McpAppSessions(request)
+  const owner = new EventEmitter() as WebContents
+  await expect(sessions.retain('app', payload, owner)).rejects.toThrow('Original retain failure')
+  await sessions.retain('app', payload, owner)
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(sessions.ids()).toEqual(['app'])
+  await sessions.dispose()
+  expect(owner.eventNames()).toEqual([])
+})

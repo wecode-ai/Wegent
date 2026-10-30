@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { verifyPositiveMcpCloudOwnership } from './mcp-app-cloud-positive.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
 
-async function nativeCloudAuthorization(cloudEnvironment, userDataDirectory, clear = false) {
+async function nativeCloudAuthorization(
+  cloudEnvironment,
+  userDataDirectory,
+  snapshotId,
+  clear = false
+) {
   const appBinary = process.env.WEWORK_E2E_APP_BIN
   assert.ok(appBinary, 'Native cloud authorization requires the shared packaged application')
   await new Promise((resolve, reject) => {
@@ -26,6 +32,7 @@ async function nativeCloudAuthorization(cloudEnvironment, userDataDirectory, cle
         apiBaseUrl: `${cloudEnvironment.backendUrl}/api`,
         authToken: cloudEnvironment.authToken,
         userDataDirectory,
+        snapshotId,
         clear,
       })
     )
@@ -34,8 +41,9 @@ async function nativeCloudAuthorization(cloudEnvironment, userDataDirectory, cle
 
 /** Exercise native ownership through the real Backend and remote executor. */
 export async function verifyNativeMcpCloudRouting(control, cloudEnvironment, userDataDirectory) {
+  const snapshotId = crypto.randomUUID()
   try {
-    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory)
+    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory, snapshotId)
     const origin = await control.command('getLocationOrigin', 'body')
     const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
       .currentRuntimeTask
@@ -74,7 +82,8 @@ export async function verifyNativeMcpCloudRouting(control, cloudEnvironment, use
       false,
       'Rejected remote acquisition must release its native owner'
     )
+    await verifyPositiveMcpCloudOwnership(control, cloudEnvironment, address, invoke)
   } finally {
-    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory, true)
+    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory, snapshotId, true)
   }
 }

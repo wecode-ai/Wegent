@@ -246,6 +246,7 @@ export interface ProcessExplorerWindowSnapshot {
 }
 
 export interface ElectronE2EHost {
+  disconnectMcpAppSession?: (sessionId: string) => void
   capturePopout: () => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
@@ -961,6 +962,10 @@ export function createElectronCapabilityRouter(
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
+    if (params.action === 'disconnect-session') {
+      e2eHost.disconnectMcpAppSession?.(stringParam(params, 'sessionId'))
+      return {}
+    }
     if (params.action === 'sessions') return mcpAppSessions.ids()
     if (params.action === 'document-status') {
       return mcpAppDocuments.respond(new Request(url)).status

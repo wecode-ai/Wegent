@@ -9,6 +9,18 @@ interface Target {
   socketPath: string
 }
 
+export async function readMcpAppConnection(storage: {
+  read(): Promise<Record<string, string>>
+}): Promise<unknown> {
+  const raw = (await storage.read())['wework.cloudConnection']
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    throw new Error('Stored cloud connection is invalid')
+  }
+}
+
 /** Native cleanup uses the same authenticated transport as the conversation. */
 export class McpAppRuntime {
   private readonly clients = new Map<
@@ -95,7 +107,12 @@ export class McpAppRuntime {
     return result
   }
 
-  dispose(): void {
+  dispose(sessionId?: string): void {
+    if (sessionId !== undefined) {
+      this.clients.get(sessionId)?.client.dispose()
+      this.clients.delete(sessionId)
+      return
+    }
     for (const { client } of this.clients.values()) client.dispose()
     this.clients.clear()
   }
