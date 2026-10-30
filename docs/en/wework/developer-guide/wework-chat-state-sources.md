@@ -381,6 +381,13 @@ Successful requests cannot consume native content buffers early. Native completi
 the complete ordered content and removes that turn's buffer, clearing blocking questions
 while preserving asynchronous questions that remain unanswered across turns.
 
+DSH session projection opens native turns from native start events. RPC admission,
+late user binding, and historical token usage replayed during resume cannot create turns.
+Restored usage updates only the cumulative baseline and cannot upload the previous turn
+again or advance its cloud sequence. Native results publish only for an open turn owned
+by that owner; historical completions and compaction notifications can update snapshots
+and caches without inventing new conversation results.
+
 Native start also establishes the content turn. The request-created callback only binds
 user-message identity. An early binding retains a pending record without claiming model
 execution has started. Binding may also arrive after content or even completion, but cannot

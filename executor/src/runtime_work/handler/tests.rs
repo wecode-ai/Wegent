@@ -3359,7 +3359,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
             crate::agents::CodexResponseValueOrigin::Empty,
         ),
     ] {
-        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let (event_tx, mut event_rx) = broadcast::channel(8);
         let index_path = temp_runtime_work_index_path(&format!("completed-turn-id-{case}"));
         let mut handler =
             RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -3376,6 +3376,28 @@ fn completed_responses_use_the_active_codex_turn_id() {
             "Task".to_owned(),
         ));
         let execution_id = start_test_execution(&handler, &local_task_id);
+        if let ExecutionOutcome::Completed { content } = &outcome {
+            handler.store.update_task(&local_task_id, |link| {
+                link.thread_id = Some(format!("thread-{case}"));
+            });
+            handler.register_thread_event_route(
+                &format!("thread-{case}"),
+                local_task_id.clone(),
+                request.clone(),
+                true,
+            );
+            handler.route_codex_notification(json!({"method": "turn/started", "params": {
+                "threadId": format!("thread-{case}"), "turn": {"id": "turn-1", "status": "inProgress"}
+            }}));
+            handler.route_codex_notification(json!({"method": "turn/completed", "params": {
+                "threadId": format!("thread-{case}"), "turn": {"id": "turn-1", "status": "completed",
+                    "startedAt": 1780000000i64, "completedAt": 1780000018i64, "durationMs": 18250,
+                    "items": [{"type": "agentMessage", "id": response_item_id,
+                        "phase": if case == "completed" { "final_answer" } else { "commentary" },
+                        "text": content}]
+                }
+            }}));
+        }
         handler.handle_turn_result(
             &local_task_id,
             execution_id,
@@ -3398,9 +3420,15 @@ fn completed_responses_use_the_active_codex_turn_id() {
             }),
         );
 
-        let event = event_rx
-            .try_recv()
+        let mut completed = std::iter::from_fn(|| event_rx.try_recv().ok())
+            .filter(|event| event["event"] == "response.completed");
+        let event = completed
+            .next()
             .expect("completed response should be emitted");
+        assert!(
+            completed.next().is_none(),
+            "RPC must not repeat the native result"
+        );
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");

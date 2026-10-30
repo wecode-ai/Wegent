@@ -2,6 +2,108 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ExecutorSessionProjector, executorSessionId } from './session-projector.js'
 
+test('restored historical token usage cannot publish the old turn again after restart', () => {
+  const sessions = new SessionStoreFixture()
+  const completed = []
+  const first = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+  first.handle(executorEvent(1, 'response.created', {}, 'task-1', 'native-first'))
+  first.handle(
+    executorEvent(2, 'response.completed', { value: 'First result' }, 'task-1', 'native-first')
+  )
+  const resumed = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+  resumed.handle(
+    executorEvent(
+      3,
+      'thread/tokenUsage/updated',
+      {
+        tokenUsage: {
+          total: { inputTokens: 100, outputTokens: 10 },
+          last: { inputTokens: 100, outputTokens: 10 },
+        },
+      },
+      'task-1',
+      'native-first'
+    )
+  )
+  resumed.handle(
+    executorEvent(
+      4,
+      'runtime.turn.updated',
+      {
+        status: 'started',
+        turnId: 'native-second',
+        task: { executionState: { phase: 'running', turnId: 'native-second' } },
+      },
+      'task-1',
+      'native-second'
+    )
+  )
+  resumed.handle(
+    executorEvent(5, 'response.completed', { value: 'Second result' }, 'task-1', 'native-second')
+  )
+  assert.deepEqual(
+    completed.map(turn => [turn.sequence, turn.executorTurnId]),
+    [
+      [1, 'native-first'],
+      [2, 'native-second'],
+    ]
+  )
+})
+
+test('RPC admission cannot create a separate transcript turn before native start', () => {
+  const sessions = new SessionStoreFixture()
+  const completed = []
+  const projector = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+  projector.handle(
+    executorEvent(
+      1,
+      'response.created',
+      {
+        task: { executionState: { phase: 'starting', turnId: null } },
+      },
+      'task-1',
+      'request-1'
+    )
+  )
+  projector.handle(
+    executorEvent(
+      2,
+      'runtime.turn.updated',
+      {
+        status: 'started',
+        turnId: 'native-turn',
+        task: { executionState: { phase: 'running', turnId: 'native-turn' } },
+      },
+      'task-1',
+      'native-turn'
+    )
+  )
+  projector.handle(
+    executorEvent(
+      3,
+      'response.completed',
+      {
+        value: 'Native result',
+        task: { executionState: { phase: 'idle', latestTurnId: 'native-turn' } },
+      },
+      'task-1',
+      'native-turn'
+    )
+  )
+  assert.equal(completed.length, 1)
+  assert.equal(completed[0].sequence, 1)
+  assert.equal(completed[0].executorTurnId, 'native-turn')
+  const events = sessions.get(executorSessionId('device-1', 'task-1')).events
+  assert.equal(events.filter(event => event.type === 'turn/start').length, 1)
+  assert.equal(events.filter(event => event.type === 'turn/end').length, 1)
+})
+
 test('late RPC user binding cannot reopen a completed native transcript turn', () => {
   const sessions = new SessionStoreFixture()
   const completed = []

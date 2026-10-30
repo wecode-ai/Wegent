@@ -380,6 +380,13 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         thread_id: "thread-1".to_owned(),
         turn_id: "turn-next".to_owned(),
     };
+    handler
+        .store
+        .update_task("task-1", |link| link.thread_id = Some("thread-1".into()));
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), true);
+    handler.route_codex_notification(json!({"method": "turn/started", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-next", "status": "inProgress"}
+    }}));
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-next");
     handler.deliver_native_notification_for_execution(
         "task-1", execution_id, &request, Some(active.clone()),
@@ -400,6 +407,9 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
             }}),
         )
         .await;
+    handler.route_codex_notification(json!({"method": "turn/completed", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-next", "status": "completed", "items": []}
+    }}));
     handler.handle_turn_result(
         "task-1",
         execution_id,

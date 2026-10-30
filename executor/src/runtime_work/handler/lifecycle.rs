@@ -193,6 +193,8 @@ impl RuntimeWorkRpcHandler {
         let before = self
             .local_task_link(task_id)
             .and_then(|link| native_execution_state(&link));
+        let owned_turn =
+            before.as_ref().and_then(|state| state.turn_id.as_deref()) == Some(turn_id.as_str());
         log_executor_event(
             "runtime native turn boundary applying",
             &[
@@ -313,9 +315,8 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         self.publish_native_execution(task_id, request, link);
-        if let Some(result) = result {
-            let mut event_request = request.clone();
-            event_request.subtask_id = turn_id.clone();
+        if let Some(result) = result.filter(|_| owned_turn) {
+            let event_request = self.request_for_codex_event(task_id, request, Some(&turn_id));
             self.publish_native_turn_result(task_id, &event_request, &turn_id, result);
         }
     }
@@ -404,10 +405,7 @@ impl RuntimeWorkRpcHandler {
         };
         self.project_runtime_link_status_now(&link);
         let turn_id = state.latest_turn_id.clone();
-        let mut event_request = request.clone();
-        if let Some(turn_id) = &turn_id {
-            event_request.subtask_id = turn_id.clone();
-        }
+        let event_request = self.request_for_codex_event(task_id, request, turn_id.as_deref());
         emit_response_event(
             &self.event_tx,
             &self.device_id,
