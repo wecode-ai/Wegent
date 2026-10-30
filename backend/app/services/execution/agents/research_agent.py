@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 5
 MAX_POLL_COUNT = 720  # 1 hour at 5s intervals
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
-DEFAULT_DEEP_RESEARCH_AGENT = "deep-research-pro-preview-12-2025"
+DEFAULT_DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026"
 THOUGHT_STREAM_TIMEOUT = 30.0  # seconds, timeout per read for thinking progress
 REPORT_STREAM_TIMEOUT = 300.0  # seconds, timeout per read for final report
 
