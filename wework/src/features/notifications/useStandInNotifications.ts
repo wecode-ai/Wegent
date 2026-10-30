@@ -139,7 +139,8 @@ export function useStandInNotifications(
         source?.currentAddress?.deviceId === state.deviceId &&
         source?.currentAddress?.taskId === state.taskId &&
         isMainWindowFocused()
-      if (!systemEnabled || viewingTask) continue
+      // Pending interactions have one shared foreground/background delivery owner.
+      if (!systemEnabled || viewingTask || state.status === 'waiting') continue
       alerts.push({
         title: item.payload.taskTitle || item.title,
         body: t(`notifications.stand_in_${state.status}`),

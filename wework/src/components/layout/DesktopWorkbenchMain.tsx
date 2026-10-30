@@ -20,6 +20,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -39,6 +40,7 @@ import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCa
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -3003,6 +3005,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneSession.answeredRequestUserInputIds
   )
   useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
+  const interactions = useRuntimeInteractions()
+  const interactionViewOwner = useId()
+  const registerInteractionView = interactions?.registerView
+  const pendingRequestUserInputKey = requestUserInputPayloadKey(pendingRequestUserInput)
+  const viewedInteraction = interactions?.pending
+    .filter(
+      item =>
+        pendingRequestUserInputKey !== null &&
+        item.task.address.deviceId === currentRuntimeTask?.deviceId &&
+        item.task.address.taskId === currentRuntimeTask?.taskId &&
+        (requestUserInputPayloadKey(item.payload) === pendingRequestUserInputKey ||
+          (pendingRequestUserInput &&
+            !pendingRequestUserInput.interactionScope &&
+            (item.payload.requestId ??
+              item.payload.request_id ??
+              item.payload.itemId ??
+              item.payload.item_id) ===
+              (pendingRequestUserInput.requestId ??
+                pendingRequestUserInput.request_id ??
+                pendingRequestUserInput.itemId ??
+                pendingRequestUserInput.item_id)))
+    )
+    .at(-1)
+  useEffect(() => {
+    registerInteractionView?.(
+      interactionViewOwner,
+      paneActive && workbenchVisible ? (viewedInteraction?.id ?? null) : null
+    )
+    return () => registerInteractionView?.(interactionViewOwner, null)
+  }, [
+    interactionViewOwner,
+    paneActive,
+    registerInteractionView,
+    viewedInteraction?.id,
+    workbenchVisible,
+  ])
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]

@@ -1,4 +1,9 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import {
+  acknowledgeNotificationReply,
+  enqueueNotificationReply,
+  pendingNotificationReplies,
+} from './notification-replies.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
@@ -169,6 +174,7 @@ interface ElectronNotificationInput {
   body: string
   url?: string
   taskAddressId?: string
+  reply?: { interactionId: string; accountKey: string; placeholder: string }
 }
 
 export function activateElectronNotification(
@@ -185,10 +191,14 @@ export function activateElectronNotification(
 
 export function showElectronNotification(
   input: ElectronNotificationInput,
-  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'> & {
+    events?: ElectronDesktopServices['events']
+  },
   createNotification: (options: {
     title: string
     body: string
+    hasReply?: boolean
+    replyPlaceholder?: string
   }) => ElectronNotificationHandle = options => new Notification(options)
 ): void {
   if (input.url && !input.url.startsWith('wework://')) {
@@ -200,11 +210,23 @@ export function showElectronNotification(
   const notification = createNotification({
     title: input.title,
     body: input.body,
+    ...(input.reply ? { hasReply: true, replyPlaceholder: input.reply.placeholder } : {}),
   })
   showRetainedNotification(
     notification,
     input.url || input.taskAddressId
       ? () => activateElectronNotification(input, navigation)
+      : undefined,
+    input.reply && input.url
+      ? text => {
+          enqueueNotificationReply({
+            interactionId: input.reply!.interactionId,
+            accountKey: input.reply!.accountKey,
+            text,
+            url: input.url!,
+          })
+          navigation.events?.publish('notification-reply', {})
+        }
       : undefined
   )
 }
@@ -1029,10 +1051,28 @@ export function createElectronCapabilityRouter(
         body,
         url: optionalStringParam(params, 'url')?.trim() || undefined,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
+        ...(params.reply && typeof params.reply === 'object' && !Array.isArray(params.reply)
+          ? {
+              reply: {
+                interactionId: stringParam(
+                  params.reply as Record<string, unknown>,
+                  'interactionId'
+                ),
+                accountKey: stringParam(params.reply as Record<string, unknown>, 'accountKey'),
+                placeholder: stringParam(params.reply as Record<string, unknown>, 'placeholder'),
+              },
+            }
+          : {}),
       },
       desktopServices
     )
   })
+  router.register('notification.pendingReplies', params =>
+    pendingNotificationReplies(stringParam(params, 'accountKey'))
+  )
+  router.register('notification.acknowledgeReply', params =>
+    acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
+  )
   router.register('preferences.get', () => preferences.read())
   const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
     const updated = desktopServices.updatePreferences

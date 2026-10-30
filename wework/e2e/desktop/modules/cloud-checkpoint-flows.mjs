@@ -18,6 +18,7 @@ import {
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import { verifyCloudSidebarGitClone } from './cloud-sidebar-project-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
 import {
   createCloudAttachmentVerification,
@@ -405,6 +406,7 @@ async function verifyCloudProjectCreationSources(
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: clonedProjectPath,
   })
+  await verifyCloudSidebarGitClone(control, workspacePath, homePath)
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {
@@ -757,7 +759,15 @@ async function verifyCloudCheckpoint({
     }
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
-    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    try {
+      await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    } catch (error) {
+      console.error(
+        '[plugin-auto-update] object storage transport',
+        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+      )
+      throw error
+    }
     return
   }
 

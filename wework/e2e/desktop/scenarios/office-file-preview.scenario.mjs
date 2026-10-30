@@ -38,10 +38,23 @@ async function metrics(control, selector) {
 
 async function openFromTree(control, filename) {
   const tree = '[data-testid="workspace-file-tree-pierre"]'
-  if (Number(await control.command('getElementCount', tree, { visible: true })) === 0) {
-    await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
-  }
   const item = `button[data-type="item"][aria-label="${filename}"]`
+  const toggle = '[data-testid="workspace-file-toggle-tree-button"]'
+  // The panel can be reused across task switches, so a single "is the tree
+  // visible?" reading races the mount/transition. Re-read the state and toggle
+  // again instead of assuming one click opened it.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (Number(await control.command('getElementCount', tree, { visible: true })) === 0) {
+      await control.command('click', toggle)
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    if (Number(await control.command('getElementCount', item, { visible: true })) > 0) {
+      await control.command('click', item)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  // Keep the descriptive failure for the checkpoint report.
   await control.command('waitFor', item, { visible: true })
   await control.command('click', item)
 }
