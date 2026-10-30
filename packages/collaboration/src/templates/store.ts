@@ -126,7 +126,9 @@ export class CollaborationTemplateStore {
     if (!this.library.remote) throw new Error('connection_required')
     let record = await this.library.remote.get(id)
     if (record.ownerId !== 0 && record.ownerId !== this.library.ownerId) {
-      await this.library.remote.install(id)
+      const available = await this.library.remote.list()
+      if (!available.some(template => template.id === id)) await this.library.remote.install(id)
+      // Recheck access after resolving an existing reference or installing a new one.
       record = await this.library.remote.get(id)
     }
     validateTemplate(record.document)

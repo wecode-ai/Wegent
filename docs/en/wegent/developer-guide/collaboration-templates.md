@@ -22,6 +22,8 @@ Installation creates a `resource_members` reference with `resource_type=Template
 without copying the source Kind. Personal references and accessible namespace
 references grant access. Every download checks current authorization. Saving a
 personal template does not publish it.
+Downloads reuse an existing account or namespace reference rather than installing
+again. Withdrawing publication preserves access for users who retain a reference.
 
 ## Configuration API
 

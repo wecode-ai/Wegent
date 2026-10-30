@@ -41,6 +41,39 @@ function remote(): CollaborationTemplateRemote {
 }
 
 describe('scoped template store', () => {
+  it('downloads an account reference without reinstalling a withdrawn template', async () => {
+    const backend = remote()
+    const document = personal('installed-workflow')
+    vi.mocked(backend.get).mockResolvedValue({
+      id: 42,
+      ownerId: 8,
+      document,
+      revision: '1',
+      source: 'downloaded',
+    })
+    vi.mocked(backend.list).mockResolvedValue([
+      {
+        id: 42,
+        ownerId: 8,
+        namespace: 'default',
+        name: document.metadata.name,
+        displayName: document.spec.displayName,
+        description: '',
+        version: '1.0.0',
+        revision: '1',
+      },
+    ])
+    vi.mocked(backend.install).mockRejectedValue(new Error('Publication withdrawn'))
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      persistence: persistence(),
+      remote: backend,
+    })
+    await expect(store.download(42)).resolves.toMatchObject({ id: 42, pendingSync: false })
+    expect(backend.install).not.toHaveBeenCalled()
+    expect(backend.get).toHaveBeenCalledTimes(2)
+  })
   it('drains drafts saved while another synchronization is in progress', async () => {
     const backend = remote()
     let release!: () => void

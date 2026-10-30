@@ -172,6 +172,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         target_namespace: 'default',
       })
       await request(
+        `/api/resource-library/listings/${accountTemplate.id}/publication`,
+        'PUT',
+        { status: 'archived' },
+        consumerToken
+      )
+      await request(
         `/api/resource-library/listings/${source.id}/publication`,
         'PUT',
         { version: '3.0.0' },
@@ -203,6 +209,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         accountTemplate.document.spec.displayName
       )
       await capture(control, '00-account-available')
+      await click(control, `template-details-${accountTemplate.id}`)
+      await click(control, 'template-use')
+      await wait(
+        control,
+        'project-create-template-section',
+        accountTemplate.document.spec.displayName
+      )
+      await capture(control, '00-account-download')
+      await control.command(
+        'click',
+        scoped(
+          '[data-testid="collaboration-project-create-dialog"] .collaboration-project-create-footer button[type="button"]'
+        )
+      )
+      await wait(
+        control,
+        `template-card-${accountTemplate.document.metadata.name}`,
+        accountTemplate.document.spec.displayName
+      )
       await click(control, 'template-tab-discover')
       await wait(control, 'template-card-product-lifecycle', '产品全流程')
       await capture(control, '01-discover')
