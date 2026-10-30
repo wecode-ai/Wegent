@@ -5,6 +5,7 @@ const EXECUTOR_REGRESSION_SPEC =
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
   /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
+const NATIVE_ANDROID_SPEC = /mobile\/android-handoff\.spec\.ts/
 
 /**
  * Playwright configuration for Wegent E2E testing
@@ -83,6 +84,7 @@ export default defineConfig({
         /api\/.*\.spec\.ts/,
         EXECUTOR_REGRESSION_SPEC, // Run executor-heavy coverage in a dedicated CI job.
         PROVIDER_NATIVE_CHAT_SPEC, // Shared provider configuration requires serial execution.
+        NATIVE_ANDROID_SPEC, // Requires the real Android application and an emulator.
       ],
       use: {
         ...devices['Desktop Chrome'],
@@ -91,6 +93,16 @@ export default defineConfig({
       dependencies: ['setup'],
     },
     /* API tests - no browser needed, but setup provisions isolated E2E users */
+    {
+      name: 'native-android',
+      testMatch: NATIVE_ANDROID_SPEC,
+      workers: 1,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
     {
       name: 'api',
       testMatch: /api\/.*\.spec\.ts/,

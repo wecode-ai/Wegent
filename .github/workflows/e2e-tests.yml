@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
+      wework_mobile: ${{ steps.classify.outputs.wework_mobile }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
 
     steps:
@@ -1423,13 +1424,14 @@ jobs:
       packages: read
     needs:
       [
+        changes,
         build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 55
 
     services:
       mysql:
@@ -1526,6 +1528,8 @@ jobs:
           exit "$status"
 
       - name: Free executor E2E runner disk space
+        env:
+          PRESERVE_ANDROID_SDK: ${{ needs.changes.outputs.wework_mobile == 'true' }}
         run: .github/scripts/free-runner-disk-space-if-needed.sh 50
 
       - name: Install executor Rust system dependencies
@@ -1837,6 +1841,36 @@ jobs:
           WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest tests/models/test_wework_file_delivery_migration.py -n 0 --no-cov
+
+      - name: Set up Java for the Android application
+        if: needs.changes.outputs.wework_mobile == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install standalone mobile dependencies
+        if: needs.changes.outputs.wework_mobile == 'true'
+        run: pnpm --dir wework-mobile install --frozen-lockfile
+
+      - name: Run real Android handoff E2E with the shared platform services
+        if: needs.changes.outputs.wework_mobile == 'true'
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:8000
+          E2E_USE_ISOLATED_USERS: "false"
+        run: |
+          sudo chmod 666 /dev/kvm
+          bash .github/scripts/run-wework-mobile-android-e2e.sh
+
+      - name: Upload native Android handoff evidence
+        if: always() && needs.changes.outputs.wework_mobile == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wework-mobile-android-e2e
+          path: wework-mobile/artifacts/android-e2e/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Run Executor E2E tests
         env:

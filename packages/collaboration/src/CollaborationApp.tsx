@@ -1194,6 +1194,8 @@ export function CollaborationApp({
             ) : (
               <IssueDetail
                 api={api}
+                focusedCommentId={host.location.commentId}
+                focusedCommentRequestKey={host.location.focusRequest}
                 project={project}
                 issue={selectedIssue}
                 allIssues={issues}

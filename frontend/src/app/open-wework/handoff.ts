@@ -44,9 +44,10 @@ export function parseWeworkHandoff(params: URLSearchParams): WeworkHandoffDestin
   const projectPath = `/collaboration/${projectId}`
   const itemPath = itemId === null ? '' : `/issues/${encodeURIComponent(itemId)}`
   const commentPath = commentId === null ? '' : `/comments/${encodeURIComponent(commentId)}`
+  const commentQuery = commentId === null ? '' : `?${new URLSearchParams({ commentId })}`
   return {
     weworkUrl: `wework://boards/${projectId}${itemPath}${commentPath}`,
-    webPath: `${projectPath}${itemPath}`,
+    webPath: `${projectPath}${itemPath}${commentQuery}`,
   }
 }
 

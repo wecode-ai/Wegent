@@ -8,6 +8,7 @@ import { createBrowserRuntimeDeviceAccess } from './runtimeDeviceAccess'
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 
 import { deviceApis } from '@/apis/devices'
+import { Button } from '@/components/ui/button'
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -127,7 +128,7 @@ export function CollaborationPage() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { t, getCurrentLanguage } = useTranslation('common')
   const api = useMemo(() => {
     const socketOptions = {
       socketBaseUrl: async () => {
@@ -237,6 +238,14 @@ export function CollaborationPage() {
       ? decodeURIComponent(segments[3])
       : null
   const projectView = (searchParams.get('view') || 'board') as CollaborationView
+  const commentId = searchParams.get('commentId')
+  const focusRequest = searchParams.get('focusRequest')
+  const legacyTarget = `${user?.id ?? ''}:${pathname}?${searchParams.toString()}`
+  const [legacyResolutionError, setLegacyResolutionError] = useState<{
+    target: string
+    message: string
+  } | null>(null)
+  const [legacyResolveAttempt, setLegacyResolveAttempt] = useState(0)
   const section = searchParams.get('section')
   const projectSettingsSection =
     projectView === 'manage' &&
@@ -253,14 +262,13 @@ export function CollaborationPage() {
     }
     if (!legacyProjectId) return
     let active = true
+    setLegacyResolutionError(null)
     void api.projects
       .get(legacyProjectId)
       .then(project => {
         if (!active) return
         if (!project.workspace_id) {
-          toast.error('该项目未关联协作空间')
-          router.replace('/collaboration')
-          return
+          throw new Error(t('collaboration_route.workspace_missing'))
         }
         router.replace(
           collaborationLocationPath({
@@ -270,18 +278,33 @@ export function CollaborationPage() {
             projectId: project.id,
             projectView,
             issueId: legacyIssueId,
+            ...(commentId ? { commentId, focusRequest } : {}),
           })
         )
       })
       .catch(error => {
         if (!active) return
-        toast.error(error instanceof Error ? error.message : '项目加载失败')
-        router.replace('/collaboration')
+        setLegacyResolutionError({
+          target: legacyTarget,
+          message: error instanceof Error ? error.message : t('collaboration_route.load_failed'),
+        })
       })
     return () => {
       active = false
     }
-  }, [api, legacyIssueId, legacyProjectId, projectView, removedRootRoute, router])
+  }, [
+    api,
+    legacyIssueId,
+    legacyProjectId,
+    projectView,
+    removedRootRoute,
+    router,
+    commentId,
+    focusRequest,
+    legacyTarget,
+    legacyResolveAttempt,
+    t,
+  ])
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
@@ -309,6 +332,7 @@ export function CollaborationPage() {
         projectView,
         ...(projectSettingsSection ? { projectSettingsSection } : {}),
         issueId,
+        ...(issueId && commentId ? { commentId, focusRequest } : {}),
       } satisfies CollaborationPlatformLocation,
       navigate(nextLocation) {
         const nextPath = collaborationLocationPath(nextLocation)
@@ -346,6 +370,8 @@ export function CollaborationPage() {
     }),
     [
       issueId,
+      commentId,
+      focusRequest,
       pathname,
       projectId,
       projectView,
@@ -359,12 +385,35 @@ export function CollaborationPage() {
   )
 
   if (legacyProjectId) {
+    const error =
+      legacyResolutionError?.target === legacyTarget ? legacyResolutionError.message : null
     return (
       <CollaborationWebShell
         sidebar={<div className="h-full" />}
         main={
-          <div className="flex h-full items-center justify-center text-sm text-text-muted">
-            正在进入协作空间…
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-text-muted">
+            {error ? (
+              <div className="space-y-3" role="alert" data-testid="collaboration-error">
+                <p className="font-medium text-text-primary">
+                  {t('collaboration_route.error_title')}
+                </p>
+                <p>{error}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 min-w-11"
+                  onClick={() => {
+                    setLegacyResolutionError(null)
+                    setLegacyResolveAttempt(attempt => attempt + 1)
+                  }}
+                  data-testid="collaboration-route-retry"
+                >
+                  {t('collaboration_route.retry')}
+                </Button>
+              </div>
+            ) : (
+              <p role="status">{t('collaboration_route.loading')}</p>
+            )}
           </div>
         }
       />

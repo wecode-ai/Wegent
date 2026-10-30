@@ -4,9 +4,12 @@
 
 import time
 import uuid
+from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -16,6 +19,16 @@ from app.models.user import User
 from app.schemas.user import (
     WeworkAuthSessionActionResponse,
 )
+from app.schemas.wework_web_session import (
+    WeworkWebSessionCreateResponse,
+    WeworkWebSessionExchangeRequest,
+    WeworkWebSessionExchangeResponse,
+    WeworkWebSessionRequest,
+)
+from app.services.auth.wework_web_session import (
+    create_web_session,
+    exchange_web_session,
+)
 
 router = APIRouter()
 
@@ -24,6 +37,33 @@ POLL_INTERVAL_SECONDS = 2
 SESSION_KEY_PREFIX = "wework_auth_session:"
 LEGACY_ACCESS_AUTH_MODE = "legacy_access"
 DEVICE_BOUND_REFRESH_AUTH_MODE = "device_bound_refresh"
+
+
+@router.post("/web-sessions", response_model=WeworkWebSessionCreateResponse)
+async def create_wework_web_session(
+    body: WeworkWebSessionRequest,
+    response: Response,
+    current_user: User = Depends(security.get_current_user),
+) -> WeworkWebSessionCreateResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await create_web_session(current_user, body)
+
+
+@router.post("/web-sessions/exchange", response_model=WeworkWebSessionExchangeResponse)
+async def exchange_wework_web_session(
+    body: WeworkWebSessionExchangeRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> WeworkWebSessionExchangeResponse:
+    response.headers["Cache-Control"] = "no-store"
+    tokens = list(body.existing_tokens)
+    authorization = security.extract_authorization_token(
+        request.headers.get("Authorization")
+    )
+    cookie = unquote(request.cookies.get("auth_token", ""))
+    tokens.extend(token for token in (authorization, cookie) if token)
+    return await exchange_web_session(db, body, tokens)
 
 
 def _session_key(session_id: str) -> str:

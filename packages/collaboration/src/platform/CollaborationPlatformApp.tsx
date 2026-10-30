@@ -117,6 +117,10 @@ function navigateWithin(
   patch: Partial<CollaborationPlatformLocation>,
 ) {
   const location = { ...host.location, ...patch };
+  if (patch.issueId !== undefined && patch.issueId !== host.location.issueId) {
+    location.commentId = patch.commentId ?? null;
+    location.focusRequest = patch.focusRequest ?? null;
+  }
   if (patch.projectView && patch.projectView !== "manage") {
     location.projectSettingsSection = null;
   }
@@ -2430,6 +2434,8 @@ export function CollaborationPlatformApp({
             location: {
               projectId: host.location.projectId,
               issueId: host.location.issueId,
+              commentId: host.location.commentId,
+              focusRequest: host.location.focusRequest,
               view: host.location.projectView,
               projectSettingsSection: host.location.projectSettingsSection,
             },

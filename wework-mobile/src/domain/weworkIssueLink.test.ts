@@ -25,10 +25,11 @@ describe('parseWeworkIssueLink', () => {
     })
   })
 
-  it('accepts a comment suffix and keeps the issue destination', () => {
+  it('preserves the comment destination from the PC Issue scheme', () => {
     expect(parseWeworkIssueLink('wework://boards/12/issues/ISSUE-1/comments/comment-1')).toEqual({
       projectId: '12',
       itemId: 'ISSUE-1',
+      commentId: 'comment-1',
     })
   })
 
@@ -48,7 +49,7 @@ describe('parseWeworkIssueLink', () => {
         'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&commentId=comment-1',
         ['https://wegent.example']
       )
-    ).toEqual({ projectId: '12', itemId: 'ISSUE-1' })
+    ).toEqual({ projectId: '12', itemId: 'ISSUE-1', commentId: 'comment-1' })
   })
 
   it('collects trusted App Link origins from the Web URL and build configuration', () => {
@@ -103,20 +104,33 @@ describe('weworkIssueWebUrl', () => {
     ).toBeNull()
   })
 
-  it('builds a same-origin session bootstrap URL with a fragment token', () => {
-    const url = weworkIssueBootstrapUrl(
-      'https://wegent.example/',
-      { projectId: '12', itemId: 'gitlab:12/issue#3' },
-      'token value/+'
+  it('preserves an encoded comment and repeat focus request through the WebView route', () => {
+    const input = 'wework://boards/12/issues/ISSUE-1/comments/comment%2F%231'
+    const issue = parseWeworkIssueLink(input)
+    expect(issue).toEqual({ projectId: '12', itemId: 'ISSUE-1', commentId: 'comment/#1' })
+    const url = new URL(
+      weworkIssueWebUrl('https://wegent.example', { ...issue!, focusRequest: 'mobile-2' })
     )
+    expect(url.pathname).toBe('/collaboration/12/issues/ISSUE-1')
+    expect(url.searchParams.get('commentId')).toBe('comment/#1')
+    expect(url.searchParams.get('focusRequest')).toBe('mobile-2')
+  })
+
+  it('builds a public bootstrap URL without credentials and preserves comment focus', () => {
+    const url = weworkIssueBootstrapUrl('https://wegent.example/', {
+      projectId: '12',
+      itemId: 'gitlab:12/issue#3',
+      commentId: 'comment-1',
+      focusRequest: 'mobile-1',
+    })
     const parsed = new URL(url)
 
     expect(parsed.origin).toBe('https://wegent.example')
     expect(parsed.pathname).toBe('/mobile-web-session')
-    expect(parsed.search).toBe('')
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('token')).toBe('token value/+')
-    expect(new URLSearchParams(parsed.hash.slice(1)).get('redirect')).toBe(
-      '/collaboration/12/issues/gitlab%3A12%2Fissue%233'
+    expect(parsed.hash).toBe('')
+    expect([...parsed.searchParams.keys()]).toEqual(['redirect'])
+    expect(parsed.searchParams.get('redirect')).toBe(
+      '/collaboration/12/issues/gitlab%3A12%2Fissue%233?commentId=comment-1&focusRequest=mobile-1'
     )
   })
 })

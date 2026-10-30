@@ -26,9 +26,9 @@ export function useFocusedComment(
       listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
     ).find(node => node.dataset.messageId === commentId)
     if (!target) return
-    target.scrollIntoView?.({ block: 'center' })
     // A new request renders without the old flash until its next animation frame.
     const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView?.({ block: 'center' })
       revealed.current = { commentId, requestKey }
       setFlashedRequest(revealed.current)
     })

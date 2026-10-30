@@ -52,6 +52,10 @@ export function collaborationLocationPath(location: CollaborationPlatformLocatio
   if (location.projectView === 'manage' && location.projectSettingsSection) {
     params.set('section', location.projectSettingsSection)
   }
+  if (location.issueId && location.commentId) {
+    params.set('commentId', location.commentId)
+    if (location.focusRequest) params.set('focusRequest', location.focusRequest)
+  }
   const search = params.toString()
   const query = search ? `?${search}` : ''
   return location.issueId

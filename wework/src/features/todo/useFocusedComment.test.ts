@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useFocusedComment } from './useFocusedComment'
+import { useFocusedComment } from '@wegent/collaboration'
 
 afterEach(() => vi.useRealTimers())
 

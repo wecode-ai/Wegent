@@ -52,6 +52,7 @@ interface MentionFixture {
   recipientApi: ApiClient
   actor: User
   recipient: User
+  recipientPassword: string
   workspace: Resource
   project: Project
   issue: Resource
@@ -286,6 +287,7 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         recipientApi,
         actor,
         recipient,
+        recipientPassword: password,
         workspace,
         project,
         issue,

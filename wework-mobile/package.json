@@ -14,6 +14,7 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "e2e:android": "pnpm --dir ../frontend exec playwright test --project=native-android",
     "build:android": "expo export --platform android --output-dir dist/android",
     "build:ios": "expo export --platform ios --output-dir dist/ios",
     "build": "pnpm run build:android && pnpm run build:ios"

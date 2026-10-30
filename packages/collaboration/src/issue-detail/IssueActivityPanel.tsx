@@ -1,6 +1,7 @@
 import { BrowserIssueExecution } from './BrowserIssueExecution'
 import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
 import { useIssueActivityScroll } from './useIssueActivityScroll'
+import { useFocusedComment } from './useFocusedComment'
 import { BrowserIssueReplies } from './BrowserIssueReplies'
 import { BrowserIssueCommentComposer } from './BrowserIssueCommentComposer'
 import { issueTaskSummaryForMessage } from './issueTaskSummary'
@@ -65,7 +66,11 @@ export function IssueActivityPanel({
   onOpenAttachment,
   taskBindings = [],
   onOpenTaskConversation,
+  focusedCommentId = null,
+  focusedCommentRequestKey = null,
 }: {
+  focusedCommentId?: string | null
+  focusedCommentRequestKey?: string | null
   commentAssignment?: import('./useCommentAssignment').CommentAssignment
   api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
     Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
@@ -123,7 +128,14 @@ export function IssueActivityPanel({
     unreadRevision: issue.is_unread ? (issue.content_revision ?? issue.version) : undefined,
     onReadSequence: api.issues ? markActivityRead : undefined,
     cardTestIdPrefix: 'collaboration-chat-card-',
+    readRequestKey: focusedCommentRequestKey,
   })
+  const flashedCommentId = useFocusedComment(
+    scroll.listRef,
+    chat.messages,
+    focusedCommentId,
+    focusedCommentRequestKey
+  )
   const threads = useMemo(() => groupIssueTimelineThreads(chat.messages), [chat.messages])
   const addressedMessages = useMemo(
     () =>
@@ -253,6 +265,7 @@ export function IssueActivityPanel({
               if (entry.kind === 'thread')
                 return (
                   <IssueProjectChatThread
+                    flashedCommentId={flashedCommentId}
                     key={`thread:${entry.thread.root.messageId}`}
                     thread={entry.thread}
                     canComment={canComment}

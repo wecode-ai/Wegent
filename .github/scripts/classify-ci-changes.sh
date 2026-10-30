@@ -11,6 +11,7 @@ declare -A changed=(
   [knowledge_engine]=false
   [frontend]=false
   [wework]=false
+  [wework_mobile]=false
   [wegent_cli]=false
   [platform_e2e]=false
   [wework_e2e]=false
@@ -45,8 +46,11 @@ classify_path() {
       mark_all
       return
       ;;
-    .github/workflows/e2e-tests.yml | \
-      .github/scripts/run-attachment-replica-e2e.sh | \
+    .github/workflows/e2e-tests.yml)
+      changed[platform_e2e]=true
+      changed[wework_mobile]=true
+      ;;
+    .github/scripts/run-attachment-replica-e2e.sh | \
       .github/scripts/run-knowledge-provider-e2e.sh | \
       .github/scripts/test-e2e-resource-reuse.mjs | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
@@ -75,6 +79,27 @@ classify_path() {
       changed[wework]=true
       changed[platform_e2e]=true
       changed[wework_e2e]=true
+      changed[wework_mobile]=true
+      ;;
+    wework-mobile/*)
+      changed[wework_mobile]=true
+      changed[platform_e2e]=true
+      ;;
+    frontend/e2e/tests/mobile/* | frontend/e2e/tests/collaboration/open-wework-handoff.spec.ts | \
+      frontend/playwright.config.ts | \
+      frontend/src/app/mobile-web-session/* | frontend/src/features/collaboration/routes.ts | \
+      frontend/src/features/collaboration/CollaborationPage.tsx | \
+      .github/scripts/run-wework-mobile-android-e2e.sh)
+      changed[frontend]=true
+      changed[wework_mobile]=true
+      changed[platform_e2e]=true
+      ;;
+    backend/app/api/endpoints/wework_auth.py | backend/app/schemas/wework_web_session.py | \
+      backend/app/services/auth/wework_web_session.py)
+      changed[backend]=true
+      changed[wegent_cli]=true
+      changed[wework_mobile]=true
+      changed[platform_e2e]=true
       ;;
     backend/* | chat_shell/*)
       changed[backend]=true
@@ -129,6 +154,7 @@ classify_path() {
       changed[wework]=true
       changed[platform_e2e]=true
       changed[wework_e2e]=true
+      changed[wework_mobile]=true
       ;;
     packages/process-explorer/*)
       changed[wework]=true
@@ -160,6 +186,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend backend_rs executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
+for key in backend backend_rs executor executor_manager shared knowledge_engine frontend wework wework_mobile wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

@@ -185,6 +185,13 @@
     "feedback": "Feedback",
     "admin": "Admin"
   },
+  "collaboration_route": {
+    "loading": "Opening collaboration workspace…",
+    "error_title": "Unable to open this project",
+    "load_failed": "Failed to load the project. Please retry.",
+    "workspace_missing": "This project has no collaboration workspace.",
+    "retry": "Retry"
+  },
   "collaboration_sidebar": {
     "back_to_workbench": "Back to workbench",
     "title": "Collaboration",

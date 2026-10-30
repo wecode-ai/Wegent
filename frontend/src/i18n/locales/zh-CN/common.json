@@ -185,6 +185,13 @@
     "feedback": "问题反馈",
     "admin": "系统管理"
   },
+  "collaboration_route": {
+    "loading": "正在进入协作空间…",
+    "error_title": "无法打开此项目",
+    "load_failed": "项目加载失败，请重试。",
+    "workspace_missing": "该项目未关联协作空间。",
+    "retry": "重试"
+  },
   "collaboration_sidebar": {
     "back_to_workbench": "返回工作台",
     "title": "协作",

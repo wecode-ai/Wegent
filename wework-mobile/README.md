@@ -35,6 +35,15 @@ platform keychain/keystore; access tokens stay in memory.
 - Follow the operating-system light or dark appearance without changing screen structure.
 - Load transcript history and consume live `response.*` Socket.IO events.
 - Recover from reconnects by reloading the canonical transcript.
+- Open notification Issue/comment links inside the app with the same project permissions and
+  comment focus behavior as PC Wework.
+
+Issue WebViews establish a Web session through a private page challenge and a 60-second,
+single-use Backend grant (`POST /api/auth/wework/web-sessions` and `/exchange`). The native access
+token stays in the Authorization header; neither credentials nor grants are accepted from URLs.
+Grants bind the current user, page nonce, and complete Issue/comment destination. An existing
+different Web account is preserved. Android and iOS use their native WebView event origin and
+main-document URL to validate the bridge before requesting a grant.
 
 ## Development
 

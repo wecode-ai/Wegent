@@ -46,6 +46,8 @@ An optional `url` specifies the click destination independently of project sourc
 
 URL-encode each address segment. In-app Markdown links, inbox actions and Electron external launches use the same destination parser. Installers register `wework`; cold-start URLs wait until authentication and the workbench are ready. Normal resource permissions apply. Links cannot execute commands, switch servers or grant access.
 
+Mobile supports Issue and comment addresses, including `/open-wework?projectId=...&itemId=...&commentId=...` on the trusted Web host. After sign-in, the Issue opens inside the app and comment links scroll to and briefly highlight the requested comment. An existing Web account is preserved if it differs from the app account. Expired authorization and network errors offer recovery; missing project access displays an error.
+
 Native addresses remain queued in the Electron process until navigation is acknowledged. Renderer remounts and authentication restoration do not consume them prematurely.
 
 An Issue navigation request is marked as handled only when its detail view opens. The request remains pending while project data loads or a parent rerender cancels the scheduled operation, so clicking a notification does not stop at the board without opening the Issue.

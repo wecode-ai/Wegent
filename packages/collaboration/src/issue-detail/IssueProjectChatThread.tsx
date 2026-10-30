@@ -56,7 +56,9 @@ export function IssueProjectChatThread({
   remove,
   members,
   agents,
+  flashedCommentId,
 }: {
+  flashedCommentId?: string | null;
   thread: IssueActivityThreadModel<ProjectChatMessage>;
   upload?(file: File): Promise<CollaborationAttachment>;
   remove?(id: string): Promise<void>;
@@ -118,6 +120,7 @@ export function IssueProjectChatThread({
     return (
       <ActivityMessage
         key={message.messageId}
+        flash={message.messageId === flashedCommentId}
         message={target?.activityMessage ?? message}
         singleExecution={singleExecution}
         persistedStatus={execution?.display_state}

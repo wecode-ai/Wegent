@@ -5,6 +5,7 @@
 export * from "./IssueDetailCore";
 export { TagEditor } from "./TagEditor";
 export * from "./IssueActivityPanel";
+export { useFocusedComment } from './useFocusedComment'
 export * from "./IssueActivityFeed";
 export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";

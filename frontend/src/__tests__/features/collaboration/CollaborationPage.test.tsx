@@ -14,6 +14,8 @@ import { collaborationLocationPath } from '@/features/collaboration/routes'
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
+const mockRouter = { push: mockPush, replace: mockReplace }
+const mockT = (key: string) => key
 let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
@@ -22,7 +24,7 @@ const mockListGroups = jest.fn()
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
-  useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  useRouter: () => mockRouter,
   useSearchParams: () => mockSearchParams,
 }))
 
@@ -78,7 +80,7 @@ jest.mock('@/features/collaboration/shared-api', () => ({
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     getCurrentLanguage: () => 'zh-CN',
-    t: (key: string) => key,
+    t: mockT,
   }),
 }))
 
@@ -101,6 +103,81 @@ describe('CollaborationPage platform routing', () => {
     mockListGroups.mockReset()
     mockListGroups.mockReturnValue(new Promise(() => undefined))
     localStorage.clear()
+  })
+
+  it('preserves the comment focus request when resolving an Issue notification URL', async () => {
+    mockPathname = '/collaboration/project%201/issues/ISSUE-1'
+    mockSearchParams = new URLSearchParams({ commentId: 'comment/1', focusRequest: 'click-2' })
+
+    render(<CollaborationPage />)
+
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201/issues/ISSUE-1?commentId=comment%2F1&focusRequest=click-2'
+      )
+    )
+  })
+
+  it('keeps a rejected Issue target visible with a local error instead of leaving the Issue', async () => {
+    mockPathname = '/collaboration/project%201/issues/ISSUE-1'
+    mockGetProject.mockRejectedValueOnce(new Error('Forbidden'))
+
+    render(<CollaborationPage />)
+
+    expect(await screen.findByTestId('collaboration-error')).toHaveTextContent('Forbidden')
+    expect(screen.getByTestId('collaboration-route-retry')).toBeEnabled()
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('retries the same Issue and preserves its requested comment after recovery', async () => {
+    mockPathname = '/collaboration/project%201/issues/ISSUE-1'
+    mockSearchParams = new URLSearchParams({ commentId: 'comment/1', focusRequest: 'click-2' })
+    mockGetProject.mockRejectedValueOnce(new Error('Forbidden'))
+
+    render(<CollaborationPage />)
+
+    await screen.findByTestId('collaboration-error')
+    fireEvent.click(screen.getByTestId('collaboration-route-retry'))
+
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/collaboration/workspaces/workspace%201/projects/project%201/issues/ISSUE-1?commentId=comment%2F1&focusRequest=click-2'
+      )
+    )
+    expect(mockGetProject).toHaveBeenNthCalledWith(1, 'project 1')
+    expect(mockGetProject).toHaveBeenNthCalledWith(2, 'project 1')
+    expect(mockGetProject).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('collaboration-error')).not.toBeInTheDocument()
+  })
+
+  it('hides the previous Project error while a new target is resolving', async () => {
+    mockPathname = '/collaboration/project%201/issues/ISSUE-1'
+    mockGetProject.mockRejectedValueOnce(new Error('Forbidden'))
+    const { rerender } = render(<CollaborationPage />)
+    await screen.findByTestId('collaboration-error')
+
+    mockPathname = '/collaboration/project%202/issues/ISSUE-2'
+    mockGetProject.mockReturnValueOnce(new Promise(() => undefined))
+    rerender(<CollaborationPage />)
+
+    expect(screen.queryByTestId('collaboration-error')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('collaboration_route.loading')
+    expect(mockGetProject).toHaveBeenLastCalledWith('project 2')
+  })
+
+  it('passes the requested comment to the shared Issue host', () => {
+    mockPathname = '/collaboration/workspaces/workspace-1/projects/project-1/issues/ISSUE-1'
+    mockSearchParams = new URLSearchParams({ commentId: 'comment-1', focusRequest: 'click-1' })
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost?.location).toEqual(
+      expect.objectContaining({
+        issueId: 'ISSUE-1',
+        commentId: 'comment-1',
+        focusRequest: 'click-1',
+      })
+    )
   })
 
   it('renders the platform spaces root through the thin host shell', () => {
@@ -299,7 +376,7 @@ describe('CollaborationPage platform routing', () => {
       render(<CollaborationPage />)
 
       expect(capturedHost).toBeNull()
-      expect(screen.getByText('正在进入协作空间…')).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('collaboration_route.loading')
       await waitFor(() =>
         expect(mockReplace).toHaveBeenCalledWith(
           `/collaboration/workspaces/workspace%201/projects/project%201?view=${view}`
@@ -320,13 +397,17 @@ describe('CollaborationPage platform routing', () => {
     )
   })
 
-  it('returns to the spaces root when a legacy Project has no Workspace', async () => {
+  it('keeps a missing Workspace failure scoped to the requested Project', async () => {
     mockPathname = '/collaboration/project%201'
     mockGetProject.mockResolvedValue({ id: 'project 1', workspace_id: null })
 
     render(<CollaborationPage />)
 
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/collaboration'))
+    expect(await screen.findByTestId('collaboration-error')).toHaveTextContent(
+      'collaboration_route.workspace_missing'
+    )
+    expect(screen.getByTestId('collaboration-route-retry')).toBeEnabled()
+    expect(mockReplace).not.toHaveBeenCalled()
   })
 
   it('keeps path construction centralized for every shared hierarchy level', () => {

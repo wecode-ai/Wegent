@@ -2,7 +2,7 @@ import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Linking, StyleSheet, useColorScheme } from 'react-native'
 import { Dialog, PaperProvider, Portal, Snackbar, Text, useTheme } from 'react-native-paper'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
@@ -15,12 +15,9 @@ import { LiquidGlassButton } from '@/components/LiquidGlass'
 import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
 import { WebIssueScreen } from '@/components/WebIssueScreen'
-import {
-  parseWeworkIssueLink,
-  weworkAppLinkOrigins,
-  type WeworkIssueLink,
-} from '@/domain/weworkIssueLink'
+import { type WeworkIssueDestination } from '@/domain/weworkIssueLink'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
+import { useWeworkIssueLinks } from '@/hooks/useWeworkIssueLinks'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { darkTheme, lightTheme } from '@/theme'
 
@@ -28,7 +25,7 @@ type RuntimeStackParamList = {
   conversationList: undefined
   conversation: undefined
   modelPicker: undefined
-  webIssue: WeworkIssueLink
+  webIssue: WeworkIssueDestination
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
@@ -60,6 +57,16 @@ export default function App() {
             deepLinkUrl={deepLinkUrl}
             onDeepLinkConsumed={consumeDeepLink}
             onLogout={auth.logout}
+            onRefreshSession={auth.refresh}
+            onReauthorize={async issue => {
+              const comment = issue.commentId
+                ? `/comments/${encodeURIComponent(issue.commentId)}`
+                : ''
+              setDeepLinkUrl(
+                `wework://boards/${encodeURIComponent(issue.projectId)}/issues/${encodeURIComponent(issue.itemId)}${comment}`
+              )
+              await auth.login()
+            }}
             userId={auth.user?.id ?? 0}
             userLabel={auth.user?.full_name || auth.user?.user_name || ''}
           />
@@ -82,6 +89,8 @@ function RuntimeApplication({
   deepLinkUrl,
   onDeepLinkConsumed,
   onLogout,
+  onRefreshSession,
+  onReauthorize,
   userId,
   userLabel,
 }: {
@@ -89,6 +98,8 @@ function RuntimeApplication({
   deepLinkUrl: string | null
   onDeepLinkConsumed: () => void
   onLogout: () => Promise<void>
+  onRefreshSession: () => Promise<boolean>
+  onReauthorize: (issue: WeworkIssueDestination) => Promise<void>
   userId: number
   userLabel: string
 }) {
@@ -100,34 +111,18 @@ function RuntimeApplication({
   const [search, setSearch] = useState('')
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
   const navigationRef = useNavigationContainerRef<RuntimeStackParamList>()
-  const pendingIssueRef = useRef<WeworkIssueLink | null>(null)
-
-  const openIssueLink = useCallback(
-    (url: string | null) => {
-      if (!url) return
-      const issue = parseWeworkIssueLink(url, weworkAppLinkOrigins(config.webUrl))
-      if (!issue) return
-      if (!navigationRef.isReady()) {
-        pendingIssueRef.current = issue
-        return
-      }
-      navigationRef.navigate('webIssue', issue)
-    },
-    [config.webUrl, navigationRef]
+  const isNavigationReady = useCallback(() => navigationRef.isReady(), [navigationRef])
+  const navigateToIssue = useCallback(
+    (issue: WeworkIssueDestination) => navigationRef.navigate('webIssue', issue),
+    [navigationRef]
   )
-
-  const openPendingIssue = useCallback(() => {
-    const issue = pendingIssueRef.current
-    if (!issue) return
-    pendingIssueRef.current = null
-    navigationRef.navigate('webIssue', issue)
-  }, [navigationRef])
-
-  useEffect(() => {
-    if (!deepLinkUrl) return
-    openIssueLink(deepLinkUrl)
-    onDeepLinkConsumed()
-  }, [deepLinkUrl, onDeepLinkConsumed, openIssueLink])
+  const openPendingIssue = useWeworkIssueLinks(
+    deepLinkUrl,
+    config.webUrl,
+    isNavigationReady,
+    navigateToIssue,
+    onDeepLinkConsumed
+  )
 
   const workspaces = useMemo(
     () =>
@@ -268,10 +263,11 @@ function RuntimeApplication({
           >
             {({ route }) => (
               <WebIssueScreen
-                accessToken={config.accessToken}
-                itemId={route.params.itemId}
-                projectId={route.params.projectId}
-                webUrl={config.webUrl || config.backendUrl}
+                config={config}
+                issue={route.params}
+                userId={userId}
+                onRefreshSession={onRefreshSession}
+                onReauthorize={() => onReauthorize(route.params)}
               />
             )}
           </RuntimeStack.Screen>

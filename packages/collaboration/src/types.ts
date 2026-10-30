@@ -524,6 +524,8 @@ export type ProjectSettingsSectionId =
 export interface CollaborationLocation {
   projectId: string | null;
   issueId: string | null;
+  commentId?: string | null;
+  focusRequest?: string | null;
   view: CollaborationView;
   rootView?: CollaborationRootView;
   projectSettingsSection?: ProjectSettingsSectionId | null;

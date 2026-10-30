@@ -19,7 +19,7 @@ describe('parseWeworkHandoff', () => {
 
     expect(parseWeworkHandoff(params)).toEqual({
       weworkUrl: 'wework://boards/12/issues/gitlab%3A12%2Fissue%233/comments/3f%2F9',
-      webPath: '/collaboration/12/issues/gitlab%3A12%2Fissue%233',
+      webPath: '/collaboration/12/issues/gitlab%3A12%2Fissue%233?commentId=3f%2F9',
     })
   })
 

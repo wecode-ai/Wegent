@@ -1,6 +1,11 @@
 export interface WeworkIssueLink {
   projectId: string
   itemId: string
+  commentId?: string
+}
+
+export interface WeworkIssueDestination extends WeworkIssueLink {
+  focusRequest: string
 }
 
 const APP_LINK_PATH = '/open-wework'
@@ -67,7 +72,7 @@ function parseSchemeLink(url: URL): WeworkIssueLink | null {
     return null
   }
 
-  return { projectId, itemId }
+  return { projectId, itemId, ...(commentId === null ? {} : { commentId }) }
 }
 
 function parseAppLink(url: URL): WeworkIssueLink | null {
@@ -88,7 +93,7 @@ function parseAppLink(url: URL): WeworkIssueLink | null {
   if (!itemId || !validProjectId(projectId) || !validItemId(itemId)) return null
   if (commentId !== null && !validItemId(commentId)) return null
 
-  return { projectId, itemId }
+  return { projectId, itemId, ...(commentId === null ? {} : { commentId }) }
 }
 
 export function parseWeworkIssueLink(
@@ -130,23 +135,29 @@ export function weworkWebOrigin(webUrl: string): string | null {
   }
 }
 
-export function weworkIssueWebUrl(webUrl: string, issue: WeworkIssueLink): string {
-  return `${webUrl.replace(/\/+$/, '')}/collaboration/${encodeURIComponent(
-    issue.projectId
-  )}/issues/${encodeURIComponent(issue.itemId)}`
+export function weworkIssueWebPath(issue: WeworkIssueLink & { focusRequest?: string }): string {
+  const params = new URLSearchParams()
+  if (issue.commentId) params.set('commentId', issue.commentId)
+  if (issue.focusRequest) params.set('focusRequest', issue.focusRequest)
+  const query = params.size ? `?${params}` : ''
+  return `/collaboration/${encodeURIComponent(issue.projectId)}/issues/${encodeURIComponent(
+    issue.itemId
+  )}${query}`
+}
+
+export function weworkIssueWebUrl(
+  webUrl: string,
+  issue: WeworkIssueLink & { focusRequest?: string }
+): string {
+  return `${webUrl.replace(/\/+$/, '')}${weworkIssueWebPath(issue)}`
 }
 
 export function weworkIssueBootstrapUrl(
   webUrl: string,
-  issue: WeworkIssueLink,
-  accessToken: string
+  issue: WeworkIssueLink & { focusRequest?: string }
 ): string {
-  const redirect = `/collaboration/${encodeURIComponent(issue.projectId)}/issues/${encodeURIComponent(
-    issue.itemId
-  )}`
-  return `${webUrl.replace(/\/+$/, '')}/mobile-web-session#token=${encodeURIComponent(
-    accessToken
-  )}&redirect=${encodeURIComponent(redirect)}`
+  const params = new URLSearchParams({ redirect: weworkIssueWebPath(issue) })
+  return `${webUrl.replace(/\/+$/, '')}/mobile-web-session?${params}`
 }
 
 export function parseWeworkIssueWebUrl(input: string, webUrl: string): string | null {

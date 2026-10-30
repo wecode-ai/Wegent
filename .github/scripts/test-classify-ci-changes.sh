@@ -298,6 +298,7 @@ shared=false
 knowledge_engine=false
 frontend=false
 wework=false
+wework_mobile=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=false
@@ -339,6 +340,7 @@ shared=false
 knowledge_engine=false
 frontend=true
 wework=true
+wework_mobile=true
 wegent_cli=false
 platform_e2e=true
 wework_e2e=true
@@ -360,6 +362,7 @@ shared=false
 knowledge_engine=false
 frontend=false
 wework=true
+wework_mobile=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=true
@@ -374,6 +377,14 @@ wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 
+mobile_expected="${all_false/wework_mobile=false/wework_mobile=true}"
+mobile_expected="${mobile_expected/platform_e2e=false/platform_e2e=true}"
+assert_case "mobile changes run tests, both platform exports and native E2E" \
+  "$mobile_expected" "wework-mobile/src/components/WebIssueScreen.tsx"
+mobile_test_expected="${mobile_expected/frontend=false/frontend=true}"
+assert_case "native E2E changes select the real emulator suite" \
+  "$mobile_test_expected" "frontend/e2e/tests/mobile/android-handoff.spec.ts"
+
 shared_expected=$(
   cat <<'EOF'
 backend=true
@@ -384,6 +395,7 @@ shared=true
 knowledge_engine=true
 frontend=false
 wework=false
+wework_mobile=false
 wegent_cli=true
 platform_e2e=true
 wework_e2e=false

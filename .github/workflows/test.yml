@@ -35,6 +35,7 @@ jobs:
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
+      wework_mobile: ${{ steps.classify.outputs.wework_mobile }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
 
     steps:
@@ -629,6 +630,35 @@ jobs:
           flags: frontend
           name: frontend-coverage
 
+  test-wework-mobile:
+    name: Test and Export Wework Mobile
+    needs: changes
+    if: needs.changes.outputs.wework_mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Install standalone mobile dependencies
+        run: pnpm --dir wework-mobile install --frozen-lockfile
+
+      - name: Check mobile types and tests
+        run: |
+          pnpm --dir wework-mobile typecheck
+          pnpm --dir wework-mobile test
+
+      - name: Export Android and iOS applications
+        run: pnpm --dir wework-mobile build
+
   test-wework:
     name: Test Wework (${{ matrix.shard }}/2)
     needs: changes
@@ -837,6 +867,7 @@ jobs:
         test-knowledge-engine,
         test-frontend,
         test-wework,
+        test-wework-mobile,
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
@@ -874,5 +905,6 @@ jobs:
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
+          assert_result "${{ needs.changes.outputs.wework_mobile }}" "${{ needs.test-wework-mobile.result }}" "Wework Mobile tests and platform exports"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"

@@ -50,6 +50,8 @@ export interface CollaborationPlatformLocation {
   projectView: CollaborationView;
   projectSettingsSection?: ProjectSettingsSectionId | null;
   issueId: string | null;
+  commentId?: string | null;
+  focusRequest?: string | null;
 }
 
 export interface CollaborationPlatformHostAdapter {

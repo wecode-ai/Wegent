@@ -20,11 +20,15 @@ if ((available_kib >= threshold_kib)); then
 fi
 
 echo "Available disk is below ${threshold_gib} GiB; removing unused hosted-runner SDKs."
-sudo rm -rf \
-  /usr/share/dotnet \
-  /usr/local/lib/android \
-  /opt/ghc \
+unused_sdks=(
+  /usr/share/dotnet
+  /opt/ghc
   /opt/hostedtoolcache/CodeQL
+)
+if [[ "${PRESERVE_ANDROID_SDK:-false}" != true ]]; then
+  unused_sdks+=(/usr/local/lib/android)
+fi
+sudo rm -rf "${unused_sdks[@]}"
 
 echo "Runner disk space after cleanup:"
 df -h /

@@ -310,6 +310,64 @@ describe('shared IssueDetail', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
+  it('reveals the linked reply after the activity snapshot arrives and refocuses on a new request', async () => {
+    const root = {
+      messageId: 'focus-root',
+      projectId: project.id,
+      taskId: issue.id,
+      sequenceNumber: 1,
+      sender: { type: 'user' as const, id: '1', name: 'Member' },
+      type: 'text' as const,
+      content: 'Root discussion',
+      metadata: {},
+      status: 'completed' as const,
+      createdAt: issue.created_at,
+      updatedAt: issue.updated_at,
+    }
+    const reply = {
+      ...root,
+      messageId: 'focus-reply',
+      rootMessageId: root.messageId,
+      replyToMessageId: root.messageId,
+      sequenceNumber: 2,
+      content: 'The mentioned reply',
+    }
+    let deliver!: (value: unknown) => void
+    const api = createApi({
+      activity: {
+        subscribe: jest.fn(() => new Promise(resolve => (deliver = resolve))),
+        send: jest.fn(),
+      },
+    })
+    const scroll = jest.spyOn(Element.prototype, 'scrollIntoView')
+    try {
+      const focus = { focusedCommentId: reply.messageId, focusedCommentRequestKey: 'first' }
+      const view = renderDetail(api, focus)
+      expect(screen.queryByTestId(`collaboration-chat-message-${reply.messageId}`)).toBeNull()
+      await act(async () => {
+        deliver({
+          snapshot: { messages: [root, reply], latestSequence: 2, currentUserId: '1' },
+          unsubscribe: jest.fn(),
+        })
+      })
+      const target = await screen.findByTestId(`collaboration-chat-message-${reply.messageId}`)
+      await waitFor(() => expect(target).toHaveAttribute('data-flash', 'true'))
+      expect(scroll.mock.contexts).toContain(target)
+      const firstScrolls = scroll.mock.contexts.filter(element => element === target).length
+
+      view.rerender(detailView(api, { ...focus, focusedCommentRequestKey: 'second' }))
+
+      await waitFor(() =>
+        expect(scroll.mock.contexts.filter(element => element === target)).toHaveLength(
+          firstScrolls + 1
+        )
+      )
+      expect(target).toHaveAttribute('data-flash', 'true')
+    } finally {
+      scroll.mockRestore()
+    }
+  })
+
   it('loads details only for a changed Issue or API, not changed callbacks', async () => {
     const api = createApi()
     const view = renderDetail(api)

@@ -10,7 +10,7 @@ import { issueActivityRole } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
-import { useFocusedComment } from './useFocusedComment'
+import { useFocusedComment } from '@wegent/collaboration'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,

@@ -16,6 +16,84 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
+for (const preserveAndroid of [false, true]) {
+  test(`runner cleanup preserves the Android SDK only for native coverage (${preserveAndroid})`, () => {
+    const root = mkdtempSync(join(tmpdir(), "runner-sdk-cleanup-"));
+    try {
+      const calls = join(root, "calls.json");
+      writeFileSync(
+        join(root, "df"),
+        `#!${process.execPath}\nprocess.stdout.write(process.argv.includes('--output=avail') ? 'Avail\\n1024\\n' : 'Filesystem available\\n')\n`,
+      );
+      writeFileSync(
+        join(root, "sudo"),
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.CLEANUP_CALLS, JSON.stringify(process.argv.slice(2)))\n`,
+      );
+      chmodSync(join(root, "df"), 0o755);
+      chmodSync(join(root, "sudo"), 0o755);
+      const result = spawnSync(
+        "bash",
+        [resolve(".github/scripts/free-runner-disk-space-if-needed.sh"), "50"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${root}:${process.env.PATH}`,
+            CLEANUP_CALLS: calls,
+            PRESERVE_ANDROID_SDK: String(preserveAndroid),
+          },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const command = JSON.parse(readFileSync(calls, "utf8"));
+      assert.deepEqual(command.slice(0, 2), ["rm", "-rf"]);
+      assert.equal(
+        command.includes("/usr/local/lib/android"),
+        !preserveAndroid,
+      );
+      assert(command.includes("/usr/share/dotnet"));
+      assert(command.includes("/opt/ghc"));
+      assert(command.includes("/opt/hostedtoolcache/CodeQL"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("native Android coverage reuses the platform host and retains the SDK before cleanup", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['executor-e2e-tests'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const job = JSON.parse(result.stdout);
+  assert(job.needs.includes("changes"));
+  const cleanup = job.steps.find(
+    (step) => step.name === "Free executor E2E runner disk space",
+  );
+  assert.equal(
+    cleanup.env.PRESERVE_ANDROID_SDK,
+    "${{ needs.changes.outputs.wework_mobile == 'true' }}",
+  );
+  const native = job.steps.find((step) =>
+    step.run?.includes("run-wework-mobile-android-e2e.sh"),
+  );
+  assert.equal(native.if, "needs.changes.outputs.wework_mobile == 'true'");
+  assert.deepEqual(Object.keys(job.services).sort(), [
+    "minio",
+    "mysql",
+    "redis",
+  ]);
+  assert(!native.run.includes("docker run"));
+});
+
 test("platform image reuse checks the registry before starting a builder", () => {
   const result = spawnSync(
     "ruby",

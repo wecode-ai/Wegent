@@ -55,6 +55,8 @@ type Messages =
   | (typeof collaborationMessages)["en"];
 
 interface IssueDetailProps {
+  focusedCommentId?: string | null;
+  focusedCommentRequestKey?: string | null;
   api: Pick<
     SharedWorkspaceApi,
     | "activity"
@@ -254,6 +256,8 @@ function BrowserIssueDetail({
   onCreateTask,
   onConflict,
   onError,
+  focusedCommentId,
+  focusedCommentRequestKey,
 }: IssueDetailProps) {
   const [attachmentPreview, setAttachmentPreview] = useState<{
     issueId: string;
@@ -350,6 +354,8 @@ function BrowserIssueDetail({
               },
               renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel
+                  focusedCommentId={focusedCommentId}
+                  focusedCommentRequestKey={focusedCommentRequestKey}
                   commentAssignment={commentAssignment}
                   api={api}
                   issue={issue}
