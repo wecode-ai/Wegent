@@ -585,10 +585,16 @@ mod tests {
 
     #[test]
     fn aware_expires_at_renders_z_suffix() {
+        // Build the timestamp from the clock: a hard-coded instant starts
+        // failing the moment CI runs past it, and this test is about the
+        // rendering, not about a fixed expiry.
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
+        let input = expires_at.format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+        let rendered = expires_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let mut json = subscription_json();
-        json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+00:00");
+        json["_internal"]["expires_at"] = json!(input);
         let item = convert_to_subscription_in_db(&kind_row(json), &HashMap::new());
-        assert_eq!(item.expires_at.as_deref(), Some("2026-10-30T11:53:00Z"));
+        assert_eq!(item.expires_at.as_deref(), Some(rendered.as_str()));
         assert!(!item.is_expired);
     }
 
