@@ -4,9 +4,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
 import { requestExecutor } from './executor-rpc.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
-import { waitForElementCount } from './harness-app-fixture.mjs'
-import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
 const RECOVERED = 'ISSUE_LARGE_TRANSCRIPT_RETRY_RECOVERED'
@@ -117,14 +116,12 @@ async function verifyCachedInitialRecovery({
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
-  // Closing retains the old conversation until its exit animation finishes.
-  // Inject the fault only after that session unmounts, before opening a new one.
-  await waitForElementCount(
+  // The closing drawer retains its conversation until the exit animation ends.
+  // Inject the next read failure only after that previous reader is unmounted.
+  await waitForSnapshot(
     control,
-    modal,
-    0,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The previous conversation must unmount before interrupting the reopened history request'
+    snapshot => !snapshot.testIds.includes('ai-chat-modal'),
+    'The previous Issue conversation did not unmount before testing its next history read'
   )
   const start = proxy.requests.length
   proxy.rule = entry =>
@@ -200,6 +197,19 @@ export async function verifyIssueTranscriptTransfer({
     transcriptProtocolVersion: 2,
     limit: 5,
   }
+  // Older HTTP clients still expect one canonical JSON response. Backend must
+  // use device chunks internally instead of asking Socket.IO to carry the page.
+  const legacy = await request('/api/runtime-work/transcript', {
+    ...address,
+    projectSession: query.projectSession,
+    limit: query.limit,
+  })
+  assert.equal(legacy.transcriptProtocolVersion, undefined)
+  assert.ok(Array.isArray(legacy.turns), 'Legacy HTTP history must retain canonical turns')
+  assert.ok(
+    JSON.stringify(legacy).includes(JSON.stringify(OUTPUT).slice(1, -1)),
+    'Legacy HTTP history must preserve the complete output beyond the device relay limit'
+  )
   const chunks = []
   let offset = 0
   let snapshotId

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fetchLocalRuntime } from './runtime-request.mjs'
 
 const PACKAGE = '@wework-e2e/speech-model'
 const PROVIDER = 'voice-toolbar-model'
@@ -43,7 +44,7 @@ export function apply(ctx) {
 `
   )
   const origin = await control.command('getLocationOrigin', 'body')
-  const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
+  const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({

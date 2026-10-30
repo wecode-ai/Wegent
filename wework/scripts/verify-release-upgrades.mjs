@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +13,7 @@ import {
   verifiedUpgradeEdge,
   verifyReleaseUpgradePlan,
 } from './lib/upgrade-evidence.mjs'
-import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
+import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
 
 const execute = promisify(execFile)
@@ -40,9 +40,9 @@ const node = {
   minSourceVersion: policy.minSourceVersion,
   revoked: false,
 }
-const temporary = await mkdtemp(join(tmpdir(), 'wework-release-upgrades-'))
+const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
 try {
-  const catalogs = await publishedCatalogs()
+  const catalogs = publishedUpgradePolicies({ repository, platform, arch })
   const published = Object.values(catalogs)
   if (
     published.some(catalog => catalog.releases.some(item => item.version === release.version)) &&
@@ -53,51 +53,6 @@ try {
     await verifyChannel(catalogs, targetChannel)
 } finally {
   await rm(temporary, { recursive: true, force: true })
-}
-
-async function publishedCatalogs() {
-  const shared = JSON.parse(
-    (
-      await execute('gh', [
-        'release',
-        'view',
-        'wework-updater',
-        '--repo',
-        repository,
-        '--json',
-        'assets',
-      ])
-    ).stdout
-  )
-  const catalogs = {}
-  for (const existingChannel of ['stable', 'beta']) {
-    const assetName = `components-${existingChannel}-${platform}-${arch}.json`
-    // Only a genuinely missing initial catalog permits a baseline without incoming edges.
-    if (!shared.assets.some(asset => asset.name === assetName)) continue
-    const previousFile = join(temporary, assetName)
-    await execute('gh', [
-      'release',
-      'download',
-      'wework-updater',
-      '--repo',
-      repository,
-      '--pattern',
-      assetName,
-      '--output',
-      previousFile,
-    ])
-    const existing = JSON.parse(await readFile(previousFile, 'utf8')).upgradePolicy
-    if (!existing) continue
-    const catalog = validateUpgradeCatalog(existing)
-    if (
-      catalog.channel !== existingChannel ||
-      catalog.platform !== platform ||
-      catalog.arch !== arch
-    )
-      throw new Error('Published upgrade policy target mismatch')
-    catalogs[existingChannel] = catalog
-  }
-  return catalogs
 }
 
 async function verifyChannel(catalogs, targetChannel) {

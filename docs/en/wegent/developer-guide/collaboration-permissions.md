@@ -88,6 +88,16 @@ Plugins without MCP can reuse existing `localAuth.tool` declarations through the
 
 ## Management surfaces
 
+Each cloud Runtime transcript packet checks current project access, Issue visibility
+and durable session binding in an independent short transaction, preserving CP14 and
+CP15. The authorization Session closes before device RPC and leaves the caller's
+transaction unchanged; repeating SELECT or refreshing ORM objects cannot advance an
+old MySQL REPEATABLE READ snapshot. A separately committed grant removal or change to
+related-only visibility returns 404 before the next RPC. The existing CI MySQL permission
+suite covers omitted-version and v1 callers with separate request, writer and observer
+Sessions, asserting that the old snapshot survives, current access is denied and only
+the first device RPC occurred.
+
 Personal Runtime tasks linked to an Issue are returned only to their owners. Change-request binding also requires task ownership. Board snapshots, paginated task bindings and per-Issue binding lists filter by the current user; project administration does not grant access to another user's personal tasks. A manual binding alone requires owner authorization for transcript details and search. Recorded dispatch executions and collaboration member activities retain their durable execution authorization. `test_project_board_snapshot_queries.py`, `test_runtime_session_device_identity.py` and the Rust binding query test protect these boundaries. Opening an archived task checks the Runtime's explicit archive state and asks the user to restore it first.
 
 HTTP and MCP board bulk ordering enforce CP07, CP13 and CP14 together: Viewers cannot reorder, and other members may submit and receive only Issues they can read. Reordering visible cards exchanges only their slots in the global sibling sequence, retaining invisible members' positions. For non-administrators, inaccessible or nonexistent request targets return the same 404 before any write. Project administrators retain their existing access to all Issues. `test_loop_item_reorder_permissions.py` covers roles, default security, same-status and cross-status ordering, and unchanged persistence after rejection.
