@@ -5,6 +5,7 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   latestModelInputText,
   readRequestBody,
   responseCompleted,
@@ -72,6 +73,7 @@ export function createRuntimeReconciliationModel({ marker, orders }) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const serialized = JSON.stringify(body)
       const testCase = cases.find(
         candidate => candidate.issue && identifiesIssue(serialized, candidate.issue.id)
