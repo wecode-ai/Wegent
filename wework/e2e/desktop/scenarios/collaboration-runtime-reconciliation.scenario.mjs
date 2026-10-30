@@ -18,6 +18,7 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const ACTIVE_WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const MARKER = `RUNTIME_RECONCILIATION_${process.pid}`
 const ORDERS = ['snapshot-first', 'event-first', 'terminal-interleaved']
 const TERMINAL = new Set(['done', 'completed', 'succeeded'])
@@ -621,12 +622,14 @@ export async function createDesktopScenario({
         elapsed => elapsed >= 500,
         'A replayed start reactivated the settled Runtime conversation'
       )
-      await control.command('waitFor', `${CONTENT} [data-testid="send-message-button"]`, {
-        visible: true,
-        stableMs: 500,
-      })
-      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH} [data-testid="project-execution-open-issue"]`,
+        { visible: true, stableMs: 500 }
+      )
+      const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH))
       assert.equal(snapshot.testIds.includes('thinking-indicator'), false)
+      assert.equal(snapshot.testIds.includes('chat-message-input'), false)
     }
     assert.equal(testCase.unphasedRequests, 1)
     evidence.push({ unphasedFinal: true, replayedStarts: starts.length })
