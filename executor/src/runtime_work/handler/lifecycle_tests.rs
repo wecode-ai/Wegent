@@ -38,6 +38,82 @@ fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit(
 }
 
 #[test]
+fn rpc_results_do_not_repeat_native_terminal_events() {
+    for (status, next_turn) in [
+        ("completed", false),
+        ("interrupted", false),
+        ("failed", false),
+        ("completed", true),
+        ("interrupted", true),
+        ("failed", true),
+    ] {
+        let (mut handler, root, request) = setup("native-terminal-single-owner");
+        let (sender, mut events) = broadcast::channel(32);
+        handler.event_tx = Some(sender);
+        let execution_id = start_test_execution(&handler, "task-1");
+        handler.route_codex_notification(notification("turn/started", "turn-1"));
+        let mut completed = notification("turn/completed", "turn-1");
+        completed["params"]["turn"]["status"] = json!(status);
+        handler.route_codex_notification(completed);
+        if next_turn {
+            handler.route_codex_notification(notification("turn/started", "turn-2"));
+        }
+        let before = handler.local_task_link("task-1").unwrap().execution_state;
+        let outcome = match status {
+            "completed" => ExecutionOutcome::Completed {
+                content: String::new(),
+            },
+            "interrupted" => ExecutionOutcome::Cancelled {
+                message: "cancelled".into(),
+            },
+            _ => ExecutionOutcome::Failed {
+                message: "failed".into(),
+            },
+        };
+        handler.handle_turn_result(
+            "task-1",
+            execution_id,
+            &request,
+            Some(&ActiveCodexTurn {
+                execution_id,
+                thread_id: "thread-1".into(),
+                turn_id: "turn-1".into(),
+            }),
+            Ok(crate::agents::CodexAppServerTurn {
+                thread_id: "thread-1".into(),
+                outcome,
+                response_item_id: None,
+                response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
+                goal_status: None,
+                goal_status_observed: false,
+                started_at_ms: None,
+                completed_at_ms: None,
+                duration_ms: None,
+            }),
+        );
+        assert_eq!(
+            handler.local_task_link("task-1").unwrap().execution_state,
+            before
+        );
+        let mut terminal = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if [
+                "response.completed",
+                "response.incomplete",
+                "response.failed",
+            ]
+            .contains(&event["event"].as_str().unwrap_or_default())
+            {
+                terminal.push(event);
+            }
+        }
+        assert_eq!(terminal.len(), 1, "{status}: {terminal:?}");
+        assert_eq!(terminal[0]["payload"]["subtaskId"], "turn-1");
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn native_completion_publishes_full_result_once_without_an_rpc_callback() {
     let (mut handler, root, _) = setup("native-full-result");
     let (sender, mut events) = broadcast::channel(32);

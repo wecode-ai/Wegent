@@ -1731,8 +1731,11 @@ impl RuntimeWorkRpcHandler {
                 let response_value_origin = turn.response_value_origin;
                 match turn.outcome {
                     ExecutionOutcome::Completed { .. }
+                    | ExecutionOutcome::Cancelled { .. }
+                    | ExecutionOutcome::Failed { .. }
                         if self.local_task_link(local_task_id).is_some_and(|link| {
-                            crate::runtime_work::lifecycle::native_execution_state(&link).is_some()
+                            crate::runtime_work::lifecycle::native_execution_state(&link)
+                                .is_some_and(|state| state.request_turn_id.is_some())
                         }) => {}
                     ExecutionOutcome::Completed { content } => self.emit_task_response(
                         "response.completed",

@@ -364,6 +364,10 @@ with its turn identity settles the message. Cancellation callbacks and list refr
 finish after the next turn starts; they must not mark the current message stopped and
 discard the new turn's streamed content.
 
+After a native turn starts, successful, cancelled, and failed RPC results release request
+resources without repeating terminal events or changing the execution snapshot. Admission
+failures before native start still settle the request and report the error.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store
