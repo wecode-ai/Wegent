@@ -18,7 +18,8 @@
 //! 4. for each namespace, load its own shells and then the capability
 //!    references visible in it (`list_referenced_capabilities`), append the
 //!    references that are not already present, and deduplicate the whole list
-//!    by shell name.
+//!    by shell name. A source shell takes precedence over a reference to the
+//!    same resource, even when the reference's group is queried first.
 //!
 //! The group list comes from the shared
 //! [`crate::teams::group_membership`] resolution, which reproduces
@@ -213,7 +214,7 @@ async fn unified_shells(
     };
 
     let mut result: Vec<UnifiedShell> = Vec::new();
-    let mut seen_names: HashSet<String> = HashSet::new();
+    let mut selected_by_name: HashMap<String, usize> = HashMap::new();
 
     // Public shells are always included, independent of the scopes queried.
     let public_rows: Vec<ShellKindRow> = mysql
@@ -223,7 +224,7 @@ async fn unified_shells(
     for row in &public_rows {
         match public_shell_to_unified(row) {
             Some(unified) => {
-                seen_names.insert(row.kinds_name.clone());
+                selected_by_name.insert(row.kinds_name.clone(), result.len());
                 result.push(unified);
             }
             None => tracing::warn!(name = %row.kinds_name, "failed to parse public shell"),
@@ -244,31 +245,44 @@ async fn unified_shells(
         };
 
         let referenced_rows = list_referenced_capabilities(mysql, user_id, namespace).await?;
-        let referenced_ids: HashSet<i64> = referenced_rows.iter().map(|row| row.kinds_id).collect();
-        let existing_ids: HashSet<i64> = direct_rows.iter().map(|row| row.kinds_id).collect();
-
-        let mut all_rows = direct_rows;
-        all_rows.extend(
-            referenced_rows
-                .into_iter()
-                .filter(|row| !existing_ids.contains(&row.kinds_id)),
-        );
-
-        for row in &all_rows {
-            if seen_names.contains(&row.kinds_name) {
-                continue;
-            }
-            match user_shell_to_unified(row, namespace, referenced_ids.contains(&row.kinds_id)) {
-                Some(unified) => {
-                    seen_names.insert(row.kinds_name.clone());
-                    result.push(unified);
-                }
-                None => tracing::warn!(name = %row.kinds_name, "failed to parse user shell"),
-            }
+        for row in &direct_rows {
+            append_user_shell(&mut result, &mut selected_by_name, row, namespace, false);
+        }
+        for row in &referenced_rows {
+            append_user_shell(&mut result, &mut selected_by_name, row, namespace, true);
         }
     }
 
     Ok(UnifiedShellList { data: result })
+}
+
+fn append_user_shell(
+    result: &mut Vec<UnifiedShell>,
+    selected_by_name: &mut HashMap<String, usize>,
+    row: &ShellKindRow,
+    namespace: &str,
+    is_reference: bool,
+) {
+    let existing_index = selected_by_name.get(&row.kinds_name).copied();
+    if let Some(index) = existing_index {
+        let existing = &result[index];
+        // Preserve public and unrelated same-name precedence. Only the source
+        // itself may replace a reference selected from an earlier namespace.
+        if is_reference || !existing.is_reference || existing.listing_id != Some(row.kinds_id) {
+            return;
+        }
+    }
+    match user_shell_to_unified(row, namespace, is_reference) {
+        Some(unified) => {
+            if let Some(index) = existing_index {
+                result[index] = unified;
+            } else {
+                selected_by_name.insert(row.kinds_name.clone(), result.len());
+                result.push(unified);
+            }
+        }
+        None => tracing::warn!(name = %row.kinds_name, "failed to parse user shell"),
+    }
 }
 
 /// `get_user_groups(db, user_id)`: the sorted group names where the user has
@@ -515,6 +529,122 @@ mod tests {
             kinds_kind: "Shell".to_string(),
             kinds_is_active: 1,
         }
+    }
+
+    fn custom_shell_row(id: i64, namespace: &str) -> ShellKindRow {
+        let mut row = shell_row(
+            "custom-shell",
+            namespace,
+            json!({
+                "metadata": {"name": "custom-shell", "labels": {"type": "local_engine"}},
+                "spec": {"shellType": "ClaudeCode", "baseImage": "registry.test/runner:v1"},
+            }),
+        );
+        row.kinds_id = id;
+        row.kinds_user_id = 7;
+        row
+    }
+
+    #[test]
+    fn self_reference_keeps_the_source_editable() {
+        for namespace in ["source-group", "default"] {
+            let source = custom_shell_row(42, namespace);
+            let mut result = Vec::new();
+            let mut selected = HashMap::new();
+
+            append_user_shell(&mut result, &mut selected, &source, namespace, false);
+            append_user_shell(&mut result, &mut selected, &source, namespace, true);
+
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].namespace, namespace);
+            assert!(!result[0].is_reference);
+            assert_eq!(result[0].listing_id, None);
+        }
+    }
+
+    #[test]
+    fn source_wins_over_its_reference_in_either_group_order() {
+        let source = custom_shell_row(42, "z-source-group");
+        for reference_first in [false, true] {
+            let mut result = Vec::new();
+            let mut selected = HashMap::new();
+            let scopes = if reference_first {
+                [("a-shared-group", true), ("z-source-group", false)]
+            } else {
+                [("z-source-group", false), ("a-shared-group", true)]
+            };
+            for (namespace, is_reference) in scopes {
+                append_user_shell(&mut result, &mut selected, &source, namespace, is_reference);
+            }
+
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].namespace, "z-source-group");
+            assert!(!result[0].is_reference);
+            assert_eq!(result[0].listing_id, None);
+        }
+    }
+
+    #[test]
+    fn reference_only_scope_keeps_the_source_id_and_visible_namespace() {
+        for (source_namespace, visible_namespace) in [
+            ("source-group", "shared-group"),
+            ("default", "shared-group"),
+            ("default", "default"),
+        ] {
+            let source = custom_shell_row(42, source_namespace);
+            let mut result = Vec::new();
+            let mut selected = HashMap::new();
+
+            append_user_shell(&mut result, &mut selected, &source, visible_namespace, true);
+
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].namespace, visible_namespace);
+            assert!(result[0].is_reference);
+            assert_eq!(result[0].listing_id, Some(42));
+        }
+    }
+
+    #[test]
+    fn unrelated_same_name_source_cannot_replace_a_reference() {
+        let referenced = custom_shell_row(42, "source-group");
+        let unrelated = custom_shell_row(43, "another-group");
+        let mut result = Vec::new();
+        let mut selected = HashMap::new();
+
+        append_user_shell(
+            &mut result,
+            &mut selected,
+            &referenced,
+            "shared-group",
+            true,
+        );
+        append_user_shell(
+            &mut result,
+            &mut selected,
+            &unrelated,
+            "another-group",
+            false,
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].namespace, "shared-group");
+        assert_eq!(result[0].listing_id, Some(42));
+        assert!(result[0].is_reference);
+    }
+
+    #[test]
+    fn user_shell_cannot_replace_a_public_shell_with_the_same_name() {
+        let source = custom_shell_row(42, "source-group");
+        let public = public_shell_to_unified(&source).unwrap();
+        let mut result = vec![public];
+        let mut selected = HashMap::from([(source.kinds_name.clone(), 0)]);
+
+        append_user_shell(&mut result, &mut selected, &source, "source-group", false);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].resource_type, "public");
+        assert!(!result[0].is_reference);
+        assert_eq!(result[0].listing_id, None);
     }
 
     #[test]

@@ -39,6 +39,10 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
     )
     for (const purpose of ['source', 'output']) {
       await control.command('click', `${LINK}[data-citation-purpose="${purpose}"]`)
+      // Both fixtures have identical content; wait for the requested file identity.
+      await control.command('waitFor', '[data-testid="workspace-file-path"]', {
+        text: purpose === 'source' ? source : output,
+      })
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: CONTENT,
       })

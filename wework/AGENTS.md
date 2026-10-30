@@ -113,6 +113,8 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 
 ## Upgrade and rollback maintenance contract
 
+- Release-gate exception: macOS x64 adopts successful macOS arm64 paths and minimum source versions instead of running release-pair E2E. Preserve x64 package identities, require matching source revisions at both ends, and record arm64 hashes under `verification.kind=architecture-equivalence`. Keep independent Windows x64 release verification and all three PR mechanism-regression platforms.
+
 - Extend the existing Electron/component manifests with optional upgrade policy fields; preserve legacy fields and endpoints. Legacy clients continue upgrading directly to the advertised latest version. Verified-path enforcement starts once a client contains the new updater; do not pin the legacy channel to a bridge or claim that new fields constrain old clients. Do not introduce a parallel update discovery protocol.
 - Each target release declares its minimum source version. Only exact source-to-target edges verified for the same platform, architecture, channel policy, and delivered package hashes may be offered. Never infer an edge from a version range or silently bypass the upgrade policy.
 - Prepare the next release in an isolated slot while the current release remains usable. Do not show restart readiness before extraction, integrity checks, and target-owned runtime/profile preparation finish. Keep mutable application data separate from versioned program files.

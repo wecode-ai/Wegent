@@ -98,6 +98,7 @@ export function createSubscriptionConfigRegression() {
         const origin = initiatedBy
           ? {
               type: 'issue_dispatch',
+              dispatchRole: 'executor',
               initiatedBy,
               userId: 9001,
               projectStore: 'local',

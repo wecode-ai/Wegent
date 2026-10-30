@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
 import { useState } from 'react'
@@ -436,7 +437,7 @@ export function StandInWorkList({
                   onRefresh?.()
                   await onOpenTask?.(address)
                 } catch (cause) {
-                  setError(String(cause))
+                  setError(getStandInErrorMessage(cause))
                 } finally {
                   setBusy(false)
                 }

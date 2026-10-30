@@ -63,9 +63,8 @@ export class RuntimeTaskMachine {
     this.observedTurnIds.add(turnId)
   }
 
-  isPriorSettledTurn(turnId: string): boolean {
-    // Streaming history can observe a future turn before the executor confirms its start.
-    return this.settledTurnIds.has(turnId) && this.isPriorTurn(turnId)
+  isSettledTurn(turnId: string): boolean {
+    return this.settledTurnIds.has(turnId)
   }
 
   mergeTurnHistory(previous: RuntimeTaskMachine): void {

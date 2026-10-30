@@ -27,6 +27,7 @@ async fn control_http_binds_every_request_and_delete_to_its_context_and_surface(
     let context = SpaceMcpRequestContext::control(ControlContext::from_request(&request).unwrap());
     let first = register_space_mcp_context(context.clone()).unwrap();
     let second = register_space_mcp_context(context).unwrap();
+    assert_ne!(first.context_handle, second.context_handle);
     let client = reqwest::Client::new();
     let url = endpoint.url.replace("/mcp", "/control/mcp");
     let init = client

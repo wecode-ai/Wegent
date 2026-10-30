@@ -3,9 +3,11 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
@@ -79,19 +81,23 @@ export async function createDesktopScenario({
       )
       return
     }
-    if (path === `/components-${packaged.channel}-${target.platform}-${target.arch}.json`) {
+    // Update preferences select the feed independently of the installed package channel.
+    const channel = ['stable', 'beta'].find(
+      channel => path === `/components-${channel}-${target.platform}-${target.arch}.json`
+    )
+    if (channel) {
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
           schemaVersion: 1,
           appVersion: packaged.appVersion,
-          channel: packaged.channel,
+          channel,
           platform: target.platform,
           arch: target.arch,
           components,
           upgradePolicy: {
             schemaVersion: 1,
-            channel: packaged.channel,
+            channel,
             platform: target.platform,
             arch: target.arch,
             releases: [],
@@ -147,7 +153,20 @@ export async function createDesktopScenario({
         undefined,
         'Startup staged a same-version component update'
       )
-      const policyChecks = requests.filter(path => path.startsWith('/components-')).length
+      const countPolicyChecks = () =>
+        requests.filter(path => path.startsWith('/components-')).length
+      if (process.platform !== 'linux') {
+        // The provider checks automatically after startup, independently of the
+        // host command below. Establish that request before measuring the manual check.
+        await waitForValue(
+          countPolicyChecks,
+          count => count > 0,
+          'The startup app update check did not read the verified manifest',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+        assert.equal(countPolicyChecks(), 1, 'Startup must check the verified manifest once')
+      }
+      const policyChecks = countPolicyChecks()
       if (process.platform === 'linux') {
         await assert.rejects(
           control.command('checkForAppUpdate', 'body'),
@@ -158,7 +177,7 @@ export async function createDesktopScenario({
         assert.equal(check, null, 'A same-version release must not be offered as an app update')
       }
       assert.equal(
-        requests.filter(path => path.startsWith('/components-')).length,
+        countPolicyChecks(),
         policyChecks + (process.platform === 'linux' ? 0 : 1),
         'The app update check must read the verified policy from the existing manifest'
       )
@@ -239,13 +258,19 @@ function sha256(bytes) {
 
 function createTarArchive(source, archive) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn('tar', ['-czf', archive, '-C', source, '.'], {
-      env: {
-        ...process.env,
-        COPYFILE_DISABLE: '1',
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    })
+    // GNU tar treats a drive-letter archive path as a remote host specification.
+    const child = spawn(
+      'tar',
+      ['-czf', basename(archive), '-C', relative(dirname(archive), source), '.'],
+      {
+        cwd: dirname(archive),
+        env: {
+          ...process.env,
+          COPYFILE_DISABLE: '1',
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      }
+    )
     let stderr = ''
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', chunk => {

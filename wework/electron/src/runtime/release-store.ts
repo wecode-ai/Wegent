@@ -12,6 +12,7 @@ export interface DesktopRelease {
   executable: string
   resources: string
   runtimeRoot: string
+  componentDataDirectory?: string
   profileRoot: string
   dataSchema: number
   readableDataSchemas: number[]
@@ -70,6 +71,10 @@ export class ReleaseStore {
       !Number.isSafeInteger(value.dataSchema) ||
       !Array.isArray(value.readableDataSchemas) ||
       !value.readableDataSchemas.every(Number.isSafeInteger) ||
+      (value.componentDataDirectory !== undefined &&
+        (typeof value.componentDataDirectory !== 'string' ||
+          !isAbsolute(value.componentDataDirectory) ||
+          /[\r\n]/.test(value.componentDataDirectory))) ||
       [value.executable, value.resources, value.runtimeRoot, value.profileRoot].some(
         path => typeof path !== 'string' || !isAbsolute(path) || /[\r\n]/.test(path)
       )

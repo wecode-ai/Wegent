@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import {
@@ -24,6 +25,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { modelInputTokenBudget } from '@/features/workbench/runtimeContextUsage'
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import { resolveEffectiveLocalCodexProxy } from '@/desktop/systemProxy'
 import { updateAppPreferences } from '@/desktop/appPreferences'
@@ -92,10 +94,17 @@ describe('createLocalAppServices', () => {
     expect(ensure).not.toHaveBeenCalled()
     expect(available).not.toHaveBeenCalled()
 
-    request.mockRejectedValueOnce(new Error('invalid personal stand-in settings'))
-    await expect(services.standInApi!.personalSave(7, settings, 'selected-device')).rejects.toThrow(
-      'invalid personal stand-in settings'
-    )
+    const error = Object.assign(new Error('invalid personal stand-in settings'), {
+      code: 'stand_in_settings',
+    })
+    request.mockRejectedValueOnce(error)
+    await expect(
+      services.standInApi!.personalSave(7, settings, 'selected-device')
+    ).rejects.toMatchObject({
+      message: i18n.t('common:standIn.errors.stand_in_settings'),
+      code: error.code,
+      cause: error,
+    })
   })
 
   test('loads project plugins from disk without either online Codex catalog', async () => {
@@ -1558,6 +1567,39 @@ describe('createLocalAppServices', () => {
     expect(JSON.stringify(registerCall)).not.toContain('cloud-token')
     expect(JSON.stringify(registerCall)).not.toContain('hongyu9')
   })
+
+  test.each([undefined, 640_000])(
+    'preserves the local Catalog budget when the configured window is %s',
+    async contextWindow => {
+      const catalogEntry = createDefaultLocalModelCatalogEntry({
+        id: 'context-budget',
+        displayName: 'Context budget',
+        toolProfile: 'function',
+        contextWindow: 512_000,
+      })
+      saveLocalModelConfig({
+        id: 'context-budget',
+        displayName: 'Context budget',
+        modelId: 'unknown-upstream',
+        baseUrl: 'http://localhost:11434/v1',
+        apiFormat: 'openai-chat-completions',
+        contextWindow,
+        catalogEntry,
+        catalogReady: true,
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+        request: vi.fn().mockResolvedValue({}),
+        subscribe: vi.fn(),
+      })
+
+      const models = await services.modelApi.listModels()
+      const selected = models.data.find(model => model.name === 'local-model:context-budget')
+
+      expect(selected?.config?.codex_catalog_model_id).toBe(catalogEntry.slug)
+      expect(modelInputTokenBudget(selected)).toBe((contextWindow ?? 512_000) - 96_000)
+    }
+  )
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
     saveLocalModelConfig({
@@ -3641,7 +3683,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
-            codex_catalog_model_id: 'wework-gpt-5.6-sol',
+            codex_catalog_model_id: 'wework-gpt-6.1-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {

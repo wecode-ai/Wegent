@@ -73,6 +73,7 @@ const fixture = {
 }
 const fixturePath = join(output, 'pair.json')
 await writeFile(fixturePath, JSON.stringify(fixture, null, 2) + '\n')
+await run(process.execPath, ['scripts/build-thin-upgrade-fixture.mjs', fixturePath], root)
 const environment = `WEWORK_E2E_APP_BIN=${fixture.from.executable}\nWEWORK_E2E_EXECUTOR_BIN=${fixture.from.executor}\nWEWORK_E2E_UPGRADE_PAIR=${fixturePath}\nWEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1\n`
 await writeFile(join(output, 'pair.env'), environment)
 if (process.env.GITHUB_ENV) {

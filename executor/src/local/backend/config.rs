@@ -140,7 +140,7 @@ fn is_unusable_ip(address: IpAddr) -> bool {
     }
 }
 
-fn normalize_token(token: &str) -> String {
+pub(super) fn normalize_token(token: &str) -> String {
     let token = token.trim();
     if let Some(separator) = token.find(char::is_whitespace) {
         let (scheme, value) = token.split_at(separator);

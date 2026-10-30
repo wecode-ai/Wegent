@@ -522,6 +522,29 @@
           "fetchFailedDescription": "The original file could not be loaded. Check your network connection or access permissions, then retry.",
           "renderFailedTitle": "Original file preview failed",
           "renderFailedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry the preview or download the original file."
+        },
+        "linkPreview": {
+          "previewOnly": "Preview only",
+          "loading": "Loading the file safely...",
+          "viewOnline": "Click to view online",
+          "coverUnavailable": "Cover preview is unavailable. Click to try the online preview.",
+          "retry": "Retry",
+          "unavailable": "File preview is unavailable",
+          "embeddedBlocked": "This embedded content was blocked. Use the restricted file preview instead.",
+          "errors": {
+            "access-denied": "The file is inaccessible or its source authorization has expired.",
+            "source-missing": "The file does not exist or the link is no longer valid.",
+            "network-or-cors": "The link could not be read. Network or cross-origin restrictions may apply.",
+            "too-large": "The file exceeds the online preview size limit.",
+            "too-complex": "The file's expanded size, page, pixel, or content complexity exceeds the online preview limit.",
+            "unsupported-type": "Online preview is not supported for this file type.",
+            "parse-failed": "The file may be damaged, encrypted, or unsafe to parse.",
+            "preview-failed": "The PDF preview could not be loaded. Please retry. If the problem persists, ask an administrator to check the preview component or file link.",
+            "codec-unsupported": "This browser cannot play the video's format or codec.",
+            "timeout": "The file took too long to load. Try again later.",
+            "video-range-required": "This video is large and its source does not support range requests, so loading was stopped to protect resources.",
+            "expired": "The file link may have expired. Reload or synchronize the source document."
+          }
         }
       },
       "downloadFailed": "Failed to download file",

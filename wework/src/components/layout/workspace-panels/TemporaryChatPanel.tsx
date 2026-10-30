@@ -102,6 +102,7 @@ interface TemporaryChatPanelProps {
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
+  showWorkbenchBackground?: boolean
   collapseComposerWhenIdle?: boolean
   readOnly?: boolean
   active?: boolean
@@ -112,7 +113,6 @@ interface TemporaryChatPanelProps {
   composerHeader?: ReactNode
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
-  scrollOrigin?: 'top' | 'bottom'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
@@ -134,6 +134,7 @@ export function TemporaryChatPanel({
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
+  showWorkbenchBackground = false,
   collapseComposerWhenIdle = false,
   readOnly = false,
   projectWork,
@@ -143,7 +144,6 @@ export function TemporaryChatPanel({
   composerHeader,
   onRestoreConversation,
   initialScrollPosition = 'restore',
-  scrollOrigin = 'bottom',
   onOpenRuntimeTask,
   active = true,
 }: TemporaryChatPanelProps) {
@@ -875,6 +875,7 @@ export function TemporaryChatPanel({
       emptyStateText={emptyStateText}
       expanded={expanded}
       wideComposer={wideComposer}
+      showWorkbenchBackground={showWorkbenchBackground}
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
@@ -980,7 +981,6 @@ export function TemporaryChatPanel({
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
         initialScrollPosition={initialScrollPosition}
-        scrollOrigin={scrollOrigin}
       />
     </TemporaryConversationLayout>
   )

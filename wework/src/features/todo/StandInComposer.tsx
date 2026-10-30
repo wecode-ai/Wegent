@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
@@ -252,7 +253,7 @@ export function StandInComposer({
               <>
                 {models.error && (
                   <span role="status" className="text-xs text-error">
-                    {models.error}
+                    {getStandInErrorMessage(models.error)}
                   </span>
                 )}
               </>

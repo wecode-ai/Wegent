@@ -11,7 +11,7 @@ import { resolveFileViewerVersion } from './file-viewer-version.mjs'
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const FRONTEND_DIR = path.resolve(SCRIPT_DIR, '..')
 const { version: FILE_VIEWER_VERSION } = await resolveFileViewerVersion(FRONTEND_DIR)
-const ASSET_VERSION = `${FILE_VIEWER_VERSION}-office-v2`
+const ASSET_VERSION = `${FILE_VIEWER_VERSION}-office-pdf-v3`
 const TARGET_DIR = path.join(FRONTEND_DIR, 'public', 'file-viewer', ASSET_VERSION)
 const STAMP_PATH = path.join(TARGET_DIR, '.office-assets-version')
 
@@ -20,10 +20,13 @@ const REQUIRED_ASSETS = [
   'vendor/docx/jszip.min.js',
   'vendor/xlsx/sheet.worker.js',
   'vendor/pptx/pptx.worker.js',
+  'vendor/pdf/pdf.worker.mjs',
+  'vendor/pdf/cmaps/Adobe-GB1-UCS2.bcmap',
+  'vendor/pdf/wasm/openjpeg.wasm',
+  'vendor/pdf/standard_fonts/LiberationSans-Regular.ttf',
 ]
 
 const NON_OFFICE_ASSETS = [
-  'vendor/pdf',
   'vendor/drawio',
   'vendor/libarchive',
   'wasm',
@@ -57,7 +60,7 @@ async function isCurrent() {
 
 async function prepareAssets() {
   if (await isCurrent()) {
-    console.log(`[file-viewer-assets] office assets are current (${ASSET_VERSION})`)
+    console.log(`[file-viewer-assets] preview assets are current (${ASSET_VERSION})`)
     return
   }
 
@@ -72,10 +75,10 @@ async function prepareAssets() {
   await writeFile(STAMP_PATH, `${ASSET_VERSION}\n`, 'utf8')
 
   if (!(await isCurrent())) {
-    throw new Error('Flyfish Office assets are incomplete after copying')
+    throw new Error('Flyfish document preview assets are incomplete after copying')
   }
 
-  console.log(`[file-viewer-assets] prepared office assets (${ASSET_VERSION})`)
+  console.log(`[file-viewer-assets] prepared preview assets (${ASSET_VERSION})`)
 }
 
 await prepareAssets()

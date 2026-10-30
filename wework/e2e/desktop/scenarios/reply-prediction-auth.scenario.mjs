@@ -1,3 +1,4 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
@@ -9,7 +10,6 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
@@ -41,7 +41,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     const address = state.workbench?.currentRuntimeTask
     assert.ok(address?.taskId, 'The conversation address is missing')
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +49,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         method: 'runtime.tasks.get',
         params: { address },
       }),
-      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(response.ok, true)
     const task = response.result?.task
@@ -116,9 +116,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
             ...shellCommandResponse(
               body,
               ENV_CALL,
-              process.platform === 'win32'
-                ? `if (-not (Test-Path -LiteralPath $env:WEGENT_EXECUTOR_BINARY -PathType Leaf)) { throw 'Executor binary is unavailable' }; if ([IO.Path]::GetFullPath($env:WEGENT_TASK_WORKSPACE) -ne (Get-Location).Path) { throw 'Task workspace differs from the shell directory' }; Write-Output '${ENV_OK}'`
-                : `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
+              `node -e 'const fs = require("node:fs"); const assert = require("node:assert/strict"); assert.ok(fs.statSync(process.env.WEGENT_EXECUTOR_BINARY).isFile()); fs.accessSync(process.env.WEGENT_EXECUTOR_BINARY, fs.constants.X_OK); assert.equal(fs.realpathSync(process.env.WEGENT_TASK_WORKSPACE), fs.realpathSync(process.cwd())); console.log("${ENV_OK}")'`,
               workspacePath
             ),
             responseCompleted(id),

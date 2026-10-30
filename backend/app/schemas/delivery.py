@@ -483,6 +483,12 @@ class LoopItemTaskBind(BaseModel):
         min_length=1,
         max_length=128,
     )
+    issue_assignment_id: str | None = Field(
+        default=None,
+        alias="issueAssignmentId",
+        min_length=1,
+        max_length=128,
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):

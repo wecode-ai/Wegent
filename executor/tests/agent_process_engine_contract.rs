@@ -155,15 +155,16 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs() {
+async fn agent_process_engine_registers_deferred_space_mcp_for_unbound_claude_runs() {
     let _lock = env_lock().lock().await;
     let _environment = isolated_environment();
-    let workspace_dir = unique_dir("claude-no-space-mcp-workspace");
-    let args_dir = unique_dir("claude-no-space-mcp");
+    let _tool_search = EnvGuard::remove("ENABLE_TOOL_SEARCH");
+    let workspace_dir = unique_dir("claude-deferred-space-mcp-workspace");
+    let args_dir = unique_dir("claude-deferred-space-mcp");
     fs::create_dir_all(&args_dir).unwrap();
     let args_file = args_dir.join("args.txt");
     let fake_claude = write_fake_executable(
-        "fake-claude-no-space-mcp",
+        "fake-claude-deferred-space-mcp",
         &format!(
             r#"#!/bin/sh
 printf '%s\n' "$@" > "{}"
@@ -177,6 +178,8 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         project_workspace_path: Some(workspace_dir.display().to_string()),
+        backend_url: Some("https://backend.example".to_owned()),
+        auth_token: Some("synthetic-backend-secret".to_owned()),
         prompt: json!("run"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -194,15 +197,33 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let args = fs::read_to_string(&args_file).unwrap();
     assert!(!args.contains("wework_space"));
     let mcp_config_path = args
-        .split_whitespace()
+        .lines()
         .collect::<Vec<_>>()
         .windows(2)
         .find_map(|pair| (pair[0] == "--mcp-config").then_some(pair[1]))
-        .map(PathBuf::from);
-    if let Some(path) = mcp_config_path {
-        let config = fs::read_to_string(path).unwrap();
-        assert!(!config.contains("wework_space"));
+        .map(PathBuf::from)
+        .expect("Claude must receive its managed MCP config");
+    let content = fs::read_to_string(&mcp_config_path).unwrap();
+    assert!(!content.contains("https://backend.example"));
+    assert!(!content.contains("synthetic-backend-secret"));
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let server = &config["mcpServers"]["wework_space"];
+    assert_eq!(server["type"], "http");
+    assert!(server.get("command").is_none());
+    for value in [
+        &server["url"],
+        &server["headers"]["Authorization"],
+        &server["headers"]["X-Wework-Mcp-Context"],
+    ] {
+        let placeholder = value.as_str().expect("managed runtime binding");
+        assert!(placeholder.starts_with("${WEGENT_MCP_MANAGED_"));
+        assert!(placeholder.ends_with('}'));
     }
+    let settings: serde_json::Value = serde_json::from_slice(
+        &fs::read(mcp_config_path.parent().unwrap().join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings["env"]["ENABLE_TOOL_SEARCH"], "true");
 }
 
 #[cfg(unix)]

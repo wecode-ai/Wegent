@@ -540,7 +540,7 @@ PY
         payload["env"]["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"],
         "0"
     );
-    assert_eq!(payload["env"]["ENABLE_TOOL_SEARCH"], "false");
+    assert_eq!(payload["env"]["ENABLE_TOOL_SEARCH"], "true");
     assert_eq!(payload["maxContextTokens"], "1000000");
 }
 

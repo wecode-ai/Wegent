@@ -60,15 +60,23 @@ class DingTalkRobotSender:
 
     BASE_URL = "https://api.dingtalk.com"
 
-    def __init__(self, client_id: str, client_secret: str):
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        api_base_url: Optional[str] = None,
+    ):
         """Initialize the sender.
 
         Args:
             client_id: DingTalk robot client ID (AppKey)
             client_secret: DingTalk robot client secret (AppSecret)
+            api_base_url: Optional override for the DingTalk OpenAPI base URL,
+                used by private deployments and end-to-end tests.
         """
         self.client_id = client_id
         self.client_secret = client_secret
+        self.api_base_url = (api_base_url or self.BASE_URL).rstrip("/")
         self._access_token: Optional[str] = None
 
     async def _get_access_token(self) -> str:
@@ -80,7 +88,7 @@ class DingTalkRobotSender:
         Raises:
             Exception: If token fetch fails
         """
-        url = f"{self.BASE_URL}/v1.0/oauth2/accessToken"
+        url = f"{self.api_base_url}/v1.0/oauth2/accessToken"
         payload = {
             "appKey": self.client_id,
             "appSecret": self.client_secret,
@@ -175,7 +183,7 @@ class DingTalkRobotSender:
         try:
             access_token = await self._get_access_token()
 
-            url = f"{self.BASE_URL}/v1.0/robot/oToMessages/batchSend"
+            url = f"{self.api_base_url}/v1.0/robot/oToMessages/batchSend"
             payload = {
                 "robotCode": robot_code or self.client_id,
                 "userIds": user_ids,
@@ -369,7 +377,7 @@ class DingTalkRobotSender:
 
         try:
             access_token = await self._get_access_token()
-            url = f"{self.BASE_URL}/v1.0/card/instances/createAndDeliver"
+            url = f"{self.api_base_url}/v1.0/card/instances/createAndDeliver"
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -506,7 +514,7 @@ class DingTalkRobotSender:
         try:
             access_token = await self._get_access_token()
             resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
-            url = f"{self.BASE_URL}/v1.0/card/streaming"
+            url = f"{self.api_base_url}/v1.0/card/streaming"
 
             # Build up content gradually
             current_content = ""
@@ -589,7 +597,7 @@ class DingTalkRobotSender:
         try:
             resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
             access_token = await self._get_access_token()
-            url = f"{self.BASE_URL}/v1.0/card/streaming"
+            url = f"{self.api_base_url}/v1.0/card/streaming"
 
             # Update card with finished flag to clear "processing" indicator
             # isFinalize=true marks this as the final frame, stopping typing animation
@@ -644,7 +652,7 @@ class DingTalkRobotSender:
         """
         try:
             access_token = await self._get_access_token()
-            url = f"{self.BASE_URL}/v1.0/card/streaming"
+            url = f"{self.api_base_url}/v1.0/card/streaming"
 
             # Build update data
             card_param_map: Dict[str, str] = {}

@@ -6,7 +6,6 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
-  FileText,
   Copy,
   Check,
   Pencil,
@@ -14,22 +13,13 @@ import {
   Save,
   Eye,
   Code,
-  Download,
-  ExternalLink,
   Maximize2,
   Minimize2,
   CircleAlert,
-  RefreshCw,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,17 +33,14 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
 import { getProcessingErrorMessage } from '../utils/processing-error'
-import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
-import { wikiApis } from '@/apis/wiki'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -65,21 +52,17 @@ import {
   isJsonFileExtension,
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
-import { parseUTCDate } from '@/lib/utils'
 import {
-  getExternalSourceInfo,
-  getSyncedWikiConnectorType,
   isDocumentEditable,
   isDocumentIndexInFlight,
   isDingtalkCopyDocument,
 } from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
-import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import { useExternalDocumentSync } from '../hooks/useExternalDocumentSync'
-import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+import { DocumentDetailDialogHeader } from './DocumentDetailDialogHeader'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -118,7 +101,7 @@ interface DocumentDetailDialogProps {
    * Passing it opts this preview into the manual sync entry; surfaces without
    * a document list (for example the chat preview) omit it.
    */
-  onDocumentSynced?: () => void
+  onDocumentSynced?: (document: KnowledgeDocument) => void
 }
 
 export function DocumentDetailDialog({
@@ -158,6 +141,7 @@ export function DocumentDetailDialog({
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
+  const renderedDocumentVersionRef = useRef<string | null>(null)
   const [openedDocumentId, setOpenedDocumentId] = useState<number | null>(
     open ? (document?.id ?? null) : null
   )
@@ -165,10 +149,6 @@ export function DocumentDetailDialog({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
   const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
-  const [resolvedWikiConnection, setResolvedWikiConnection] = useState<{
-    id: string
-    name: string | null
-  } | null>(null)
   // Extraction guards apply to the read-only protected preview, never the editor.
   const protectedContent = protectedPreview && !isEditing
 
@@ -213,29 +193,6 @@ export function DocumentDetailDialog({
     () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
     [allowDownload, document]
   )
-  // Source governance metadata for imported external documents.
-  const externalSourceInfo = useMemo(
-    () => (document ? getExternalSourceInfo(document) : null),
-    [document]
-  )
-  const syncedWikiConnectorType = useMemo(
-    () => (document ? getSyncedWikiConnectorType(document) : null),
-    [document]
-  )
-  const sourceInfo = externalSourceInfo
-  const wikiConnectionId =
-    sourceInfo?.provider === 'wiki' && sourceInfo.sync?.enabled
-      ? sourceInfo.sync.connection_id
-      : undefined
-  const wikiConnectionName =
-    resolvedWikiConnection && resolvedWikiConnection.id === wikiConnectionId
-      ? resolvedWikiConnection.name
-      : null
-  const externalLastImportedAt = useMemo(() => {
-    if (!externalSourceInfo?.last_success_at) return null
-    const date = parseUTCDate(externalSourceInfo.last_success_at)
-    return date && !Number.isNaN(date.getTime()) ? formatDateTime(date.getTime()) : null
-  }, [externalSourceInfo])
   const isSourceView = contentSourceMode === 'source' && canPreviewSource
   // Manual source refresh of a DingTalk copy: the same entry the document list
   // offers, so the preview can queue it without leaving the dialog.
@@ -244,29 +201,6 @@ export function DocumentDetailDialog({
   const sourceSyncBusy =
     !!document && (isDocumentSyncing(document.id) || isDocumentIndexInFlight(document))
   const sourceSyncLabel = document ? getDingtalkSyncLabel(document, sourceSyncBusy) : ''
-
-  useEffect(() => {
-    if (!open || !wikiConnectionId) return
-
-    let cancelled = false
-    void wikiApis
-      .listConnections()
-      .then(response => {
-        if (cancelled) return
-        const connection = response.connections.find(item => item.id === wikiConnectionId)
-        setResolvedWikiConnection({
-          id: wikiConnectionId,
-          name: connection?.display_name || null,
-        })
-      })
-      .catch(() => {
-        if (!cancelled) setResolvedWikiConnection({ id: wikiConnectionId, name: null })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [open, wikiConnectionId])
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
@@ -322,14 +256,27 @@ export function DocumentDetailDialog({
     refresh()
   }
 
-  const handleSourceSync = async () => {
+  const handleSourceSync = useCallback(async () => {
     if (!document) return
     // A failed request keeps the existing copy and reports the reason through
     // the shared entry, so the preview only reacts to a queued refresh.
-    if (!(await syncDocument(document))) return
-    refresh()
-    onDocumentSynced?.()
-  }
+    const synchronizedDocument = await syncDocument(document)
+    if (!synchronizedDocument) return
+    onDocumentSynced?.(synchronizedDocument)
+  }, [document, onDocumentSynced, syncDocument])
+
+  useEffect(() => {
+    if (!open || !document) {
+      renderedDocumentVersionRef.current = null
+      return
+    }
+    const version = `${document.id}:${document.index_generation}:${document.index_status}:${document.updated_at}`
+    const previousVersion = renderedDocumentVersionRef.current
+    renderedDocumentVersionRef.current = version
+    if (previousVersion && previousVersion !== version && document.index_status === 'success') {
+      void refresh()
+    }
+  }, [document, open, refresh])
 
   const handleSourceDownload = useCallback(async () => {
     if (!allowDownload) return
@@ -471,194 +418,29 @@ export function DocumentDetailDialog({
                 isFullscreen ? 'px-4 py-2' : 'py-4 pl-6 pr-12'
               )}
             >
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/10 p-2">
-                    <FileText className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <DialogTitle className="truncate text-base font-medium text-text-primary">
-                      {document.name}
-                    </DialogTitle>
-                    {!isFullscreen && (
-                      <DialogDescription className="mt-1 flex items-center gap-2 text-xs text-text-muted">
-                        <span>{document.file_extension.toUpperCase()}</span>
-                        <span>•</span>
-                        <span>{formatFileSize(document.file_size)}</span>
-                        <span>•</span>
-                        <span>
-                          {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                          })}
-                        </span>
-                      </DialogDescription>
-                    )}
-                    {!isFullscreen && sourceInfo && (
-                      <div
-                        className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
-                        data-testid="external-source-info"
-                      >
-                        {syncedWikiConnectorType ? (
-                          <ExternalDocumentBadge
-                            syncedWiki
-                            extension={document.file_extension}
-                            connectorType={syncedWikiConnectorType}
-                          />
-                        ) : (
-                          <span className="capitalize">{sourceInfo.provider}</span>
-                        )}
-                        {wikiConnectionName && (
-                          <>
-                            <span>•</span>
-                            <span data-testid="external-wiki-connection-name">
-                              {t('document.document.externalSource.wikiConnectionName', {
-                                name: wikiConnectionName,
-                              })}
-                            </span>
-                          </>
-                        )}
-                        <span>•</span>
-                        {sourceInfo.url && (
-                          <a
-                            href={sourceInfo.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex min-h-[44px] min-w-[44px] items-center gap-1 text-primary hover:underline md:min-h-0 md:min-w-0"
-                            data-testid="external-source-link"
-                          >
-                            <span className="truncate">{sourceInfo.title || sourceInfo.url}</span>
-                            <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                          </a>
-                        )}
-                        {externalLastImportedAt && (
-                          <>
-                            <span>•</span>
-                            <span>
-                              {t('document.document.externalSource.lastImportedAt', {
-                                time: externalLastImportedAt,
-                              })}
-                            </span>
-                          </>
-                        )}
-                        {externalSourceInfo.status === 'accessible' ? (
-                          <Badge
-                            variant="default"
-                            size="sm"
-                            className="bg-green-500/10 text-green-600 border-green-500/20"
-                          >
-                            {t('document.document.externalSource.accessible')}
-                          </Badge>
-                        ) : (
-                          <ExternalSourceStatusBadge
-                            document={document}
-                            testId="external-source-inaccessible"
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-shrink-0 items-center gap-2 max-md:w-full">
-                  {!isEditing && !isFullscreen && canSyncSource && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleSourceSync}
-                      disabled={sourceSyncBusy}
-                      aria-label={sourceSyncLabel}
-                      className="flex-shrink-0 max-md:min-h-[44px] max-md:min-w-[44px]"
-                      data-testid={`document-detail-sync-dingtalk-${document.id}`}
-                    >
-                      <RefreshCw
-                        className={cn('h-3.5 w-3.5 md:mr-1', sourceSyncBusy && 'animate-spin')}
-                      />
-                      <span className="hidden md:inline">{sourceSyncLabel}</span>
-                    </Button>
-                  )}
-                  {!isEditing && canPreviewSource && (
-                    <div
-                      className={cn(
-                        'flex flex-shrink-0 items-center gap-2',
-                        !isSourceView && 'invisible pointer-events-none'
-                      )}
-                      aria-hidden={!isSourceView}
-                      data-testid="knowledge-source-preview-actions"
-                    >
-                      {allowDownload && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleSourceDownload}
-                          className="max-md:min-h-[44px] max-md:min-w-[44px]"
-                          aria-label={t('document.document.detail.sourcePreview.download')}
-                          data-testid="knowledge-source-preview-download"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          <span className="hidden md:inline">
-                            {t('document.document.detail.sourcePreview.download')}
-                          </span>
-                        </Button>
-                      )}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsFullscreen(!isFullscreen)}
-                        className="max-md:min-h-[44px] max-md:min-w-[44px]"
-                        aria-label={
-                          isFullscreen
-                            ? t('document.document.detail.exitFullscreen')
-                            : t('document.document.detail.fullscreen')
-                        }
-                        data-testid="knowledge-source-preview-fullscreen"
-                      >
-                        {isFullscreen ? (
-                          <Minimize2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Maximize2 className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  )}
-
-                  {!isFullscreen && !isEditing && canPreviewSource && (
-                    <Tabs
-                      value={contentSourceMode}
-                      onValueChange={value => {
-                        const nextMode = value as 'parsed' | 'source'
-                        setContentSourceMode(nextMode)
-                        setIsFullscreen(false)
-                        if (!summaryManuallyToggledRef.current) {
-                          setIsSummaryOpen(nextMode === 'parsed')
-                        }
-                      }}
-                      className="max-md:flex-1"
-                    >
-                      <TabsList className="h-8 max-md:grid max-md:h-11 max-md:w-full max-md:grid-cols-2">
-                        <TabsTrigger
-                          value="source"
-                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
-                          data-testid="knowledge-document-source-tab"
-                        >
-                          {t('document.document.detail.sourceFile')}
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="parsed"
-                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
-                          data-testid="knowledge-document-parsed-tab"
-                        >
-                          {t('document.document.detail.parsedContent')}
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  )}
-                </div>
-              </div>
+              <DocumentDetailDialogHeader
+                document={document}
+                isFullscreen={isFullscreen}
+                canSyncSource={canSyncSource}
+                sourceSyncBusy={sourceSyncBusy}
+                sourceSyncLabel={sourceSyncLabel}
+                onSourceSync={handleSourceSync}
+                canPreviewSource={canPreviewSource}
+                isSourceView={isSourceView}
+                isEditing={isEditing}
+                contentSourceMode={contentSourceMode}
+                onContentSourceModeChange={nextMode => {
+                  setContentSourceMode(nextMode)
+                  setIsFullscreen(false)
+                  if (!summaryManuallyToggledRef.current) {
+                    setIsSummaryOpen(nextMode === 'parsed')
+                  }
+                }}
+                onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
+                allowDownload={allowDownload}
+                onSourceDownload={handleSourceDownload}
+                getCurrentLanguage={getCurrentLanguage}
+              />
             </DialogHeader>
           )}
 

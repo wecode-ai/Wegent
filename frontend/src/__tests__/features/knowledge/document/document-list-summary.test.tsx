@@ -12,6 +12,7 @@ let mockDocuments: KnowledgeDocument[] = []
 let mockFolders: KnowledgeFolder[] = []
 const mockFolderTree = jest.fn()
 const mockKnowledgeDocumentTreeGrid = jest.fn()
+const mockDocumentDetailDialog = jest.fn()
 const mockCreateWebDocument = jest.fn()
 const mockRefreshDocuments = jest.fn()
 const mockGetDocumentProtection = jest.fn()
@@ -96,16 +97,17 @@ jest.mock('@/features/knowledge/document/hooks/useColumnResize', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
-  DocumentDetailDialog: ({
-    open,
-    document,
-  }: {
+  DocumentDetailDialog: (props: {
     open: boolean
     document: KnowledgeDocument | null
-  }) =>
-    open && document ? (
+    onDocumentSynced?: (document: KnowledgeDocument) => void
+  }) => {
+    mockDocumentDetailDialog(props)
+    const { open, document } = props
+    return open && document ? (
       <div data-testid="document-detail-preview">{`${document.source_type}:${document.id}`}</div>
-    ) : null,
+    ) : null
+  },
 }))
 jest.mock('@/features/knowledge/document/components/DocumentUpload', () => ({
   DocumentUpload: ({
@@ -306,6 +308,7 @@ describe('DocumentList summary header', () => {
     mockFolders = []
     mockFolderTree.mockClear()
     mockKnowledgeDocumentTreeGrid.mockClear()
+    mockDocumentDetailDialog.mockClear()
     mockCreateWebDocument.mockReset()
     mockRefreshDocuments.mockReset()
     mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
@@ -738,5 +741,29 @@ describe('DocumentList DingTalk manual sync', () => {
     // The refetch reuses the active folder/sort/page query and keeps selection.
     expect(mockRefreshDocuments).toHaveBeenCalledWith()
     expect(mockKnowledgeDocumentTreeGrid.mock.lastCall?.[0].selectedDocumentIds.has(20)).toBe(true)
+  })
+
+  it('does not replace a newly opened document when an older sync completes', () => {
+    const documentA = createDingtalkCopy({ id: 20 })
+    const documentB = createDingtalkCopy({ id: 21 })
+    mockDocuments = [documentA, documentB]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 2 })}
+        canManageAllDocuments
+        compact
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('open-document-20'))
+    const finishDocumentASync = mockDocumentDetailDialog.mock.lastCall?.[0].onDocumentSynced
+    fireEvent.click(screen.getByTestId('open-document-21'))
+    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external:21')
+
+    act(() => finishDocumentASync?.({ ...documentA, index_generation: 2 }))
+
+    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external:21')
+    expect(mockRefreshDocuments).toHaveBeenCalled()
   })
 })

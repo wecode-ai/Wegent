@@ -5,6 +5,44 @@ use super::super::{call_backend_tool, BackendToolContext};
 use super::*;
 
 #[tokio::test]
+async fn local_comment_write_persists_in_the_same_issue_activity() {
+    use crate::task_runtime::LocalTaskStore;
+
+    let directory = tempfile::tempdir().unwrap();
+    let runtime =
+        TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
+            .unwrap();
+    let project = runtime
+        .create_project(serde_json::from_value(json!({"name":"Review"})).unwrap())
+        .unwrap();
+    let other = runtime
+        .create_project(serde_json::from_value(json!({"name":"Other"})).unwrap())
+        .unwrap();
+    let issue = runtime
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Review the PR"})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let args = json!({"space_id":project.id,"item_id":issue.id,"body":"PR link"});
+    let written = add_local(&runtime, &args).await.unwrap();
+    let history = list(&runtime, &args).await.unwrap();
+    assert_eq!(history.as_array().unwrap().len(), 1);
+    assert_eq!(history[0]["id"], written["id"]);
+    assert_eq!(history[0]["body"], "PR link");
+    assert_eq!(history[0]["author"], "Wework");
+
+    let mut invalid = args.clone();
+    invalid["space_id"] = json!(other.id);
+    assert!(add_local(&runtime, &invalid).await.is_err());
+    invalid = args.clone();
+    invalid["body"] = json!("  ");
+    assert!(add_local(&runtime, &invalid).await.is_err());
+    assert_eq!(list(&runtime, &args).await.unwrap(), history);
+}
+
+#[tokio::test]
 async fn backend_comment_tools_use_the_visible_issue_activity() {
     use axum::{extract::Query, http::HeaderMap, routing::get, Json, Router};
     use std::collections::HashMap;

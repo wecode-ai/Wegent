@@ -171,6 +171,144 @@ test('rejects an invalid release source SHA', async () => {
   ).rejects.toThrow('manifest generator exited with code 1')
 })
 
+async function verifiedManifestFixture() {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-verified-manifests-'))
+  temporaryDirectories.push(root)
+  const assets = resolve(root, 'assets')
+  const output = resolve(root, 'output')
+  const notes = resolve(root, 'notes.md')
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
+  await writeFile(notes, 'Verified release')
+  for (const suffix of ['macos_arm64.zip', 'macos_x64.zip', 'windows_x64-setup.exe'])
+    await writeFile(resolve(assets, `WeWork_1.2.3_${suffix}`), suffix)
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+  ]) {
+    await writeFile(
+      resolve(assets, `components-${platform}-${arch}.json`),
+      JSON.stringify({ components: {} })
+    )
+    for (const channel of ['stable', 'beta']) {
+      const releases = ['1.2.2', '1.2.3'].map((version, index) => ({
+        version,
+        minSourceVersion: '1.2.2',
+        sha256: String(index + 1).repeat(64),
+        sourceSha: 'a'.repeat(40),
+        url: `https://example.com/${version}.tar.gz`,
+        bytes: 1,
+        dataSchema: 1,
+        readableDataSchemas: [1],
+        revoked: false,
+      }))
+      await writeFile(
+        resolve(assets, `upgrade-policy-${channel}-${platform}-${arch}.json`),
+        JSON.stringify({
+          schemaVersion: 1,
+          channel,
+          platform,
+          arch,
+          releases,
+          edges: [
+            {
+              from: '1.2.2',
+              to: '1.2.3',
+              fromSha256: releases[0].sha256,
+              toSha256: releases[1].sha256,
+              fromSourceSha: releases[0].sourceSha,
+              toSourceSha: releases[1].sourceSha,
+              runId: '123',
+              evidenceSha256: 'b'.repeat(64),
+              upgrade: 'passed',
+              rollback: 'passed',
+              revoked: false,
+            },
+          ],
+        })
+      )
+    }
+  }
+  return {
+    assets,
+    output,
+    args: [
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      assets,
+      output,
+      '1.2.3',
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'a'.repeat(40),
+    ],
+  }
+}
+
+test('publishes the CI-confirmed floor and exact edges for every platform and channel', async () => {
+  const fixture = await verifiedManifestFixture()
+  await run(fixture.args, { WEWORK_REQUIRE_UPGRADE_POLICY: 'true' })
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+  ]) {
+    for (const channel of ['stable', 'beta']) {
+      const manifest = JSON.parse(
+        await readFile(
+          resolve(fixture.output, `components-${channel}-${platform}-${arch}.json`),
+          'utf8'
+        )
+      )
+      expect(manifest.upgradePolicy.releases[1].minSourceVersion).toBe('1.2.2')
+      expect(manifest.upgradePolicy.edges).toHaveLength(1)
+      expect(manifest.upgradePolicy.edges[0]).toMatchObject({
+        from: '1.2.2',
+        to: '1.2.3',
+        rollback: 'passed',
+      })
+    }
+  }
+})
+
+test('release promotion rejects missing verification policies', async () => {
+  const fixture = await verifiedManifestFixture()
+  await rm(resolve(fixture.assets, 'upgrade-policy-stable-windows-x64.json'))
+  await expect(run(fixture.args, { WEWORK_REQUIRE_UPGRADE_POLICY: 'true' })).rejects.toThrow(
+    'manifest generator exited with code 1'
+  )
+})
+
+test('release promotion rejects a policy from another channel, source revision or package', async () => {
+  const fixture = await verifiedManifestFixture()
+  const path = resolve(fixture.assets, 'upgrade-policy-stable-macos-arm64.json')
+  const policy = JSON.parse(await readFile(path, 'utf8'))
+  for (const change of [
+    value => {
+      value.channel = 'beta'
+    },
+    value => {
+      value.releases[1].version = '1.2.4'
+      value.edges = []
+    },
+    value => {
+      value.releases[1].sourceSha = 'c'.repeat(40)
+      value.edges[0].toSourceSha = 'c'.repeat(40)
+    },
+    value => {
+      value.edges[0].rollback = 'not-run'
+    },
+  ]) {
+    const invalid = structuredClone(policy)
+    change(invalid)
+    await writeFile(path, JSON.stringify(invalid))
+    await expect(run(fixture.args, { WEWORK_REQUIRE_UPGRADE_POLICY: 'true' })).rejects.toThrow(
+      'manifest generator exited with code 1'
+    )
+  }
+})
+
 function run(args, environment = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, args, {

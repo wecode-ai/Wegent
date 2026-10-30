@@ -3693,6 +3693,44 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
+  test('keeps the composer blocked until an available model is selected', async () => {
+    const services = createWorkbenchServices()
+    function ModelReadinessProbe() {
+      const workbench = useWorkbench()
+      return (
+        <>
+          <span data-testid="composer-model-ready">
+            {workbench.projectChat.isModelSelectionReady ? 'ready' : 'blocked'}
+          </span>
+          <button
+            type="button"
+            onClick={() => workbench.projectChat.onModelSelectorOpenChange?.(true)}
+          >
+            refresh composer models
+          </button>
+        </>
+      )
+    }
+    renderWorkbench(
+      <>
+        <BootstrapProbe />
+        <ModelReadinessProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(screen.getByTestId('composer-model-ready')).toHaveTextContent('blocked')
+
+    vi.mocked(services.modelApi.listModels).mockResolvedValue({
+      data: [{ name: 'claude-sonnet-4-5', type: 'public' }],
+    })
+    await userEvent.click(screen.getByText('refresh composer models'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-model-ready')).toHaveTextContent('ready')
+    )
+  })
+
   test('loads task composer catalogs after runtime work bootstrap', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const services = createWorkbenchServices({
@@ -8624,7 +8662,7 @@ describe('WorkbenchProvider runtime tasks', () => {
               outputTokens: 300,
               reasoningOutputTokens: 0,
             },
-            modelContextWindow: 258_400,
+            modelContextWindow: 996_147,
           },
         },
         deviceId: 'device-1',

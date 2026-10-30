@@ -1,8 +1,10 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
+import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -112,31 +114,6 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
-
-interface DesktopControlResult {
-  id: string
-  clientId: string
-  ok: boolean
-  value?: string
-  error?: string
-}
-
-interface ScrollStabilitySamplePoint {
-  anchorTop: number
-  clientHeight: number
-  scrollHeight: number
-  scrollOrigin: 'bottom' | 'top'
-  scrollTop: number
-  time: number
-}
-
-interface ScrollStabilitySample {
-  done: boolean
-  frames: ScrollStabilitySamplePoint[]
-  missingFrames: number
-  scrollEvents: ScrollStabilitySamplePoint[]
-  stop: () => void
-}
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
@@ -672,16 +649,6 @@ function desktopControlElementMetrics(selector: string): string {
   )
 }
 
-function desktopControlContentScrollTop(element: HTMLElement): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
-  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
-}
-
-function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
-  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
-}
-
 async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Promise<string> {
   const scroller = findDesktopControlElements(command.selector)[0]
   if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -689,6 +656,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     contentSelector?: string
     framesPerRatio?: number
     ratios?: number[]
+    scrollbarSelector?: string
   }
   const contentSelector = options.contentSelector?.trim()
   if (!contentSelector) {
@@ -705,6 +673,16 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
   if (!Number.isInteger(framesPerRatio) || framesPerRatio < 1 || framesPerRatio > 60) {
     throw new Error('sampleRapidMarkdownWindowing requires framesPerRatio between 1 and 60')
   }
+  const track = options.scrollbarSelector
+    ? findDesktopControlElements(options.scrollbarSelector)[0]
+    : null
+  const thumb = track?.querySelector<HTMLElement>(
+    '[data-testid="desktop-workbench-scrollbar-thumb"]'
+  )
+  if (options.scrollbarSelector && (!track || !thumb))
+    throw new Error('The requested scrollbar is missing')
+  let pointerY: number | null = null
+  let pointerOffset = 0
 
   const nextFrame = () =>
     new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
@@ -779,6 +757,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     }
     maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
     maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    const thumbBounds = thumb?.getBoundingClientRect()
     return {
       ratio,
       frame,
@@ -797,31 +776,60 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
       hasVisibleText,
       maxChunkHeightDelta: frameHeightDelta,
       maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
+      scrollbarPointerY: pointerY,
+      scrollbarGrabOffset: pointerOffset,
+      scrollbarThumbTop: thumbBounds?.top ?? null,
+      scrollbarPointerError:
+        thumbBounds && pointerY !== null
+          ? Math.abs(thumbBounds.top + pointerOffset - pointerY)
+          : null,
     }
   }
 
   startedAt = await nextFrame()
+  // Navigation can move the thumb during that frame; grab its current physical point.
+  const pointer = thumb ? { ...desktopControlEventOptions(thumb), buttons: 1 } : null
+  pointerOffset = thumb && pointer ? pointer.clientY! - thumb.getBoundingClientRect().top : 0
+  pointerY = pointer?.clientY ?? null
   const initial = capture(startedAt, 1, 0)
   const samples: ReturnType<typeof capture>[] = []
-  for (const ratio of ratios) {
-    await nextFrame()
-    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    const nextScrollTop = maximum * ratio
-    const currentScrollTop = desktopControlContentScrollTop(scroller)
-    scroller.dispatchEvent(
-      new WheelEvent('wheel', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
-      })
-    )
-    scroller.scrollTop = desktopControlDomScrollTop(scroller, nextScrollTop)
-    scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
-    // Do not accept synchronous placeholder content in the turn that scrolls.
-    for (let frame = 1; frame <= framesPerRatio; frame += 1) {
-      samples.push(capture(await nextFrame(), ratio, frame))
+  if (thumb && pointer) dispatchDesktopControlPointerEvent(thumb, 'pointerdown', pointer)
+  try {
+    for (const ratio of ratios) {
+      await nextFrame()
+      const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const nextScrollTop = maximum * ratio
+      const currentScrollTop = scroller.scrollTop
+      if (track && thumb && pointer) {
+        const movement = {
+          ...pointer,
+          clientY:
+            track.getBoundingClientRect().top +
+            pointerOffset +
+            ratio * (track.clientHeight - thumb.getBoundingClientRect().height),
+        }
+        pointerY = movement.clientY
+        dispatchDesktopControlPointerEvent(track, 'pointermove', movement)
+      } else {
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      }
+      // Do not accept synchronous placeholder content in the turn that scrolls.
+      for (let frame = 1; frame <= framesPerRatio; frame += 1) {
+        samples.push(capture(await nextFrame(), ratio, frame))
+      }
     }
+  } finally {
+    if (track && pointer)
+      dispatchDesktopControlPointerEvent(track, 'pointerup', { ...pointer, buttons: 0 })
   }
   return JSON.stringify({
     initial,
@@ -1908,8 +1916,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
+    case 'getDocumentVisibility':
+      return document.visibilityState
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'getWindowBackgroundPolicy':
+      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''
@@ -2459,6 +2471,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const { collectMemory = true } = JSON.parse(command.value ?? '{}') as {
+        collectMemory?: boolean
+      }
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2480,10 +2495,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
       const [processMemory, rendererHeap] = await Promise.all([
-        navigator.platform.toLowerCase().includes('mac')
+        collectMemory && navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
-        invokeDesktopHost('e2e.getRendererHeapUsage'),
+        collectMemory ? invokeDesktopHost('e2e.getRendererHeapUsage') : null,
       ])
       return JSON.stringify({
         timestamp: Date.now(),
@@ -2772,77 +2787,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!scrollerSelector) {
         throw new Error('sampleScrollStability requires scrollerSelector')
       }
-      const scroller = findDesktopControlElements(scrollerSelector)[0]
-      if (!scroller) throw new Error(`Unable to find selector "${scrollerSelector}"`)
+      if (!findDesktopControlElements(scrollerSelector).length)
+        throw new Error(`Unable to find selector "${scrollerSelector}"`)
       activeScrollStabilitySample?.stop()
-      const startedAt = performance.now()
-      let sampleTimer = 0
-      let mutationObserver: MutationObserver | null = null
-      const sample: ScrollStabilitySample = {
-        done: false,
-        frames: [],
-        missingFrames: 0,
-        scrollEvents: [],
-        stop: () => {},
-      }
-      const capture = (time: number): ScrollStabilitySamplePoint | null => {
-        const anchors = findDesktopControlElements(command.selector)
-        const anchor = options.anchorText
-          ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
-          : anchors[0]
-        if (!anchor) return null
-        return {
-          anchorTop: anchor.getBoundingClientRect().top,
-          clientHeight: scroller.clientHeight,
-          scrollHeight: scroller.scrollHeight,
-          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
-          scrollTop: scroller.scrollTop,
-          time: time - startedAt,
-        }
-      }
-      const handleScroll = () => {
-        const point = capture(performance.now())
-        if (point) sample.scrollEvents.push(point)
-      }
-      const finish = () => {
-        if (sample.done) return
-        sample.done = true
-        scroller.removeEventListener('scroll', handleScroll)
-        mutationObserver?.disconnect()
-      }
-      sample.stop = () => {
-        window.clearInterval(sampleTimer)
-        finish()
-      }
-      scroller.addEventListener('scroll', handleScroll)
-      mutationObserver = new MutationObserver(() => {
-        const point = capture(performance.now())
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-      })
-      mutationObserver.observe(scroller, {
-        characterData: true,
-        childList: true,
-        subtree: true,
-      })
-      const captureFrame = () => {
-        const time = performance.now()
-        const point = capture(time)
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-        if (time - startedAt >= durationMs) {
-          window.clearInterval(sampleTimer)
-          finish()
-        }
-      }
-      captureFrame()
-      sampleTimer = window.setInterval(captureFrame, 16)
-      activeScrollStabilitySample = sample
+      activeScrollStabilitySample = startScrollStabilitySampler(
+        () => {
+          const anchors = findDesktopControlElements(command.selector)
+          return options.anchorText
+            ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
+            : anchors[0]
+        },
+        () => findDesktopControlElements(scrollerSelector),
+        durationMs
+      )
       return ''
     }
+    case 'stopScrollStabilitySampling':
     case 'getScrollStabilitySample': {
       const sample = activeScrollStabilitySample
       if (!sample) throw new Error('Scroll stability sampling has not started')
+      if (command.action === 'stopScrollStabilitySampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -2983,10 +2947,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop =
-        element.dataset.scrollOrigin === 'bottom'
-          ? 0
-          : Math.max(0, element.scrollHeight - element.clientHeight)
+      element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -3007,10 +2968,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop =
-        scroller.dataset.scrollOrigin === 'bottom'
-          ? -Math.min(distance, maxScrollTop)
-          : Math.max(0, maxScrollTop - distance)
+      scroller.scrollTop = Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3024,7 +2982,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const nextContentScrollTop = maxScrollTop * ratio
-      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+      const currentContentScrollTop = scroller.scrollTop
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
@@ -3033,7 +2991,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+      scroller.scrollTop = nextContentScrollTop
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3060,7 +3018,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const viewport = scroller.getBoundingClientRect()
       const samples = ratios.map(ratio => {
         const nextContentScrollTop = maxScrollTop * ratio
-        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+        const currentContentScrollTop = scroller.scrollTop
         scroller.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
@@ -3069,7 +3027,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
           })
         )
-        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+        scroller.scrollTop = nextContentScrollTop
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
 
         const hasVisibleContent = Array.from(
@@ -3097,7 +3055,18 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-started',
+        { commandId: command.id, selector: command.selector },
+        'debug'
+      )
       element.click()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-dispatched',
+        { commandId: command.id, elapsedMs: Date.now() - startedAt },
+        'debug'
+      )
       return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {
@@ -3566,13 +3535,39 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
-  const response = await fetch(`${url}/results`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify(result),
-  })
-  if (!response.ok) {
-    throw new Error(`Desktop E2E control result failed with ${response.status}`)
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  let response: Response | undefined
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  try {
+    response = await fetch(`${url}/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify(result),
+    })
+    if (!response.ok) {
+      throw new Error(`Desktop E2E control result failed with ${response.status}`)
+    }
+  } finally {
+    window.clearInterval(probe)
+    logRuntimeTaskCreateStage(
+      'desktop-control-result-transport',
+      {
+        commandId: result.id,
+        clientId: result.clientId,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs: Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100),
+        responseStatus: response?.status ?? null,
+        serverReceivedAt: response?.headers.get('X-Wework-Control-Received-At') ?? null,
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3603,15 +3598,19 @@ async function postDesktopControlStarted(
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
   }
   if (Date.now() - startedAt > 1000) {
-    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
-      commandId: command.id,
-      action: command.action,
-      startedAt,
-      elapsedMs: Date.now() - startedAt,
-      maxEventLoopLagMs,
-      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
-      visibility: document.visibilityState,
-    })
+    logRuntimeTaskCreateStage(
+      'desktop-control-slow-start-acknowledgement',
+      {
+        commandId: command.id,
+        action: command.action,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs,
+        serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3622,7 +3621,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
-  let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
@@ -3632,10 +3630,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
+  let commandRequest = pollForCommand()
 
   while (true) {
     try {
       const response = await commandRequest
+      if (response.status === 410) return
       if (response.status === 204) {
         commandRequest = pollForCommand()
         continue
@@ -3645,38 +3645,25 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       const command = (await response.json()) as DesktopControlCommand
       const diagnostic = { commandId: command.id, action: command.action, clientId }
-      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
-      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
-      let result: DesktopControlResult
-      try {
-        const value = await executeDesktopControlCommand(command)
-        result = { id: command.id, clientId, ok: true, value }
-      } catch (error) {
-        result = {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
+      const completion = completeDesktopControlCommand(
+        command,
+        clientId,
+        executeDesktopControlCommand,
+        result => postDesktopControlResult(url, result)
+      )
+      if (command.action === 'fetchLocalRuntime') {
+        // Runtime RPCs may wait on each other; keep polling so the controller
+        // can issue the overlapping request while each result retains its ID.
+        void completion.catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
       }
-      try {
-        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
-        await postDesktopControlResult(url, result)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
-      } catch (error) {
-        console.error(
-          '[Wework] Desktop E2E result acknowledgement failed:',
-          JSON.stringify({
-            commandId: command.id,
-            action: command.action,
-            actionSucceeded: result.ok,
-            actionError: result.error,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        )
-        throw error
-      }
+      const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')

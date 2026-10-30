@@ -13,8 +13,7 @@ use crate::loop_node_storage;
 #[path = "assignment_index_mysql_tests.rs"]
 mod mysql_tests;
 
-const INDEX_QUERY: &str =
-    "SELECT id FROM loop_items WHERE id = ? AND resource_type = 'assignment_index'";
+const INDEX_QUERY: &str = "SELECT id FROM loop_items WHERE id = ? AND resource_type = 'assignment_index' AND version >= 2";
 
 pub(super) fn index_id(kind: &str, id: &str) -> String {
     format!("{:x}", Sha256::digest(format!("{kind}:{id}").as_bytes()))
@@ -74,11 +73,28 @@ async fn initialize_index<T: MysqlTransaction>(
     if initialized.is_some() {
         return Ok(true);
     }
+    // Version 1 indexes may predate a Rust automation assignment that did not
+    // maintain them. Rebuild once from the authoritative event stream.
+    refresh_active_index(tx, item_id).await?;
+    Ok(true)
+}
+
+/// The caller holds the Issue lock; events and their index commit together.
+pub(crate) async fn refresh_active_index<T: MysqlTransaction>(
+    tx: &mut T,
+    item_id: &str,
+) -> MysqlResult<()> {
+    let marker = index_id("assignment-index", item_id);
     let comments: Vec<CommentRow> = tx
         .fetch_all(format!("{} FOR UPDATE", item_comments_query()), (item_id,))
         .await?;
     let required = loop_node_storage::required_columns(tx).await?;
     let (marker_insert, assignment_insert) = index_insert_statements(&required);
+    tx.execute(
+        "DELETE FROM loop_items WHERE parent_id = ? AND resource_type = 'assignment_index'",
+        (item_id,),
+    )
+    .await?;
     for (position, event) in active_events(&comments).into_iter().enumerate() {
         tx.execute(
             &assignment_insert,
@@ -91,8 +107,9 @@ async fn initialize_index<T: MysqlTransaction>(
         )
         .await?;
     }
-    tx.execute(&marker_insert, (marker, item_id, 0i64)).await?;
-    Ok(true)
+    tx.execute(&marker_insert, (marker.as_str(), item_id, 0i64))
+        .await?;
+    Ok(())
 }
 
 fn index_insert_statements(required: &HashSet<String>) -> (String, String) {
@@ -114,7 +131,7 @@ fn index_insert_statements(required: &HashSet<String>) -> (String, String) {
         "'assignment_index'",
         "?",
         "''",
-        "1",
+        "2",
         "?",
         "'default'",
         "''",

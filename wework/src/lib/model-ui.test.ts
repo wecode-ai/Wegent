@@ -475,7 +475,7 @@ describe('model-ui', () => {
     expect(reasoning?.defaultValue).toBe('high')
   })
 
-  test('keeps cloud reasoning limited to catalogs that declare reasoning levels', () => {
+  test('limits cloud reasoning to catalog-declared levels', () => {
     const chatCompletionsDeepseek: UnifiedModel = {
       name: 'deepseek-chat(公网)',
       type: 'public',
@@ -514,7 +514,7 @@ describe('model-ui', () => {
     const hasReasoning = (model: UnifiedModel) =>
       getControlsForModel(model).some(control => control.id === 'reasoning')
 
-    expect(hasReasoning(chatCompletionsDeepseek)).toBe(false)
+    expect(hasReasoning(chatCompletionsDeepseek)).toBe(true)
     expect(hasReasoning(catalogWithoutReasoning)).toBe(false)
     expect(hasReasoning(explicitCatalog)).toBe(true)
     expect(hasReasoning(localDeepseek)).toBe(false)

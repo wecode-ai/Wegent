@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { Brain, Plus, X } from 'lucide-react'
 import { dequal } from 'dequal'
@@ -84,7 +85,7 @@ export function StandInMemoryPanel({
         }
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -109,7 +110,7 @@ export function StandInMemoryPanel({
     try {
       await action()
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }

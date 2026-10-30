@@ -3,7 +3,7 @@ import { streamTerminalEvents } from './sse-events.js'
 import { TerminalRuntime, TerminalRuntimeError } from './terminal-runtime.js'
 
 export const name = 'wework-terminal-runtime'
-export const inject = ['webServer']
+export const inject = ['webServer', 'weworkRequestSecurity']
 
 const BASE_PATH = '/wework/terminal/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
@@ -18,13 +18,17 @@ export function apply(ctx) {
 
 function register(ctx, path, handler) {
   ctx.effect(
-    () => ctx.webServer.register({ kind: 'exact', path, handler }),
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path,
+        handler: ctx.weworkRequestSecurity.wrap(handler),
+      }),
     `wework-terminal-runtime: ${path}`
   )
 }
 
 function describe(req, res, runtime) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return methodNotAllowed(res, 'GET, HEAD')
   }
@@ -32,7 +36,6 @@ function describe(req, res, runtime) {
 }
 
 async function rpc(req, res, runtime) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
   try {
     const body = await readJsonBody(req)
@@ -51,7 +54,6 @@ async function rpc(req, res, runtime) {
 }
 
 function events(req, res, runtime) {
-  if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   streamTerminalEvents(req, res, runtime, eventCursor(req))
 }
@@ -86,22 +88,6 @@ async function readJsonBody(req) {
   }
 }
 
-function trustedBrowserRequest(req) {
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return false
-  const fetchSite = singleHeader(req.headers['sec-fetch-site'])
-  if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) return false
-  const origin = singleHeader(req.headers.origin)
-  const host = singleHeader(req.headers.host)
-  if (!origin) return true
-  if (!host) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
-}
-
 function sendError(res, error) {
   const normalized =
     error instanceof TerminalRuntimeError
@@ -128,13 +114,6 @@ function sendJson(res, status, value, head = false) {
     'content-length': Buffer.byteLength(body),
   })
   res.end(head ? undefined : body)
-}
-
-function forbidden(res) {
-  sendJson(res, 403, {
-    ok: false,
-    error: { code: 'forbidden', message: 'Forbidden', retryable: false },
-  })
 }
 
 function methodNotAllowed(res, allow) {

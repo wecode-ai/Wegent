@@ -713,6 +713,19 @@ for (const view of ['calendar', 'gantt'] as const) {
       await page.reload()
       await expect(page).toHaveURL(`${path}/issues/${issueId}?view=${view}`)
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+      // CI traces show a successful click at a stale point during the entry transition.
+      // Visibility alone does not mean the Close button has reached its final position.
+      await expect
+        .poll(() =>
+          page
+            .getByTestId('issue-conversation-drawers')
+            .evaluate(element =>
+              element
+                .getAnimations()
+                .every(animation => ['finished', 'idle'].includes(animation.playState))
+            )
+        )
+        .toBe(true)
       await page.getByTestId('cloud-todo-detail-close').click()
       await expect(page).toHaveURL(`${path}?view=${view}`)
       await expect(page.getByTestId(`collaboration-${view}`)).toBeVisible()

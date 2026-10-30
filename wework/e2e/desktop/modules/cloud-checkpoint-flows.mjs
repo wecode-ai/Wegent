@@ -18,6 +18,7 @@ import {
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import { verifyCloudSidebarGitClone } from './cloud-sidebar-project-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
 import {
   createCloudAttachmentVerification,
@@ -404,6 +405,7 @@ async function verifyCloudProjectCreationSources(
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: clonedProjectPath,
   })
+  await verifyCloudSidebarGitClone(control, workspacePath, homePath)
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {

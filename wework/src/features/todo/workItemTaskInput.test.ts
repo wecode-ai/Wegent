@@ -30,8 +30,8 @@ describe('personal task Issue start', () => {
     ])
   })
 
-  it('does not overwrite a concurrent status edit', async () => {
-    const issues = issuesFor({ version: 4, status: 'completed' })
+  it.each(['completed', 'done'])('does not overwrite a concurrent %s status edit', async status => {
+    const issues = issuesFor({ version: 4, status })
     await expect(start(issues)).resolves.not.toBeNull()
     expect(issues.update).toHaveBeenCalledTimes(1)
   })
@@ -39,6 +39,16 @@ describe('personal task Issue start', () => {
   it('does not rebase permission denials', async () => {
     const issues = issuesFor({ version: 4 }, new Error('Forbidden'))
     await expect(start(issues)).resolves.toBe('Forbidden')
+    expect(issues.get).toHaveBeenCalledTimes(1)
+    expect(issues.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not rebase an unrelated HTTP 409 response', async () => {
+    const issues = issuesFor(
+      { version: 4 },
+      Object.assign(new Error('Action unavailable'), { status: 409 })
+    )
+    await expect(start(issues)).resolves.toBe('Action unavailable')
     expect(issues.get).toHaveBeenCalledTimes(1)
     expect(issues.update).toHaveBeenCalledTimes(1)
   })

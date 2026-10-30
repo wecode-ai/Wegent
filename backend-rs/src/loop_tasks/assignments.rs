@@ -20,6 +20,7 @@
 //! 4. `response_values` per active event, resolving `created_by_user_name`
 //!    through the session's identity map (`db.get(User, id)`).
 use brz_http_server::StatusCode;
+use brz_mysql::MysqlService;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
@@ -80,14 +81,22 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    super::assignment_index::ensure_active_index(&state.mysql, item_id).await?;
-    let comments = LoopItemRepository::new(&state.mysql)
-        .list_active_assignment_comments(item_id)
+    list_assignment_items(&state.mysql, item_id, current_user).await
+}
+
+/// Read and render assignments after the existing Issue access checks.
+pub(super) async fn list_assignment_items(
+    mysql: &MysqlService,
+    item_id: &str,
+    current_user: &FlexibleUser,
+) -> Result<IssueAssignmentListResponse, FastApiError> {
+    let comments = LoopItemRepository::new(mysql)
+        .list_assignment_comments(item_id)
         .await
         .map_err(internal)?;
     let mut items = Vec::new();
     for event in active_events(&comments) {
-        items.push(assignment_response(state, &event, current_user).await?);
+        items.push(assignment_response(mysql, &event, current_user).await?);
     }
     Ok(IssueAssignmentListResponse { items })
 }
@@ -305,10 +314,9 @@ pub(crate) struct ActiveEvent<'a> {
     key: (String, String, String),
 }
 
-/// `issue_assignment_service._active_events`: the active `assign` events after
-/// applying the `unassign` cancellations, in activity order. A repeated member
-/// key keeps its first position and takes the newest event.
-pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
+/// Uncancelled `assign` events in activity order, including superseded events
+/// for the same member so reassignment can revoke every previous root event.
+pub(crate) fn uncancelled_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
     let cancelled: HashSet<&str> = comments
         .iter()
         .filter_map(|comment| {
@@ -318,8 +326,7 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
             .then(|| metadata.assignment_event_id.as_deref().unwrap_or(""))
         })
         .collect();
-    let mut active: Vec<ActiveEvent<'_>> = Vec::new();
-    let mut positions = HashMap::new();
+    let mut active = Vec::new();
     for comment in comments {
         let Some(metadata) = comment.assignment() else {
             continue;
@@ -332,34 +339,47 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
         if cancelled.contains(&comment.id.as_str()) {
             continue;
         }
-        let key = (
-            member_type_key(metadata.target_type.as_deref()).to_string(),
-            metadata.target_id.clone().unwrap_or_default(),
-            metadata
-                .workflow_step
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-        );
+        active.push(ActiveEvent {
+            comment,
+            metadata,
+            #[cfg(test)]
+            key: member_key(metadata),
+        });
+    }
+    active
+}
+
+/// Reassignment cancels all uncancelled events, including superseded events for
+/// the same member. Read projections retain only the newest event per member.
+pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
+    let mut active = Vec::new();
+    let mut positions = HashMap::new();
+    for event in uncancelled_events(comments) {
+        let key = member_key(event.metadata);
         match positions.get(&key).copied() {
             Some(index) => {
-                let existing: &mut ActiveEvent<'_> = &mut active[index];
-                existing.comment = comment;
-                existing.metadata = metadata;
+                active[index] = event;
             }
             None => {
                 positions.insert(key.clone(), active.len());
-                active.push(ActiveEvent {
-                    comment,
-                    metadata,
-                    #[cfg(test)]
-                    key,
-                });
+                active.push(event);
             }
         }
     }
     active
+}
+
+fn member_key(metadata: &AssignmentMetadata) -> (String, String, String) {
+    (
+        member_type_key(metadata.target_type.as_deref()).to_string(),
+        metadata.target_id.clone().unwrap_or_default(),
+        metadata
+            .workflow_step
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
 }
 
 /// `_member_type`: `user`/`human` normalize to `human`, everything else to
@@ -373,7 +393,7 @@ fn member_type_key(value: Option<&str>) -> &'static str {
 
 /// `issue_assignment_service.response_values(db, row)`.
 async fn assignment_response(
-    state: &AppState,
+    mysql: &MysqlService,
     event: &ActiveEvent<'_>,
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentResponse, FastApiError> {
@@ -386,7 +406,7 @@ async fn assignment_response(
     let creator_name = if assigned_by == current_user.id {
         Some(current_user.user_name.clone())
     } else {
-        assignment_repository::user_by_id(&state.mysql, i64::from(assigned_by))
+        assignment_repository::user_by_id(mysql, i64::from(assigned_by))
             .await
             .map_err(internal)?
             .map(|user| user.user_name)

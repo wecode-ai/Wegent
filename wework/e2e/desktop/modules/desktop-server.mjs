@@ -1,3 +1,7 @@
+import {
+  DIAGRAM_REGRESSION_MARKER,
+  DIAGRAM_REGRESSION_RESPONSE,
+} from './conversation-diagram-fixture.mjs'
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
@@ -1196,8 +1200,8 @@ class DesktopE2EServer {
     return this.commandForClient(clientId, action, selector, options)
   }
 
-  recordControlTransport(event, clientId) {
-    this.controlTransportHistory.push({ event, clientId, at: new Date().toISOString() })
+  recordControlTransport(event, clientId, details = {}) {
+    this.controlTransportHistory.push({ event, clientId, ...details, at: new Date().toISOString() })
     if (this.controlTransportHistory.length > 200) this.controlTransportHistory.shift()
   }
 
@@ -2017,7 +2021,8 @@ class DesktopE2EServer {
         const previousLongPoll = this.controlLongPolls.get(previousClientId)
         if (previousLongPoll) {
           clearTimeout(previousLongPoll.timeout)
-          previousLongPoll.response.destroy()
+          previousLongPoll.response.writeHead(410)
+          previousLongPoll.response.end()
           this.controlLongPolls.delete(previousClientId)
         }
         this.controlWindowsByClient.delete(previousClientId)
@@ -2057,7 +2062,7 @@ class DesktopE2EServer {
       const clientId = url.searchParams.get('clientId')
       this.recordControlTransport('poll', clientId)
       if (!clientId || !this.controlWindowsByClient.has(clientId)) {
-        response.writeHead(204)
+        response.writeHead(410)
         response.end()
         return true
       }
@@ -2081,7 +2086,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
-      this.recordControlTransport('started', started.clientId)
+      this.recordControlTransport('started', started.clientId, { commandId: started.id })
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })
@@ -2104,6 +2109,11 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
+      this.recordControlTransport('result-received', result.clientId, {
+        commandId: result.id,
+        actionSucceeded: result.ok,
+        pending: this.commandResults.has(result.id),
+      })
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${result.id}` })
@@ -4459,7 +4469,11 @@ class DesktopE2EServer {
       )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        assistantMessage(
+          JSON.stringify(body).includes(DIAGRAM_REGRESSION_MARKER)
+            ? DIAGRAM_REGRESSION_RESPONSE
+            : FRESH_CHAT_COMPLETION_TEXT
+        ),
         responseCompleted(responseId),
       ])
       return

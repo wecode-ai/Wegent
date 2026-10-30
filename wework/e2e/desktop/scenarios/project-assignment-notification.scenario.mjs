@@ -331,6 +331,8 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
       1
     )
   }
+  // The list API can observe the new row before the create request finishes.
+  await control.command('waitFor', trigger, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('click', trigger)
   assert.equal(
     await control.command('getComputedStyleValue', input, { value: 'opacity' }),

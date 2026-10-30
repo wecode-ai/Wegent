@@ -10,6 +10,7 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
+  watchDirectory = watch,
 }) {
   const watchers = []
   let closed = false
@@ -48,9 +49,13 @@ export async function watchDevelopmentBuild({
   }
   const observe = (directory, recursive, accept) => {
     if (!existsSync(directory)) return
-    const watcher = watch(directory, { recursive }, (_event, filename) => {
+    const watcher = watchDirectory(directory, { recursive }, (_event, filename) => {
       if (!filename) return schedule()
-      const resolved = path.resolve(directory, String(filename))
+      // Native recursive watchers can report the watched directory itself by
+      // basename. Rescan that root rather than inventing a nested input path.
+      const name = String(filename)
+      const resolved =
+        recursive && name === path.basename(directory) ? directory : path.resolve(directory, name)
       if (excluded(resolved, directory) || !accept(resolved)) return
       try {
         if (inputChanged(resolved, directory)) schedule()

@@ -131,29 +131,14 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
   return true
 }
 
-// Recover aliases before Electron creates its single-instance files or log directory.
+// Recover aliases before Electron creates its single-instance files.
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
-export function recoverWorkbenchDataBridge(
-  options: EntryMigration,
-  recovery: { replaceEmptyDirectory?: boolean } = {}
-): void {
+export function recoverWorkbenchDataBridge(options: EntryMigration): void {
   const journal = readJournal(options)
   if (!journal || (!owns(options.target, journal) && !(journal.completed && !journal.directory)))
     return
   const original = stat(options.source)
-  if (original) {
-    if (
-      !recovery.replaceEmptyDirectory ||
-      !journal.directory ||
-      !original.isDirectory() ||
-      fs.readdirSync(options.source).length
-    )
-      return
-    validateMigrationPaths(options)
-    // Only an explicitly opted-in log directory may be recreated after cleanup.
-    // rmdir also refuses a concurrent write; never recursively remove user data.
-    fs.rmdirSync(options.source)
-  }
+  if (original) return
   if (process.platform === 'win32' && !journal.directory) {
     if (!stat(options.target)) return
     if (refreshMutableFileBridge(options, journal)) return

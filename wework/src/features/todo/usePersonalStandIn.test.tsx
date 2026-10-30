@@ -55,7 +55,7 @@ describe('personal stand-in Executor routing', () => {
     await act(async () => {
       expect(await result.current.save()).toBeNull()
     })
-    expect(result.current.error).toContain('version conflict')
+    expect(result.current.error).toBe('分身设置已在其他位置更新，请刷新后重新修改。')
     expect(result.current.draft?.roles[0].prompt).toBe('Review changes')
   })
 })

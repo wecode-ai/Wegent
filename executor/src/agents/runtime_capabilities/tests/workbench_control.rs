@@ -38,6 +38,15 @@ fn managed_control_is_injected_for_personal_claude_runs_and_removed_for_delegati
     request
         .extra
         .insert("origin".into(), json!({"dispatchRole":"executor"}));
+    assert_eq!(
+        inject_managed_wework_mcps(&request, &mut servers).unwrap_err(),
+        "Issue dispatch requires a bound project space and board item"
+    );
+    assert!(!servers.contains_key("wework_control"));
+    request.extra.insert(
+        "origin".into(),
+        json!({"dispatchRole":"executor","cloudProjectId":"space-1","loopItemId":"issue-1"}),
+    );
     inject_managed_wework_mcps(&request, &mut servers).unwrap();
     assert!(!servers.contains_key("wework_control"));
 }

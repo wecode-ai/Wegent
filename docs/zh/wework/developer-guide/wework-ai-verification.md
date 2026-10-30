@@ -28,11 +28,21 @@ pnpm --filter wework ai:verify start
 
 ## 共享桌面 E2E 运行时镜像
 
+完整源码的浅克隆不设置 `filter: blob:none`：工作目录需要全部 blob，过滤会把下载推迟到 checkout 的第二次 promisor 请求。仅变更分类任务保留完整提交历史及 blob 过滤，避免拉取历史文件内容。共享运行时合约测试检查浅克隆任务不引入这种额外请求。
+
+独立 MinIO 的 API 端口由共享分配器分配，并排除固定版本的控制台默认端口 `13333`。该版本即使设置 `MINIO_BROWSER=off` 仍会检查端口相等并退出，详见固定源码的 [默认值](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/globals.go#L215)及[启动检查](https://github.com/minio/minio/blob/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/cmd/common-main.go#L502)。端口回归直接从 `13333` 开始分配，验证排除后的端口可真实绑定；不靠重启 MinIO 掩盖冲突。
+
+非草稿 PR 只触发 Wework 桌面 E2E 时，也必须启动 `e2e-tests.yml` 中的 Backend Rust 运行时生产任务，不能只以平台 E2E 是否运行作为条件。生产任务先检查内容寻址镜像是否存在，缓存命中时复用既有镜像；缓存未命中时构建并发布，供桌面构建消费。`ruby .github/scripts/test-backend-rs-e2e-runtime.rb` 覆盖平台、桌面和草稿 PR 的生产条件。
+
 Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Backend OCI 镜像。消费者必须与生产方的 `SOURCE_DIGEST` 表达式保持一致，包括示例程序源码；只哈希主程序会生成无人发布的镜像标签，最终以 `manifest unknown` 超时失败。修改运行时镜像输入时，运行 `bash .github/scripts/test-wework-core-e2e-runtimes.sh`，检查桌面验证和缓存预热两个消费者与生产方的摘要契约。
 
 ## 操作与断言
 
+Linux 隔离桌面使用 `Xvfb -noreset`，使显示服务在整个 checkpoint 内持续可连接。默认的“最后一个客户端断开即 reset”会在短连接 `xprop` 探测与 Openbox 连接之间关闭监听，详见 [Debian 的生命周期分析](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43)。不通过重启窗口管理器或延长等待隐藏启动失败。
+
 后续命令都传入启动命令返回的 session 路径。优先使用稳定的 `data-testid` 选择器。
+
+创建 Issue 后，API 列表中已存在该记录不代表详情界面已完成渲染。共享的 `createAndAssignCloudIssue` 流程使用 `clickWhenEnabled` 等待详情负责人控件出现并启用后再点击，沿用默认步骤时限；不能用 API 落库状态代替控件就绪，也不能用延时或重跑掩盖竞争。
 
 ```bash
 pnpm --filter wework ai:verify snapshot --session /path/to/session.json

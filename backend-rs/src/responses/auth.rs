@@ -17,10 +17,12 @@
 //! its helper session), reloads the expired row (SELECT by id), and resolves
 //! the owner user through the configured `userReader`
 //! (`user_reader::UserByIdReader`).
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+#[cfg(test)]
+use jsonwebtoken::Algorithm;
 use serde::Deserialize;
 
 use super::auth_error::AuthError;
+#[cfg(test)]
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
 use crate::headers::Headers as _;
@@ -446,27 +448,13 @@ fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
     keys
 }
 
-/// Algorithm from settings (`HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
+/// Task-token decoding with the configured HMAC algorithm.
 fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &str) -> Option<T> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose default decode: signature and `exp` when present; no
-    // audience is required and `exp` need not exist.
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    decoding_keys(config)
-        .into_iter()
-        .find_map(|key_bytes| {
-            decode::<T>(token, &DecodingKey::from_secret(&key_bytes), &validation).ok()
-        })
-        .map(|token| token.claims)
+    crate::jwt_compat::decode_task(
+        token,
+        decoding_keys(config),
+        crate::auth::algorithm(config)?,
+    )
 }
 
 /// A reader infrastructure failure mapped to the source dependency error.
@@ -504,7 +492,7 @@ async fn verify_jwt_token_with_db(
     user_reader: &dyn UserByIdReader,
     token: &str,
 ) -> Result<Option<UserRecord>, AuthError> {
-    let Some(claims) = decode_with_keys::<SessionClaims>(config, token) else {
+    let Some(claims) = crate::auth::decode_session_claims(config, token) else {
         return Ok(None);
     };
     let Some(user_name) = claims.username() else {
@@ -615,3 +603,38 @@ mod tests;
 
 #[cfg(test)]
 mod jwt_fallback_tests;
+
+#[cfg(test)]
+mod task_jwt_compatibility {
+    #[test]
+    fn task_fallback_validates_pyjwt_claims() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        let now = jsonwebtoken::get_current_timestamp();
+        for (delta, expected) in [
+            (serde_json::json!({}), true),
+            (serde_json::json!({"exp":(now+600).to_string()}), true),
+            (serde_json::json!({"exp":now-30}), false),
+            (serde_json::json!({"nbf":now+300}), false),
+            (serde_json::json!({"iat":now+300}), false),
+            (serde_json::json!({"aud":"other-service"}), false),
+            (serde_json::json!({"jti":123}), false),
+        ] {
+            let mut claims = serde_json::json!({"type":"task_token","user_id":1,
+                "user_name":"u","task_id":1,"subtask_id":1});
+            claims
+                .as_object_mut()
+                .unwrap()
+                .extend(delta.as_object().unwrap().clone());
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::decode_with_keys::<serde_json::Value>(&config, &token).is_some(),
+                expected,
+                "{delta}"
+            );
+        }
+    }
+}

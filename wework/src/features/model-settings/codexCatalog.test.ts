@@ -2,29 +2,29 @@ import { describe, expect, test } from 'vitest'
 import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
 
 describe('codexCatalog', () => {
-  test('resolves exact upstream model metadata for the matching API format', () => {
-    expect(codexCatalogModelIdForUpstream([' DeepSeek-V4-Pro '], 'openai-responses')).toBe(
-      'wework-deepseek-v4-pro'
-    )
-  })
-
-  test('does not resolve metadata for an incompatible API format', () => {
-    expect(
-      codexCatalogModelIdForUpstream(['deepseek-v4-pro'], 'openai-chat-completions')
-    ).toBeNull()
+  test('resolves exact upstream model metadata', () => {
+    expect(codexCatalogModelIdForUpstream([' DeepSeek-V4-Pro '])).toBe('wework-deepseek-v4-pro')
   })
 
   test('resolves a declared upstream model fragment', () => {
-    expect(
-      codexCatalogModelIdForUpstream(['moonshot-kimi-k2.7-code-highspeed'], 'openai-responses')
-    ).toBe('wework-kimi-k2-7')
+    expect(codexCatalogModelIdForUpstream(['moonshot-kimi-k2.7-code-highspeed'])).toBe(
+      'wework-kimi-k2-7'
+    )
   })
 
   test('resolves a declared provider-specific model alias', () => {
-    expect(codexCatalogModelIdForUpstream(['k3'], 'openai-chat-completions')).toBe('wework-kimi-k3')
-    expect(codexCatalogModelIdForUpstream(['kimi-for-coding'], 'openai-chat-completions')).toBe(
-      'wework-kimi-k2-7'
+    expect(codexCatalogModelIdForUpstream(['k3'])).toBe('wework-kimi-k3')
+    expect(codexCatalogModelIdForUpstream(['kimi-for-coding'])).toBe('wework-kimi-k2-7')
+  })
+
+  test('resolves the active Wework long-context models', () => {
+    expect(codexCatalogModelIdForUpstream(['qwen3.8-max'])).toBe('wework-qwen-3-8-max')
+    expect(codexCatalogModelIdForUpstream(['thudm-glm-5.3-flash'])).toBe('wework-glm-5-3')
+    expect(codexCatalogModelIdForUpstream(['huoshan-deepseek-v4.1-flash'])).toBe(
+      'wework-deepseek-v4-1-flash'
     )
+    expect(codexCatalogModelIdForUpstream(['gpt-6.1-sol'])).toBe('wework-gpt-6.1-sol')
+    expect(codexCatalogModelIdForUpstream(['gpt-6-astra'])).toBe('wework-gpt-6-astra')
   })
 
   test('returns built-in catalog capabilities by slug', () => {

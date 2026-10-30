@@ -201,97 +201,100 @@ test.each(['darwin', 'linux'] as const)(
   }
 )
 
-test.each(['missing', 'missing-parent', 'empty'])(
-  'macOS startup restores a %s legacy log directory after cleanup',
+test.each([
+  'missing',
+  'missing-parent',
+  'empty',
+  'nonempty',
+  'file',
+  'redirected',
+  'stale-device',
+  'invalid-journal',
+  'mismatched-journal',
+  'missing-journal',
+])('macOS startup ignores %s legacy log migration state', async state => {
+  const input = fixture('darwin')
+  fs.mkdirSync(input.logs, { recursive: true })
+  fs.writeFileSync(join(input.logs, 'app.log'), 'retained-log')
+  const legacy = {
+    source: input.logs,
+    target: join(input.desktop, 'electron-logs'),
+    journal: join(input.desktop, 'migrations/desktop-electron-logs-v1.json'),
+  }
+  migrateWorkbenchDataEntry(legacy)
+  const identity = fs.statSync(legacy.target, { bigint: true }).ino
+  fs.unlinkSync(input.logs)
+  if (state === 'missing-parent') fs.rmdirSync(dirname(input.logs))
+  else if (state === 'empty' || state === 'nonempty') {
+    fs.mkdirSync(input.logs)
+    if (state === 'nonempty') fs.writeFileSync(join(input.logs, 'new.log'), 'independent-log')
+  } else if (state === 'file') fs.writeFileSync(input.logs, 'independent-file')
+  else if (state === 'redirected') {
+    const other = join(root, 'independent-logs')
+    fs.mkdirSync(other)
+    fs.writeFileSync(join(other, 'new.log'), 'independent-log')
+    fs.symlinkSync(other, input.logs, 'junction')
+  } else if (state === 'missing-journal') fs.unlinkSync(legacy.journal)
+  else if (state === 'invalid-journal') fs.writeFileSync(legacy.journal, 'invalid JSON')
+  else if (state === 'stale-device' || state === 'mismatched-journal') {
+    const journal = JSON.parse(fs.readFileSync(legacy.journal, 'utf8'))
+    if (state === 'stale-device') {
+      journal.device = (BigInt(journal.device) + 1n).toString()
+      fs.mkdirSync(input.logs)
+    } else journal.source += '-unexpected'
+    fs.writeFileSync(legacy.journal, JSON.stringify(journal))
+  }
+  const journal = fs.existsSync(legacy.journal)
+    ? fs.readFileSync(legacy.journal, 'utf8')
+    : undefined
+  const source = fs.existsSync(input.logs)
+    ? fs.lstatSync(input.logs, { bigint: true }).ino
+    : undefined
+  for (let launch = 0; launch < 2; launch++) {
+    const result = await initializeWorkbenchDesktopData(input.options)
+    expect(result!.logs).toBe(legacy.target)
+    expect(fs.statSync(result!.logs, { bigint: true }).ino).toBe(identity)
+    expect(fs.readFileSync(join(result!.logs, 'app.log'), 'utf8')).toBe('retained-log')
+    expect(
+      fs.existsSync(input.logs) ? fs.lstatSync(input.logs, { bigint: true }).ino : undefined
+    ).toBe(source)
+    expect(
+      fs.existsSync(legacy.journal) ? fs.readFileSync(legacy.journal, 'utf8') : undefined
+    ).toBe(journal)
+    if (state === 'nonempty' || state === 'redirected')
+      expect(fs.readFileSync(join(input.logs, 'new.log'), 'utf8')).toBe('independent-log')
+    if (state === 'file') expect(fs.readFileSync(input.logs, 'utf8')).toBe('independent-file')
+    expect(input.app.getPath).not.toHaveBeenCalledWith('logs')
+    expect(input.singletonHeld()).toBe(true)
+    input.app.releaseSingleInstanceLock()
+  }
+})
+
+test.each(['missing', 'replaced'])(
+  'macOS startup preserves a %s log target history',
   async state => {
     const input = fixture('darwin')
-    const first = await initializeWorkbenchDesktopData(input.options)
-    fs.writeFileSync(join(first!.logs, 'app.log'), 'retained-log')
-    fs.writeFileSync(join(first!.userData, 'preferences.json'), 'retained-preferences')
-    const identity = fs.statSync(first!.logs, { bigint: true })
-    const journalPath = join(input.desktop, 'migrations/desktop-electron-logs-v1.json')
-    const journal = fs.readFileSync(journalPath, 'utf8')
-    input.app.releaseSingleInstanceLock()
-    fs.unlinkSync(input.logs)
-    if (state === 'empty') fs.mkdirSync(input.logs)
-    else if (state === 'missing-parent') fs.rmdirSync(dirname(input.logs))
-
+    const target = join(input.desktop, 'electron-logs')
+    fs.mkdirSync(target, { recursive: true })
+    fs.writeFileSync(join(target, 'old.log'), 'retained-log')
+    const retained = target + '.retained'
+    fs.renameSync(target, retained)
+    if (state === 'replaced') {
+      fs.mkdirSync(target)
+      fs.writeFileSync(join(target, 'other.log'), 'independent-log')
+    }
     for (let launch = 0; launch < 2; launch++) {
       const result = await initializeWorkbenchDesktopData(input.options)
-
-      expect(result).toEqual(first)
-      expect(fs.realpathSync(input.logs)).toBe(result!.logs)
-      expect(fs.statSync(result!.logs, { bigint: true }).ino).toBe(identity.ino)
-      expect(fs.readFileSync(join(result!.logs, 'app.log'), 'utf8')).toBe('retained-log')
-      expect(fs.readFileSync(join(result!.userData, 'preferences.json'), 'utf8')).toBe(
-        'retained-preferences'
-      )
-      expect(fs.readFileSync(journalPath, 'utf8')).toBe(journal)
-      expect(input.app.getPath).not.toHaveBeenCalledWith('logs')
-      expect(input.singletonHeld()).toBe(true)
+      expect(result!.logs).toBe(target)
+      fs.writeFileSync(join(result!.logs, 'new.log'), 'new-startup-log')
+      expect(fs.readFileSync(join(retained, 'old.log'), 'utf8')).toBe('retained-log')
+      if (state === 'replaced')
+        expect(fs.readFileSync(join(target, 'other.log'), 'utf8')).toBe('independent-log')
+      expect(fs.existsSync(input.logs)).toBe(false)
       input.app.releaseSingleInstanceLock()
     }
   }
 )
-
-test.each([
-  'nonempty-source',
-  'file-source',
-  'redirected-source',
-  'missing-target',
-  'replaced-target',
-  'missing-journal',
-  'invalid-journal',
-  'mismatched-journal',
-])('macOS log recovery refuses %s without changing data', async state => {
-  const input = fixture('darwin')
-  const first = await initializeWorkbenchDesktopData(input.options)
-  fs.writeFileSync(join(first!.logs, 'app.log'), 'retained-log')
-  input.app.releaseSingleInstanceLock()
-  fs.unlinkSync(input.logs)
-  fs.mkdirSync(input.logs)
-  const journalPath = join(input.desktop, 'migrations/desktop-electron-logs-v1.json')
-  let retainedLogs = first!.logs
-  let independentLogs = input.logs
-  if (state === 'nonempty-source') {
-    fs.writeFileSync(join(input.logs, 'independent.log'), 'independent-log')
-  } else if (state === 'file-source' || state === 'redirected-source') {
-    fs.rmdirSync(input.logs)
-    if (state === 'file-source') fs.writeFileSync(input.logs, 'independent-file')
-    else {
-      independentLogs = join(root, 'independent-logs')
-      fs.mkdirSync(independentLogs)
-      fs.writeFileSync(join(independentLogs, 'independent.log'), 'independent-log')
-      fs.symlinkSync(independentLogs, input.logs, 'junction')
-    }
-  } else if (state === 'missing-target' || state === 'replaced-target') {
-    retainedLogs = `${first!.logs}.retained`
-    fs.renameSync(first!.logs, retainedLogs)
-    if (state === 'replaced-target') fs.mkdirSync(first!.logs)
-  } else if (state === 'missing-journal') fs.unlinkSync(journalPath)
-  else if (state === 'invalid-journal') fs.writeFileSync(journalPath, 'invalid JSON')
-  else {
-    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'))
-    journal.source = join(root, 'unexpected-logs')
-    fs.writeFileSync(journalPath, JSON.stringify(journal))
-  }
-  const sourceIdentity = fs.lstatSync(input.logs, { bigint: true }).ino
-  const journal = fs.existsSync(journalPath) ? fs.readFileSync(journalPath, 'utf8') : undefined
-
-  await expect(initializeWorkbenchDesktopData(input.options)).rejects.toThrow()
-
-  expect(fs.lstatSync(input.logs, { bigint: true }).ino).toBe(sourceIdentity)
-  expect(fs.readFileSync(join(retainedLogs, 'app.log'), 'utf8')).toBe('retained-log')
-  expect(fs.existsSync(journalPath) ? fs.readFileSync(journalPath, 'utf8') : undefined).toBe(
-    journal
-  )
-  if (state === 'nonempty-source' || state === 'redirected-source')
-    expect(fs.readFileSync(join(independentLogs, 'independent.log'), 'utf8')).toBe(
-      'independent-log'
-    )
-  if (state === 'file-source') expect(fs.readFileSync(input.logs, 'utf8')).toBe('independent-file')
-  expect(input.singletonHeld()).toBe(false)
-})
 
 test.each(['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-journal'])(
   'startup and restarts preserve user data with a %s updater cache',

@@ -248,6 +248,7 @@
       "collapse_file_diff": "折叠文件差异",
       "expand_file_diff": "展开文件差异",
       "copy_git_apply": "复制 git apply 命令",
+      "copied_git_apply": "已复制",
       "hide_files": "隐藏文件",
       "show_files": "显示文件",
       "show_split": "切换到分栏视图",

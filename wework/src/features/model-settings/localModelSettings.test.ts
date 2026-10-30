@@ -433,6 +433,67 @@ describe('localModelSettings', () => {
     ])
   })
 
+  test('prefers the stored catalog override during normalization', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'stored-catalog',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4 Flash',
+          modelId: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-responses',
+          toolProfile: 'custom',
+          requestPath: '/responses',
+          codexCatalogModelId: 'operator-selected-catalog',
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'stored-catalog',
+        codexCatalogModelId: 'operator-selected-catalog',
+      }),
+    ])
+  })
+
+  test('uses the resolved DeepSeek V4.1 catalog context window', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-deepseek-v41',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4.1 Flash',
+          modelId: 'deepseek-v4.1-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-responses',
+          toolProfile: 'custom',
+          requestPath: '/responses',
+          contextWindow: 1_048_576,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-deepseek-v41',
+        contextWindow: 1_000_000,
+        codexCatalogModelId: 'wework-deepseek-v4-1-flash',
+      }),
+    ])
+  })
+
   test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',

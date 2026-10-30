@@ -424,21 +424,17 @@ mod tests {
     }
 
     #[test]
-    fn route_table_selects_the_registered_get_stream() {
+    fn route_table_keeps_unmigrated_subscription_tools_on_python() {
         const PATH: &str = "/api/mcp/subscription/sse";
-        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
-        const GET: u16 = 1 << 1;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&path).expect("routes file loads");
         let table = crate::RouteTable::compile(config).expect("routes compile");
-        assert!(table.matches(&http::Method::GET, PATH));
-        assert!(table.matches(&http::Method::POST, PATH));
-        let registered =
-            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
-                .into_iter()
-                .flat_map(|entry| (entry.0.routes)())
-                .any(|route| route.path == PATH && route.methods & GET != 0);
-        assert!(registered, "GET {PATH} must be registered by the router");
+        for method in [http::Method::GET, http::Method::POST] {
+            assert!(
+                !table.matches(&method, PATH),
+                "{method} {PATH} must reach the Python subscription tools"
+            );
+        }
     }
 
     #[tokio::test]

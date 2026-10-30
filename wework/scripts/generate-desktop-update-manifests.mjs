@@ -7,6 +7,7 @@ import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import { componentReleaseScope } from './desktop-component-release.mjs'
+import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
 
 const [
   assetsDirectory,
@@ -122,6 +123,19 @@ for (const [platform, architecture] of [
         (process.env.WEWORK_REQUIRE_UPGRADE_POLICY === 'true' && platform !== 'linux')
       )
         throw error
+    }
+    if (upgradePolicy) {
+      validateUpgradeCatalog(upgradePolicy)
+      const target = upgradePolicy.releases.find(release => release.version === version)
+      if (
+        upgradePolicy.channel !== targetChannel ||
+        upgradePolicy.platform !== platform ||
+        upgradePolicy.arch !== architecture ||
+        !target ||
+        target.fixture ||
+        target.sourceSha !== sourceSha
+      )
+        throw new Error('Verified upgrade policy does not match the release target')
     }
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),

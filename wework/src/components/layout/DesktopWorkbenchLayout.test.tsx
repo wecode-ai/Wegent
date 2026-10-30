@@ -4303,8 +4303,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
     const scroller = screen.getByTestId('desktop-workbench-content')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'top')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
@@ -4314,12 +4314,15 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: -200,
+      value: 400,
       writable: true,
       configurable: true,
     })
 
-    fireEvent.scroll(scrollContainer)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+    fireEvent.wheel(scroller, { deltaY: -200 })
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
@@ -7597,11 +7600,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
-    expect(contentFrame).toHaveClass(
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
     expect(document.body).toHaveAttribute('data-wework-panel-resizing', 'true')
@@ -8035,6 +8034,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
     expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
+  })
+
+  test('keeps the sidebar and side chat translucent behind the workbench background', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+        backgroundInSidebar: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('bg-background/25')
+    const paneGroups = screen.getAllByTestId(/^workbench-pane-pane-/)
+    expect(paneGroups.length).toBeGreaterThan(0)
+    paneGroups.forEach(group => expect(group).toHaveClass('bg-transparent'))
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(
+      within(screen.getByTestId('right-workspace-chat-panel')).getByTestId(
+        'right-workspace-chat-composer-shell'
+      )
+    ).toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
@@ -8495,12 +8522,7 @@ describe('DesktopWorkbenchLayout', () => {
     const topBar = screen.getByTestId('workbench-topbar')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(topBar).toHaveStyle({ width: '100%' })
-    expect(contentFrame).toHaveClass(
-      'flex-none',
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
     expect(contentFrame).toHaveStyle({ width: '100%' })
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
@@ -8520,12 +8542,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(contentFrame).toHaveClass(
-      'flex-none',
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
     expect(contentFrame).not.toHaveClass('border-r')
     await waitFor(() => {
       expect(contentFrame).toHaveStyle({ width: '420px' })
@@ -11736,6 +11753,44 @@ describe('DesktopWorkbenchLayout', () => {
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
     expect(environmentInfoPanel).toHaveClass('w-0', 'overflow-hidden')
     expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-0')
+  })
+
+  test('commits the conversation width and pinned environment space together when toggling the right panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
+    const frame = screen.getByTestId('desktop-workbench-scroll-frame')
+    const spacer = screen.getByTestId('environment-info-panel-spacer')
+    const environmentPanel = screen.getByTestId('environment-info-panel-container')
+    const toggle = screen.getByTestId('toggle-right-workspace-panel-button')
+    expect(frame).toHaveStyle({ width: '100%' })
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'true')
+
+    await userEvent.click(toggle)
+    expect(frame).toHaveStyle({ width: '420px' })
+    expect(spacer).not.toHaveClass('w-[320px]')
+    expect(environmentPanel).not.toHaveClass('w-[320px]')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'false')
+    expect(frame).toHaveClass('transition-none')
+
+    await userEvent.click(toggle)
+    expect(frame).toHaveStyle({ width: '100%' })
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'true')
+    expect(frame).toHaveClass('transition-none')
+    expect(frame).not.toHaveClass('transition-[width]', 'will-change-[width]')
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(spacer).not.toHaveClass('w-[320px]')
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveClass('w-[320px]', 'transition-none')
   })
 
   test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {

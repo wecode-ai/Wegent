@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
   latestModelInputText,
   readRequestBody,
   responseCompleted,
@@ -251,21 +253,57 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
   return badge
 }
 
-export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
+export function createBoardReplyModelRegression({
+  executorHome,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   let active = false
+  let linkedIssueTask = null
   const upstreamModels = new Map()
 
   return {
+    holdLinkedIssueTask(projectId, issue) {
+      let release
+      const held = new Promise(resolve => {
+        release = resolve
+      })
+      linkedIssueTask = { projectId, issue, held, requests: [] }
+      return { requests: linkedIssueTask.requests, release }
+    },
+
     async handleHttp(request, response, url) {
       if (
-        !active ||
+        (!active && !linkedIssueTask) ||
         request.method !== 'POST' ||
         !['/v1/responses', '/responses'].includes(url.pathname)
       ) {
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const text = latestModelInputText(body)
+      if (!active && linkedIssueTask) {
+        const { projectId, issue, held, requests } = linkedIssueTask
+        assert.ok(text.includes(`[projectSpaceIssue]`), 'The linked Task lost its Issue context')
+        assert.ok(
+          text.includes(`wework-issue://${projectId}/${issue.id}`),
+          'The linked Task lost its Issue reference'
+        )
+        assert.ok(text.includes(issue.title), 'The linked Task lost its Issue title')
+        requests.push(body)
+        const id = 'collaboration-linked-issue-task'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(createSse([responseCreated(id)]))
+        await held
+        response.end(
+          createSse([
+            assistantMessage('COLLABORATION_LINKED_ISSUE_TASK_COMPLETE'),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
       const marker = text.includes(MEMBER_REPLY)
         ? MEMBER_REPLY
         : text.includes(REPLY)
@@ -287,6 +325,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
     },
 
     async verify(control, issue, scope, cloud) {
+      upstreamModels.clear()
       active = true
       try {
         const activity = scope(`[data-testid="cloud-task-activity-${issue.id}"]`)
@@ -363,6 +402,14 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         await control.command('fill', composer, { value: INITIAL })
         await control.command('press', composer, { key: 'Enter' })
         const [initialRun] = await readPersistedExecutions(cloud, issue.id, [INITIAL], uiTimeoutMs)
+        // A persisted dispatch address precedes native session/MCP startup on Windows.
+        // Establish runtime readiness before applying the separate UI response budget.
+        await waitForValue(
+          () => upstreamModels.has(INITIAL),
+          Boolean,
+          'The native board execution did not reach its configured cloud model',
+          workbenchReadyTimeoutMs
+        )
         const initialBadge = await verifyExecutionDetail(
           control,
           scope,

@@ -249,9 +249,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
     {
-        return Err(TaskRuntimeError::Invalid(
-            "Project-scoped agents can only receive work from their project".into(),
-        ));
+        return Err(TaskRuntimeError::StandInProjectConnections);
     }
     let source = &role["collaboration"];
     let valid = role.get("collaboration").map_or(true, valid_collaboration)

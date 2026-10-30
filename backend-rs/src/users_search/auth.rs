@@ -9,72 +9,15 @@
 //! signing keys, `app.core.session_token.is_user_session_payload`), then
 //! load the user row and reject missing or inactive users with
 //! `401 {"detail": ...}`.
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+#[cfg(test)]
+use jsonwebtoken::Algorithm;
 
 use super::auth_error::AuthError;
-use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
-
-/// Decode keys derived from the active key and legacy decode-only keys.
-fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
-    let mut keys = vec![config.jwt_key.as_bytes().to_vec()];
-    for key in &config.legacy_jwt_keys {
-        if !keys.iter().any(|existing| existing == key.as_bytes()) {
-            keys.push(key.as_bytes().to_vec());
-        }
-    }
-    keys
-}
-
-/// Algorithm from settings (`HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
-/// `extract_authorization_token`: case-insensitive Bearer credential or the
-/// plain header value.
-pub fn extract_authorization_token(authorization: Option<&str>) -> String {
-    let Some(header) = authorization else {
-        return String::new();
-    };
-    if let Some(token) = header.strip_prefix("Bearer ") {
-        return token.trim().to_string();
-    }
-    if let Some(token) = header.strip_prefix("bearer ") {
-        return token.trim().to_string();
-    }
-    header.trim().to_string()
-}
 
 /// `verify_token` with key rotation: try the active key, then legacy keys.
 fn verify_token(config: &AuthConfig, token: &str) -> Result<String, AuthError> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose rejects the `none` algorithm; HS256 is the configured
-    // algorithm and no audience is required. `exp` is validated when present
-    // but not a required claim, matching python-jose decode defaults.
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    let mut last_error = None;
-    for key_bytes in decoding_keys(config) {
-        let key = DecodingKey::from_secret(&key_bytes);
-        match decode::<SessionClaims>(token, &key, &validation) {
-            Ok(token) => {
-                return token
-                    .claims
-                    .username()
-                    .ok_or_else(AuthError::invalid_credentials);
-            }
-            Err(error) => last_error = Some(error),
-        }
-    }
-    match last_error {
-        Some(_) => Err(AuthError::invalid_credentials()),
-        None => Err(AuthError::invalid_credentials()),
-    }
+    crate::auth::verify_token(config, token).map_err(|_| AuthError::invalid_credentials())
 }
 
 /// Database user row (`users` table) for authentication.
@@ -126,11 +69,9 @@ pub async fn get_current_user<M>(
 where
     M: brz_mysql::Mysql,
 {
-    let token = extract_authorization_token(authorization);
-    if token.is_empty() {
-        return Err(AuthError::missing_token());
-    }
-    let username = verify_token(config, &token)?;
+    let token =
+        crate::auth::bearer_credential(authorization).ok_or_else(AuthError::missing_token)?;
+    let username = verify_token(config, token)?;
     let user: Option<UserRow> = mysql
         .fetch_optional(crate::auth::USER_BY_NAME_QUERY, (username,))
         .await
@@ -156,25 +97,34 @@ mod tests {
         }
     }
 
-    fn header(value: &'static str) -> Option<&'static str> {
-        Some(value)
-    }
-
     fn token_for(claims: serde_json::Value) -> String {
         let header = jsonwebtoken::Header::new(Algorithm::HS256);
         let key = EncodingKey::from_secret("test-key".as_bytes());
         jsonwebtoken::encode(&header, &claims, &key).unwrap()
     }
 
-    #[test]
-    fn extracts_bearer_token() {
-        assert_eq!(
-            extract_authorization_token(header("Bearer abc.def")),
-            "abc.def"
-        );
-        assert_eq!(extract_authorization_token(header("bearer abc")), "abc");
-        assert_eq!(extract_authorization_token(header("abc")), "abc");
-        assert_eq!(extract_authorization_token(None), "");
+    #[tokio::test]
+    async fn oauth2_scheme_controls_user_lookup() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        let token = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        for (authorization, queries) in [
+            (Some(token.clone()), 0),
+            (Some(format!("bEaReR {token}")), 1),
+            (Some(format!("Bearer {token}")), 1),
+            (None, 0),
+        ] {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                get_current_user(&config, &mysql, authorization.as_deref())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(mysql.queries().len(), queries);
+        }
     }
 
     #[test]
@@ -218,5 +168,25 @@ mod tests {
             jsonwebtoken::encode(&header, &serde_json::json!({"sub": "legacy-user"}), &key).unwrap()
         };
         assert_eq!(verify_token(&config, &legacy_token).unwrap(), "legacy-user");
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::verify_token(&config, &token).is_ok(),
+                expected,
+                "{name}"
+            );
+        }
     }
 }

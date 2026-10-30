@@ -17,6 +17,7 @@ from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
 from app.stores.tasks.interfaces import (
     ExecutorReference,
     FailedSubtaskDetail,
+    StalledRunningSubtask,
     TaskAccessStore,
 )
 from shared.models.db.enums import ContextType
@@ -1052,6 +1053,52 @@ class SqlAlchemySubtaskStore:
             .all()
         )
 
+    def list_stalled_running_assistant_subtasks(
+        self,
+        db: Session,
+        *,
+        cutoff: datetime,
+        max_age_cutoff: datetime,
+        limit: int,
+    ) -> list[StalledRunningSubtask]:
+        """Find recent RUNNING assistant subtasks silent since ``cutoff``.
+
+        ``created_at`` is indexed, so the bounded recent window keeps this a
+        range scan instead of filtering every RUNNING row.
+        """
+        rows = (
+            db.query(
+                Subtask.task_id,
+                Subtask.id,
+                TaskResource.user_id,
+                Subtask.executor_name,
+                Subtask.executor_namespace,
+                Subtask.updated_at,
+            )
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .filter(
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status == SubtaskStatus.RUNNING,
+                Subtask.updated_at <= cutoff,
+                Subtask.created_at >= max_age_cutoff,
+                TaskResource.is_active != TaskResource.STATE_DELETED,
+            )
+            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            StalledRunningSubtask(
+                task_id=row[0],
+                subtask_id=row[1],
+                owner_user_id=row[2],
+                executor_name=(row[3] or "").strip(),
+                executor_namespace=(row[4] or "").strip(),
+                updated_at=row[5],
+            )
+            for row in rows
+        ]
+
     def list_session_task_ids(self, db: Session, *, skip: int, limit: int) -> list[int]:
         rows = (
             db.query(Subtask.task_id)
@@ -1227,6 +1274,31 @@ class SqlAlchemySubtaskStore:
         if "result" in fields:
             flag_modified(subtask, "result")
         return subtask
+
+    def update_fields_if_status(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        from_status: SubtaskStatus,
+        **fields: Any,
+    ) -> bool:
+        """Update fields only while the subtask still has ``from_status``.
+
+        Returns True when exactly one row was updated. Callers use this to
+        avoid overwriting a concurrent completion or cancellation with a stale
+        terminal event.
+        """
+        values: dict[Any, Any] = {
+            getattr(Subtask, field): value for field, value in fields.items()
+        }
+        values[Subtask.updated_at] = datetime.now()
+        updated = (
+            db.query(Subtask)
+            .filter(Subtask.id == subtask.id, Subtask.status == from_status)
+            .update(values, synchronize_session=False)
+        )
+        return updated == 1
 
     def transition_status(
         self,

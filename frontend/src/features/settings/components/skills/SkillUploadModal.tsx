@@ -947,7 +947,12 @@ function UploadForm({
         <Button variant="outline" onClick={handleClose} disabled={uploading}>
           {t('actions.cancel')}
         </Button>
-        <Button variant="primary" onClick={handleSubmit} disabled={uploading || !selectedFile}>
+        <Button
+          variant="primary"
+          onClick={handleSubmit}
+          disabled={uploading || !selectedFile}
+          data-testid="skill-upload-submit-button"
+        >
           {uploading
             ? t('skills.uploading')
             : isEditMode

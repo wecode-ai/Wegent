@@ -54,9 +54,33 @@ export function createSharedSkillRuntime({
         item => item.type === 'function_call_output' && item.call_id === `${turn.callId}-mcp`
       )
       if (!mcpOutput) {
-        const tool = body.tools?.find(tool => tool.name?.endsWith('__probe_environment'))
-        assert.ok(tool, 'Retained skill MCP tool is unavailable to native Claude')
-        writeToolCall(response, `${turn.callId}-mcp`, `${turn.callId}-mcp`, tool.name, {})
+        const searchId = `${turn.callId}-search`
+        const searchOutput = (body.input ?? []).find(
+          item => item.type === 'function_call_output' && item.call_id === searchId
+        )
+        const advertised = body.tools?.find(tool => tool.name?.endsWith('__probe_environment'))
+        if (turn.index === 1 && !searchOutput) {
+          assert.equal(
+            advertised,
+            undefined,
+            'Retained skill MCP tools must be deferred until native discovery'
+          )
+        }
+        if (advertised) {
+          writeToolCall(response, `${turn.callId}-mcp`, `${turn.callId}-mcp`, advertised.name, {})
+        } else if (!searchOutput) {
+          assert.ok(body.tools?.some(tool => tool.name === 'ToolSearch'))
+          writeToolCall(response, searchId, searchId, 'ToolSearch', {
+            query: 'probe_environment',
+            max_results: 1,
+          })
+        } else {
+          const name = JSON.stringify(searchOutput).match(
+            /mcp__[A-Za-z0-9_-]+__probe_environment/
+          )?.[0]
+          assert.ok(name, 'Native tool search did not discover the retained skill MCP tool')
+          writeToolCall(response, `${turn.callId}-mcp`, `${turn.callId}-mcp`, name, {})
+        }
       } else {
         assert.match(JSON.stringify(mcpOutput), /MCP_CONTEXT:[A-Za-z0-9_-]+/)
         turn.mcpOutput = JSON.stringify(mcpOutput)

@@ -52,6 +52,27 @@ test('reserves unique ports across parallel checkpoint processes', async () => {
   }
 })
 
+test('excludes the pinned MinIO console port from API service allocation', async () => {
+  const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-minio-port-test-'))
+  const server = createServer()
+  try {
+    vi.mocked(randomInt).mockReturnValueOnce(13333 - 1024)
+    const port = await reservePort(registryDir, {
+      dynamicRange: [32768, 65535],
+      excludedPorts: [13333],
+    })
+    assert.notEqual(port, 13333)
+    await new Promise((resolvePromise, reject) => {
+      server.once('error', reject)
+      server.listen(port, '127.0.0.1', resolvePromise)
+    })
+    assert.equal(server.address().port, port)
+  } finally {
+    await new Promise(resolvePromise => server.close(resolvePromise))
+    await rm(registryDir, { recursive: true, force: true })
+  }
+})
+
 test('reserves bindable service ports outside the configured dynamic allocation range', async () => {
   const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-service-port-test-'))
   const dynamicRange = [32768, 65535]

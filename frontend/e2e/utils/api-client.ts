@@ -182,6 +182,40 @@ export class ApiClient {
     return this.call('DELETE', `/api/v1/namespaces/${namespace}/bots/${name}`)
   }
 
+  // ==================== Skill APIs ====================
+
+  /**
+   * Upload a Skill ZIP package through the real multipart endpoint.
+   */
+  async uploadSkill(params: {
+    name: string
+    namespace: string
+    file: Buffer
+    fileName?: string
+  }): Promise<ApiResponse> {
+    const headers: Record<string, string> = { Connection: 'close' }
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+
+    const response = await this.request.post(`${this.baseURL}/api/v1/kinds/skills/upload`, {
+      headers,
+      multipart: {
+        name: params.name,
+        namespace: params.namespace,
+        file: {
+          name: params.fileName || `${params.name}.zip`,
+          mimeType: 'application/zip',
+          buffer: params.file,
+        },
+      },
+    })
+
+    return {
+      status: response.status(),
+      data: await response.json().catch(() => null),
+      headers: response.headers(),
+    }
+  }
+
   // ==================== Model APIs ====================
 
   /**

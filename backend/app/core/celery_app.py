@@ -230,6 +230,16 @@ def setup_celery_task_logger(logger, *args, **kwargs):
 
 
 @worker_process_init.connect
+def register_subscription_completion_handlers(*args, **kwargs):
+    """Keep subscription completion handling active in standalone workers."""
+    from app.tasks.subscription_tasks import (
+        _ensure_subscription_task_event_handlers_registered,
+    )
+
+    _ensure_subscription_task_event_handlers_registered()
+
+
+@worker_process_init.connect
 def log_worker_database_pool_configuration(*args, **kwargs):
     """Log the per-process database pool budget after a worker forks."""
     from app.db.pool_observability import log_registered_pool_configurations

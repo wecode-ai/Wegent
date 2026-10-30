@@ -22,6 +22,7 @@ mod events;
 mod handlers;
 mod persist;
 mod sql;
+mod text_value;
 
 #[cfg(test)]
 #[path = "tests.rs"]

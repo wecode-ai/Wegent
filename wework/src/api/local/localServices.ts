@@ -261,7 +261,7 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
-const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
+const DEFAULT_CODEX_CATALOG_MODEL_ID = 'wework-gpt-6.1-sol'
 
 const WEWORK_EXECUTION_IDENTITY = {
   id: 0,
@@ -275,6 +275,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     : 'model-interface'
   const reasoningEfforts = localModelReasoningEfforts(config)
   const defaultReasoningEffort = localModelDefaultReasoningEffort(config)
+  const contextWindow = config.contextWindow ?? config.catalogEntry?.context_window
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -285,7 +286,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: config.apiFormat,
       upstreamApiFormat: config.apiFormat,
-      ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
+      codex_catalog_model_id: config.codexCatalogModelId || DEFAULT_CODEX_CATALOG_MODEL_ID,
+      ...(contextWindow ? { model_context_window: contextWindow } : {}),
       ...(config.maxOutputTokens ? { max_output_tokens: config.maxOutputTokens } : {}),
       ui: {
         family,
@@ -1059,7 +1061,7 @@ function localRuntimeModelConfig(
     const requestUrl = localModelConfigRequestUrl(localModel)
     const visionSidecar = localVisionSidecarConfig(localModel)
     const primaryCodexCatalogModelId =
-      localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+      localModel.codexCatalogModelId || DEFAULT_CODEX_CATALOG_MODEL_ID
     const nativeCodexTools =
       localModel.apiFormat === 'openai-responses' &&
       localModel.codexToolCompatibility !== 'standard'
@@ -1161,7 +1163,7 @@ function localRuntimeModelConfig(
         : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
-      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
+      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_CODEX_CATALOG_MODEL_ID
     return {
       ...gatewayConfig,
       codex_catalog_model_id: primaryCodexCatalogModelId,

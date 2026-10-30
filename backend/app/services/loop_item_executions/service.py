@@ -2251,6 +2251,7 @@ class LoopItemExecutionService:
         expected_version: Optional[int] = None,
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
+        reconciled: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
@@ -2266,6 +2267,7 @@ class LoopItemExecutionService:
             observed_at=observed_at,
             event_seq=event_seq,
             termination_reason="runtime_succeeded",
+            reconciled=reconciled,
         )
         return result
 
@@ -2490,6 +2492,7 @@ class LoopItemExecutionService:
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
         termination_reason: Optional[str] = None,
+        reconciled: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Atomically choose and project the first terminal outcome.
 
@@ -2569,6 +2572,7 @@ class LoopItemExecutionService:
                 error=error,
                 summary_note=note,
                 completed_at=now,
+                reconciled=reconciled,
             )
             notify_execution_lifecycle(
                 db,
@@ -2753,6 +2757,7 @@ class LoopItemExecutionService:
         error: Optional[str],
         summary_note: Optional[str],
         completed_at: datetime,
+        reconciled: bool = False,
     ) -> ProjectChatMessage | None:
         """Apply the elected execution outcome without committing or pushing."""
 
@@ -2769,6 +2774,10 @@ class LoopItemExecutionService:
                 error=error,
             )
             metadata = dict(activity.metadata_json or {})
+            if reconciled and isinstance(metadata.get("runtime_turn_id"), str):
+                # Outcome-only observations must retain eligibility for the
+                # matching final event to supply text after this transaction.
+                metadata.setdefault("runtime_completed_at", completed_at.isoformat())
             activity.metadata_json = {
                 **metadata,
                 "run_status": terminal_status,
@@ -4467,6 +4476,7 @@ class LoopItemExecutionService:
                 content="",
                 expected_status=row.status,
                 expected_version=row.version,
+                reconciled=True,
             )
         if terminal == STATUS_FAILED:
             self.open_execution_activity(

@@ -414,6 +414,56 @@ describe("native conversation ordering contract", () => {
     ]);
   });
 
+  it("uses a snapshot's observed trailing output after its native user boundary", () => {
+    const reply: RuntimeConversationItem = {
+      ...item("reply", 2),
+      position: undefined,
+    };
+    const user: RuntimeConversationItem = {
+      id: "native-user",
+      type: "user_message",
+      message: {
+        id: "client-user",
+        role: "user",
+        content: "Prompt",
+        status: "done",
+      },
+    };
+    const merged = mergeRuntimeConversationTurns(
+      [turn([reply, user])],
+      [turn([{ ...user, position: 1 }, reply])],
+    );
+    expect(ids(merged)).toEqual(["native-user", "reply"]);
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      messages: [],
+      turns: merged,
+      runtimeTurns: [],
+    });
+    expect(
+      page.messages.map((message) => [message.role, message.status]),
+    ).toEqual([
+      ["user", "done"],
+      ["assistant", "streaming"],
+    ]);
+  });
+
+  it("retains an observed gap when a later delta carries no native boundary", () => {
+    const reply: RuntimeConversationItem = {
+      ...item("reply", 1),
+      position: undefined,
+    };
+    expect(
+      ids(
+        mergeRuntimeConversationTurns(
+          [turn([reply, item("native", 2)])],
+          [turn([reply])],
+        ),
+      ),
+    ).toEqual(["reply", "native"]);
+  });
+
   it("materializes the accepted user when turn start supplied only its identity", () => {
     const turns: RuntimeConversationTurn[] = [
       {

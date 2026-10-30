@@ -12,22 +12,33 @@ impl RuntimeWorkRpcHandler {
             payload["itemId"].as_str(),
             payload["assignmentId"].as_str(),
         ) else {
+            self.log_stand_in_decision(&json!({}), &json!({}), "notification_identity_missing", json!({"hasProjectId":payload["projectId"].is_string(),"hasItemId":payload["itemId"].is_string(),"hasAssignmentId":payload["assignmentId"].is_string()}));
             return Ok(());
         };
+        let context = json!({"projectId":project,"userId":payload["recipientUserId"]});
+        let event_issue = json!({"id":issue_id,"human_task_binding":{"assignmentId":assignment}});
+        self.log_stand_in_decision(&context, &event_issue, "notification_received", json!({}));
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
-        let configs: Vec<Value> = self
-            .stand_in_project_configs(&personal, project, "cloud")
-            .into_iter()
+        let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
+        let configs: Vec<Value> = project_configs
+            .iter()
             .filter(|config| {
                 config["enabled"] == true
                     && config["handlingPolicy"]["automatic"] != false
                     && config["userId"] == payload["recipientUserId"]
             })
+            .cloned()
             .collect();
         if configs.is_empty() {
+            self.log_stand_in_decision(
+                &context,
+                &event_issue,
+                "no_automatic_project_role",
+                json!({"personalSettingsCount":personal.len(),"projectRoles":project_configs.iter().map(|role|json!({"roleId":role["id"],"userId":role["userId"],"enabled":role["enabled"],"automatic":role["handlingPolicy"]["automatic"]})).collect::<Vec<_>>()}),
+            );
             return Ok(());
         }
         self.verify_stand_in_user(&configs[0]).await?;
@@ -42,12 +53,27 @@ impl RuntimeWorkRpcHandler {
         if issue["cloud_project_id"] != project
             || issue["human_task_binding"]["assignmentId"] != assignment
         {
+            self.log_stand_in_decision(&context, &issue, "notification_assignment_mismatch", json!({
+                "notificationAssignmentId":assignment,"actualProjectId":issue["cloud_project_id"]
+            }));
             return Ok(());
         }
         if super::personal_stand_in::matching_personal_roles(&configs, &issue).is_empty() {
+            self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
-        self.start_cloud_stand_in_with_roles(&configs, &issue).await
+        let result = self.start_cloud_stand_in_with_roles(&configs, &issue).await;
+        self.log_stand_in_decision(
+            &configs[0],
+            &issue,
+            if result.is_ok() {
+                "notification_processed"
+            } else {
+                "notification_failed"
+            },
+            json!({"errorCode":result.as_ref().err().map(|error| &error.code)}),
+        );
+        result
     }
 }
 
@@ -115,6 +141,39 @@ mod tests {
 
     fn notification() -> Value {
         json!({"method":"runtime.stand_in.assignment","payload":{"projectId":"project","itemId":"issue","assignmentId":"assignment","recipientUserId":7}})
+    }
+
+    #[tokio::test]
+    async fn active_assignment_bound_elsewhere_silently_skips_then_reports_already_handled() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        fixture
+            .handler
+            .handle_runtime_rpc(notification())
+            .await
+            .unwrap();
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
+        assert!(fixture.handler.local_task_links(true).is_empty());
+
+        let error = fixture
+            .handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.stand_in.run",
+                "payload": {
+                    "projectId": "project", "issueId": "issue", "userId": 7,
+                    "projectStore": "cloud", "standInId": "default"
+                }
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "assignment_already_handled");
+        assert_eq!(
+            error.message,
+            "This assignment has already been handled or is no longer active"
+        );
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert!(fixture.handler.local_task_links(true).is_empty());
     }
 
     #[tokio::test]

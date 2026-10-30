@@ -38,7 +38,7 @@ it('returns failure to the pane rollback path and permits retrying the same conv
     onRuntimeTaskOptimisticOpen: vi.fn(),
   }
   await expect(mocks.createTask!('请继续', options)).resolves.toBe(false)
-  expect(onError).toHaveBeenCalledWith(expect.stringContaining('creation unavailable'))
+  expect(onError).toHaveBeenCalledWith('分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。')
   await act(async () => {
     await expect(mocks.createTask!('请继续', options)).resolves.toMatchObject({
       deviceId: 'device',

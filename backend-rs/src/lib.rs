@@ -145,6 +145,7 @@ mod internal_callback;
 mod internal_conversion_callback;
 mod internal_robot_queue;
 pub mod json_decode_error;
+mod jwt_compat;
 mod knowledge_artifacts;
 mod knowledge_base_detail;
 mod knowledge_bases_all_grouped;

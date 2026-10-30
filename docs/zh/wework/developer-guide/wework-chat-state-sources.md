@@ -50,6 +50,25 @@ sidebar_position: 18
 | 附件/模型/技能选择            | `projectChat` context                                                                                                           | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
 | 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                                                         | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
 
+## 会话滚动与图表渲染
+
+消息列表的尺寸由 TanStack Virtual 和原生 ResizeObserver 统一维护。滚动期间继续显示正文，行组件按消息身份复用；不要再添加第二套行高写入、滚动占位正文或逐帧 Markdown 高度估算。
+
+首次进入会话定位到最新内容，恢复阅读时使用保存的位置。接近已加载历史顶部时，由当前滚动容器内的边界观察器提前请求上一页；新记录插入上方，通过稳定的消息、内容块和段落身份保持阅读位置。边界标记始终为 1px，加载提示和分页操作通过 portal 浮在正文外，不参与高度计算。搜索打开时保留显式加载入口，隐藏面板暂停自动加载；请求失败或完成后边界未推进时保留手动恢复入口，避免循环请求。手动重试期间保留按钮和键盘焦点。
+
+图表预览按文档、源码、主题和服务地址缓存清洗后的静态 SVG 产物及尺寸。Mermaid 编译串行执行，同一产物的并发请求共享一次编译；消息挂载静态图片和轻量缩放画布，全屏复用相同产物。内联图表允许纵向触摸滚动会话，全屏保留自由拖动。离屏重挂载不应重新编译同一图表，也不应保留每行独立的完整文件查看器。
+
+```mermaid
+flowchart LR
+  A[滚动容器] --> B[历史边界预取]
+  B --> C[上方插入历史]
+  C --> D[恢复语义阅读锚点]
+  B --> E[正文外加载提示或分页按钮]
+  F[消息行] --> G[图表产物缓存]
+  G --> H[静态图片与轻量缩放]
+  H -->|打开大图| I[全屏展示相同产物]
+```
+
 ## 看板会话分屏
 
 项目空间看板上的 Hover 任务面板是原任务会话的分屏视图，不是独立预览会话。任务页、Hover 面板和卡片摘要必须使用同一个 runtime task address，并读取 `runtimeConversationCache` 中同一份 canonical `RuntimeConversationTurn[]`。
@@ -208,11 +227,15 @@ Claude Code 的 `/compact` 是普通原生命令；Codex 仍使用其 app-server
 
 ### 上下文压缩结果
 
+上下文指示器使用运行时窗口与模型输入预算的较小值。未配置窗口时，从所选 Wework Catalog 读取窗口；本地自定义模型使用其 Catalog 窗口。输入预算需要扣除显式输出上限；Chat Completions 和 Anthropic Messages 未填写输出上限时预留 96,000 tokens。原生 Responses 未填写输出上限时保留服务商默认行为。显式输出预算或转换协议默认预算存在时，执行器在输入预算的 80% 触发自动压缩；手动压缩提示默认从 75% 开始。
+
 执行器的实时条目缓存必须保留压缩开始与完成状态；把中断回合写入历史缓存时，尚未完成的压缩必须保持未完成结果。
 
 只有压缩完成事件能把 `context_compaction` 标记为成功。回合结束或用户停止时，尚未完成的压缩显示“上下文压缩未完成”，不能随普通处理条目一起结算为 `done`。已经完成的压缩保留成功状态，即使所属回合后来被停止。
 
 压缩被中断时，上下文尚未缩小，下一轮可能再次触发自动压缩。历史刷新不能把中断的尝试变成成功；Codex 历史可能不保留未完成的尝试。桌面 `context-compaction` 检查点覆盖成功压缩、中断、刷新历史和后续重新压缩。
+
+同一检查点还从真实模型配置文件加载模型，验证共享 Catalog 与 Kimi Catalog 的缺省窗口、转换协议的默认及显式输出预算，以及 Responses 的显式及缺省输出预算。每组用例验证阈值前不压缩、越过阈值后自动压缩、摘要进入续聊和会话保持不变。仅模型服务被模拟；模型配置、Electron、执行器、Codex 和协议代理均使用真实实现。用例复用现有 Core CI 检查点及构建产物。
 
 ### 网页搜索工具块
 
@@ -418,7 +441,7 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 - 项目空间看板任务弹窗和项目空间任务 Tab 创建新 runtime task 时，必须统一调用 `useProjectRuntimeTaskComposer`，再进入 `createProjectRuntimeTask` 的同一条底层创建链路。`TemporaryChatPanel` 只构造一次带稳定 id 的 optimistic user message，并把同一个消息对象传入创建链路；`sendPreparedRuntimeMessage` 统一负责把该 id 发送给 executor，并将消息写入 `runtimeConversationCache`。入口组件不得各自追加首条消息，否则实时界面会同时保留本地消息和 transcript 消息，刷新后才恢复为一条。
 - 每个临时聊天 tab 都有独立的 `chat:<id>` 实例标识，允许在右侧工作区同时打开多个临时聊天。
 - 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息优先由 `runtimeConversationCache` 的实时投影恢复。切换主会话后，已结束会话的无订阅缓存可以在 5 分钟后回收；缓存缺失时，面板通过共享 `runtime.tasks.transcript` 加载 executor 保存的侧聊正文，并保留加载、错误重试与过期请求隔离。不能直接读取原生 fork 的完整历史，否则会把继承的主会话正文混入侧聊。
-- `TemporaryChatPanel` 默认使用与主会话相同的 DOM 底部原点滚动模型。首次显示已有消息或切换回会话时，虚拟列表必须在 layout commit 内直接恢复到底部或已保存的阅读位置，不能先绘制顶部位置再向下校正；只有明确需要顶部原点语义的调用方才可覆盖该默认值。
+- `TemporaryChatPanel` 与主会话统一使用正常 DOM 滚动坐标，顶部为零，溢出会话的底部为 `scrollHeight - clientHeight`。短会话从顶部排列；首次显示已有长会话或切换回会话时，在 layout commit 内直接恢复到底部或已保存的阅读位置，不能先绘制顶部位置再向下校正。
 - 每个临时聊天的附件选择、上传进度和错误状态也按实例隔离，不能复用主聊天 composer 的附件状态；首条消息必须把该实例的附件显式传给 `createTemporaryRuntimeTask`。
 - 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
@@ -434,7 +457,7 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中伪造 rollout。多轮临时聊天使用隐藏的 runtime task、`sideSource` 与可恢复的原生线程；一次性辅助生成使用原生 ephemeral 线程。
 
-修改该链路后运行 `pnpm --filter wework e2e:desktop --segment temporary-chat`。独立真实 Electron 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在首次显示消息和切换回会话后确认滚动容器保持底部原点及底部锚定，同时确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+该链路的 CI 回归入口是 `pnpm --filter wework e2e:desktop --segment temporary-chat`，仅在用户明确要求时本地执行。独立真实 Electron 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在首次显示消息和切换回会话后确认正常滚动坐标及底部锚定，同时确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

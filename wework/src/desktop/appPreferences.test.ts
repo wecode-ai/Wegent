@@ -22,7 +22,7 @@ const mergedDefaultPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
-  contextCompactionThreshold: 85,
+  contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
