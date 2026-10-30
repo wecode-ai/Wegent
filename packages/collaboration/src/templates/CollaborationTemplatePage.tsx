@@ -138,12 +138,13 @@ function ScopedCollaborationTemplatePage({
         installed: listing.is_installed,
       })
     }
-  if (tab === 'mine' || (tab === 'available' && mode === 'marketplace'))
+  if (tab === 'mine' || tab === 'available')
     for (const summary of mine.filter(
       item => tab === 'available' || item.ownerId === store.library.ownerId
     )) {
       const key = `${summary.ownerId}:${summary.namespace}:${summary.name}`
-      if (!cards.has(key))
+      const cached = cards.get(key)?.record
+      if (!cached || (!cached.pendingSync && cached.document.spec.version !== summary.version))
         cards.set(key, {
           key,
           id: summary.id,
@@ -283,7 +284,9 @@ function ScopedCollaborationTemplatePage({
                       ? m.personal
                       : card.record
                         ? m.downloaded
-                        : ''}
+                        : card.installed
+                          ? m.accountAvailable
+                          : ''}
               </span>
             </div>
             <h3>{card.name}</h3>

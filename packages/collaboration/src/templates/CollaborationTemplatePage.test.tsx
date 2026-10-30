@@ -136,34 +136,82 @@ it('keeps cached templates usable when independent discovery requests fail', asy
   expect(backend.get).not.toHaveBeenCalled()
 })
 
-it('shows server-installed templates under marketplace capabilities without downloading them', async () => {
+it.each(['desktop', 'marketplace'] as const)(
+  'shows account-installed templates in %s without downloading them',
+  async mode => {
+    const backend = remote()
+    vi.mocked(backend.list).mockResolvedValue([
+      {
+        id: 42,
+        ownerId: 8,
+        name: 'shared-product',
+        namespace: 'default',
+        displayName: 'Shared product',
+        description: 'Team workflow',
+        version: '1.0.0',
+        revision: '1',
+      },
+    ])
+    const store = new CollaborationTemplateStore({
+      scope: 'backend:7',
+      ownerId: 7,
+      remote: backend,
+      persistence: { read: async () => [], write: async () => undefined },
+    })
+    await act(async () =>
+      root.render(<CollaborationTemplatePage store={store} locale="en" mode={mode} />)
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    })
+    await click('template-tab-available')
+    if (mode === 'marketplace') expect(container.textContent).toContain('My capabilities')
+    expect(container.textContent).toContain('Shared product')
+    expect(backend.get).not.toHaveBeenCalled()
+  }
+)
+
+it('uses a private template update advertised by account metadata instead of an older local copy', async () => {
   const backend = remote()
+  const previous: TemplateRecord = {
+    ...builtinCollaborationTemplates()[0],
+    id: 42,
+    ownerId: 7,
+    source: 'personal',
+  }
+  previous.document = structuredClone(previous.document)
+  previous.document.metadata = { name: 'private-workflow', namespace: 'default' }
+  const updated = structuredClone(previous)
+  updated.document.spec.version = '2.0.0'
+  vi.mocked(backend.get).mockResolvedValue(updated)
   vi.mocked(backend.list).mockResolvedValue([
     {
       id: 42,
-      ownerId: 8,
-      name: 'shared-product',
+      ownerId: 7,
       namespace: 'default',
-      displayName: 'Shared product',
-      description: 'Team workflow',
-      version: '1.0.0',
-      revision: '1',
+      name: 'private-workflow',
+      displayName: 'Private workflow',
+      description: '',
+      version: '2.0.0',
+      revision: '2',
     },
   ])
   const store = new CollaborationTemplateStore({
     scope: 'backend:7',
     ownerId: 7,
     remote: backend,
-    persistence: { read: async () => [], write: async () => undefined },
+    persistence: { read: async () => [previous], write: async () => undefined },
   })
+  const onUse = vi.fn()
   await act(async () =>
-    root.render(<CollaborationTemplatePage store={store} locale="en" mode="marketplace" />)
+    root.render(<CollaborationTemplatePage store={store} locale="en" onUse={onUse} />)
   )
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 250))
   })
-  await click('template-tab-available')
-  expect(container.textContent).toContain('My capabilities')
-  expect(container.textContent).toContain('Shared product')
-  expect(backend.get).not.toHaveBeenCalled()
+  await click('template-tab-mine')
+  await click('template-details-42')
+  await click('template-use')
+  expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ document: updated.document }))
+  expect(backend.install).not.toHaveBeenCalled()
 })

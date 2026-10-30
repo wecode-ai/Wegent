@@ -453,6 +453,12 @@ get_changed_files() {
 # Get list of changed files in the commits being pushed
 CHANGED_FILES=$(get_changed_files)
 
+# Quality checks create their own repositories. Git exports the caller's local
+# context to hooks, which would redirect those commands into the pushed checkout.
+while IFS= read -r git_context_variable; do
+    unset "$git_context_variable"
+done < <(git rev-parse --local-env-vars)
+
 if [ -z "$CHANGED_FILES" ]; then
     echo -e "${GREEN}✅ No files changed, skipping checks${NC}"
     exit 0

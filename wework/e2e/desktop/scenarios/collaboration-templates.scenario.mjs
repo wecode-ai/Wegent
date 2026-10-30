@@ -11,6 +11,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let cloud
   let source
   let consumerToken
+  let accountTemplate
   const projectName = `模板协作验收-${process.pid}`
   const savedName = `团队标准流程-${process.pid}`
   const request = async (path, method = 'GET', values, token = cloud.authToken, expected) => {
@@ -146,6 +147,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         consumerToken
       )
       assert.equal(read.document.spec.version, '2.0.0')
+      const sharedDocument = structuredClone(document)
+      sharedDocument.metadata.name = `consumer-workflow-${process.pid}`
+      sharedDocument.spec.displayName = `Account workflow ${process.pid}`
+      accountTemplate = await request(
+        `/api/v1/collaboration-templates/${sharedDocument.metadata.name}`,
+        'PUT',
+        { document: sharedDocument, expectedRevision: null },
+        consumerToken
+      )
+      await request(
+        '/api/resource-library/listings',
+        'POST',
+        {
+          resource_type: 'template',
+          source_id: accountTemplate.id,
+          display_name: sharedDocument.spec.displayName,
+          version: '1.0.0',
+          status: 'published',
+        },
+        consumerToken
+      )
+      await request(`/api/resource-library/listings/${accountTemplate.id}/install`, 'POST', {
+        target_namespace: 'default',
+      })
       await request(
         `/api/resource-library/listings/${source.id}/publication`,
         'PUT',
@@ -171,6 +196,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await wait(control, 'collaboration-platform-root')
       await click(control, 'collaboration-primary-templates')
+      await click(control, 'template-tab-available')
+      await wait(
+        control,
+        `template-card-${accountTemplate.id}`,
+        accountTemplate.document.spec.displayName
+      )
+      await capture(control, '00-account-available')
+      await click(control, 'template-tab-discover')
       await wait(control, 'template-card-product-lifecycle', '产品全流程')
       await capture(control, '01-discover')
       await click(control, 'template-details-product-lifecycle')

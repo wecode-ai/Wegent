@@ -49,6 +49,14 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "${PUSH_GATE_TEST_REQUIRE_CLEAN_GIT_ENV:-0}" = "1" ]; then
+    for variable in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; do
+        if declare -p "$variable" >/dev/null 2>&1; then
+            echo "Quality check inherited repository context: $variable" >&2
+            exit 1
+        fi
+    done
+fi
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
         '--filter @wegent/chat-core test'*)
@@ -240,6 +248,10 @@ fi
 
 AI_VERIFIED=1 \
 AI_PUSH_FULL_TESTS=1 \
+PUSH_GATE_TEST_REQUIRE_CLEAN_GIT_ENV=1 \
+GIT_DIR="$(git -C "$PROJECT_ROOT" rev-parse --absolute-git-dir)" \
+GIT_WORK_TREE="$PROJECT_ROOT" \
+GIT_INDEX_FILE="$TMP_DIR/isolated-hook-index" \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
 refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
