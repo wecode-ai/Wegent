@@ -184,6 +184,36 @@ impl RuntimeWorkRpcHandler {
         };
         let thread_id = codex_notification_thread_id(message);
         let started = notification.method == "turn/started";
+        let before = self
+            .local_task_link(task_id)
+            .and_then(|link| native_execution_state(&link));
+        log_executor_event(
+            "runtime native turn boundary applying",
+            &[
+                ("local_task_id", task_id.to_owned()),
+                ("method", notification.method.clone()),
+                ("turn_id", turn_id.clone()),
+                ("native_sequence", message.sequence().to_string()),
+                (
+                    "process_generation",
+                    message.process_generation().to_string(),
+                ),
+                (
+                    "previous_turn_id",
+                    before
+                        .as_ref()
+                        .and_then(|state| state.latest_turn_id.clone())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "previous_native_sequence",
+                    before
+                        .as_ref()
+                        .map_or(0, |state| state.native_sequence)
+                        .to_string(),
+                ),
+            ],
+        );
         let mut changed = false;
         let updated = self.store.update_task(task_id, |link| {
             if thread_id.is_some() && thread_id != link.thread_id {

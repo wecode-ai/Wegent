@@ -1408,6 +1408,33 @@ impl CodexNotificationHub {
     async fn send(&self, message: Value) {
         let message =
             CodexNotification::from(message).with_process_generation(self.process_generation);
+        if matches!(
+            message["method"].as_str(),
+            Some("turn/started" | "turn/completed")
+        ) {
+            log_executor_event(
+                "codex native turn boundary received",
+                &[
+                    (
+                        "method",
+                        message["method"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    ("process_generation", self.process_generation.to_string()),
+                    ("native_sequence", message.sequence().to_string()),
+                    (
+                        "thread_id",
+                        stream_thread_id(message_params(&message)).unwrap_or_default(),
+                    ),
+                    (
+                        "turn_id",
+                        message["params"]["turn"]["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                ],
+            );
+        }
         self.send_runtime(message.clone()).await;
         let _ = self.all.send(message.clone());
         let thread_id =
