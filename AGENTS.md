@@ -89,6 +89,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
+- If repeated attempts fail to fix the same problem, promptly stop adding patches. Complete root-cause investigation and analysis, obtain concrete evidence of the cause, and only then resume fixing it.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
@@ -134,7 +135,7 @@ pnpm --dir frontend test
 
 - Branches: `<type>/<description>` where type is `feature`, `fix`, `refactor`, `docs`, `test`, or `chore`.
 - Commits use Conventional Commits: `<type>[scope]: <description>`.
-- Respect Husky output; never use `--no-verify`.
+- The first push for a branch must run the hooks and complete the full test suite successfully; do not use `--no-verify`. For subsequent fix commits, assess the scope of the code changes and choose whether to use `git push --no-verify` to skip the push hooks. This exception does not waive required focused tests or allow bypassing commit hooks.
 - Do not commit temporary screenshots, logs, dumps, or build artifacts. If required for delivery, explain their purpose and obtain explicit user authorization.
 - Pull the latest main branch and resolve conflicts before opening a PR. Run `git push` in an isolated background process because pre-push checks are expensive.
 
