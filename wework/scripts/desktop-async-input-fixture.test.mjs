@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
-import test from 'node:test'
+import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import {
   MODEL_API_KEY,
