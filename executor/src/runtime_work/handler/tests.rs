@@ -6910,7 +6910,7 @@ async fn execution_mapper_persists_historical_completion_without_remapping_it() 
 }
 
 #[test]
-fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
+fn context_compaction_notifications_use_the_native_turn_identity() {
     let (event_tx, mut event_rx) = broadcast::channel(4);
     let index_path = temp_runtime_work_index_path("context-compaction-route");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -6946,10 +6946,7 @@ fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
         .try_recv()
         .expect("compaction event should be emitted");
     assert_eq!(event["event"], "response.block.created");
-    assert_eq!(
-        event["payload"]["subtaskId"],
-        "runtime-task-1-context-compact"
-    );
+    assert_eq!(event["payload"]["subtaskId"], "compact-turn-1");
     assert_eq!(
         event["payload"]["data"]["block"]["tool_name"],
         "context_compaction"

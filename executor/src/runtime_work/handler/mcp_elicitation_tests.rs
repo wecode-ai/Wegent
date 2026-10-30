@@ -340,6 +340,7 @@ fn ordinary_pending_requests_are_cleared_by_turn_changes_and_completion() {
     );
     handler.refresh_pending_user_input_status("task-1");
     assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-3");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-3",

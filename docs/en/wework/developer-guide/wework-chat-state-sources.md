@@ -355,7 +355,15 @@ older queued snapshot cannot make the cancelled task busy again.
 Content mappers neither cache Goal status nor gate native lifecycle delivery. Native turn
 completion settles that turn's messages and thinking blocks. Late content can enrich a
 settled message but cannot restore streaming. After committing content, the native completion entry publishes the terminal event with full text and native turn identity. Clients must not synthesize an empty completion from a lifecycle snapshot. An ordinary RPC releases its own scheduling resources without repeating native successful results; it must preserve recovery journals for still-active Goal executions. Context compaction can
-update content routing without replacing execution state.
+update content routing without replacing execution state. Compaction events use the native
+turn identity carried by each notification, never a previous manual compaction request ID.
+Only a native turn start establishes the active content buffer; late text cannot reassign it.
+
+The streaming ingress reads only required metadata rather than copying the complete task
+and completed history for each text chunk. The lifecycle reducer filters unrelated events
+before reading task state; routing identity and local Issue progress use read-only Store
+projections. Lifecycle boundaries still publish complete snapshots. Do not hide backlog by
+dropping events or increasing observation timeouts.
 
 The lifecycle owner receives native events through a bounded channel with backpressure,
 so congestion cannot discard events. Subscriptions belong to the long-lived client and

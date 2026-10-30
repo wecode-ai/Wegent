@@ -109,6 +109,95 @@ fn native_child_output_uses_its_parent_turn_before_rpc_binding() {
 }
 
 #[test]
+fn automatic_compaction_does_not_reuse_a_previous_manual_request_identity() {
+    let (mut handler, root, mut request) = setup("native-compaction-after-manual");
+    let (sender, mut events) = broadcast::channel(32);
+    handler.event_tx = Some(sender);
+    request.subtask_id = "task-1-context-compact".into();
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+    handler.route_codex_notification(notification("turn/started", "manual-turn"));
+    handler.route_codex_notification(notification("turn/completed", "manual-turn"));
+    handler.route_codex_notification(notification("turn/started", "ordinary-turn"));
+    while events.try_recv().is_ok() {}
+    handler.route_codex_notification(json!({"method": "item/started", "params": {
+        "threadId": "thread-1", "turnId": "ordinary-turn", "item": {
+            "id": "auto-compaction", "type": "contextCompaction"
+        }
+    }}));
+    let event = events.try_recv().unwrap();
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(event["payload"]["subtaskId"], "ordinary-turn");
+    assert_eq!(
+        event["payload"]["data"]["block"]["tool_name"],
+        "context_compaction"
+    );
+    assert_eq!(event["payload"]["data"]["block"]["status"], "pending");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn native_text_chunks_do_not_copy_the_tasks_completed_history() {
+    let (mut handler, root, _) = setup("native-text-history-read-budget");
+    let (sender, mut events) = broadcast::channel(64);
+    handler.event_tx = Some(sender);
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["completedTranscriptMessages"] = json!([{
+            "id": "history", "role": "assistant", "content": "history".repeat(100_000)
+        }]);
+    });
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(json!({"method": "item/started", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "item": {
+            "id": "current", "type": "agentMessage", "text": "", "phase": "final_answer"
+        }
+    }}));
+    while events.try_recv().is_ok() {}
+    let before = handler.store.full_task_read_count();
+    for _ in 0..16 {
+        handler.route_codex_notification(json!({"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "itemId": "current", "delta": "chunk"
+        }}));
+    }
+    handler.route_codex_notification(json!({"method": "item/completed", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "item": {
+            "id": "current", "type": "agentMessage", "text": "chunk".repeat(16),
+            "phase": "final_answer"
+        }
+    }}));
+    assert_eq!(handler.store.full_task_read_count(), before);
+    let mut text_events = 0;
+    while let Ok(event) = events.try_recv() {
+        if event["event"] == "response.output_text.delta" {
+            assert_eq!(event["payload"]["subtaskId"], "turn-1");
+            assert_eq!(event["payload"]["data"]["delta"], "chunk");
+            text_events += 1;
+        }
+    }
+    assert_eq!(text_events, 16);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn late_text_delta_cannot_reassign_the_open_native_transcript() {
+    let (handler, root, _) = setup("native-text-cache-turn-owner");
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    handler.route_codex_notification(notification("turn/started", "turn-2"));
+    for (turn, text) in [("turn-2", "current"), ("turn-1", "late")] {
+        handler.route_codex_notification(json!({"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-1", "turnId": turn, "itemId": turn, "delta": text
+        }}));
+    }
+    let active = handler.active_codex_transcript_items.lock().unwrap();
+    let transcript = active.get("task-1").unwrap();
+    assert_eq!(transcript.turn_id, "turn-2");
+    assert_eq!(transcript.items.len(), 1);
+    assert_eq!(transcript.items[0]["text"], "current");
+    drop(active);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rpc_success_cannot_consume_a_native_turn_before_its_answer_settlement() {
     let (handler, root, _) = setup("native-answer-after-rpc");
     handler.route_codex_notification(notification("turn/started", "turn-1"));

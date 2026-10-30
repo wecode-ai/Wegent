@@ -1028,13 +1028,13 @@ impl RuntimeWorkRpcHandler {
             event_request.subtask_id = turn_id.to_owned();
         }
         let continuation = turn_id.is_some_and(|turn_id| {
-            self.local_task_link(local_task_id).is_some_and(|link| {
+            self.store.read_task(local_task_id, |link| {
                 link.runtime_handle
                     .get("turnIdsBySubtask")
                     .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
                     .and_then(Value::as_str)
                     .is_some_and(|initial| initial != turn_id)
-            })
+            }) == Some(true)
         });
         if request
             .extra

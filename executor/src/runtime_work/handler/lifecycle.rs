@@ -124,11 +124,18 @@ impl RuntimeWorkRpcHandler {
         message: &CodexNotification,
     ) {
         let notification = codex_notification(message);
-        if !is_root_codex_turn_event(notification.params)
-            || self.local_task_link(task_id).is_some_and(|link| {
+        if !matches!(
+            notification.method.as_str(),
+            "turn/started"
+                | "turn/completed"
+                | "thread/goal/updated"
+                | "thread/goal/cleared"
+                | "error"
+        ) || !is_root_codex_turn_event(notification.params)
+            || self.store.read_task(task_id, |link| {
                 codex_notification_thread_id(message)
                     .is_some_and(|thread| link.thread_id.as_deref() != Some(thread.as_str()))
-            })
+            }) == Some(true)
         {
             return;
         }

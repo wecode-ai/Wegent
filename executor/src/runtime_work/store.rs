@@ -60,6 +60,8 @@ pub(crate) struct RuntimeWorkStore {
     last_written_payload: Arc<Mutex<Option<Vec<u8>>>>,
     #[cfg(test)]
     write_attempts: Arc<AtomicU64>,
+    #[cfg(test)]
+    full_task_reads: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -380,6 +382,8 @@ impl RuntimeWorkStore {
             last_written_payload: Arc::new(Mutex::new(last_written_payload)),
             #[cfg(test)]
             write_attempts: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_task_reads: Arc::new(AtomicU64::new(0)),
         };
         if migration_required {
             store.persist_current_index();
@@ -423,18 +427,28 @@ impl RuntimeWorkStore {
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
-        self.refresh_index_from_disk_if_changed();
-        self.index.lock().ok()?.tasks.get(local_task_id).cloned()
+        #[cfg(test)]
+        self.full_task_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_task(local_task_id, Clone::clone)
+    }
+
+    #[cfg(test)]
+    pub fn full_task_read_count(&self) -> u64 {
+        self.full_task_reads.load(Ordering::Relaxed)
     }
 
     pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.read_task(local_task_id, RuntimeTaskLink::list_summary)
+    }
+
+    /// Read task metadata without copying its buffered transcript.
+    pub fn read_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
-        self.index
-            .lock()
-            .ok()?
-            .tasks
-            .get(local_task_id)
-            .map(RuntimeTaskLink::list_summary)
+        self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
