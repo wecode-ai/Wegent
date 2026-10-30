@@ -151,7 +151,7 @@ fn verify_background_terminal_settlement(persist_before_finish: bool, retain_act
     if retain_active_turn {
         handler.route_codex_notification(completion.clone());
         assert!(handler.active_codex_turn("task-1").is_some());
-        assert!(event_rx.try_recv().is_err());
+        assert!(next_content_event(&mut event_rx).is_err());
     } else {
         handler.clear_active_codex_turn("task-1", execution_id);
     }
@@ -174,14 +174,14 @@ fn verify_background_terminal_settlement(persist_before_finish: bool, retain_act
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
     assert!(
-        event_rx.try_recv().is_err(),
+        next_content_event(&mut event_rx).is_err(),
         "output must be emitted only once"
     );
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn background_terminal_started_turn_does_not_route_before_execution_mapper_is_ready() {
+fn native_command_output_does_not_depend_on_request_observer_readiness() {
     let (mut handler, root) = isolated_runtime_work_handler("background-terminal-startup");
     let (event_tx, mut event_rx) = broadcast::channel(8);
     handler.event_tx = Some(event_tx);
@@ -199,9 +199,13 @@ fn background_terminal_started_turn_does_not_route_before_execution_mapper_is_re
         "method": "item/commandExecution/outputDelta",
         "params": {"threadId": "thread-1", "turnId": "new-turn-1", "itemId": "command-1", "delta": "tick\n"}
     }));
-    assert!(
-        event_rx.try_recv().is_err(),
-        "a new turn must remain owned by its execution mapper"
+    let event =
+        next_content_event(&mut event_rx).expect("the native router must own command delivery");
+    assert_eq!(event["event"], "response.block.updated");
+    assert_eq!(event["payload"]["subtaskId"], "new-turn-1");
+    assert_eq!(
+        event["payload"]["data"]["updates"]["tool_output_delta"],
+        "tick\n"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -241,7 +245,6 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
             "status": "inProgress", "aggregatedOutput": "ready\n"
         }]}
     }});
-    let mut mapper = CodexNotificationEventMapper::default();
     let hook_turn = handler.active_codex_turn("task-1");
     if router_observed_completion {
         handler.route_codex_notification(completion.clone());
@@ -249,16 +252,15 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
     // A lagged router can miss completion and receive output while the native
     // receiver is preempted before its active-turn callback runs.
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             "task-1",
             execution_id,
             &request,
             hook_turn.clone(),
-            &mut mapper,
             completion,
         )
         .await;
-    while event_rx.try_recv().is_ok() {}
+    while next_content_event(&mut event_rx).is_ok() {}
     for sequence in [2, 3] {
         let output = CodexNotification::from(
             json!({"method": "item/commandExecution/outputDelta", "params": {
@@ -273,12 +275,11 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
             }
         }
         handler
-            .map_execution_codex_notification(
+            .deliver_native_notification_for_execution(
                 "task-1",
                 execution_id,
                 &request,
                 hook_turn.clone(),
-                &mut mapper,
                 output.clone(),
             )
             .await;
@@ -293,10 +294,11 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
             handler.route_codex_notification(output);
         }
         assert_eq!(
-            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["tool_output_delta"],
+            next_content_event(&mut event_rx).unwrap()["payload"]["data"]["updates"]
+                ["tool_output_delta"],
             "tick\n"
         );
-        assert!(event_rx.try_recv().is_err());
+        assert!(next_content_event(&mut event_rx).is_err());
     }
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(
@@ -345,15 +347,13 @@ async fn background_terminal_concurrent_receivers_preserve_native_output_order()
     });
     let execution_handler = handler.clone();
     let execution = tokio::spawn(async move {
-        let mut mapper = CodexNotificationEventMapper::default();
         for message in messages {
             execution_handler
-                .map_execution_codex_notification(
+                .deliver_native_notification_for_execution(
                     "task-1",
                     execution_id,
                     &request,
                     execution_handler.active_codex_turn("task-1"),
-                    &mut mapper,
                     message,
                 )
                 .await;
@@ -364,7 +364,7 @@ async fn background_terminal_concurrent_receivers_preserve_native_output_order()
     execution.await.unwrap();
     let mut output = String::new();
     let mut count = 0;
-    while let Ok(event) = event_rx.try_recv() {
+    while let Ok(event) = next_content_event(&mut event_rx) {
         output.push_str(
             event["payload"]["data"]["updates"]["tool_output_delta"]
                 .as_str()
@@ -418,20 +418,19 @@ async fn background_terminal_old_turn_output_is_recorded_once_during_a_new_turn(
     );
     handler.route_codex_notification(message.clone());
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             "task-1",
             execution_id,
             &request,
             handler.active_codex_turn("task-1"),
-            &mut CodexNotificationEventMapper::default(),
             message,
         )
         .await;
     assert_eq!(
-        event_rx.try_recv().unwrap()["payload"]["subtaskId"],
+        next_content_event(&mut event_rx).unwrap()["payload"]["subtaskId"],
         "old-turn-1"
     );
-    assert!(event_rx.try_recv().is_err());
+    assert!(next_content_event(&mut event_rx).is_err());
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
     assert_eq!(
@@ -477,7 +476,7 @@ fn background_terminal_notifications_keep_the_command_turn_after_compaction_rout
         params["threadId"] = json!("thread-1");
         params["turnId"] = json!("command-turn-1");
         handler.route_codex_notification(json!({"method": method, "params": params}));
-        let event = event_rx.try_recv().expect("command update must be emitted");
+        let event = next_content_event(&mut event_rx).expect("command update must be emitted");
         assert_eq!(event["event"], "response.block.updated");
         assert_eq!(event["payload"]["subtaskId"], "command-turn-1");
         assert_eq!(event["payload"]["data"]["block_id"], "command-1");

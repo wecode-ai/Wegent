@@ -80,7 +80,12 @@ export function deriveRuntimePaneStatus({
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      isSubmitting || isAwaitingAssistant || (running && !activeAssistantMessage),
+      isSubmitting ||
+      isAwaitingAssistant ||
+      (running &&
+        !activeAssistantMessage &&
+        lifecycle?.execution.phase !== 'continuing' &&
+        lifecycle?.execution.phase !== 'recovering'),
     canSendQueuedMessage: Boolean(currentRuntimeTask) && continuable && !isBusy,
   }
 }

@@ -416,9 +416,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn project_queue_progress(&self, local_task_id: &str, content: &str) {
-        if !self
-            .local_task_link(local_task_id)
-            .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "local")
+        if self.store.read_task(local_task_id, |link| {
+            link.runtime_handle["origin"]["projectStore"] == "local"
+        }) != Some(true)
         {
             return;
         }

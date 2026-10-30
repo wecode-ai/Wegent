@@ -159,6 +159,7 @@ export const DESKTOP_CHECKPOINTS = [
   'application-menu',
   'tray-lifecycle',
   'window-lifecycle',
+  'native-lifecycle',
   'goal-lifecycle',
   'goal-state-sync',
   'supervisor-lifecycle',

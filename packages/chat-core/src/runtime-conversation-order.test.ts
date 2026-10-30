@@ -203,6 +203,29 @@ describe("native conversation ordering contract", () => {
       })[0],
     ).toMatchObject({ id: "turn", startedAt: 40_000 });
   });
+  it("binds a metadata-only pending user without starting or replacing its observed interval", () => {
+    const pending: RuntimeConversationTurn = {
+      id: null,
+      clientUserMessageId: "user",
+      status: "pending",
+      startedAt: 40_000,
+      items: [],
+    };
+    const bound = reduceRuntimeConversationTurns([pending], {
+      type: "assistant_bound",
+      subtaskId: "turn",
+      clientUserMessageId: "user",
+    });
+    expect(bound).toEqual([{ ...pending, id: "turn" }]);
+    expect(
+      reduceRuntimeConversationTurns(bound, {
+        type: "assistant_started",
+        subtaskId: "turn",
+        clientUserMessageId: null,
+        startedAt: 42_000,
+      }),
+    ).toEqual([{ ...pending, id: "turn", status: "streaming" }]);
+  });
   it("freezes the observed interval without reconstructing a millisecond endpoint from rounded native timestamps", () => {
     vi.spyOn(Date, "now").mockReturnValue(58_200);
     try {
@@ -607,11 +630,49 @@ describe("native conversation ordering contract", () => {
       "Original prompt",
     ]);
     expect(page.turns).toHaveLength(1);
-    expect(page.turns[0]).toMatchObject({ id: null, status: "done" });
+    expect(page.turns[0]).toMatchObject({ id: null, status: "pending" });
     expect(page.turns[0].items[0]).toMatchObject({
       type: "user_message",
       message: { content: "Original prompt" },
     });
+  });
+  it("cannot complete a running member from its user-only preview before native binding", () => {
+    const message = {
+      id: "member-request",
+      role: "user" as const,
+      content: "Assigned work",
+    };
+    const preview = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      turns: [],
+      runtimeTurns: [],
+      messages: [message],
+    });
+    const native = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      messages: [message],
+      turns: [
+        {
+          id: "member-turn",
+          status: "streaming",
+          items: [
+            {
+              id: message.id,
+              type: "user_message",
+              message,
+            },
+          ],
+        },
+      ],
+    });
+    const merged = mergeRuntimeConversationTurns(preview.turns, native.turns);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ id: "member-turn", status: "streaming" });
+    expect(preview.turns[0]).toMatchObject({ id: null, status: "pending" });
   });
   it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
     const page = projectRuntimePaneTranscript({

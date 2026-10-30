@@ -3,7 +3,10 @@ import {
   MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS,
   processingBlocks,
 } from "./runtime-turn-helpers";
-import { mergeRuntimeConversationItem } from "./runtime-turn-merge";
+import {
+  mergeRuntimeConversationItem,
+  mergeRuntimeConversationTurn,
+} from "./runtime-turn-merge";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
 import type { TurnFileChangesSummary } from "./runtime";
@@ -137,11 +140,77 @@ export function appendOptimisticUser(
   ];
 }
 
+export function bindAssistantTurn(
+  turns: RuntimeConversationTurn[],
+  action: Pick<
+    Extract<RuntimePaneMessageAction, { type: "assistant_bound" }>,
+    "subtaskId" | "clientUserMessageId"
+  >,
+): RuntimeConversationTurn[] {
+  if (!action.subtaskId || !action.clientUserMessageId) return turns;
+  const existingIndex = turns.findIndex((turn) => turn.id === action.subtaskId);
+  const userIndex = turns.findIndex(
+    (turn) =>
+      hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!) ||
+      (turn.id === null &&
+        turn.clientUserMessageId === action.clientUserMessageId),
+  );
+  if (userIndex < 0) {
+    // The RPC identity can arrive before the native start. Keep the join without
+    // claiming that execution or assistant content has started.
+    return existingIndex < 0
+      ? [
+          ...turns,
+          {
+            id: action.subtaskId,
+            clientUserMessageId: action.clientUserMessageId,
+            items: [],
+            status: "pending",
+          },
+        ]
+      : replaceAt(turns, existingIndex, {
+          ...turns[existingIndex],
+          clientUserMessageId: action.clientUserMessageId,
+        });
+  }
+  const bound = {
+    ...turns[userIndex],
+    id: action.subtaskId,
+    clientUserMessageId: action.clientUserMessageId,
+    items: turns[userIndex].items.map((item) =>
+      item.type === "user_message"
+        ? {
+            ...item,
+            message: {
+              ...item.message,
+              subtaskId: action.subtaskId,
+              turnId: action.subtaskId,
+            },
+          }
+        : item,
+    ),
+  };
+  const merged =
+    existingIndex >= 0 && existingIndex !== userIndex
+      ? mergeRuntimeConversationTurn(bound, turns[existingIndex])
+      : bound;
+  const target =
+    existingIndex < 0 ? userIndex : Math.min(userIndex, existingIndex);
+  return turns.flatMap((turn, index) =>
+    index === target
+      ? [merged]
+      : index === existingIndex || index === userIndex
+        ? []
+        : [turn],
+  );
+}
+
 export function updateStartedTurn(
   turns: RuntimeConversationTurn[],
   action: Extract<RuntimePaneMessageAction, { type: "assistant_started" }>,
 ): RuntimeConversationTurn[] {
   if (!action.subtaskId) return turns;
+  turns = bindAssistantTurn(turns, action);
   const existingIndex = turns.findIndex((turn) => turn.id === action.subtaskId);
   if (existingIndex >= 0) {
     if (turns[existingIndex].status === "cancelled") return turns;
@@ -163,14 +232,16 @@ export function updateStartedTurn(
           turn.clientUserMessageId === action.clientUserMessageId ||
           hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
       )
-    : findLastIndex(
-        turns,
-        (turn) =>
-          turn.id === null &&
-          (turn.status === "pending" ||
-            turn.status === "streaming" ||
-            turn.status === "cancelled"),
-      );
+    : action.clientUserMessageId === null
+      ? -1
+      : findLastIndex(
+          turns,
+          (turn) =>
+            turn.id === null &&
+            (turn.status === "pending" ||
+              turn.status === "streaming" ||
+              turn.status === "cancelled"),
+        );
   if (optimisticIndex >= 0) {
     const optimistic = turns[optimisticIndex];
     return replaceAt(turns, optimisticIndex, {
@@ -210,7 +281,7 @@ export function updateStartedTurn(
     ...turns,
     {
       id: action.subtaskId,
-      clientUserMessageId: action.clientUserMessageId,
+      clientUserMessageId: action.clientUserMessageId ?? undefined,
       items: [],
       status: "streaming",
       startedAt: action.startedAt ?? Date.now(),

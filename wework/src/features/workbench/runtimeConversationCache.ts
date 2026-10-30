@@ -9,7 +9,6 @@ export {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimePlanEventPayload,
   RuntimeSubagentActivityPayload,
@@ -40,7 +39,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
-import { reconcileRuntimeGoal, updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { reconcileRuntimeGoal } from '@/lib/runtime-goal'
 import {
   cacheBoundedEntry,
   cacheRuntimeConversationQueuedMessagesByKey,
@@ -106,7 +105,6 @@ export function beginRuntimeConversationOperation(
 
 const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
   goal: null,
-  goalContinuation: null,
   taskPlan: null,
   subagentStatuses: [],
 }
@@ -129,10 +127,6 @@ export function setRuntimeConversationGoal(
   updateRuntimeConversationMetadata(address, current => ({
     ...current,
     goal: resolvedGoal,
-    goalContinuation:
-      resolvedGoal?.status === 'active'
-        ? current.goalContinuation
-        : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
   }))
   return resolvedGoal
 }
@@ -156,28 +150,6 @@ function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   const key = runtimeConversationKey(address)
   goalSnapshotVersionsByConversation.set(key, nextRuntimeGoalSnapshotVersion)
   nextRuntimeGoalSnapshotVersion += 1
-}
-
-export function applyRuntimeConversationGoalContinuation(
-  address: RuntimeTaskAddress,
-  payload: RuntimeGoalContinuationPayload
-): void {
-  updateRuntimeConversationMetadata(address, current => ({
-    ...current,
-    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
-      type: 'turn_lifecycle',
-      payload,
-    }),
-  }))
-}
-
-export function markRuntimeConversationAssistantStarted(address: RuntimeTaskAddress): void {
-  updateRuntimeConversationMetadata(address, current => ({
-    ...current,
-    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
-      type: 'assistant_started',
-    }),
-  }))
 }
 
 export function setRuntimeConversationTaskPlan(
@@ -281,6 +253,7 @@ export function runtimeConversationMessageHasStartedTurn(
   return (touchEntry(turnsByConversation, key) ?? []).some(
     turn =>
       turn.id !== null &&
+      turn.status !== 'pending' &&
       (turn.clientUserMessageId === messageId ||
         turn.items.some(item => item.type === 'user_message' && item.id === messageId))
   )
