@@ -250,6 +250,19 @@ passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
 
+### Async Question Model Fixtures
+
+The desktop E2E async question fixture recognizes only an exact expected answer
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
+AGENTS.md and environment context can also arrive with `role=user`; scanning the
+whole request or matching an answer substring cannot establish a user reply.
+
+`desktop-async-input-fixture.test.mjs` covers injected context, historical answers,
+tool output, and actual replies. Existing desktop async question scenarios retain
+the distracting word `Complete` in their prompt and assert both the waiting
+message before an answer and the completion message afterward.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:

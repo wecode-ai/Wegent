@@ -584,7 +584,11 @@ export function MessageTurnNavigation({
           style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
         >
           <p className="break-words text-xs font-semibold leading-4 text-text-primary">
-            {marker.promptPreview}
+            {marker.promptPreview ||
+              t('conversation.message_navigation.turn_label', undefined, {
+                index: marker.turnIndex + 1,
+                defaultValue: `第 ${marker.turnIndex + 1} 轮对话`,
+              })}
           </p>
           {marker.responsePreview && (
             <p className="mt-1 break-words text-xs leading-4 text-text-muted">
