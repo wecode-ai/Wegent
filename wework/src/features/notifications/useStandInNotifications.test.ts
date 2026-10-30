@@ -219,7 +219,7 @@ describe('stand-in notification read and delivery state', () => {
     expect(hook.result.current.unreadCount).toBe(0)
     expect(send).not.toHaveBeenCalled()
   })
-  it('marks a new pending question unread and suppresses duplicate delivery', () => {
+  it('marks a new pending question unread while the shared interaction owner delivers its alert', () => {
     const waiting = {
       ...runtimeItem,
       task: { ...runtimeItem.task, interactionStatus: 'waitingForUserInput' as const },
@@ -231,7 +231,7 @@ describe('stand-in notification read and delivery state', () => {
     hook.rerender({ item: waiting })
     expect(hook.result.current.unreadCount).toBe(1)
     hook.rerender({ item: { ...waiting } })
-    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
   })
   it('respects collaboration channel preferences independently of task reminders', () => {
     const hook = renderHook(

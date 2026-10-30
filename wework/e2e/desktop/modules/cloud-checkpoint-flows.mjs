@@ -758,7 +758,15 @@ async function verifyCloudCheckpoint({
     }
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
-    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    try {
+      await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    } catch (error) {
+      console.error(
+        '[plugin-auto-update] object storage transport',
+        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+      )
+      throw error
+    }
     return
   }
 

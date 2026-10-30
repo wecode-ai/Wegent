@@ -2423,6 +2423,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'removeLocalStorageItem':
       localStorage.removeItem(command.value ?? '')
       return ''
+    case 'getWebLocksSnapshot':
+      return JSON.stringify(await navigator.locks.query())
     case 'getLocationOrigin':
       return window.location.origin
     case 'restartCoreDsh':
