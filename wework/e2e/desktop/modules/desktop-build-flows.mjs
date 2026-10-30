@@ -1198,7 +1198,11 @@ async function verifyCloudProjectFlow(
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await verifyNativeMcpCloudRouting(control, cloudEnvironment)
+  await verifyNativeMcpCloudRouting(
+    control,
+    cloudEnvironment,
+    join(resultDir, 'electron-user-data')
+  )
   control.releaseCloudInitialResponse()
   await waitForSnapshot(
     control,
