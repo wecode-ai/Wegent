@@ -568,6 +568,10 @@ async fn spawn_stream_server_holding(
                 b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
             )
             .await;
+        // The drain lives for one second and the cancel poller ticks every
+        // second. Delay the terminal frames so the drain is guaranteed to
+        // overlap a poll tick instead of racing the first sleep.
+        tokio::time::sleep(Duration::from_millis(2_200)).await;
         for frame in frames {
             let _ = stream
                 .write_all(format!("data: {frame}\n\n").as_bytes())
