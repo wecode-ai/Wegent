@@ -2,6 +2,62 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ExecutorSessionProjector, executorSessionId } from './session-projector.js'
 
+test('late RPC user binding cannot reopen a completed native transcript turn', () => {
+  const sessions = new SessionStoreFixture()
+  const completed = []
+  const projector = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+  const task = { executionState: { phase: 'running', turnId: 'native-turn' } }
+  projector.handle(
+    executorEvent(
+      1,
+      'runtime.turn.updated',
+      { status: 'started', turnId: 'native-turn', task },
+      'task-1',
+      'native-turn'
+    )
+  )
+  projector.handle(
+    executorEvent(
+      2,
+      'response.output_text.delta',
+      { delta: 'Native result' },
+      'task-1',
+      'native-turn'
+    )
+  )
+  projector.handle(
+    executorEvent(
+      3,
+      'response.completed',
+      {
+        value: 'Native result',
+        task: { executionState: { phase: 'idle', latestTurnId: 'native-turn' } },
+      },
+      'task-1',
+      'native-turn'
+    )
+  )
+  projector.handle(
+    executorEvent(
+      4,
+      'response.created',
+      {
+        task: { executionState: { phase: 'idle', latestTurnId: 'native-turn' } },
+        runtimeGeneratedUserMessage: { id: 'user-1', message: 'Original task' },
+      },
+      'task-1',
+      'native-turn'
+    )
+  )
+  const events = sessions.get(executorSessionId('device-1', 'task-1')).events
+  assert.equal(events.filter(event => event.type === 'turn/start').length, 1)
+  assert.equal(events.filter(event => event.type === 'turn/end').length, 1)
+  assert.equal(events.filter(event => event.type === 'user/message').length, 1)
+  assert.equal(completed.length, 1)
+})
+
 test('projects executor text, reasoning, usage, and completion into standard session events', () => {
   const sessions = new SessionStoreFixture()
   const completed = []

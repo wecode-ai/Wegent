@@ -235,9 +235,12 @@ impl JsonRpcConnection {
                         }
                     }
                     let _ = state.handle_message(&message);
-                    if let Some(sender) = &notifications {
-                        let _ = sender.send(notification.into());
-                    }
+                    super::local_notifications::publish(
+                        self.runtime_notifications.as_ref(),
+                        notifications.as_ref(),
+                        notification,
+                    )
+                    .await;
                     tokio::time::sleep(delay).await;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
@@ -258,12 +261,14 @@ impl JsonRpcConnection {
                         else {
                             super::overload_recovery::sync_goal_snapshot(
                                 state,
+                                self.runtime_notifications.as_ref(),
                                 notifications.as_ref(),
                                 goal["threadId"]
                                     .as_str()
                                     .ok_or("Stopped goal has no thread ID")?,
                                 &current,
-                            );
+                            )
+                            .await;
                             if !state.goal_is_active() {
                                 return Ok(ExecutionOutcome::Cancelled {
                                     message: "Goal changed during model overload recovery"

@@ -5286,10 +5286,14 @@ while IFS= read -r line; do
       turn_start_count=$((turn_start_count + 1))
       if [ "$turn_start_count" -eq 1 ]; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","delta":"alpha","phase":"finalAnswer"}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","delta":"beta","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-a","turnId":"turn-a","item":{{"id":"text-a","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-b","turnId":"turn-b","item":{{"id":"text-b","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","itemId":"text-a","delta":"alpha"}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","itemId":"text-b","delta":"beta"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"completed"}}}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"completed"}}}}}}'
       fi
@@ -5389,6 +5393,7 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
+    printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{}'
     sleep 0.1
     notification_index=0
@@ -5408,8 +5413,8 @@ while IFS= read -r line; do
     fi
   elif printf '%s\n' "$line" | grep -q '"id":{}' && printf '%s\n' "$line" | grep -q '"result"'; then
     turn_active=false
-    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
-    printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
+    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"answered-message","delta":"answered","phase":"finalAnswer"}}}}'
+    printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"completed"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"auto-approval-sentinel","type":"commandExecution","status":"inProgress","command":"approval returned"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":98' && printf '%s\n' "$line" | grep -q '"result"'; then

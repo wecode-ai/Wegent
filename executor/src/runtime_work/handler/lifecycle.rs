@@ -36,7 +36,7 @@ impl RuntimeWorkRpcHandler {
                 if active.contains(&task_id) {
                     if before
                         .as_ref()
-                        .is_some_and(|state| state.phase.awaits_admission())
+                        .is_some_and(|state| state.awaits_admission())
                     {
                         begin_native_request(link);
                     }
@@ -44,7 +44,7 @@ impl RuntimeWorkRpcHandler {
                     queue_native_execution(link, *position, *recovering);
                 } else if before
                     .as_ref()
-                    .is_some_and(|state| state.phase.awaits_admission())
+                    .is_some_and(|state| state.awaits_admission())
                 {
                     settle_native_execution(link, "cancelled");
                 }
@@ -60,7 +60,7 @@ impl RuntimeWorkRpcHandler {
         for task in self.local_task_links(true) {
             if !native_execution_state(&task).is_some_and(|state| {
                 state.phase != NativeExecutionPhase::Idle
-                    && !state.phase.awaits_admission()
+                    && !state.awaits_admission()
                     && state.process_generation == Some(generation)
             }) {
                 continue;
@@ -132,6 +132,12 @@ impl RuntimeWorkRpcHandler {
         {
             return;
         }
+        if matches!(notification.method.as_str(), "error")
+            && notification.params["willRetry"] == true
+        {
+            self.apply_native_recovery(task_id, request, message);
+            return;
+        }
         if matches!(
             notification.method.as_str(),
             "thread/goal/updated" | "thread/goal/cleared"
@@ -178,7 +184,7 @@ impl RuntimeWorkRpcHandler {
         {
             return;
         }
-        self.persist_completed_codex_turn_from_notification(task_id, message);
+        let result = self.persist_completed_codex_turn_from_notification(task_id, message);
         let Some(turn_id) = codex_notification_turn_id(message) else {
             return;
         };
@@ -307,6 +313,84 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         self.publish_native_execution(task_id, request, link);
+        if let Some(result) = result {
+            let mut event_request = request.clone();
+            event_request.subtask_id = turn_id.clone();
+            self.publish_native_turn_result(task_id, &event_request, &turn_id, result);
+        }
+    }
+
+    fn publish_native_turn_result(
+        &self,
+        task_id: &str,
+        request: &ExecutionRequest,
+        turn_id: &str,
+        result: crate::agents::CodexAppServerTurn,
+    ) {
+        let mut data = json!({"turnId": turn_id, "itemId": result.response_item_id,
+            "startedAt": result.started_at_ms, "completedAt": result.completed_at_ms,
+            "durationMs": result.duration_ms});
+        let event = match result.outcome {
+            ExecutionOutcome::Completed { content } => {
+                data["value"] = json!(content);
+                data["valueOrigin"] = json!(result.response_value_origin.as_str());
+                "response.completed"
+            }
+            ExecutionOutcome::Failed { message } => {
+                data["error"] = json!({"message": message});
+                "response.failed"
+            }
+            ExecutionOutcome::Cancelled { message } => {
+                data["type"] = json!("cancelled");
+                data["error"] = json!({"message": message});
+                "response.incomplete"
+            }
+            _ => return,
+        };
+        self.emit_task_response(event, task_id, request, data);
+    }
+
+    fn apply_native_recovery(
+        &self,
+        task_id: &str,
+        request: &ExecutionRequest,
+        message: &CodexNotification,
+    ) {
+        let turn_id = codex_notification_turn_id(message);
+        let mut changed = false;
+        let updated = self.store.update_task(task_id, |link| {
+            let Some(mut state) = native_execution_state(link) else {
+                return;
+            };
+            if state.native_sequence >= message.sequence()
+                || state.latest_turn_id != turn_id
+                || state.turn_id.is_some()
+                || state.outcome.as_deref() != Some("failed")
+                || state.process_generation != Some(message.process_generation())
+            {
+                return;
+            }
+            state.phase = NativeExecutionPhase::Recovering;
+            state.execution_outcome = None;
+            state.updated_at = now_ms();
+            state.revision = next_runtime_event_sequence().to_string();
+            state.native_sequence = message.sequence();
+            project_native_execution(link, &state);
+            changed = true;
+        });
+        if let Some(link) = updated.filter(|_| changed) {
+            self.publish_native_execution(task_id, request, link);
+            let mut event_request = request.clone();
+            if let Some(turn_id) = &turn_id {
+                event_request.subtask_id = turn_id.clone();
+            }
+            self.emit_task_response(
+                "response.recovered",
+                task_id,
+                &event_request,
+                json!({"turnId": turn_id}),
+            );
+        }
     }
 
     fn publish_native_execution(

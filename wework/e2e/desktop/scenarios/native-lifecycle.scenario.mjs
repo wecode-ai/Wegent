@@ -230,7 +230,13 @@ export function createDesktopScenario(options) {
         )
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
-        assert.ok(model, 'The real Codex model is missing from the runner catalog')
+        assert.ok(model, 'The configured Codex model is missing from the runner catalog')
+        const modelConfig = {
+          model: 'openai',
+          model_id: model.local_model_id,
+          model_provider: model.provider,
+          runtime_config: { codex: { use_user_config: true, configured: true } },
+        }
         const namedTaskId = 'native-lifecycle-named-home'
         await rpc('runtime.tasks.create', {
           taskId: namedTaskId,
@@ -249,7 +255,7 @@ export function createDesktopScenario(options) {
             bot: [{ id: 7302, shell_type: 'Codex' }],
             prompt: NAMED_HOME,
             new_session: true,
-            model_config: { model_id: model.local_model_id, model_provider: model.provider },
+            model_config: modelConfig,
           },
         })
         await withTimeout(

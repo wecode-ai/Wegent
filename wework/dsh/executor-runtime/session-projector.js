@@ -26,9 +26,19 @@ export class ExecutorSessionProjector {
     const event = stringField(envelope, 'event')
     if (!event) return
     const subtaskId = stringField(payload, 'subtaskId')
+    const data = recordField(payload, 'data')
+    const native = recordField(recordField(data, 'task'), 'executionState')
+
+    if (event === 'runtime.turn.updated') {
+      const turnId = stringField(data, 'turnId')
+      if (data.status === 'started' && turnId && native.turnId === turnId) {
+        this.openTurn(state, turnId)
+      }
+      return
+    }
 
     if (event === 'response.created' || event === 'response.in_progress') {
-      this.openTurn(state, subtaskId)
+      if (Object.keys(native).length === 0) this.openTurn(state, subtaskId)
       this.appendGeneratedUserMessage(state, payload)
       return
     }

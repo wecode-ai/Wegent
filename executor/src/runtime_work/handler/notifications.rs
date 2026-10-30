@@ -293,22 +293,17 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         message: &Value,
-    ) {
+    ) -> Option<crate::agents::CodexAppServerTurn> {
         let notification = codex_notification(message);
         if notification.method != "turn/completed" {
-            return;
+            return None;
         }
-        let Some(mut turn) = notification
+        let mut turn = notification
             .params
             .get("turn")
             .filter(|turn| turn.is_object())
-            .cloned()
-        else {
-            return;
-        };
-        let Some(turn_id) = string_field(&turn, "id") else {
-            return;
-        };
+            .cloned()?;
+        let turn_id = string_field(&turn, "id")?;
         // Completion notifications can omit items already delivered through the stream.
         let mut active_items = self.active_codex_transcript_items.lock().ok();
         let active = active_items.as_ref().and_then(|items| {
@@ -337,6 +332,7 @@ impl RuntimeWorkRpcHandler {
             .map(|link| link.workspace_path)
             .unwrap_or_default();
         let completed_at = timestamp_ms_field(&turn, "completedAt").unwrap_or_else(now_ms);
+        let result = crate::agents::completed_native_codex_turn(&thread_id, &turn);
         let mut messages = transcript_messages(
             &json!({"cwd": workspace_path, "turns": [turn]}),
             &self.device_id,
@@ -381,6 +377,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         drop(active_items);
+        Some(result)
     }
 
     pub(super) fn record_active_codex_transcript_item(

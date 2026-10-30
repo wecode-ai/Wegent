@@ -5,6 +5,64 @@
 use super::*;
 
 #[test]
+fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit() {
+    use crate::runtime_work::lifecycle::NativeExecutionPhase;
+    let (handler, root, _) = setup("native-owned-retry");
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    let mut failed = notification("turn/completed", "turn-1");
+    failed["params"]["turn"]["status"] = json!("failed");
+    handler.route_codex_notification(failed);
+    handler.route_codex_notification(json!({"method": "error", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "willRetry": true,
+        "error": {"codexErrorInfo": "serverOverloaded"}
+    }}));
+    let state = handler
+        .local_task_link("task-1")
+        .unwrap()
+        .execution_state
+        .unwrap();
+    assert_eq!(state.phase, NativeExecutionPhase::Recovering);
+    assert_eq!(state.outcome.as_deref(), Some("failed"));
+    assert_eq!(state.execution_outcome, None);
+    assert!(!state.awaits_admission());
+    assert_eq!(state.turn_id, None);
+    handler.settle_native_transport_exit(0);
+    let state = handler
+        .local_task_link("task-1")
+        .unwrap()
+        .execution_state
+        .unwrap();
+    assert_eq!(state.phase, NativeExecutionPhase::Idle);
+    assert_eq!(state.execution_outcome.as_deref(), Some("cancelled"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn native_completion_publishes_full_result_once_without_an_rpc_callback() {
+    let (mut handler, root, _) = setup("native-full-result");
+    let (sender, mut events) = broadcast::channel(32);
+    handler.event_tx = Some(sender);
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(json!({"method": "item/completed", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "item": {
+            "id": "text-1", "type": "agentMessage", "phase": "final_answer",
+            "text": "Ready-to-send task text"
+        }
+    }}));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    let mut completed = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if event["event"] == "response.completed" {
+            completed.push(event["payload"].clone());
+        }
+    }
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0]["data"]["value"], "Ready-to-send task text");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rpc_success_cannot_consume_a_native_turn_before_its_answer_settlement() {
     let (handler, root, _) = setup("native-answer-after-rpc");
     handler.route_codex_notification(notification("turn/started", "turn-1"));

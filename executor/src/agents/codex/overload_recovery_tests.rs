@@ -310,6 +310,7 @@ fn shared_options(
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
+        runtime_notifications: None,
         overload_turn_recovering: None,
         overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
         active_turn_id: Some("failed-turn".to_owned()),

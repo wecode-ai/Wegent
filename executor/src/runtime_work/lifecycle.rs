@@ -18,12 +18,6 @@ pub(crate) enum NativeExecutionPhase {
     Idle,
 }
 
-impl NativeExecutionPhase {
-    pub(crate) fn awaits_admission(self) -> bool {
-        matches!(self, Self::Queued | Self::Recovering)
-    }
-}
-
 /// Native thread notifications own execution state, independently of RPC lifetimes.
 /// The version is a decimal string because the event sequence exceeds JS integer precision.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -46,6 +40,13 @@ pub(crate) struct NativeExecutionState {
     pub completed_at: Option<i64>,
     pub duration_ms: Option<i64>,
     pub error: Option<String>,
+}
+
+impl NativeExecutionState {
+    pub(crate) fn awaits_admission(&self) -> bool {
+        self.phase == NativeExecutionPhase::Queued
+            || (self.phase == NativeExecutionPhase::Recovering && self.process_generation.is_none())
+    }
 }
 
 pub(crate) fn native_execution_state(link: &RuntimeTaskLink) -> Option<NativeExecutionState> {
@@ -79,9 +80,10 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
         return;
     }
     let previous = native_execution_state(link);
-    if previous.as_ref().is_some_and(|state| {
-        state.phase != NativeExecutionPhase::Idle && !state.phase.awaits_admission()
-    }) {
+    if previous
+        .as_ref()
+        .is_some_and(|state| state.phase != NativeExecutionPhase::Idle && !state.awaits_admission())
+    {
         return;
     }
     let state = NativeExecutionState {
@@ -115,9 +117,9 @@ pub(crate) fn queue_native_execution(
     } else {
         NativeExecutionPhase::Queued
     };
-    if native_execution_state(link).is_some_and(|state| {
-        state.phase != NativeExecutionPhase::Idle && !state.phase.awaits_admission()
-    }) {
+    if native_execution_state(link)
+        .is_some_and(|state| state.phase != NativeExecutionPhase::Idle && !state.awaits_admission())
+    {
         return;
     }
     if link
@@ -136,6 +138,7 @@ pub(crate) fn queue_native_execution(
     };
     state.revision = next_runtime_event_sequence().to_string();
     state.phase = phase;
+    state.process_generation = None;
     state.execution_outcome = None;
     state.request_turn_id = None;
     state.continuation = false;
@@ -152,7 +155,7 @@ pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &Nativ
     if let Some(turn_id) = &state.latest_turn_id {
         link.runtime_handle["lastTurnId"] = json!(turn_id);
     }
-    let queued = state.phase.awaits_admission();
+    let queued = state.awaits_admission();
     if !queued {
         if let Some(handle) = link.runtime_handle.as_object_mut() {
             handle.remove("queuePosition");

@@ -38,8 +38,53 @@ function runningTask(turnId = 'turn-1'): RuntimeTaskSummary {
   return task
 }
 
+function completeNativeTurn(
+  handlers: ReturnType<typeof createRuntimeTaskStreamHandlers>,
+  payload: Parameters<NonNullable<typeof handlers.onRuntimeTurnUpdated>>[0]
+) {
+  handlers.onRuntimeTurnUpdated?.(payload)
+  const state = payload.task!.executionState!
+  const terminal = {
+    ...payload,
+    subtaskId: payload.turnId!,
+    durationMs: state.durationMs ?? undefined,
+  }
+  if (state.outcome === 'succeeded') {
+    handlers.onChatDone?.({
+      ...terminal,
+      result: { turnId: payload.turnId, durationMs: state.durationMs },
+    })
+  } else {
+    handlers.onChatError?.({ ...terminal, error: state.error ?? 'cancelled', type: state.outcome! })
+  }
+}
+
 describe('native turn content settlement', () => {
   afterEach(() => vi.useRealTimers())
+  test('a lifecycle snapshot cannot replace the full native result with empty content', () => {
+    const onMessageAction = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, { onMessageAction })
+    handlers.onRuntimeTurnUpdated?.({
+      ...address,
+      status: 'settled',
+      turnId: 'turn-1',
+      task: settledTask('succeeded'),
+    })
+    expect(onMessageAction).not.toHaveBeenCalled()
+    handlers.onChatDone?.({
+      ...address,
+      subtaskId: 'turn-1',
+      task: settledTask('succeeded'),
+      result: { turnId: 'turn-1', value: 'Ready-to-send task text' },
+    })
+    expect(onMessageAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'assistant_done',
+        content: 'Ready-to-send task text',
+        subtaskId: 'turn-1',
+      })
+    )
+  })
   test('does not settle native content from an RPC result before its native boundary', () => {
     let turns: RuntimeConversationTurn[] = []
     const onAssistantSettled = vi.fn()
@@ -78,7 +123,7 @@ describe('native turn content settlement', () => {
     expect(turns[0].items).toEqual([
       expect.objectContaining({ type: 'assistant_text', content: 'Native content' }),
     ])
-    handlers.onRuntimeTurnUpdated?.({
+    completeNativeTurn(handlers, {
       ...address,
       status: 'settled',
       turnId: 'turn-1',
@@ -122,7 +167,7 @@ describe('native turn content settlement', () => {
         content: 'Early native output',
       })
       if (settled)
-        handlers.onRuntimeTurnUpdated?.({
+        completeNativeTurn(handlers, {
           ...address,
           status: 'settled',
           turnId: 'turn-1',
@@ -197,7 +242,7 @@ describe('native turn content settlement', () => {
       itemId: 'text-1',
       content: 'First output',
     })
-    handlers.onRuntimeTurnUpdated?.({
+    completeNativeTurn(handlers, {
       ...address,
       status: 'settled',
       turnId: 'turn-1',
@@ -247,7 +292,7 @@ describe('native turn content settlement', () => {
         content: 'Before ',
       })
       vi.setSystemTime(2000)
-      handlers.onRuntimeTurnUpdated?.({
+      completeNativeTurn(handlers, {
         ...address,
         turnId: 'turn-1',
         status: 'settled',
@@ -278,7 +323,7 @@ describe('native turn content settlement', () => {
       onAssistantSettled,
     })
     handlers.onChatStart?.({ ...address, subtaskId: 'turn-2' })
-    handlers.onRuntimeTurnUpdated?.({
+    completeNativeTurn(handlers, {
       ...address,
       turnId: 'turn-1',
       status: 'settled',

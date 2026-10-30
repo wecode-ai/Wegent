@@ -273,7 +273,7 @@ Goal 条的运行展示和计时统一读取生命周期 Store。存在 `executi
 Codex 执行状态由执行器的统一生命周期转换维护，独立于单次请求的返回和消息内容。
 任务列表、任务详情与 `runtime.turn.updated` 事件携带同一份 `executionState`：
 它包含执行阶段、当前及最近轮次、轮次结果、原生时间信息与版本。版本使用十进制
-字符串传输，避免 JavaScript 对纳秒事件序号丢失精度。前端只接受更新版本；旧列表、
+字符串传输，避免 JavaScript 对纳秒事件序号丢失精度。版本覆盖完整快照：交互状态、Goal 和模型选择变化也必须推进版本，但不能伪造原生轮次进展或修改其时间。模型选择直接包含在快照中，实时事件与列表不依赖不同的客户端补全。前端只接受更新版本；旧列表、
 历史恢复以及上一轮请求完成均不能覆盖新轮次。执行器重启后不复用内存运行状态。
 
 `running` 表示原生轮次正在执行；`continuing` 表示上一轮已结束且 Goal 正在等待
@@ -285,13 +285,11 @@ Codex 执行状态由执行器的统一生命周期转换维护，独立于单�
 队列持久化成功后推进同一份执行状态版本；取消排队不会改写上一轮的结果，旧排队
 快照也不能把取消后的任务重新变成忙碌。
 
-`recovering` 表示执行器已持有既有 Goal 的恢复，仍在等待执行名额。它保持恢复忙碌，
-但没有活动模型轮次；排队中的旧 `task.running: false` 不能把它显示为已停止。
+`recovering` 表示执行器已持有既有 Goal 的恢复或正在执行有界重试退避。等待名额的恢复尚未绑定进程；退避保留进程归属，进程退出必须结算它。恢复期间没有活动模型轮次，排队中的旧 `task.running: false` 不能把它显示为已停止。
 
 内容映射器不缓存 Goal 状态，不决定是否接收原生生命周期。原生轮次完成负责收尾
 该轮的消息和思考块；迟到内容可以补全已结束消息，但不能把该轮重新改成 streaming。
-普通请求返回仅释放自己的调度资源，并通过原终止事件携带当前执行快照；不能清理
-仍活跃的 Goal 恢复记录。上下文压缩可以更新内容路由，不能重建执行状态。
+原生完成入口在提交内容后发布携带完整正文和轮次身份的终止事件；前端不能根据状态快照合成空内容完成事件。普通请求返回仅释放自己的调度资源，不能重复发布原生成功结果或清理仍活跃的 Goal 恢复记录。上下文压缩可以更新内容路由，不能重建执行状态。
 
 生命周期 owner 从有界、带背压的专用通道读取原生事件，通道拥塞不会丢弃事件。
 订阅属于长期存活的客户端，跨 app-server 进程替换保留。事件和已进入原生轮次的
@@ -329,9 +327,9 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 | 单轮输出中 | `task.running === true` 且存在 streaming assistant 消息 | 只用于流式消息生命周期，不得成为侧栏、composer 或未读状态的另一套运行判定                  |
 | 已结束未读 | 任务从“运行中”转换为“不再运行”，且不是当前打开任务      | 左侧显示蓝色未读点，并可触发一次完成通知                                                   |
 
-`running` 是 executor 对任务级执行生命周期的权威判断，不是当前单个 turn 的状态。Active Goal 的 continuation loop 仍存活时，即使两个自动 turn 之间暂时没有 streaming assistant 消息，executor 也必须继续报告 `running: true`，因此左侧 spinner、composer 暂停按钮和消息区“正在思考”保持可见且不产生未读。executor 重启后若没有恢复该执行循环，则即使持久化的 `goalStatus` 仍为 `active`，也必须报告 `running: false`；Wework 不得自行把它推断为运行中。前一轮残留的 streaming 消息不能复活。
+`running` 是 executor 对任务级执行生命周期的权威判断，不是当前单个 turn 的状态。Active Goal 的 continuation loop 仍存活时，即使两个自动 turn 之间暂时没有 streaming assistant 消息，executor 也必须继续报告 `running: true`，因此左侧 spinner 和 composer 暂停按钮保持可见且不产生未读；消息区显示继续执行，不能伪造模型思考。executor 重启后若没有恢复该执行循环，则即使持久化的 `goalStatus` 仍为 `active`，也必须报告 `running: false`；Wework 不得自行把它推断为运行中。前一轮残留的 streaming 消息不能复活。
 
-任务终止事件应立即把本地任务标记为 `running: false`，并刷新 work list。若并发刷新返回了更早的 `running: true` 快照，reducer 必须保留本地已结算状态，直到同一任务收到新的启动事件，不能让旧响应把 spinner、暂停按钮或“正在思考”重新点亮。同一任务的执行身份由 `deviceId + taskId` 决定；`workspacePath` 是可能在创建、刷新和 transcript 恢复间变化的路由元数据，不能参与运行状态身份判断。
+原生任务的运行状态只随更新版本的 executor 快照改变，单轮终止事件不直接设置 `running: false`。旧快照不能覆盖较新快照；没有原生快照的其他运行时沿用其明确的执行边界。同一任务的执行身份由 `deviceId + taskId` 决定；`workspacePath` 是可能在创建、刷新和 transcript 恢复间变化的路由元数据，不能参与运行状态身份判断。
 
 未读只根据同一任务的运行状态边沿产生：之前为 `running: true`、现在为
 `running: false`，且任务不是当前打开任务。Wework 在浏览器存储中保存已经产生的
@@ -343,7 +341,8 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime API
 响应中。`runtime-work/index.json` 不得序列化该字段，读取旧索引时也必须忽略其中
-残留的 `running` 值；任务是否正在执行只能由当前 executor 的活动任务集合决定。
+残留的 `running` 值；Codex 是否正在执行由当前 executor 拥有的原生执行状态决定，
+不能用单次请求是否仍在活动集合中代替。
 
 ## Composer 模式提示
 
@@ -545,7 +544,7 @@ Wework runtime task 与项目空间任务绑定后，状态同步只保留一条
 
 ## 后续维护规则
 
-- 新增任务生命周期状态或转换时，先扩展 `RuntimeTaskMachine` 及其内部 reducer，再暴露 Store 事件与派生快照字段。
+- 原生生命周期转换先在 executor owner 中定义，再通过版本化快照进入 Store，由 `RuntimeTaskMachine` 派生 UI 字段。
 - 不要在布局、pane hook 或组件中重新计算任务运行、turn 活跃、busy 或未读状态。
 - 不要新增独立的 `isSending`、`isRunning`、`isStreaming` React state；新的外部事实必须通过 Store 事件路由进入状态机。
 - runtime work 与消息状态冲突时，不允许在 UI 组件里临时覆盖显示，也不允许新增 fallback 结算；必须修主路径。

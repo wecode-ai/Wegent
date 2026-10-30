@@ -660,6 +660,14 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     let native_state = crate::runtime_work::lifecycle::native_execution_state(&link);
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
+    task.insert(
+        "modelSelection".to_owned(),
+        runtime_handle
+            .get("modelSelection")
+            .or_else(|| runtime_handle.get("model_selection"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
     task.insert(
         "workspacePath".to_owned(),

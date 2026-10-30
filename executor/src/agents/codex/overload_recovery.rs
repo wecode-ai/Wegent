@@ -171,8 +171,9 @@ pub(super) async fn resume_goal(
     }
 }
 
-pub(super) fn sync_goal_snapshot(
+pub(super) async fn sync_goal_snapshot(
     state: &mut CodexRunState,
+    runtime: Option<&super::CodexNotificationHub>,
     notifications: Option<&super::CodexNotificationSender>,
     thread_id: &str,
     response: &Value,
@@ -180,20 +181,20 @@ pub(super) fn sync_goal_snapshot(
     super::sync_goal_status_from_response(state, response);
     // A changed Goal ends recovery before queued notifications can be drained.
     // Publish the authoritative snapshot so the task and composer settle together.
-    if let Some(sender) = notifications {
-        let goal = response.get("goal").cloned().unwrap_or(Value::Null);
-        let method = if goal.is_null() {
-            "thread/goal/cleared"
-        } else {
-            "thread/goal/updated"
-        };
-        let _ = sender.send(
-            json!({"method": method, "params": {
-                "threadId": thread_id, "turnId": null, "goal": goal,
-            }})
-            .into(),
-        );
-    }
+    let goal = response.get("goal").cloned().unwrap_or(Value::Null);
+    let method = if goal.is_null() {
+        "thread/goal/cleared"
+    } else {
+        "thread/goal/updated"
+    };
+    super::local_notifications::publish(
+        runtime,
+        notifications,
+        json!({"method": method, "params": {
+            "threadId": thread_id, "turnId": null, "goal": goal,
+        }}),
+    )
+    .await;
 }
 
 #[cfg(test)]

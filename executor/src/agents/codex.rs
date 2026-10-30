@@ -172,7 +172,10 @@ mod local_connector_auth;
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
 
+mod local_notifications;
+mod native_turn;
 mod notification;
+pub(crate) use native_turn::completed_native_codex_turn;
 pub use notification::CodexNotification;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<CodexNotification>;
@@ -2102,9 +2105,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let runtime_notifications = client.existing_process().await?.notifications;
+        let local_notifications = local_notifications::LocalNotificationSource::new(
+            Some(runtime_notifications.clone()), notifications.clone(),
+        );
         let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
             &thread_id,
-            notifications.as_ref(),
+            Some(&local_notifications.sender),
         );
         let mut notification_rx = match early_notification_rx {
             Some(notification_rx) => notification_rx,
@@ -2203,6 +2210,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                runtime_notifications: Some(runtime_notifications),
                 overload_continuation_params: overload_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
                 ),
@@ -2467,8 +2475,14 @@ async fn run_codex_app_server_turn_with_runtime(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        let _retry_subscription =
-            local_model_proxy::retry_notifications::subscribe(&thread_id, notifications.as_ref());
+        let local_notifications = local_notifications::LocalNotificationSource::new(
+            runtime_notifications.clone(),
+            notifications.clone(),
+        );
+        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
+            &thread_id,
+            Some(&local_notifications.sender),
+        );
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -2595,6 +2609,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    runtime_notifications: Option<CodexNotificationHub>,
     overload_turn_recovering: Option<CodexActiveTurnCallback>,
     overload_continuation_params: Value,
     active_turn_id: Option<String>,
@@ -2643,10 +2658,12 @@ async fn read_shared_turn_notifications(
                     let response = deferred_goal_snapshot.take().unwrap();
                     overload_recovery::sync_goal_snapshot(
                         state,
+                        options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
                         thread_id,
                         &response,
-                    );
+                    )
+                    .await;
                     options.wait_for_goal_continuation = false;
                     if options.active_turn_id.is_none() {
                         return Ok(last_outcome.unwrap_or(ExecutionOutcome::Cancelled {
@@ -2879,9 +2896,12 @@ async fn read_shared_turn_notifications(
                         callback();
                     }
                     options.active_turn_id = None;
-                    if let Some(sender) = &options.notifications {
-                        let _ = sender.send(notification.into());
-                    }
+                    local_notifications::publish(
+                        options.runtime_notifications.as_ref(),
+                        options.notifications.as_ref(),
+                        notification,
+                    )
+                    .await;
                     overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
@@ -2916,10 +2936,12 @@ async fn read_shared_turn_notifications(
                         } else {
                             overload_recovery::sync_goal_snapshot(
                                 state,
+                                options.runtime_notifications.as_ref(),
                                 options.notifications.as_ref(),
                                 thread_id,
                                 &response,
-                            );
+                            )
+                            .await;
                             // Activating an idle Goal starts its native continuation.
                             // Do not race it with a second turn/start request.
                             options.wait_for_goal_continuation = state.goal_is_active();
@@ -3020,10 +3042,12 @@ async fn read_shared_turn_notifications(
                 if let Some(response) = deferred_goal_snapshot.take() {
                     overload_recovery::sync_goal_snapshot(
                         state,
+                        options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
                         thread_id,
                         &response,
-                    );
+                    )
+                    .await;
                 }
                 return Ok(outcome);
             }

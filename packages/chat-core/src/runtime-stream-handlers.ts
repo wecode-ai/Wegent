@@ -827,36 +827,6 @@ export function createRuntimeTaskStreamHandlers(
           startedAt: state.startedAt ?? undefined,
         });
       }
-      if (
-        payload.status === "settled" &&
-        payload.turnId &&
-        state?.outcome === "succeeded"
-      ) {
-        streamHandlers.onChatDone?.({
-          ...payload,
-          subtaskId: payload.turnId,
-          result: {
-            turnId: payload.turnId,
-            startedAt: state.startedAt ?? undefined,
-            durationMs: state.durationMs ?? undefined,
-          },
-        });
-      } else if (
-        payload.status === "settled" &&
-        payload.turnId &&
-        state?.outcome
-      ) {
-        streamHandlers.onChatError?.({
-          ...payload,
-          subtaskId: payload.turnId,
-          error:
-            state.error ??
-            (state.outcome === "cancelled" ? "cancelled" : "Codex turn failed"),
-          type: state.outcome,
-          startedAt: state.startedAt ?? undefined,
-          durationMs: state.durationMs ?? undefined,
-        });
-      }
     },
     onRuntimePlanUpdated: (payload) => {
       const matched = isRuntimeTaskStreamPayload(address, payload);

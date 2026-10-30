@@ -542,29 +542,47 @@ impl RuntimeWorkStore {
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let before = persisted_task_fingerprint(task);
+        let revision_before = task
+            .execution_state
+            .as_ref()
+            .map(|state| state.revision.clone());
+        let updated_at_before = task.updated_at;
         let lifecycle_before = (
             task.running,
             task.status.clone(),
+            task.thread_status.clone(),
             task.turn_status.clone(),
             task.interaction_status.clone(),
+            task.completed_at,
             task.runtime_handle["lastTurnId"].clone(),
             task.runtime_handle["origin"].clone(),
         );
         updater(task);
-        if lifecycle_before
+        let lifecycle_changed = lifecycle_before
             != (
                 task.running,
                 task.status.clone(),
+                task.thread_status.clone(),
                 task.turn_status.clone(),
                 task.interaction_status.clone(),
+                task.completed_at,
                 task.runtime_handle["lastTurnId"].clone(),
                 task.runtime_handle["origin"].clone(),
-            )
-        {
+            );
+        let metadata_changed = before != persisted_task_fingerprint(task);
+        if lifecycle_changed || metadata_changed || task.updated_at != updated_at_before {
+            if let Some(state) = task.execution_state.as_mut() {
+                // The revision versions the whole snapshot, not only native turn progress.
+                if Some(&state.revision) == revision_before.as_ref() {
+                    state.revision = super::events::next_runtime_event_sequence().to_string();
+                }
+            }
+        }
+        if lifecycle_changed {
             self.observe_stand_in(task);
         }
         let updated = task.clone();
-        let should_persist = persist && before != persisted_task_fingerprint(task);
+        let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
             self.persist_current_index();
