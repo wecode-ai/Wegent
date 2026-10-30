@@ -1,7 +1,8 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { test, expect, vi, onTestFinished } from 'vitest'
+import { watch } from 'node:fs'
+import { test, expect, vi, onTestFinished, onTestFailed } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
 test('rebuilds input edits reported only as a directory-self notification', async () => {
@@ -51,11 +52,18 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     const source = path.join(root, 'entry.js')
     await writeFile(source, 'one')
     let published = ''
+    const events = []
+    const record = (...event) => events.push({ time: Date.now(), event })
+    onTestFailed(() => console.error(JSON.stringify({ checkout, events }, null, 2)))
     const failedBuild = Promise.withResolvers()
     const recoveredBuild = Promise.withResolvers()
-    const onError = vi.fn(error => failedBuild.resolve(error))
+    const onError = vi.fn(error => {
+      record('build-error', error.message)
+      failedBuild.resolve(error)
+    })
     const build = vi.fn(async () => {
       const snapshot = await readFile(source, 'utf8')
+      record('build', snapshot)
       if (snapshot === 'invalid') throw new Error('compile failed')
       published = snapshot
       await writeFile(path.join(output, 'bundle.js'), snapshot)
@@ -68,18 +76,25 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       build,
       onError,
       debounceMs: 20,
+      watchDirectory: (directory, options, notify) =>
+        watch(directory, options, (...event) => {
+          record('native-notification', ...event)
+          notify(...event)
+        }),
     })
     onTestFinished(async () => {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
     })
     expect(published).toBe('one')
+    record('write-invalid')
     await writeFile(source, 'invalid')
     // Await native build callbacks under Vitest's test deadline, with cleanup
     // registered separately so a missing notification cannot leak the watcher.
     expect(await failedBuild.promise).toEqual(new Error('compile failed'))
     expect(onError).toHaveBeenCalledTimes(1)
     expect(published).toBe('one')
+    record('write-recovery')
     await writeFile(source, 'two')
     await recoveredBuild.promise
     expect(published).toBe('two')
