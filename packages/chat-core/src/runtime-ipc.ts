@@ -152,7 +152,7 @@ async function emitRuntimeRequest<T>(
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
-    const timeout = window.setTimeout(() => {
+    const timeout = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;
       console.warn("[Wework] Cloud runtime RPC request timed out", {
@@ -188,7 +188,7 @@ async function emitRuntimeRequest<T>(
           return;
         }
         settled = true;
-        window.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         if (!ack) {
           console.warn(
             "[Wework] Cloud runtime RPC returned an empty acknowledgement",
@@ -255,7 +255,7 @@ async function decodeRuntimeIpcResult<T>(result: unknown): Promise<T> {
     throw new Error("Runtime RPC gzip decompression is not supported");
   }
 
-  const binary = window.atob(result.payload);
+  const binary = globalThis.atob(result.payload);
   const payload = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     payload[index] = binary.charCodeAt(index);

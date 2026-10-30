@@ -1,4 +1,6 @@
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
+import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
+import { verifyMcpReplacementSession } from './mcp-app-session-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,6 +28,7 @@ const composer =
 export function createDesktopScenario({
   workspacePath,
   resultDir,
+  electronUserDataDirectory,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   captureScreenshot,
@@ -84,6 +87,24 @@ export function createDesktopScenario({
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       assert.ok(address.taskId)
+      const discoveredApp = await requestExecutor(
+        control,
+        'runtime.mcp_apps.request',
+        { address, callId, method: 'discover' },
+        uiTimeoutMs
+      )
+      assert.equal(discoveredApp.server, 'counter')
+      assert.ok(discoveredApp.resourceUri.startsWith('ui://'))
+      assert.equal(Object.hasOwn(discoveredApp, 'resource'), false)
+      assert.equal(
+        await requestExecutor(
+          control,
+          'runtime.mcp_apps.request',
+          { address, callId: 'foreign', method: 'discover' },
+          uiTimeoutMs
+        ),
+        null
+      )
       const origin = await control.command('getLocationOrigin', 'body')
       let frameUrl = await control.command('getAttribute', '[data-testid="mcp-app-frame"]', {
         value: 'src',
@@ -341,6 +362,63 @@ export function createDesktopScenario({
       await frameAction('click', '#refresh')
       await waitText('Counter 1')
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
+      frameUrl = await verifyMcpReplacementSession(
+        control,
+        callId,
+        () => frameAction('sessions', 'body'),
+        uiTimeoutMs
+      )
+      await frameAction('click', '#refresh')
+      await waitText('Counter 2')
+      const oldSessions = await frameAction('sessions', 'body')
+      assert.ok(oldSessions.length > 0)
+      const oldDocumentUrl = frameUrl
+      const readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await control.awaitReadyAfter(readyCount)
+      await control.command(
+        'waitFor',
+        original + ' [data-testid="mcp-app-frame"][data-ready="true"]',
+        {
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
+      assert.equal(
+        await frameAction('document-status', 'body'),
+        404,
+        'Reload must dispose the old document'
+      )
+      const cleanupDeadline = Date.now() + uiTimeoutMs
+      let currentSessions
+      do {
+        currentSessions = await frameAction('sessions', 'body')
+        if (oldSessions.every(id => !currentSessions.includes(id))) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < cleanupDeadline)
+      assert.ok(
+        oldSessions.every(id => !currentSessions.includes(id)),
+        'Reload must release every old native app session'
+      )
+      frameUrl = await control.command(
+        'getAttribute',
+        original + ' [data-testid="mcp-app-frame"]',
+        { value: 'src' }
+      )
+      assert.notEqual(frameUrl, oldDocumentUrl)
+      await frameAction('click', '#refresh')
+      // Startup model synchronization may restart this process-local fixture.
+      const counterDeadline = Date.now() + uiTimeoutMs
+      let counterText
+      do {
+        counterText = await frameAction('text', '#status')
+        if (/^Counter \d+$/.test(counterText)) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < counterDeadline)
+      assert.match(counterText, /^Counter \d+$/)
+      const firstCount = Number(counterText.slice('Counter '.length))
+      assert.ok(firstCount > 0)
+      await frameAction('click', '#refresh')
+      await waitText(`Counter ${firstCount + 1}`)
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })
@@ -355,7 +433,9 @@ export function createDesktopScenario({
       } while (Date.now() < releaseDeadline)
       assert.ok(released, 'Leaving the task must release its app document')
       assert.ok(calls >= 8)
+      await selectE2EModel(control)
       await ordinaryMcp.verify(control)
+      await verifyMcpDiscoveryNetworkFailure(control, electronUserDataDirectory, uiTimeoutMs)
     },
   }
 }
