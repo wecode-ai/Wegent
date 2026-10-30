@@ -2675,9 +2675,6 @@ export function useWorkbenchPaneSession({
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
-
-      optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
-      void refreshWorkLists()
     } finally {
       if (accepted !== true) restoreQueue?.()
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
@@ -2692,7 +2689,6 @@ export function useWorkbenchPaneSession({
     currentRuntimeTask,
     goal?.status,
     queueController,
-    refreshWorkLists,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])

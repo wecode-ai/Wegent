@@ -8,6 +8,7 @@ import { getPlatform } from '@/lib/platform'
 import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
+  applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
@@ -836,6 +837,53 @@ describe('unbound pane conversation search', () => {
 })
 
 describe('composer cancellation rollback', () => {
+  test('a delayed cancellation acknowledgement cannot stop the next native turn', async () => {
+    const { result } = await renderSession()
+    let acknowledge!: (accepted: boolean) => void
+    mocks.cancel.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          acknowledge = resolve
+        })
+    )
+    let stopping!: Promise<void>
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'cancelled-native-turn',
+      })
+      stopping = result.current.pauseCurrentResponse()
+    })
+    await act(async () => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_error',
+        subtaskId: 'cancelled-native-turn',
+        error: 'cancelled',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'next-native-turn',
+      })
+      acknowledge(true)
+      await stopping
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'next-native-turn',
+        itemId: 'follow-up-answer',
+        content: 'The next native answer stays visible.',
+      })
+    })
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'next-native-turn',
+          status: 'streaming',
+          content: 'The next native answer stays visible.',
+        }),
+      ])
+    )
+  })
+
   test.each([
     { pendingResume: false, outcome: 'rejected' },
     { pendingResume: true, outcome: 'rejected' },

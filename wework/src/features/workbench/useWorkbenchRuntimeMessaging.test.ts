@@ -1,4 +1,4 @@
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import i18n from '@/i18n'
@@ -17,6 +17,12 @@ import {
 } from './useWorkbenchRuntimeMessaging'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { initialWorkbenchState } from './workbenchReducer'
+import {
+  applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationTurns,
+} from './runtimeConversationCache'
+import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 
 function messagingFixture(
   modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
@@ -32,13 +38,14 @@ function messagingFixture(
   })
   const cancel = vi.fn().mockResolvedValue({ accepted: true })
   const send = vi.fn().mockResolvedValue({ accepted: true })
+  const compact = vi.fn().mockResolvedValue({ accepted: true })
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   type Options = Parameters<typeof useWorkbenchRuntimeMessaging>[0]
   const options: Options = {
     state: { ...initialWorkbenchState, currentRuntimeTask: address },
     dispatch: vi.fn(),
     executorClient: {
-      runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send },
+      runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send, compactRuntimeTask: compact },
     } as unknown as Options['executorClient'],
     services: { taskApi: {} } as unknown as Options['services'],
     runtimeTasks: {} as Options['runtimeTasks'],
@@ -52,8 +59,75 @@ function messagingFixture(
     refreshWorkLists: refresh,
   }
   const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options))
-  return { address, store, cancel, send, refresh, messaging: result.current }
+  return { address, store, cancel, send, compact, refresh, messaging: result.current }
 }
+
+test('compaction renders only its native turn and remains active after an early RPC response', async () => {
+  const { address, store, compact, messaging } = messagingFixture()
+  let finish!: (value: { accepted: boolean }) => void
+  compact.mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+  const sending = messaging.compactRuntimePaneTask({
+    ...address,
+    runtimeHandle: { modelSelection: { modelName: 'test-model' } },
+  })
+  try {
+    await waitFor(() => expect(compact).toHaveBeenCalledOnce())
+    expect(getRuntimeConversationTurns(address)).toEqual([])
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onRuntimeTurnUpdated: payload => {
+        if (payload.task) store.syncRuntimeTask(address, payload.task)
+      },
+      onMessageAction: action => applyRuntimeConversationAction(address, action),
+    })
+    handlers.onRuntimeTurnUpdated?.({
+      ...address,
+      status: 'started',
+      turnId: 'native-compact',
+      task: {
+        taskId: address.taskId,
+        title: 'Compaction',
+        workspacePath: '/workspace',
+        runtime: 'codex',
+        running: true,
+        executionState: {
+          revision: '2',
+          phase: 'running',
+          turnId: 'native-compact',
+          latestTurnId: 'native-compact',
+          outcome: null,
+        },
+      },
+    })
+    handlers.onBlockCreated?.({
+      ...address,
+      subtaskId: 'native-compact',
+      block: {
+        id: 'native-item',
+        type: 'tool',
+        tool_name: 'context_compaction',
+        status: 'pending',
+      },
+    })
+    finish({ accepted: true })
+    await expect(sending).resolves.toBe(true)
+    expect(store.getTask(address)?.execution.running).toBe(true)
+    expect(getRuntimeConversationTurns(address)).toHaveLength(1)
+    expect(getRuntimeConversationTurns(address)[0]).toMatchObject({
+      id: 'native-compact',
+      status: 'streaming',
+      items: [{ id: 'native-item', block: { toolName: 'context_compaction', status: 'pending' } }],
+    })
+  } finally {
+    finish({ accepted: true })
+    await sending
+    store.remove(address)
+    clearRuntimeConversationCacheForTests()
+  }
+})
 
 describe('runtime pane cancellation', () => {
   test.each(['accepted', 'refresh-failed', 'rejected', 'transport-failed'] as const)(

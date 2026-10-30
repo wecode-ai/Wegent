@@ -359,11 +359,18 @@ update content routing without replacing execution state. Compaction events use 
 turn identity carried by each notification, never a previous manual compaction request ID.
 Only a native turn start establishes the active content buffer; late text cannot reassign it.
 
+Stopping requests cancellation and pauses the local outbound queue. A native terminal event
+with its turn identity settles the message. Cancellation callbacks and list refreshes can
+finish after the next turn starts; they must not mark the current message stopped and
+discard the new turn's streamed content.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store
 projections. Lifecycle boundaries still publish complete snapshots. Do not hide backlog by
-dropping events or increasing observation timeouts.
+dropping events or increasing observation timeouts. Manual compaction records admission
+intent and request errors; native events provide its progress and turn outcome without a
+synthetic assistant message.
 
 The lifecycle owner receives native events through a bounded channel with backpressure,
 so congestion cannot discard events. Subscriptions belong to the long-lived client and
