@@ -14,6 +14,7 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
+import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -383,6 +384,7 @@ const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
 const openboxPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
+const allocateXvfbDisplay = createXvfbDisplayAllocator()
 
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -391,6 +393,7 @@ function formatDuration(durationMs) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
+/** Run one checkpoint with an isolated display and retain fully drained failure evidence. */
 function runTaskFlow(args, env, label) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()
@@ -404,7 +407,9 @@ function runTaskFlow(args, env, label) {
       ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
-      env,
+      env: isolateDisplay
+        ? { ...env, WEWORK_E2E_XVFB_SERVER_NUM: String(allocateXvfbDisplay()) }
+        : env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -431,7 +436,8 @@ function runTaskFlow(args, env, label) {
       clearInterval(heartbeat)
       reject(error)
     })
-    child.once('exit', (code, signal) => {
+    // Drain startup stderr before capturing failure details; exit can precede it.
+    child.once('close', (code, signal) => {
       clearInterval(heartbeat)
       rejectRecordedCheckpointFailure({
         code: code ?? 1,
