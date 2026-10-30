@@ -2707,6 +2707,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
       onModelSelectorOpenChange: handleModelSelectorOpenChange,
@@ -2792,6 +2793,7 @@ export function WorkbenchProvider({
       isOptionsLocked,
       listLocalSkills,
       listLocalApps,
+      modelSelection.isCatalogReady,
       modelSelection.isSelectionReady,
       modelSelection.selectedModelAvailable,
       handleModelSelectorOpenChange,

@@ -1,9 +1,9 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { fetchJson } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -58,7 +58,7 @@ export function createDesktopScenario(options) {
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
       const readCatalog = async () => {
-        const result = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+        const result = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
@@ -9,11 +10,11 @@ export async function requestExecutor(control, method, params, timeoutMs) {
   let response
   let payload
   try {
-    response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+    response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ id: requestId, method, params }),
-      signal: AbortSignal.timeout(timeoutMs),
+      timeoutMs,
     })
     stage = 'response-body'
     payload = await response.json()

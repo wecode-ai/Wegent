@@ -12,6 +12,7 @@ while ! xprop -root >/dev/null 2>&1; do
   sleep 0.05
 done
 
+echo "[desktop-e2e-window-manager] starting: display=$DISPLAY" >&2
 openbox >&2 &
 openbox_pid=$!
 trap 'kill "$openbox_pid" 2>/dev/null || true; wait "$openbox_pid" 2>/dev/null || true' EXIT
