@@ -1172,6 +1172,23 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
     handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
 }
 
+fn finish_test_native_turn(handler: &RuntimeWorkRpcHandler, task_id: &str, thread_id: &str) {
+    for method in ["turn/started", "turn/completed"] {
+        let status = if method == "turn/started" {
+            "inProgress"
+        } else {
+            "completed"
+        };
+        handler.apply_native_lifecycle(
+            task_id,
+            &ExecutionRequest::default(),
+            &json!({"method": method, "params": {"threadId": thread_id,
+                "turn": {"id": "test-native-turn", "status": status}}})
+            .into(),
+        );
+    }
+}
+
 fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
@@ -2458,7 +2475,7 @@ fn forked_task_inherits_project_routing_metadata() {
 }
 
 #[test]
-fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
+fn finishing_a_goal_request_updates_metadata_without_settling_native_admission() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -2476,17 +2493,22 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
-    assert!(!task.running);
+    assert_eq!(task.status, "running");
+    assert!(task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
-    assert!(task.completed_at.is_some());
+    assert!(task.completed_at.is_none());
+    assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(
+        task.execution_state.unwrap().phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+    );
 
     let _ = fs::remove_file(index_path);
 }
 
 #[test]
-fn turn_result_persists_observed_goal_status_before_settling_task() {
+fn turn_result_persists_goal_status_before_native_execution_settles() {
     let index_path = temp_runtime_work_index_path("finish-observed-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -2523,6 +2545,9 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
         }),
     );
 
+    assert!(handler.local_task_link("task-1").unwrap().running);
+    assert!(!handler.is_active_local_task("task-1"));
+    finish_test_native_turn(&handler, "task-1", "thread-1");
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
@@ -2570,6 +2595,10 @@ fn stale_execution_cannot_finish_its_replacement() {
         Some("current-thread".to_owned()),
         "done",
     );
+
+    assert!(handler.local_task_link("task-1").unwrap().running);
+    assert!(!handler.is_active_local_task("task-1"));
+    finish_test_native_turn(&handler, "task-1", "current-thread");
 
     let task = handler
         .local_task_link("task-1")

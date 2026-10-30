@@ -25,6 +25,42 @@ async fn request_observer_does_not_wait_for_native_publication() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn rpc_success_does_not_settle_admission_before_native_delivery() {
+    let (handler, root, request) = setup("rpc-before-native-start");
+    let execution = start_test_execution(&handler, "task-1");
+    let admitted = handler
+        .local_task_link("task-1")
+        .unwrap()
+        .execution_state
+        .unwrap();
+    assert_eq!(
+        admitted.phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+    );
+    assert!(handler.finish_local_task("task-1", execution, Some("thread-1".into()), "done"));
+    assert_eq!(
+        handler
+            .local_task_link("task-1")
+            .unwrap()
+            .execution_state
+            .as_ref(),
+        Some(&admitted)
+    );
+    handler.apply_native_lifecycle("task-1", &request, &notification("turn/started", "turn-1"));
+    let started = handler
+        .local_task_link("task-1")
+        .unwrap()
+        .execution_state
+        .unwrap();
+    assert_eq!(started.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(
+        started.phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Running
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn notification(method: &str, turn: &str) -> CodexNotification {
     json!({"method": method, "params": {"threadId": "thread-1", "turn": {
         "id": turn, "status": "completed", "agent_path": "/root"

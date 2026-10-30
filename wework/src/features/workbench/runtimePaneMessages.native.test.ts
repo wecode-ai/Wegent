@@ -40,6 +40,54 @@ function runningTask(turnId = 'turn-1'): RuntimeTaskSummary {
 
 describe('native turn content settlement', () => {
   afterEach(() => vi.useRealTimers())
+  test('does not settle native content from an RPC result before its native boundary', () => {
+    let turns: RuntimeConversationTurn[] = []
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onAssistantSettled,
+      onMessageAction: action => {
+        turns = reduceRuntimeConversationTurns(turns, action)
+      },
+    })
+    handlers.onChatStart?.({
+      ...address,
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'client-user',
+      task: runningTask(),
+    })
+    handlers.onChatDone?.({
+      ...address,
+      subtaskId: 'turn-1',
+      task: runningTask(),
+      result: { turnId: 'turn-1', value: 'RPC result' },
+    })
+    expect(onAssistantSettled).not.toHaveBeenCalled()
+    handlers.onRuntimeTurnUpdated?.({
+      ...address,
+      status: 'started',
+      turnId: 'turn-1',
+      task: runningTask(),
+    })
+    handlers.onChatChunk?.({
+      ...address,
+      subtaskId: 'turn-1',
+      itemId: 'native-text-1',
+      content: 'Native content',
+    })
+    expect(turns[0].status).toBe('streaming')
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({ type: 'assistant_text', content: 'Native content' }),
+    ])
+    handlers.onRuntimeTurnUpdated?.({
+      ...address,
+      status: 'settled',
+      turnId: 'turn-1',
+      task: settledTask('succeeded'),
+    })
+    expect(turns[0].status).toBe('done')
+    expect(onAssistantSettled).toHaveBeenCalledOnce()
+  })
+
   test.each([false, true])(
     'keeps content before RPC user binding, already settled: %s',
     settled => {

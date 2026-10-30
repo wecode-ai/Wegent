@@ -482,6 +482,14 @@ export function createRuntimeTaskStreamHandlers(
         warnAndDropRuntimeStreamEvent("chat:done", address, payload);
         return;
       }
+      const native = payload.task?.executionState;
+      if (
+        native &&
+        (native.latestTurnId !== identity.subtaskId ||
+          native.outcome !== "succeeded")
+      ) {
+        return;
+      }
       if (settledAssistantTurnIds.has(identity.subtaskId)) return;
       const blocks = getResultBlocks(identity.subtaskId, payload.result);
       const fileChanges =

@@ -1166,9 +1166,7 @@ impl RuntimeWorkRpcHandler {
                 link.thread_id = thread_id;
             }
             if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(link) {
-                if status == "done"
-                    && state.phase != crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
-                {
+                if status == "done" {
                     crate::runtime_work::lifecycle::project_native_execution(link, &state);
                     return;
                 }
