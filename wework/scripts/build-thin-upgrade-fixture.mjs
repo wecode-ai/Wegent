@@ -14,7 +14,7 @@ await new Promise((accept, reject) => {
     env: {
       ...process.env,
       WEWORK_UPGRADE_FIXTURE_VERSION: pair.from.version,
-      WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA: String(pair.from.dataSchema),
+      WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA: String(pair.to.dataSchema),
       WEWORK_UPGRADE_FIXTURE_OUTPUT: output,
       WEWORK_UPGRADE_FIXTURE_THIN_SOURCE: '1',
     },

@@ -202,6 +202,52 @@ test('retains a running thin installation without copying or preparing its host'
   expect(shutdown).not.toHaveBeenCalled()
   expect(await readFile(join(profile, 'package.json'), 'utf8')).toContain('running-profile')
 })
+
+test('waits for running component readiness before inspecting the profile or downloading', async () => {
+  const { options, store, fetch } = await fixture()
+  await rm(join(store.root, 'active'))
+  const ready = Promise.withResolvers<ComponentPaths>()
+  const runningComponents = vi.fn(() => ready.promise)
+  const service = new AppUpdateService({ ...options, runningComponents })
+  await service.check('stable')
+  const downloading = service.download()
+  await vi.waitFor(() => expect(runningComponents).toHaveBeenCalledOnce())
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(0)
+  const profile = currentCoreProfile(options.dataDirectory)
+  await mkdir(profile, { recursive: true })
+  await writeFile(join(profile, 'package.json'), '{}')
+  ready.resolve({ executor: '/running/executor' } as ComponentPaths)
+  await expect(downloading).rejects.toThrow('Release package integrity check failed')
+})
+
+test('preserves component startup errors without registering an unusable baseline', async () => {
+  const { options, store } = await fixture()
+  await rm(join(store.root, 'active'))
+  const error = new Error('Packaged executor is incompatible')
+  const service = new AppUpdateService({
+    ...options,
+    runningComponents: async () => {
+      throw error
+    },
+  })
+  await service.check('stable')
+  await expect(service.download()).rejects.toBe(error)
+  expect(await store.active()).toBeNull()
+})
+
+test('compatible rollback selects the retained version without preparing its host', async () => {
+  const { service, store, shutdown, restart } = await fixture()
+  const current = (await store.active())!
+  const previous = { ...current, id: 'previous', version: '0.9.0' }
+  await store.save(previous)
+  await atomicReleaseWrite(join(store.root, 'active'), previous.id)
+  await store.activate(current, 'snapshot')
+  await store.confirm(current.id)
+  await expect(service.createRollbackAction(false)()).resolves.toBeUndefined()
+  expect((await store.active())?.id).toBe(previous.id)
+  expect(shutdown).toHaveBeenCalledOnce()
+  expect(restart).toHaveBeenCalledOnce()
+})
 test('rollback cannot restore incompatible data without an explicit boolean confirmation', async () => {
   const { service, store } = await fixture()
   const previous = {

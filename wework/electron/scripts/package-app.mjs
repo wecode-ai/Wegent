@@ -130,13 +130,13 @@ try {
       ...(thinFixture
         ? []
         : [
-            'harness-runtime',
-            'bin',
-            'codex',
-            'wework-core-plugins',
-            'wework-app-static',
-            'bundled-plugins',
-          ].map(name => join(electronRoot, 'resources', name))),
+            join(electronRoot, 'resources', 'harness-runtime'),
+            join(electronRoot, 'resources', 'bin'),
+            join(electronRoot, 'resources', 'codex'),
+            join(electronRoot, 'resources', 'wework-core-plugins'),
+            join(electronRoot, 'resources', 'wework-app-static'),
+            join(electronRoot, 'resources', 'bundled-plugins'),
+          ]),
       join(electronRoot, 'resources', 'components.json'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),

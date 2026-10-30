@@ -54,7 +54,7 @@ export interface AppUpdateServiceOptions {
   resources: string
   runtimeRoot: string
   componentDataDirectory?: string
-  runningComponents?: () => ComponentPaths | null
+  runningComponents?: () => ComponentPaths | null | Promise<ComponentPaths | null>
   dataSchema: number
   readableDataSchemas: number[]
   updateBaseUrl: string
@@ -276,6 +276,8 @@ export class AppUpdateService {
     const store = this.options.store
     const current = await store.active()
     if (current && !current.id.startsWith('installed-')) return
+    const components = await this.options.runningComponents?.()
+    if (!components) throw new Error('The running release component composition is unavailable')
     const id = current?.id ?? `installed-${this.options.currentVersion}-${randomUUID()}`
     const release: DesktopRelease = {
       schemaVersion: 1,
@@ -289,8 +291,6 @@ export class AppUpdateService {
       dataSchema: this.options.dataSchema,
       readableDataSchemas: this.options.readableDataSchemas,
     }
-    const components = this.options.runningComponents?.()
-    if (!components) throw new Error('The running release component composition is unavailable')
     await store.save(release)
     await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify({ components }))
     await atomicReleaseWrite(join(store.root, 'bridge'), this.options.executable)
@@ -416,26 +416,8 @@ export class AppUpdateService {
         if (previous.restoreRequired && !restoreConfirmed)
           throw new Error('Restoring pre-update data requires confirmation')
         const store = this.options.store
-        let sourceRevision: string | undefined
-        if (!previous.restoreRequired) {
-          const previousId = await optionalText(join(store.root, 'previousHealthy'))
-          const release = await store.read(previousId!)
-          const refreshed = {
-            ...release,
-            profileRoot: join(store.slot(release.id), `rollback-profile-${randomUUID()}`),
-          }
-          await this.prepareHostEnvironment(refreshed)
-          sourceRevision = JSON.parse(
-            await readFile(join(store.slot(release.id), 'prepared.json'), 'utf8')
-          ).sourceRevision
-        }
         this.stopping = true
         await this.options.shutdown()
-        if (
-          sourceRevision &&
-          sourceRevision !== (await profileRevision(currentCoreProfile(this.options.dataDirectory)))
-        )
-          throw new Error('Plugins changed while preparing rollback; prepare again')
         const activation = await store.requestRollback()
         if (
           process.env.WEWORK_E2E_CONTROL_URL &&

@@ -593,8 +593,16 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
-      WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
-      WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource?.executable,
+    }
+  }
+  if (upgradeRequested && nextEnvironment.WEWORK_E2E_UPGRADE_PAIR) {
+    const pair = JSON.parse(await readFile(nextEnvironment.WEWORK_E2E_UPGRADE_PAIR, 'utf8'))
+    if (pair.kind === 'regression' && pair.thinPairFile && pair.thinSource?.executable) {
+      nextEnvironment = {
+        ...nextEnvironment,
+        WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
+        WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource.executable,
+      }
     }
   }
   const [build, codexBinary] = await Promise.all([

@@ -77,7 +77,7 @@ export async function createDesktopScenario(options) {
       timeoutMs: options.workbenchReadyTimeoutMs,
     })
     const data = options.electronUserDataDirectory
-    const original = await stat(join(data, 'dsh-core/profiles/wework-core'))
+    const original = await stat(join(data, 'dsh-core/profiles/wework-core'), { bigint: true })
     const { release: running } = JSON.parse(
       await client.command('getDesktopRuntimeDiagnostics', 'body')
     )
@@ -88,8 +88,10 @@ export async function createDesktopScenario(options) {
     const baseline = JSON.parse(await readFile(join(slots, installed[0], 'release.json'), 'utf8'))
     assert.equal(baseline.executable, running.hostExecutable, 'The running host was copied')
     assert.equal(baseline.componentDataDirectory, data, 'The running components were replaced')
+    const retained = await stat(baseline.profileRoot, { bigint: true })
+    assert.equal(retained.dev, original.dev, 'The retained profile moved to another filesystem')
     assert.equal(
-      (await stat(baseline.profileRoot)).ino,
+      retained.ino,
       original.ino,
       'Rollback must retain the original stopped profile, rather than prepare a copy'
     )

@@ -99,6 +99,8 @@ preparation and execution do not write to the source components or profile.
 The shared real-package upgrade, rollback, and recovery scenarios additionally
 check retained host paths, component directories, and profile identity for
 independently built regression packages.
+Compatible manual rollback switches directly to the retained release. Incompatible
+rollback still requires confirmation before restoring the pre-update snapshot.
 
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
