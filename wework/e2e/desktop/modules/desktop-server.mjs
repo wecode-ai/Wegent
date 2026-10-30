@@ -1,3 +1,7 @@
+import {
+  DIAGRAM_REGRESSION_MARKER,
+  DIAGRAM_REGRESSION_RESPONSE,
+} from './conversation-diagram-fixture.mjs'
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
@@ -2017,7 +2021,8 @@ class DesktopE2EServer {
         const previousLongPoll = this.controlLongPolls.get(previousClientId)
         if (previousLongPoll) {
           clearTimeout(previousLongPoll.timeout)
-          previousLongPoll.response.destroy()
+          previousLongPoll.response.writeHead(410)
+          previousLongPoll.response.end()
           this.controlLongPolls.delete(previousClientId)
         }
         this.controlWindowsByClient.delete(previousClientId)
@@ -2057,7 +2062,7 @@ class DesktopE2EServer {
       const clientId = url.searchParams.get('clientId')
       this.recordControlTransport('poll', clientId)
       if (!clientId || !this.controlWindowsByClient.has(clientId)) {
-        response.writeHead(204)
+        response.writeHead(410)
         response.end()
         return true
       }
@@ -4464,7 +4469,11 @@ class DesktopE2EServer {
       )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        assistantMessage(
+          JSON.stringify(body).includes(DIAGRAM_REGRESSION_MARKER)
+            ? DIAGRAM_REGRESSION_RESPONSE
+            : FRESH_CHAT_COMPLETION_TEXT
+        ),
         responseCompleted(responseId),
       ])
       return

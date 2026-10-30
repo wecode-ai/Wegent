@@ -183,7 +183,7 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -776,6 +776,14 @@ jobs:
           PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
+
+      - name: Verify MySQL Issue assignment concurrency
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          ISSUE_ASSIGNMENT_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/issue_assignment_mysql.py
 
       - name: Prepare isolated DingTalk HTTPS download fixture
         if: matrix.shardIndex == 1

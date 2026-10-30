@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
+import { isSeq, parseDocument } from 'yaml'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
@@ -114,6 +115,9 @@ export async function prepareWorkbenchDshLaunch(
 ): Promise<WorkbenchDshLaunch> {
   const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
+  if (options.includeElectronHostBridge !== false && runtime.version !== WORKBENCH_DSH_VERSION) {
+    throw new Error(`The trusted Electron host bridge requires DSH ${WORKBENCH_DSH_VERSION}`)
+  }
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(
     options.dataDirectory,
@@ -158,13 +162,9 @@ export async function prepareWorkbenchDshLaunch(
     // /wework/electron-host/v1/invoke hits a plain page and every capability
     // (including dshCapture.*) silently degrades. Install the trusted host bridge
     // into the profile so the workbench can reach the owner-scoped capabilities.
-    const hostPluginPath = join(runtime.pluginsRoot, 'wework-electron-host')
     const corePluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
-    const resolvedHostPluginPath = (await isDirectory(hostPluginPath))
-      ? hostPluginPath
-      : corePluginsRoot && (await isDirectory(join(corePluginsRoot, 'wework-electron-host')))
-        ? join(corePluginsRoot, 'wework-electron-host')
-        : null
+    const hostPluginPath = join(corePluginsRoot || runtime.pluginsRoot, 'wework-electron-host')
+    const resolvedHostPluginPath = (await isDirectory(hostPluginPath)) ? hostPluginPath : null
     if (!resolvedHostPluginPath) {
       throw new Error(
         'Workbench Smart App runtime requires the trusted wework-electron-host plugin'
@@ -539,6 +539,15 @@ async function patchModelProvider(path: string): Promise<void> {
 }
 
 export function injectModelProviderPatch(source: string): string {
+  const document = parseDocument(source)
+  if (document.errors.length) {
+    throw new Error('Smart app model patch contains invalid YAML', {
+      cause: document.errors[0],
+    })
+  }
+  if (document.contents !== null && !isSeq(document.contents)) {
+    throw new Error('Smart app model patch must contain a plugin list')
+  }
   let provider = false
   let model = false
   const patched = source.split('\n').map(line => {

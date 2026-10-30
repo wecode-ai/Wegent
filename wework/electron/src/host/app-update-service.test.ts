@@ -110,6 +110,38 @@ test('never treats the absence of an upgrade policy as permission to update dire
   fetch.mockResolvedValue(new Response(JSON.stringify({ schemaVersion: 1, appVersion: '1.2.0' })))
   await expect(service.check('stable')).rejects.toThrow('no verified upgrade policy')
 })
+
+test('records rollback failures before shutdown without losing the original error', async () => {
+  const { options } = await fixture()
+  const log = vi.fn()
+  const service = new AppUpdateService({ ...options, log })
+  await expect(service.createRollbackAction(false)()).rejects.toThrow('No previous healthy release')
+  expect(log).toHaveBeenCalledWith({
+    event: 'release-operation-failed',
+    stopping: false,
+    message: 'No previous healthy release is available',
+  })
+  expect(service.downloadProgress()).toMatchObject({ phase: 'failed' })
+})
+
+test('diagnostic failures do not hide the original rollback failure', async () => {
+  const { options } = await fixture()
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const service = new AppUpdateService({
+      ...options,
+      log: () => {
+        throw new Error('Log unavailable')
+      },
+    })
+    await expect(service.createRollbackAction(false)()).rejects.toThrow(
+      'No previous healthy release'
+    )
+    expect(diagnostic).toHaveBeenCalledOnce()
+  } finally {
+    diagnostic.mockRestore()
+  }
+})
 test('reports an unavailable path separately from already being up to date', async () => {
   const { service, catalog } = await fixture()
   catalog.edges = []

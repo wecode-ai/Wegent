@@ -3,6 +3,7 @@ import { createContext, useContext, type RefObject } from 'react'
 const MAX_MARKDOWN_HEIGHT_ENTRIES = 256
 
 export interface MarkdownWindowingScope {
+  rootFontSize: number
   scrollElementRef?: RefObject<HTMLElement | null>
   getHeight(content: string, width: number): number | undefined
   setHeight(content: string, width: number, height: number): void
@@ -13,11 +14,13 @@ export interface MarkdownWindowingScope {
 
 export function createMarkdownWindowingScope(
   scrollElementRef: RefObject<HTMLElement | null> | undefined,
-  onChunkLayout: (element: HTMLElement) => void
+  onChunkLayout: (element: HTMLElement) => void,
+  rootFontSize = 16
 ): MarkdownWindowingScope {
   const heights = new Map<string, number>()
 
   return {
+    rootFontSize,
     ...createViewportChecks(scrollElementRef),
     scrollElementRef,
     onChunkLayout,
