@@ -234,6 +234,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   loadParticipants,
   locale,
   currentUserId,
+  includeCurrentUserByDefault = true,
   commands,
   canManage: canManageOverride,
   initialCreateOpen = false,
@@ -255,6 +256,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   }>;
   locale: "zh-CN" | "en";
   currentUserId?: number;
+  includeCurrentUserByDefault?: boolean;
   commands: WorkspaceResourceCommands;
   canManage?: boolean;
   initialCreateOpen?: boolean;
@@ -455,7 +457,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   }, [formOpen, onCreateOpenChange]);
 
   useEffect(() => {
-    if (!formOpen || currentUserId == null) return;
+    if (!formOpen || !includeCurrentUserByDefault || currentUserId == null) return;
     const currentMember = members.find(
       (member) => member.user_id === currentUserId,
     );
@@ -479,7 +481,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
     if (!leader) {
       setLeader(`human:${currentMember.user_id}`);
     }
-  }, [currentUserId, formOpen, leader, members]);
+  }, [currentUserId, formOpen, includeCurrentUserByDefault, leader, members]);
 
   useEffect(() => {
     if (!selectedGroup) return;

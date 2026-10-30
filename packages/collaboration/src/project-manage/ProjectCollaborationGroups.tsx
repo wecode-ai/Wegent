@@ -257,6 +257,7 @@ function ScopedProjectCollaborationGroups({
         agents={availableAgents}
         locale={locale}
         currentUserId={currentUserId}
+        includeCurrentUserByDefault={false}
         canManage={canManage}
         agentActions={agentActions}
         commands={{
