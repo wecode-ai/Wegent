@@ -27,7 +27,8 @@ export function watchDevelopmentDirectory(
       .find(
         value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value)
       )
-    if (relative !== undefined) notify(event, relative || path.basename(directory))
+    if (relative !== undefined)
+      notify(event, filename ? relative || path.basename(directory) : undefined)
   })
   return {
     ready: once(watcher, 'ready'),

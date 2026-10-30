@@ -190,6 +190,38 @@ test.each(['directory', 'file', 'fsevents'])(
   }
 )
 
+test('rebuilds a subscribed file when a raw directory notification omits its filename', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-unknown-'))
+  const source = path.join(root, 'config.json')
+  await writeFile(source, 'one')
+  const native = new EventEmitter()
+  native.close = vi.fn()
+  let published
+  const onError = vi.fn()
+  const watcher = await watchDevelopmentBuild({
+    directories: [],
+    files: [source],
+    build: async () => {
+      published = await readFile(source, 'utf8')
+    },
+    onError,
+    debounceMs: 0,
+    watchDirectory: (directory, options, notify) =>
+      watchDevelopmentDirectory(directory, options, notify, () => {
+        queueMicrotask(() => native.emit('ready'))
+        return native
+      }),
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  await writeFile(source, 'two')
+  native.emit('raw', 'change', undefined, { watchedPath: root })
+  await expect.poll(() => published).toBe('two')
+  expect(onError).not.toHaveBeenCalled()
+})
+
 test('accepts canonical raw paths only inside the subscribed directory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'development-build-boundary-'))
   const native = new EventEmitter()
@@ -203,6 +235,7 @@ test('accepts canonical raw paths only inside the subscribed directory', async (
     native.emit('raw', 'change', outside, {})
     native.emit('raw', 'change', 'entry.js', { watchedPath: path.dirname(outside) })
     native.emit('raw', 'change', 'entry.js', {})
+    native.emit('raw', 'change', undefined, { watchedPath: path.dirname(outside) })
     expect(notify).not.toHaveBeenCalled()
     native.emit('raw', 'change', path.join(await realpath(root), 'entry.js'), {})
     expect(notify).toHaveBeenCalledExactlyOnceWith('change', 'entry.js')
