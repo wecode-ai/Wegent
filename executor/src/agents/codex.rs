@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -875,7 +875,7 @@ impl CodexAppServerClient {
             let Some((oldest_thread_id, oldest_generation)) = state
                 .idle_thread_generations
                 .iter()
-                .filter(|(thread, _)| !state.has_mcp_app_lease(thread))
+                .filter(|(thread, _)| !state.has_mcp_app_session(thread))
                 .min_by_key(|(_, generation)| **generation)
                 .map(|(thread_id, generation)| (thread_id.clone(), *generation))
             else {
@@ -945,7 +945,7 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let state = self.state.lock().await;
-            if state.has_mcp_app_lease(thread_id)
+            if state.has_mcp_app_session(thread_id)
                 || state.active_threads.contains_key(thread_id)
                 || state.thread_generations.get(thread_id) != Some(&generation)
             {
@@ -1275,7 +1275,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
-    mcp_app_leases: HashMap<(String, String), Instant>,
+    mcp_app_sessions: HashSet<(String, String, String)>,
     thread_generations: HashMap<String, u64>,
     thread_mcp_configurations: HashMap<String, Map<String, Value>>,
     idle_thread_generations: HashMap<String, u64>,
@@ -1310,7 +1310,7 @@ impl Default for CodexAppServerSharedState {
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
-            mcp_app_leases: HashMap::new(),
+            mcp_app_sessions: HashSet::new(),
             thread_generations: HashMap::new(),
             thread_mcp_configurations: HashMap::new(),
             idle_thread_generations: HashMap::new(),
