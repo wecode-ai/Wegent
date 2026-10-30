@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { cloudFetch } from './cloud-http.js'
 import type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
@@ -18,14 +18,15 @@ import {
   ReleaseStore,
   type DesktopRelease,
 } from '../runtime/release-store.js'
-import { currentCoreProfile, profileRevision } from '../runtime/release-profile.js'
+import {
+  currentCoreProfile,
+  profileRevision,
+  retainReleaseProfile,
+} from '../runtime/release-profile.js'
+import type { ComponentPaths } from '../runtime/component-update-manager.js'
 import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
-import {
-  copyPhysicalRelease,
-  extractPhysicalRelease,
-  removePhysicalRelease,
-} from '../runtime/physical-release-files.js'
+import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
 
 const execute = promisify(execFile)
 
@@ -52,6 +53,8 @@ export interface AppUpdateServiceOptions {
   executable: string
   resources: string
   runtimeRoot: string
+  componentDataDirectory?: string
+  runningComponents?: () => ComponentPaths | null
   dataSchema: number
   readableDataSchemas: number[]
   updateBaseUrl: string
@@ -188,7 +191,6 @@ export class AppUpdateService {
     // Download preparation owns cleanup. Startup cleanup could race creation
     // of the next slot when automatic downloads start immediately after readiness.
     await store.prune()
-    await this.preserveInstalledHost()
     const id = `${pending.version}-${randomUUID()}`
     const slot = store.slot(id)
     await mkdir(slot, { recursive: true, mode: 0o700 })
@@ -227,22 +229,6 @@ export class AppUpdateService {
       this.progress = { ...this.progress, phase: 'runtime' }
       await this.prepareHostEnvironment(release)
       await store.read(id)
-      const current = await store.active()
-      if (
-        current?.id.startsWith('installed-') &&
-        resolve(await realpath(currentCoreProfile(this.options.dataDirectory))) !==
-          resolve(current.profileRoot)
-      ) {
-        const revisions = await Promise.all(
-          [current.id, id].map(
-            async releaseId =>
-              JSON.parse(await readFile(join(store.slot(releaseId), 'prepared.json'), 'utf8'))
-                .sourceRevision
-          )
-        )
-        if (revisions[0] !== revisions[1])
-          throw new Error('Plugins changed between source and target preparation; prepare again')
-      }
       this.prepared = release
       this.progress = { ...this.progress, phase: 'ready' }
       this.options.log?.({
@@ -288,8 +274,9 @@ export class AppUpdateService {
 
   private async registerInstalledRelease(): Promise<void> {
     const store = this.options.store
-    if (await store.active()) return
-    const id = `installed-${this.options.currentVersion}-${randomUUID()}`
+    const current = await store.active()
+    if (current && !current.id.startsWith('installed-')) return
+    const id = current?.id ?? `installed-${this.options.currentVersion}-${randomUUID()}`
     const release: DesktopRelease = {
       schemaVersion: 1,
       id,
@@ -297,11 +284,15 @@ export class AppUpdateService {
       executable: this.options.executable,
       resources: this.options.resources,
       runtimeRoot: this.options.runtimeRoot,
-      profileRoot: join(store.slot(id), 'profile'),
+      componentDataDirectory: this.options.componentDataDirectory ?? this.options.dataDirectory,
+      profileRoot: await realpath(currentCoreProfile(this.options.dataDirectory)),
       dataSchema: this.options.dataSchema,
       readableDataSchemas: this.options.readableDataSchemas,
     }
+    const components = this.options.runningComponents?.()
+    if (!components) throw new Error('The running release component composition is unavailable')
     await store.save(release)
+    await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify({ components }))
     await atomicReleaseWrite(join(store.root, 'bridge'), this.options.executable)
     await atomicReleaseWrite(join(store.root, 'active'), id)
   }
@@ -315,38 +306,6 @@ export class AppUpdateService {
       prepared.sourceRevision ===
       (await profileRevision(currentCoreProfile(this.options.dataDirectory)))
     )
-  }
-
-  private async preserveInstalledHost(): Promise<void> {
-    const store = this.options.store
-    const current = await store.active()
-    if (!current || !current.id.startsWith('installed-')) return
-    if (current.executable.startsWith(store.root + sep)) {
-      if (
-        resolve(await realpath(currentCoreProfile(this.options.dataDirectory))) !==
-        resolve(current.profileRoot)
-      ) {
-        await this.prepareHostEnvironment({
-          ...current,
-          profileRoot: join(store.slot(current.id), `baseline-profile-${randomUUID()}`),
-        })
-      }
-      return
-    }
-    const hostSource =
-      process.platform === 'darwin'
-        ? resolve(this.options.executable, '..', '..', '..')
-        : dirname(this.options.executable)
-    const hostTarget = join(store.slot(current.id), 'host', basename(hostSource))
-    await removePhysicalRelease(hostTarget)
-    await copyPhysicalRelease(hostSource, hostTarget)
-    const preserved = {
-      ...current,
-      executable: join(hostTarget, relative(hostSource, this.options.executable)),
-      resources: join(hostTarget, relative(hostSource, this.options.resources)),
-    }
-    await store.save(preserved)
-    await this.prepareHostEnvironment(preserved)
   }
 
   private async prepareHostEnvironment(release: DesktopRelease): Promise<void> {
@@ -424,6 +383,12 @@ export class AppUpdateService {
       store.root,
       process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
     )
+    if (current.id.startsWith('installed-')) {
+      const profileRoot = join(store.slot(current.id), `retained-profile-${randomUUID()}`)
+      // Record recovery's destination before moving the stopped writer's profile.
+      await store.save({ ...current, profileRoot })
+      await retainReleaseProfile(this.options.dataDirectory, profileRoot)
+    }
     await store.activate(release, snapshot)
     this.options.restart()
   }

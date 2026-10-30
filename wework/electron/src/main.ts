@@ -122,6 +122,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
   type DesktopComponentUpdateController,
+  type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
 import {
   prepareElectronNodeRuntime,
@@ -353,6 +354,7 @@ let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let runningComponentPaths: PreparedDesktopComponents['paths'] = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -508,6 +510,9 @@ const appUpdates = new AppUpdateService({
   currentVersion: app.getVersion(),
   executable: process.execPath,
   resources: process.resourcesPath,
+  componentDataDirectory:
+    process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
+  runningComponents: () => runningComponentPaths,
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
   dataSchema: packageMetadata.weworkDataSchema ?? 1,
@@ -2518,6 +2523,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths
+  runningComponentPaths = components
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',

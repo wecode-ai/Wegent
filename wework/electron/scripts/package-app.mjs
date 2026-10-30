@@ -1,6 +1,6 @@
 import { packager } from '@electron/packager'
 import { spawn } from 'node:child_process'
-import { cp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'yaml'
@@ -24,6 +24,7 @@ const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 // Regression fixtures are independently packaged and signed. Never rewrite a built archive.
 const fixtureVersion = process.env.WEWORK_UPGRADE_FIXTURE_VERSION?.trim()
+const thinFixture = fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_THIN_SOURCE === '1'
 const output = fixtureVersion
   ? join(
       resolve(
@@ -126,13 +127,17 @@ try {
         `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
       ),
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
-      join(electronRoot, 'resources', 'harness-runtime'),
-      join(electronRoot, 'resources', 'bin'),
-      join(electronRoot, 'resources', 'codex'),
-      join(electronRoot, 'resources', 'wework-core-plugins'),
-      join(electronRoot, 'resources', 'wework-app-static'),
+      ...(thinFixture
+        ? []
+        : [
+            'harness-runtime',
+            'bin',
+            'codex',
+            'wework-core-plugins',
+            'wework-app-static',
+            'bundled-plugins',
+          ].map(name => join(electronRoot, 'resources', name))),
       join(electronRoot, 'resources', 'components.json'),
-      join(electronRoot, 'resources', 'bundled-plugins'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
       join(repositoryRoot, 'LICENSE'),
@@ -147,6 +152,13 @@ try {
         ? join(application, `${identity.productName}.app`, 'Contents', 'Resources')
         : join(application, 'resources')
     if (fixtureVersion) {
+      if (thinFixture && process.platform === 'win32') {
+        await mkdir(join(resources, 'bin'), { recursive: true })
+        await cp(
+          join(electronRoot, 'resources', 'bin', 'wegent-executor.exe'),
+          join(resources, 'bin', 'wegent-executor.exe')
+        )
+      }
       const path = join(resources, 'components.json')
       const components = JSON.parse(await readFile(path, 'utf8'))
       components.appVersion = packageVersion

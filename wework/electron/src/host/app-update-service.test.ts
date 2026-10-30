@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { AppUpdateService } from './app-update-service.js'
 import { atomicReleaseWrite, ReleaseStore } from '../runtime/release-store.js'
 import type { UpgradeCatalog } from '../runtime/upgrade-policy.mjs'
+import type { ComponentPaths } from '../runtime/component-update-manager.js'
+import { currentCoreProfile } from '../runtime/release-profile.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -171,6 +173,34 @@ test('corrupt downloads fail once, retain the active release, and never shut dow
   expect(shutdown).not.toHaveBeenCalled()
   expect(restart).not.toHaveBeenCalled()
   expect(() => service.createInstallAction()).toThrow('not ready')
+})
+
+test('retains a running thin installation without copying or preparing its host', async () => {
+  const { options, store, fetch, shutdown } = await fixture()
+  await rm(join(store.root, 'active'))
+  const profile = currentCoreProfile(options.dataDirectory)
+  await mkdir(profile, { recursive: true })
+  await writeFile(join(profile, 'package.json'), '{"name":"running-profile"}')
+  const components = { executor: '/running/executor' } as ComponentPaths
+  const service = new AppUpdateService({ ...options, runningComponents: () => components })
+  await service.check('stable')
+  // There is deliberately no host, preparation CLI, or bundled component tree.
+  // Reaching download integrity validation proves source preparation was removed.
+  await expect(service.download()).rejects.toThrow('Release package integrity check failed')
+  const baseline = (await store.active())!
+  expect(baseline).toMatchObject({
+    executable: options.executable,
+    resources: options.resources,
+    runtimeRoot: options.runtimeRoot,
+    componentDataDirectory: options.dataDirectory,
+    profileRoot: await realpath(profile),
+  })
+  expect(
+    JSON.parse(await readFile(join(store.slot(baseline.id), 'prepared.json'), 'utf8'))
+  ).toEqual({ components })
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(1)
+  expect(shutdown).not.toHaveBeenCalled()
+  expect(await readFile(join(profile, 'package.json'), 'utf8')).toContain('running-profile')
 })
 test('rollback cannot restore incompatible data without an explicit boolean confirmation', async () => {
   const { service, store } = await fixture()

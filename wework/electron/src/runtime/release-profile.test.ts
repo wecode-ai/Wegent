@@ -6,6 +6,7 @@ import {
   cloneReleaseProfile,
   currentCoreProfile,
   profileRevision,
+  retainReleaseProfile,
   selectReleaseProfile,
 } from './release-profile.js'
 
@@ -13,6 +14,34 @@ const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
+
+test.each([false, true])(
+  'retains the stopped profile itself (existing pointer: %s)',
+  async pointer => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-retain-profile-'))
+    roots.push(root)
+    const live = currentCoreProfile(root)
+    const source = pointer ? join(root, 'original-profile') : live
+    await mkdir(source, { recursive: true })
+    await writeFile(join(source, 'package.json'), '{"version":"running"}')
+    if (pointer) {
+      await mkdir(join(live, '..'), { recursive: true })
+      await symlink(source, live, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    const before = await lstat(source)
+    const baseline = join(root, 'retained-profile')
+    await retainReleaseProfile(root, baseline)
+    expect((await lstat(baseline)).ino).toBe(before.ino)
+    expect(await readFile(join(live, 'package.json'), 'utf8')).toContain('running')
+    const target = join(root, 'target-profile')
+    await mkdir(target)
+    await writeFile(join(target, 'package.json'), '{"version":"target"}')
+    await selectReleaseProfile(root, target, join(root, 'legacy'))
+    await writeFile(join(live, 'package.json'), '{"version":"changed-target"}')
+    await selectReleaseProfile(root, baseline, join(root, 'legacy'))
+    expect(await readFile(join(live, 'package.json'), 'utf8')).toBe('{"version":"running"}')
+  }
+)
 
 test('reconstructs a missing profile pointer and switches it on subsequent launches', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-profile-'))
