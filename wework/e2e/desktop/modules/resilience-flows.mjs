@@ -63,6 +63,11 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
   await control.command(
     'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`,
+    { text: '正在自动重试…', timeoutMs: 1_000 }
+  )
+  await control.command(
+    'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
     { timeoutMs: 15_000 }
   )

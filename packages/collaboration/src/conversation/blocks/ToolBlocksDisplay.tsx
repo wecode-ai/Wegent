@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
-import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
+import {
+  isRuntimeRateLimitWaitBlock,
+  isRuntimeRetryWaitBlock,
+} from '@wegent/chat-core/runtime-conversation-turns'
 import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import type { ProcessingBlock, SubagentBlock } from './types'
 import {
@@ -103,6 +106,7 @@ export function ToolBlocksDisplay({
 }: ToolBlocksDisplayProps) {
   const { t } = useConversationTranslation()
   const rateLimitWaiting = blocks.some(isRuntimeRateLimitWaitBlock)
+  const retryWaiting = blocks.some(isRuntimeRetryWaitBlock)
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
@@ -314,16 +318,20 @@ export function ToolBlocksDisplay({
   const toolCallCount = countProcessingToolCalls(activityStats)
   const summaryTitle = rateLimitWaiting
     ? t('tool_activity.rate_limit_wait')
-    : hasToolActivity
-      ? hasOnlyEditActivity
-        ? t('tool_activity.edit_summary', { count: activityStats.edit })
-        : activityStats.edit > 0
-          ? t('tool_activity.mixed_summary', {
-              count: activityStats.edit,
-              toolSummary: t('tool_activity.summary', { count: toolCallCount }),
-            })
-          : t('tool_activity.summary', { count: toolCallCount })
-      : t('thinking.completed')
+    : retryWaiting
+      ? t('tool_activity.retrying')
+      : hasToolActivity
+        ? hasOnlyEditActivity
+          ? t('tool_activity.edit_summary', { count: activityStats.edit })
+          : activityStats.edit > 0
+            ? t('tool_activity.mixed_summary', {
+                count: activityStats.edit,
+                toolSummary: t('tool_activity.summary', {
+                  count: toolCallCount,
+                }),
+              })
+            : t('tool_activity.summary', { count: toolCallCount })
+        : t('thinking.completed')
   const summaryDuration = hasToolActivity ? '' : duration.replace(/^已处理\s*/, '')
   const processingContent = useMemo(
     () =>
@@ -409,7 +417,7 @@ export function ToolBlocksDisplay({
           canToggle={canToggleSummary}
           duration={summaryDuration}
           expanded={summaryExpanded}
-          isRunning={isRunning && !hasClosedToolSegment && !rateLimitWaiting}
+          isRunning={isRunning && !hasClosedToolSegment && !retryWaiting}
           rows={rows}
           onToggle={toggleSummary}
           title={summaryTitle}
@@ -430,7 +438,7 @@ export function ToolBlocksDisplay({
           rows={previewRows}
           showThinking={
             isStreaming &&
-            !rateLimitWaiting &&
+            !retryWaiting &&
             hasToolActivity &&
             !hasRunningToolActivity &&
             (processingPhase === 'live' || showInterToolThinking)

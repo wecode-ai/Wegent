@@ -337,6 +337,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.other": "其他工具",
     "conversation.tool_activity.other_action": "调用工具",
     "conversation.tool_activity.reconnecting": "连接中断，正在重连…",
+    "conversation.tool_activity.retrying": "正在自动重试…",
     "conversation.tool_activity.rate_limit_wait": "模型限流，等待自动重试…",
     "conversation.tool_activity.renamed_file": "重命名 {{filename}}",
     "conversation.tool_activity.search": "搜索",
@@ -750,6 +751,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.other_action": "Call tool",
     "conversation.tool_activity.reconnecting":
       "Connection interrupted. Reconnecting…",
+    "conversation.tool_activity.retrying": "Retrying automatically…",
     "conversation.tool_activity.rate_limit_wait":
       "Model rate limited. Waiting to retry…",
     "conversation.tool_activity.renamed_file": "Renamed {{filename}}",

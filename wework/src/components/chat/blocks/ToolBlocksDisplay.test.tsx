@@ -1927,6 +1927,63 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
   })
 
+  test.each([
+    { modelKind: 'custom', forceExpanded: false },
+    { modelKind: 'codex-official', forceExpanded: false },
+    { modelKind: 'codex-official', forceExpanded: true },
+  ])(
+    'shows retries immediately and clears them on recovery: %o',
+    ({ modelKind, forceExpanded }) => {
+      const retryBlock: ProcessingBlock = {
+        id: 'retry-immediate',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        toolInput: { model_kind: modelKind, retry_reason: 'connection' },
+        status: 'streaming',
+        createdAt: Date.now(),
+      }
+      const { rerender } = render(
+        <ToolBlocksDisplay
+          blocks={[completedCommandBlock, retryBlock]}
+          isStreaming
+          forceExpanded={forceExpanded}
+          showInterToolThinking
+          thinkingContent="Previous reasoning"
+        />
+      )
+      expect(screen.getByTestId('processing-summary-header')).toHaveTextContent('正在自动重试…')
+      expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('tool-thinking-indicator')).not.toBeInTheDocument()
+
+      rerender(
+        <ToolBlocksDisplay
+          blocks={[completedCommandBlock, { ...retryBlock, status: 'done' }]}
+          isStreaming
+          forceExpanded={forceExpanded}
+        />
+      )
+      expect(screen.queryByText('正在自动重试…')).not.toBeInTheDocument()
+    }
+  )
+
+  test('does not show retry waiting for a failed connection block', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'retry-failed',
+            type: 'tool',
+            toolName: 'runtime_reconnecting',
+            status: 'error',
+            createdAt: Date.now(),
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+    expect(screen.queryByText('正在自动重试…')).not.toBeInTheDocument()
+  })
+
   test('shows a subtle one-line reconnecting status after a sustained interruption', () => {
     vi.useFakeTimers()
     const reconnectingBlock: ProcessingBlock = {
