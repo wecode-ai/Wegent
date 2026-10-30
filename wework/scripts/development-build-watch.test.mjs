@@ -1,9 +1,8 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { watch } from 'node:fs'
 import { test, expect, vi, onTestFinished, onTestFailed } from 'vitest'
-import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
+import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
 
 test('rebuilds input edits reported only as a directory-self notification', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
@@ -77,7 +76,7 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       onError,
       debounceMs: 20,
       watchDirectory: (directory, options, notify) =>
-        watch(directory, options, (...event) => {
+        watchDevelopmentDirectory(directory, options, (...event) => {
           record('native-notification', ...event)
           notify(...event)
         }),
@@ -101,6 +100,30 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     expect(build).toHaveBeenCalledTimes(3)
   }
 )
+
+test('starts the initial build only after directory subscriptions are ready', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-ready-'))
+  const readiness = Promise.withResolvers()
+  const build = vi.fn()
+  const close = vi.fn()
+  const starting = watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError: vi.fn(),
+    watchDirectory: () => ({ ready: readiness.promise, on: vi.fn(), close }),
+  })
+  expect(build).not.toHaveBeenCalled()
+  readiness.resolve()
+  const watcher = await starting
+  try {
+    expect(build).toHaveBeenCalledTimes(1)
+  } finally {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  }
+  expect(close).toHaveBeenCalledTimes(1)
+})
 
 test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
   const { build: viteBuild } = await import('vite')

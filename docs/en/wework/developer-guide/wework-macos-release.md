@@ -348,6 +348,12 @@ is complete.
 
 ## Development hot reload
 
+Wait for Chokidar's `ready` before taking the input snapshot and starting the
+initial build. Creating a native watcher alone does not establish subscription
+readiness, so the first edit can lose its notification. Await all watcher
+closures during shutdown; failure diagnostics retain the edit, notification,
+and build timeline.
+
 `pnpm --dir wework run dev:mac` continuously builds the original Wework
 application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher
 clears `dsh/app-wework/web` once at startup and must not clear it again for
