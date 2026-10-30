@@ -10,6 +10,7 @@
 
 import { Bell } from 'lucide-react'
 import { useMemo, useState, useEffect, useCallback } from 'react'
+import { toast } from 'sonner'
 
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
 import { Label } from '@/components/ui/label'
@@ -147,7 +148,6 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
-        group_mention_user_ids: [],
       },
     [channelBindingConfigs]
   )
@@ -193,6 +193,23 @@ export function NotificationSection({
     }
   }, [groupBindingDialogChannel, groupBindingState, channelBindingConfigs, getBindingConfig])
 
+  // Never leave the dialog spinning forever when no binding message arrives.
+  useEffect(() => {
+    const waiting = privateBindingState === 'waiting' || groupBindingState === 'waiting'
+    if (!waiting) return
+    const timeoutId = window.setTimeout(() => {
+      if (privateBindingState === 'waiting') setPrivateBindingState('idle')
+      if (groupBindingState === 'waiting') setGroupBindingState('idle')
+      toast.error(
+        t(
+          'notification_settings.binding_wait_timeout',
+          '长时间未收到绑定消息，请确认机器人已加入群聊后重试'
+        )
+      )
+    }, 120000)
+    return () => window.clearTimeout(timeoutId)
+  }, [privateBindingState, groupBindingState, t])
+
   const updateBindingConfig = (
     channelId: number,
     updater: (prev: { bind_private: boolean; bind_group: boolean }) => {
@@ -207,7 +224,6 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
-        group_mention_user_ids: [],
       }
       const next = updater({
         bind_private: existing.bind_private,
@@ -238,25 +254,8 @@ export function NotificationSection({
           ...existing,
           group_conversation_id: undefined,
           group_name: undefined,
-          group_mention_user_ids: [],
         },
       ]
-    })
-  }
-
-  const updateGroupMentionUserIds = (channelId: number, userIds: string[]) => {
-    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
-      const existing = prev.find(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
-      ) ?? {
-        channel_id: channelId,
-        bind_private: true,
-        bind_group: false,
-      }
-      const rest = prev.filter(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
-      )
-      return [...rest, { ...existing, group_mention_user_ids: userIds }]
     })
   }
 
@@ -269,6 +268,21 @@ export function NotificationSection({
     const config = getBindingConfig(channelId)
     await onStartBinding(channelId, config.bind_private, config.bind_group)
   }
+
+  const startBindingSession = useCallback(
+    async (channelId: number, bindPrivate: boolean, bindGroup: boolean, onFailure: () => void) => {
+      try {
+        await onStartBinding(channelId, bindPrivate, bindGroup)
+      } catch (error) {
+        console.error('Failed to start binding session:', error)
+        onFailure()
+        toast.error(
+          t('notification_settings.binding_start_failed', '启动绑定失败，请检查网络后重试')
+        )
+      }
+    },
+    [onStartBinding, t]
+  )
 
   const handleRebind = async (channelId: number) => {
     clearGroupBinding(channelId)
@@ -406,7 +420,6 @@ export function NotificationSection({
                       onUnbind={() => {
                         void handleUnbind(channel.id)
                       }}
-                      onMentionUserIdsChange={value => updateGroupMentionUserIds(channel.id, value)}
                     />
                   )
                 })}
@@ -456,7 +469,9 @@ export function NotificationSection({
           if (privateBindingDialogChannel) {
             setPrivateBindingState('waiting')
             const config = getBindingConfig(privateBindingDialogChannel)
-            void onStartBinding(privateBindingDialogChannel, true, config.bind_group)
+            void startBindingSession(privateBindingDialogChannel, true, config.bind_group, () =>
+              setPrivateBindingState('idle')
+            )
           }
         }}
         onCancel={() => {
@@ -503,7 +518,9 @@ export function NotificationSection({
           if (groupBindingDialogChannel) {
             setGroupBindingState('waiting')
             const config = getBindingConfig(groupBindingDialogChannel)
-            void onStartBinding(groupBindingDialogChannel, config.bind_private, config.bind_group)
+            void startBindingSession(groupBindingDialogChannel, config.bind_private, true, () =>
+              setGroupBindingState('idle')
+            )
           }
         }}
         onCancel={() => {

@@ -1,3 +1,4 @@
+import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
@@ -1197,12 +1198,18 @@ async function verifyCloudProjectFlow(
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
   control.releaseCloudInitialResponse()
   await waitForSnapshot(
     control,
     value => !value.testIds.includes(runningTaskTestId),
     'The initial cloud task did not settle after its streamed response completed',
     DEFAULT_STEP_TIMEOUT_MS
+  )
+  await verifyNativeMcpCloudRouting(
+    control,
+    cloudEnvironment,
+    join(resultDir, 'electron-user-data')
   )
   await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
 
