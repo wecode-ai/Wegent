@@ -38,6 +38,34 @@ fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit(
 }
 
 #[test]
+fn admitted_turn_history_cannot_synthesize_interruption_before_native_start() {
+    let (handler, root, _) = setup("native-admission-history-boundary");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    let before = handler.local_task_link("task-1").unwrap().execution_state;
+    let mut thread = json!({"id": "thread-1", "turns": [{
+        "id": "turn-1", "status": "interrupted", "items": []
+    }]});
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    assert_eq!(
+        handler.local_task_link("task-1").unwrap().execution_state,
+        before
+    );
+    assert!(handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .is_empty());
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    thread["turns"][0]["status"] = json!("completed");
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "completed");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn recovery_exit_settles_only_its_own_failed_turn() {
     for next_turn in [false, true] {
         let (handler, root, _) = setup("native-recovery-exit");

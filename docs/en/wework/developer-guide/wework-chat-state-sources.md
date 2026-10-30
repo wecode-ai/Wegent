@@ -373,6 +373,12 @@ cancellation, Goal mutation, or error, carrying the failed turn's identity. Only
 recovery can settle; an old recovery exit cannot stop a newer turn. A successful native
 restart clears the pending exit notification. RPC completion does not settle recovery.
 
+History reads obey the same native boundary. After Codex returns an admitted turn identity
+but before its start notification arrives, history may infer interruption for the unfinished
+record. The history merge protects that admitted identity before cloud outcome reporting.
+This changes only the history view, without advancing execution or creating an active
+content buffer. A leftover request binding cannot reopen a natively completed turn.
+
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events
 before reading task state; routing identity and local Issue progress use read-only Store

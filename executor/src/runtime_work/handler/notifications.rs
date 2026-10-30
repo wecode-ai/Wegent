@@ -520,18 +520,32 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
+        // Admission can precede the native start notification. History must not
+        // synthesize interruption for that identity while its start is pending.
+        let admitted = self.store.read_task(local_task_id, |link| {
+            crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+            })
+        }) == Some(true);
+        let admitted_turn = admitted
+            .then(|| self.active_codex_turn(local_task_id))
+            .flatten();
         let active = self
             .active_codex_transcript_items
             .lock()
             .ok()
             .and_then(|items| items.get(local_task_id).cloned());
-        let Some(active) = active else {
+        let Some(turn_id) = admitted_turn
+            .map(|turn| turn.turn_id)
+            .or_else(|| active.as_ref().map(|turn| turn.turn_id.clone()))
+        else {
             return;
         };
         let positioned = thread["timeline"] == true;
         let active_items = active
-            .items
             .into_iter()
+            .filter(|active| active.turn_id == turn_id)
+            .flat_map(|active| active.items)
             .filter(|item| !positioned || item["lifecycleCompleted"] != true)
             .collect::<Vec<_>>();
         let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
@@ -539,7 +553,7 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(turn) = turns
             .iter_mut()
-            .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
+            .find(|turn| string_field(turn, "id").as_deref() == Some(turn_id.as_str()))
         {
             // Turn-list status can synthesize interruption without a terminal boundary.
             // Execution identity remains authoritative for this open turn even when
@@ -574,7 +588,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         turns.push(json!({
-            "id": active.turn_id,
+            "id": turn_id,
             "items": active_items,
             "itemsView": "full",
             "status": "inProgress",
