@@ -5291,7 +5291,8 @@
     "ask_body": "保存分配后，将发送应用内通知，并推送到对方已连接的 IM。",
     "without_notification": "不通知",
     "with_notification": "通知对方",
-    "connect": "连接云端后查看通知"
+    "connect": "连接云端后查看通知",
+    "im_target": "设置 IM 接收会话"
   },
   "standIn": {
     "model_label": "模型",
@@ -5452,7 +5453,7 @@
       "no_matching_work": "当前筛选下没有工作。",
       "work_preview": "工作预览",
       "preview_no_summary": "暂时没有处理摘要，可进入工作查看完整上下文。",
-      "preview_help": "可在此确认操作；需要更多上下文时再打开会话。",
+      "preview_help": "需要你判断的问题统一在「待你处理」中处理；完整上下文可进入原会话查看。",
       "open_work": "进入工作处理",
       "receive_new": "接收新工作",
       "pause_help": "开启并保存后接收新工作。暂停后不再接手新工作，已有工作继续。",
@@ -5658,5 +5659,33 @@
     "close": "关闭应用",
     "send": "发送",
     "unsupported_display_mode": "应用没有可用的显示模式。"
+  },
+  "interactions": {
+    "title": "待你处理",
+    "needs_reply": "AI 需要你回应",
+    "reply": "回复",
+    "reply_placeholder": "补充你的判断…",
+    "send": "发送",
+    "dismiss": "关闭提醒",
+    "handle_in_context": "打开原会话处理",
+    "add_detail": "补充说明",
+    "pending": "待处理",
+    "history": "已处理",
+    "loading": "正在加载待处理事项…",
+    "empty": "暂无待处理事项",
+    "load_failed": "部分事项加载失败，请刷新重试。",
+    "open_original": "打开原会话",
+    "context": "判断依据",
+    "back_to_list": "返回列表",
+    "your_reply": "你的判断",
+    "resume_hint": "回复后，AI 将继续这项任务。",
+    "replied": "已回复",
+    "expired": "这个问题已被回应或已失效。",
+    "failed": "回复发送失败，草稿已保留。",
+    "reply_success": "已回复，AI 正在继续。",
+    "pending_count": "{{count}} 项待处理",
+    "needs_action": "请打开原上下文完成此操作。",
+    "title_with_count": "待你处理，{{count}} 项",
+    "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。"
   }
 }

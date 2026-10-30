@@ -82,6 +82,7 @@ function renderSidebar(overrides: Partial<SidebarProps> = {}) {
     onStartNewProjectChat: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
+    onCloneGitRepository: vi.fn(),
     onOpenSettings: vi.fn(),
     onLogout: vi.fn(),
     ...overrides,
