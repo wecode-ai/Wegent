@@ -63,6 +63,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'collaboration-board-sorting',
+  'collaboration-board-backlog',
   'collaboration-board-move-recovery',
   'collaboration-home-preload',
   'priority-filter',

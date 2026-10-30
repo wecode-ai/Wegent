@@ -453,11 +453,30 @@ get_changed_files() {
 # Get list of changed files in the commits being pushed
 CHANGED_FILES=$(get_changed_files)
 
-# Quality checks create their own repositories. Git exports the caller's local
-# context to hooks, which would redirect those commands into the pushed checkout.
-while IFS= read -r git_context_variable; do
-    unset "$git_context_variable"
+# Git exports checkout-local context to hooks. Preserve it for the pushed diff,
+# then isolate checks so their temporary repositories cannot target this checkout.
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+while IFS= read -r git_env_name; do
+    unset "$git_env_name"
 done < <(git rev-parse --local-env-vars)
+# Checks own their runtime identity and data; never attach test executors to
+# the workbench that invoked this hook.
+while IFS= read -r check_env_name; do
+    case "$check_env_name" in
+        WEGENT_APP_*|WEGENT_RUNTIME_INSTANCE_ID|WEGENT_TASK_ID|WEGENT_TASK_WORKSPACE|WEGENT_PLUGIN_RUNTIME_TARGET|WEGENT_CAPABILITIES_HOME)
+            unset "$check_env_name"
+            ;;
+    esac
+done < <(compgen -e)
+unset CODEX_HOME CLAUDE_CONFIG_DIR
+export WEGENT_WORKBENCH_HOME="$TEMP_DIR/workbench"
+export WEGENT_EXECUTOR_HOME="$TEMP_DIR/executor"
+export WEGENT_CODEX_HOME="$TEMP_DIR/codex"
+export WEGENT_CLAUDE_HOME="$TEMP_DIR/claude"
+export WEGENT_EXECUTOR_PROJECTS_DIR="$TEMP_DIR/projects"
+export LOCAL_WORKSPACE_ROOT="$TEMP_DIR/projects"
+export WORKSPACE_ROOT="$TEMP_DIR/projects"
+cd "$PROJECT_ROOT" || exit 1
 
 if [ -z "$CHANGED_FILES" ]; then
     echo -e "${GREEN}✅ No files changed, skipping checks${NC}"
@@ -994,19 +1013,9 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/executor_fmt.log")
         fi
 
-        echo -e "   Running cargo test --all-features --lib..."
-        if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
-            echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
-        else
-            echo -e "   ${RED}❌ cargo test: FAILED${NC}"
-            CHECK_FAILED=1
-            FAILED_CHECKS+=("Executor cargo test")
-            FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
-        fi
-
         if should_run_full_tests; then
-            echo -e "   Running full cargo test --all-features..."
-            if cargo test --all-features > "$TEMP_DIR/executor_full_test.log" 2>&1; then
+            echo -e "   Running full cargo test --all-features --no-fail-fast..."
+            if cargo test --all-features --no-fail-fast > "$TEMP_DIR/executor_full_test.log" 2>&1; then
                 echo -e "   ${GREEN}✅ full cargo test: PASSED${NC}"
             else
                 echo -e "   ${RED}❌ full cargo test: FAILED${NC}"
@@ -1015,7 +1024,15 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
                 FAILED_LOGS+=("$TEMP_DIR/executor_full_test.log")
             fi
         else
-            echo -e "   ${YELLOW}↪ Full cargo test: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
+            echo -e "   Running cargo test --all-features --lib..."
+            if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
+                echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ cargo test: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Executor cargo test")
+                FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
+            fi
         fi
 
         echo -e "   Running cargo clippy..."

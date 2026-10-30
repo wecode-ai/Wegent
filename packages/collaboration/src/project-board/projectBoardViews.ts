@@ -2,14 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationProject, CollaborationStatus } from '../types'
+import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from '../types'
 import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardSort } from './projectBoardSorting'
 import type { CollaborationTranslate } from '../i18n'
+import { hasTooManyTags } from '../tagging'
 
 export interface SavedBoardColumn {
   id: string
-  type: 'status' | 'tag'
+  type: 'status' | 'tag' | 'unmatched'
   value: string
   [key: string]: unknown
 }
@@ -36,6 +37,13 @@ export interface BoardViewSaveSettings {
   boardConfig?: CollaborationProject['board_config']
 }
 
+export interface BoardIssueCreateDefaults {
+  status: string
+  tags: string[]
+  draftScope: string
+  parent: CollaborationIssue | null
+}
+
 export function defaultBoardViewId(config?: ProjectBoardViews | null): string {
   return config?.schema_version === 1 &&
     config.views.some(view => view.id === config.default_view_id)
@@ -43,7 +51,10 @@ export function defaultBoardViewId(config?: ProjectBoardViews | null): string {
     : 'default'
 }
 
-export function matchesBoardView(item: { tags: string[] }, view?: SavedBoardView | null) {
+export function matchesBoardView(
+  item: { tags: string[] },
+  view?: Pick<SavedBoardView, 'filter'> | null
+) {
   const tags = view?.filter?.tags ?? []
   if (!tags.length) return true
   return view?.filter?.match === 'any'
@@ -56,12 +67,12 @@ export function savedBoardColumns(
   statuses: readonly CollaborationStatus[],
   statusColumns: readonly ProjectBoardColumn[]
 ): ProjectBoardColumn[] {
-  return view.columns.map(column => ({
+  const columns: ProjectBoardColumn[] = view.columns.map(column => ({
     key: column.id,
     type: column.type,
     groupValue: column.value,
     label:
-      column.type === 'tag'
+      column.type !== 'status'
         ? column.value
         : (statuses.find(status => status.id === column.value)?.name ?? column.value),
     dotClass:
@@ -71,6 +82,12 @@ export function savedBoardColumns(
         : 'bg-zinc-400',
     status: column.type === 'status' ? column.value : '',
   }))
+  const matchedColumns = columns.filter(column => column.type !== 'unmatched')
+  return columns.map(column =>
+    column.type === 'unmatched'
+      ? { ...column, unmatchedColumns: matchedColumns, unmatchedFilter: view.filter }
+      : column
+  )
 }
 
 export function createSavedBoardView(statuses: readonly CollaborationStatus[]): SavedBoardView {
@@ -86,6 +103,47 @@ export function createSavedBoardView(statuses: readonly CollaborationStatus[]): 
   }
 }
 
+export function unmatchedCreateDefaults(
+  view: SavedBoardView,
+  statuses: readonly CollaborationStatus[],
+  parent: CollaborationIssue | null = null
+): BoardIssueCreateDefaults | null {
+  const statusValues = new Set(
+    view.columns.filter(column => column.type === 'status').map(column => column.value)
+  )
+  const tagValues = new Set(
+    view.columns.filter(column => column.type === 'tag').map(column => column.value)
+  )
+  const status = statuses[0]?.id
+  const filterTags = view.filter?.tags ?? []
+  const tags =
+    view.filter?.match === 'any'
+      ? filterTags.filter(tag => !tagValues.has(tag)).slice(0, 1)
+      : filterTags
+  if (
+    !status ||
+    statusValues.has(status) ||
+    hasTooManyTags(tags) ||
+    tags.some(tag => tagValues.has(tag)) ||
+    (filterTags.length > 0 && tags.length === 0)
+  )
+    return null
+  const draftRules = JSON.stringify({
+    status,
+    tags,
+    columns: view.columns
+      .filter(column => column.type !== 'unmatched')
+      .map(column => [column.type, column.value]),
+    filter: { tags: filterTags, match: view.filter?.match ?? 'all' },
+  })
+  return {
+    status,
+    tags,
+    parent,
+    draftScope: `board-view:${view.id}:unmatched:${parent?.id ?? 'root'}:${draftRules}`,
+  }
+}
+
 export function boardDropHint(
   item: { status: string; tags: string[] },
   target: ProjectBoardColumn,
@@ -94,6 +152,27 @@ export function boardDropHint(
   t: CollaborationTranslate
 ) {
   const type = target.type ?? groupBy
+  if (type === 'unmatched') {
+    const stageTags = new Set(
+      target.unmatchedColumns
+        ?.filter(column => column.type === 'tag')
+        .map(column => column.groupValue)
+    )
+    if (
+      !matchesBoardView(
+        { tags: item.tags.filter(tag => !stageTags.has(tag)) },
+        { filter: target.unmatchedFilter }
+      )
+    )
+      return t('todo.board_drop_unmatched_filter')
+    return t(
+      target.unmatchedColumns?.some(
+        column => column.type === 'status' && column.groupValue === item.status
+      )
+        ? 'todo.board_drop_unmatched_status'
+        : 'todo.board_drop_unmatched'
+    )
+  }
   if (type === 'status')
     return item.status === target.groupValue
       ? t('todo.board_drop_has_status')
