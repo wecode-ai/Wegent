@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { once } from 'node:events'
 import path from 'node:path'
 import chokidar from 'chokidar'
@@ -10,6 +10,7 @@ export function watchDevelopmentDirectory(
   notify,
   createWatcher = chokidar.watch
 ) {
+  const roots = [directory, realpathSync(directory)]
   const watcher = createWatcher(directory, {
     ignoreInitial: true,
     depth: recursive ? undefined : 0,
@@ -19,22 +20,27 @@ export function watchDevelopmentDirectory(
   // Node-backed normalized change events are throttled for 50 ms. Preserve
   // raw edits as well; the input snapshot deduplicates repeated notifications.
   watcher.on('raw', (event, filename, details) => {
-    const watched = details?.watchedPath
-    if (!watched) return
-    const changed =
-      !filename || path.basename(watched) === String(filename)
-        ? watched
-        : path.resolve(watched, String(filename))
-    notify(
-      event,
-      changed === directory ? path.basename(directory) : path.relative(directory, changed)
-    )
+    const changed = rawNotificationPath(filename, details?.watchedPath)
+    if (!changed) return
+    const relative = roots
+      .map(root => path.relative(root, changed))
+      .find(
+        value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value)
+      )
+    if (relative !== undefined) notify(event, relative || path.basename(directory))
   })
   return {
     ready: once(watcher, 'ready'),
     on: (...args) => watcher.on(...args),
     close: () => watcher.close(),
   }
+}
+
+function rawNotificationPath(filename, watched) {
+  const name = filename == null ? undefined : String(filename)
+  if (!watched) return name && path.isAbsolute(name) ? name : undefined
+  if (!name || path.basename(watched) === name) return watched
+  return path.resolve(watched, name)
 }
 
 /** Serialize fresh builds so emitted asset references never cross build generations. */

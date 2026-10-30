@@ -141,7 +141,7 @@ test('starts the initial build only after directory subscriptions are ready', as
   expect(close).toHaveBeenCalledTimes(1)
 })
 
-test.each(['directory', 'file'])(
+test.each(['directory', 'file', 'fsevents'])(
   'preserves a rapid recovery edit omitted by normalized events from a watched %s',
   async watchedKind => {
     const root = await mkdtemp(path.join(tmpdir(), 'development-build-raw-'))
@@ -173,20 +173,44 @@ test.each(['directory', 'file'])(
       await watcher.close()
       await rm(root, { recursive: true, force: true })
     })
-    const details = { watchedPath: watchedKind === 'file' ? source : root }
+    const details =
+      watchedKind === 'fsevents' ? {} : { watchedPath: watchedKind === 'file' ? source : root }
+    const filename = watchedKind === 'fsevents' ? await realpath(source) : 'entry.js'
     await writeFile(source, 'invalid')
     native.emit('all', 'change', source)
-    native.emit('raw', 'change', 'entry.js', details)
+    native.emit('raw', 'change', filename, details)
     expect(await failed.promise).toEqual(new Error('compile failed'))
     await writeFile(source, 'two')
     // The second normalized change is suppressed by the Node backend's throttle.
-    native.emit('raw', 'change', 'entry.js', details)
-    native.emit('raw', 'change', 'entry.js', details)
+    native.emit('raw', 'change', filename, details)
+    native.emit('raw', 'change', filename, details)
     await expect.poll(() => published).toBe('two')
     expect(build).toHaveBeenCalledTimes(3)
     expect(onError).toHaveBeenCalledTimes(1)
   }
 )
+
+test('accepts canonical raw paths only inside the subscribed directory', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-boundary-'))
+  const native = new EventEmitter()
+  native.close = vi.fn()
+  const notify = vi.fn()
+  const watcher = watchDevelopmentDirectory(root, { recursive: true }, notify, () => native)
+  native.emit('ready')
+  await watcher.ready
+  try {
+    const outside = path.join(`${root}-outside`, 'entry.js')
+    native.emit('raw', 'change', outside, {})
+    native.emit('raw', 'change', 'entry.js', { watchedPath: path.dirname(outside) })
+    native.emit('raw', 'change', 'entry.js', {})
+    expect(notify).not.toHaveBeenCalled()
+    native.emit('raw', 'change', path.join(await realpath(root), 'entry.js'), {})
+    expect(notify).toHaveBeenCalledExactlyOnceWith('change', 'entry.js')
+  } finally {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
   const { build: viteBuild } = await import('vite')
