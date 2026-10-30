@@ -12,7 +12,7 @@
 //! bucket existence, object existence, and presigned download URLs.
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::encode_object_path;
+use crate::attachments::minio_client::{encode_object_path, object_request};
 use crate::attachments::s3_signing;
 
 /// The source `WORKSPACE_ARCHIVE_BUCKET` default (`app/core/config.py`).
@@ -230,8 +230,7 @@ impl ArchiveStorage {
             &uri,
             &amz_date,
         );
-        let response = http
-            .request(brz_http::Method::HEAD, &url)?
+        let response = object_request(http, brz_http::Method::HEAD, &url, &self.bucket)?
             .header("authorization", signed.authorization)
             .header("x-amz-content-sha256", signed.content_sha256)
             .header("x-amz-date", signed.amz_date)

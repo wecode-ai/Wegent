@@ -96,6 +96,22 @@ pub enum StorageError {
     NotFound,
 }
 
+/// Group object requests by method, origin, and bucket before registering
+/// metrics. The entire key can contain IDs, including in directory names.
+pub(crate) fn object_request(
+    client: &HttpClient,
+    method: brz_http::Method,
+    url: impl brz_http::reqwest::IntoUrl,
+    bucket: &str,
+) -> brz_http::Result<brz_http::RequestBuilder> {
+    let url = url.into_url()?;
+    let name = format!(
+        "{method} {}/{bucket}/{{key}}",
+        url.origin().ascii_serialization()
+    );
+    Ok(client.endpoint_named(url, name)?.request(method))
+}
+
 /// `MinIOStorageBackend` construction plus `bucket_exists`:
 /// `HEAD {scheme}://{host}/{bucket}`. Failures are logged by the source and
 /// re-raised as `StorageError` from the constructor.
@@ -158,8 +174,7 @@ pub async fn get_object(
         &uri,
         &amz_date,
     );
-    let request = client
-        .get(&url)
+    let request = object_request(client, brz_http::Method::GET, &url, &config.bucket)
         .map_err(|_| StorageError::Unavailable)?
         .header("authorization", signed.authorization)
         .header("x-amz-content-sha256", signed.content_sha256)
@@ -206,8 +221,7 @@ pub async fn stat_object(
         &uri,
         &amz_date,
     );
-    let response = client
-        .request(brz_http::Method::HEAD, &url)
+    let response = object_request(client, brz_http::Method::HEAD, &url, &config.bucket)
         .map_err(|_| StorageError::Unavailable)?
         .header("authorization", signed.authorization)
         .header("x-amz-content-sha256", signed.content_sha256)
@@ -266,8 +280,7 @@ pub async fn put_object_with_content_type(
             ("x-amz-date", &amz_date),
         ],
     );
-    let response = client
-        .request(brz_http::Method::PUT, &url)
+    let response = object_request(client, brz_http::Method::PUT, &url, &config.bucket)
         .map_err(|_| StorageError::Unavailable)?
         .header("authorization", signed.authorization)
         .header("x-amz-content-sha256", signed.content_sha256)
@@ -307,8 +320,7 @@ pub async fn delete_object(
         &uri,
         &amz_date,
     );
-    let response = client
-        .request(brz_http::Method::DELETE, &url)
+    let response = object_request(client, brz_http::Method::DELETE, &url, &config.bucket)
         .map_err(|_| StorageError::Unavailable)?
         .header("authorization", signed.authorization)
         .header("x-amz-content-sha256", signed.content_sha256)
@@ -359,6 +371,10 @@ pub fn build_client() -> anyhow::Result<HttpClient> {
         .build()
         .context("failed to build the attachment storage HTTP client")
 }
+
+#[cfg(test)]
+#[path = "minio_client_metrics_tests.rs"]
+mod metrics_tests;
 
 #[cfg(test)]
 mod tests {
