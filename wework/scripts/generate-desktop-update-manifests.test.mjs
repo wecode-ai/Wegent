@@ -37,7 +37,7 @@ test('generates Electron and component rolling manifests from one release', asyn
     const components = {}
     for (const [id, componentVersion] of [
       ['coreDsh', '0.1.1-rc.2'],
-      ['executor', 'wework-abc123'],
+      ['executor', `wework-${'a'.repeat(12)}`],
     ]) {
       const archive = `${platform}-${arch}-${id}`
       const archiveSha256 = createHash('sha256').update(archive).digest('hex')
@@ -57,6 +57,7 @@ test('generates Electron and component rolling manifests from one release', asyn
       JSON.stringify({
         schemaVersion: 1,
         appVersion: version,
+        sourceSha: 'a'.repeat(40),
         platform,
         arch,
         components,
@@ -122,7 +123,14 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   ]) {
     await writeFile(
       resolve(assets, `components-${platform}-${arch}.json`),
-      JSON.stringify({ components: {} })
+      JSON.stringify({
+        schemaVersion: 1,
+        appVersion: version,
+        sourceSha: 'a'.repeat(40),
+        platform,
+        arch,
+        components: {},
+      })
     )
   }
   await writeFile(notes, '## Changes\n')
@@ -188,7 +196,14 @@ async function verifiedManifestFixture() {
   ]) {
     await writeFile(
       resolve(assets, `components-${platform}-${arch}.json`),
-      JSON.stringify({ components: {} })
+      JSON.stringify({
+        schemaVersion: 1,
+        appVersion: '1.2.3',
+        sourceSha: 'a'.repeat(40),
+        platform,
+        arch,
+        components: {},
+      })
     )
     for (const channel of ['stable', 'beta']) {
       const releases = ['1.2.2', '1.2.3'].map((version, index) => ({
@@ -279,6 +294,20 @@ test('release promotion rejects missing verification policies', async () => {
     'manifest generator exited with code 1'
   )
 })
+
+test.each(['appVersion', 'sourceSha', 'arch'])(
+  'rejects components from a mutable workspace with a different %s',
+  async field => {
+    const fixture = await verifiedManifestFixture()
+    const file = resolve(fixture.assets, 'components-macos-arm64.json')
+    const descriptor = JSON.parse(await readFile(file, 'utf8'))
+    descriptor[field] = field === 'sourceSha' ? 'b'.repeat(40) : 'different'
+    await writeFile(file, JSON.stringify(descriptor))
+    await expect(run(fixture.args, { WEWORK_REQUIRE_UPGRADE_POLICY: 'true' })).rejects.toThrow(
+      'manifest generator exited with code 1'
+    )
+  }
+)
 
 test('release promotion rejects a policy from another channel, source revision or package', async () => {
   const fixture = await verifiedManifestFixture()

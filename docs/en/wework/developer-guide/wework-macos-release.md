@@ -145,8 +145,12 @@ version. When those inputs are unchanged, the installer and online component
 reuse exactly the same signed bytes. A changed input is signed and verified
 again. Electron Builder skips those already processed managed resources so a
 new signing timestamp alone cannot change their component hashes. Published
-content SHA-256 values are computed from these final resources rather than
-extracting components from a newly re-signed installer.
+component archives must use resources inside the final delivered application,
+checking each content SHA-256, application version, and source revision against
+its bundled manifest. Never read the mutable `electron/resources` staging tree,
+which E2E fixture builds can overwrite, or re-sign the delivered application to
+extract components. Catalog generation checks the component descriptor against
+the target source revision again and blocks publication on an identity mismatch.
 
 Re-signing an existing Mach-O file must preserve the entitlements from its
 previous signature. Codex and `codex-code-mode-host` require `allow-jit` and
