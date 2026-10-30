@@ -5034,7 +5034,8 @@ while IFS= read -r line; do
       else
         turn_count=$((turn_count + 1))
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","itemId":"text-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
       fi
       ;;
@@ -5556,6 +5557,7 @@ while IFS= read -r line; do
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       ;;
     *'"method":"turn/steer"'*)
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'

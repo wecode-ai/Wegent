@@ -314,10 +314,11 @@ impl RuntimeWorkRpcHandler {
         let Some(link) = updated.filter(|_| changed) else {
             return;
         };
+        let terminal_snapshot = owned_turn.then(|| link.clone());
         self.publish_native_execution(task_id, request, link);
-        if let Some(result) = result.filter(|_| owned_turn) {
+        if let (Some(result), Some(snapshot)) = (result, terminal_snapshot) {
             let event_request = self.request_for_codex_event(task_id, request, Some(&turn_id));
-            self.publish_native_turn_result(task_id, &event_request, &turn_id, result);
+            self.publish_native_turn_result(task_id, &event_request, &turn_id, snapshot, result);
         }
     }
 
@@ -326,6 +327,7 @@ impl RuntimeWorkRpcHandler {
         task_id: &str,
         request: &ExecutionRequest,
         turn_id: &str,
+        snapshot: RuntimeTaskLink,
         result: crate::agents::CodexAppServerTurn,
     ) {
         let mut data = json!({"turnId": turn_id, "itemId": result.response_item_id,
@@ -348,7 +350,15 @@ impl RuntimeWorkRpcHandler {
             }
             _ => return,
         };
-        self.emit_task_response(event, task_id, request, data);
+        data["task"] = local_task_json(snapshot);
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            event,
+            task_id,
+            request,
+            data,
+        );
     }
 
     fn apply_native_recovery(
@@ -418,6 +428,65 @@ impl RuntimeWorkRpcHandler {
                 "turnId": turn_id,
                 "task": local_task_json(link),
             }),
+        );
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn next_admission_cannot_change_the_snapshot_bound_to_a_completed_turn_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let (events, mut receiver) = broadcast::channel(16);
+        let mut handler = RuntimeWorkRpcHandler::with_event_sender("device", "/bin/false", events);
+        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+        let mut link =
+            RuntimeTaskLink::new_pending("task".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread".into());
+        handler.upsert_local_task(link);
+        let request = ExecutionRequest {
+            task_id: "task".into(),
+            subtask_id: "turn".into(),
+            ..Default::default()
+        };
+        for method in ["turn/started", "turn/completed"] {
+            handler.apply_native_lifecycle(
+                "task",
+                &request,
+                &json!({"method": method, "params": {
+                    "threadId": "thread", "turn": {"id": "turn", "status": "completed"}
+                }})
+                .into(),
+            );
+        }
+        while receiver.try_recv().is_ok() {}
+        let snapshot = handler.local_task_link("task").unwrap();
+        handler.store.update_task("task", begin_native_request);
+        let result = crate::agents::completed_native_codex_turn(
+            "thread",
+            &json!({
+                "id": "turn", "status": "completed", "items": [{
+                    "id": "text", "type": "agentMessage", "text": "First result", "phase": "final_answer"
+                }]
+            }),
+        );
+        handler.publish_native_turn_result("task", &request, "turn", snapshot, result);
+        let event = receiver.try_recv().unwrap();
+        assert_eq!(event["payload"]["data"]["value"], "First result");
+        assert_eq!(
+            event["payload"]["data"]["task"]["executionState"]["outcome"],
+            "succeeded"
+        );
+        assert_eq!(
+            handler
+                .local_task_link("task")
+                .unwrap()
+                .execution_state
+                .unwrap()
+                .phase,
+            NativeExecutionPhase::Starting
         );
     }
 }
