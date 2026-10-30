@@ -77,10 +77,13 @@ export function createStandInDelivery(key: string) {
       write(rows)
       for (const row of rows) {
         if (!active()) return
-        const accepted = Boolean(
-          row.identity &&
-          (await deliverDurableEvent(row.fact, row.fact.eventId, row.fact.occurredAt, row.identity))
+        const result = await deliverDurableEvent(
+          row.fact,
+          row.fact.eventId,
+          row.fact.occurredAt,
+          row.identity
         )
+        const accepted = result === true
         if (!active()) return
         // Re-read after awaiting transport so newly collected facts are preserved.
         write(
@@ -88,7 +91,7 @@ export function createStandInDelivery(key: string) {
             current.fact.eventId !== row.fact.eventId ? [current] : accepted ? [] : [current]
           )
         )
-        if (!accepted) return
+        if (result === false) return
       }
     },
   }

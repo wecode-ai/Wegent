@@ -4,7 +4,7 @@ import type { WeworkTelemetryContext } from './facts'
 let emailPrefix: string | undefined
 
 /** Retain only the selected account identifier, never additional account properties. */
-export function setTelemetryUser(user: { id: number; email: string } | null): void {
+export function setTelemetryUser(user: { id: number; email?: string | null } | null): void {
   emailPrefix = undefined
   if (
     getTelemetryConfig().identity !== 'email_prefix' ||
@@ -13,7 +13,7 @@ export function setTelemetryUser(user: { id: number; email: string } | null): vo
     user.id <= 0
   )
     return
-  const email = user.email.trim()
+  const email = typeof user.email === 'string' ? user.email.trim() : ''
   const separator = email.indexOf('@')
   const prefix = separator > 0 ? email.slice(0, separator) : ''
   if (/^[^\s@]{1,128}$/.test(prefix)) emailPrefix = prefix

@@ -119,7 +119,8 @@ async function initPostHog(): Promise<void> {
   const config = getTelemetryConfig()
   if (!config.posthogKey) return
   const module = await import('posthog-js')
-  posthog = module.default.init(config.posthogKey, {
+  if (!enabled) return
+  const sdk = new module.PostHog().init(config.posthogKey, {
     api_host: config.posthogHost,
     autocapture: false,
     capture_pageleave: false,
@@ -139,6 +140,16 @@ async function initPostHog(): Promise<void> {
     request_batching: true,
     before_send: sanitizePostHogCapture,
   })
+  posthog = sdk
+  const send = sdk._send_request.bind(sdk)
+  // Batch, retry and shutdown flushes must all respect the current consent.
+  sdk._send_request = options => {
+    if (!enabled || posthog !== sdk) {
+      options.callback?.({ statusCode: 403 })
+      return
+    }
+    send(options)
+  }
 }
 
 function sanitizeSentryTags(tags: SentryEvent['tags']): SentryEvent['tags'] {
@@ -458,6 +469,7 @@ async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   }
   posthog?.reset(true)
   posthog?.opt_out_capturing()
+  await posthog?.shutdown()
   sentry?.setUser(null)
   await sentry?.close(0)
   posthog = null
@@ -534,17 +546,12 @@ export async function deliverDurableEvent(
   id: string,
   occurredAt: string,
   identity: DurableTelemetryIdentity
-): Promise<boolean> {
+): Promise<boolean | 'identity_mismatch'> {
   if (!enabled) return false
   await initialize()
   const sdk = posthog
-  if (
-    !enabled ||
-    !sdk ||
-    telemetryDeliveryScope() !== identity.scope ||
-    telemetryDistinctId(sdk.get_distinct_id()) !== identity.distinctId
-  )
-    return false
+  if (!enabled || !sdk || telemetryDeliveryScope() !== identity.scope) return false
+  if (telemetryDistinctId(sdk.get_distinct_id()) !== identity.distinctId) return 'identity_mismatch'
   const timestamp = new Date(occurredAt)
   const properties = sdk.calculateEventProperties(
     event.name,

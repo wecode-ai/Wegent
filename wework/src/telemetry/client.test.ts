@@ -7,6 +7,8 @@ const posthogMocks = vi.hoisted(() => ({
   optIn: vi.fn(),
   optOut: vi.fn(),
   reset: vi.fn(),
+  send: vi.fn(),
+  shutdown: vi.fn(),
 }))
 const sentryMocks = vi.hoisted(() => ({
   browserTracingIntegration: vi.fn(() => ({ name: 'browser-tracing' })),
@@ -18,8 +20,8 @@ const sentryMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('posthog-js', () => ({
-  default: {
-    init: posthogMocks.init,
+  PostHog: class {
+    init = posthogMocks.init
   },
 }))
 
@@ -36,6 +38,8 @@ describe('telemetry client', () => {
     Object.values(posthogMocks).forEach(mock => mock.mockReset())
     Object.values(sentryMocks).forEach(mock => mock.mockReset())
     posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
       get_distinct_id: () => 'anonymous',
       capture: posthogMocks.capture,
       opt_in_capturing: posthogMocks.optIn,
@@ -779,11 +783,48 @@ describe('telemetry client', () => {
 
     expect(posthogMocks.reset).toHaveBeenCalledWith(true)
     expect(posthogMocks.optOut).toHaveBeenCalled()
+    expect(posthogMocks.shutdown).toHaveBeenCalledOnce()
     expect(posthogMocks.reset.mock.invocationCallOrder[0]).toBeLessThan(
       posthogMocks.optOut.mock.invocationCallOrder[0]
     )
     expect(sentryMocks.setUser).toHaveBeenCalledWith(null)
     expect(sentryMocks.close).toHaveBeenCalledWith(0)
+  })
+
+  test('blocks queued SDK sends during shutdown and after re-enabling', async () => {
+    const oldSdk = {
+      get_distinct_id: () => 'anonymous',
+      capture: posthogMocks.capture,
+      opt_in_capturing: posthogMocks.optIn,
+      opt_out_capturing: posthogMocks.optOut,
+      reset: posthogMocks.reset,
+      _send_request: posthogMocks.send,
+      shutdown: vi.fn(() => {
+        oldSdk._send_request(request)
+        return Promise.resolve()
+      }),
+    }
+    const callback = vi.fn()
+    const request = { url: 'https://example.invalid/e/', callback }
+    const newSend = vi.fn()
+    const newSdk = { ...oldSdk, _send_request: newSend, shutdown: vi.fn() }
+    posthogMocks.init.mockReturnValueOnce(oldSdk).mockReturnValueOnce(newSdk)
+    const { installTelemetry, setTelemetryEnabled } = await import('./client')
+    await installTelemetry(true)
+    oldSdk._send_request(request)
+    expect(posthogMocks.send).toHaveBeenCalledOnce()
+    posthogMocks.send.mockClear()
+
+    await setTelemetryEnabled(false)
+    expect(oldSdk.shutdown).toHaveBeenCalledOnce()
+    expect(callback).toHaveBeenCalledWith({ statusCode: 403 })
+    expect(posthogMocks.send).not.toHaveBeenCalled()
+
+    await setTelemetryEnabled(true)
+    oldSdk._send_request(request)
+    expect(posthogMocks.send).not.toHaveBeenCalled()
+    newSdk._send_request(request)
+    expect(newSend).toHaveBeenCalledWith(request)
   })
 
   test('re-initializes SDKs with fresh instances after disable and re-enable', async () => {
@@ -834,6 +875,7 @@ describe('durable stand-in transport', () => {
   test('uses SDK transport receipts and preserves UUID, occurrence time and anonymous identity', async () => {
     const send = vi.fn(options => options.callback({ statusCode: 200 }))
     posthogMocks.init.mockReturnValue({
+      shutdown: posthogMocks.shutdown,
       opt_in_capturing: vi.fn(),
       get_distinct_id: () => 'anonymous',
       calculateEventProperties: (_name: string, properties: object) => ({
@@ -850,6 +892,13 @@ describe('durable stand-in transport', () => {
       await import('./client')
     await installTelemetry(true)
     const identity = (await durableTelemetryIdentity())!
+    expect(
+      await deliverDurableEvent(event, uuid, '2026-10-27T00:00:00.000Z', {
+        ...identity,
+        distinctId: 'another-account',
+      })
+    ).toBe('identity_mismatch')
+    expect(send).not.toHaveBeenCalled()
     expect(await deliverDurableEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(true)
     const request = send.mock.calls[0]![0]
     expect(request.url).toBe('https://posthog.invalid/custom-events/')
@@ -866,6 +915,8 @@ describe('durable stand-in transport', () => {
 
   test('validates numeric durations and clears all pending queues on opt-out', async () => {
     posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
       opt_in_capturing: vi.fn(),
       opt_out_capturing: vi.fn(),
       reset: vi.fn(),
@@ -893,6 +944,8 @@ describe('configured identity on the shared telemetry transport', () => {
     localStorage.clear()
     posthogMocks.capture.mockReset()
     posthogMocks.init.mockReturnValue({
+      _send_request: posthogMocks.send,
+      shutdown: posthogMocks.shutdown,
       get_distinct_id: () => 'anonymous-installation',
       opt_in_capturing: vi.fn(),
       capture: posthogMocks.capture,

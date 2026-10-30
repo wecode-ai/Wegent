@@ -36,13 +36,13 @@ The main window polls the local and online executors every five seconds through 
 - `runtime.stand_in.telemetry.list`: up to 100 account-scoped facts with random `id`, original `occurredAt`, event name and allowed properties.
 - `runtime.stand_in.telemetry.ack`: acknowledge up to 100 account-scoped UUIDs; repeated acknowledgements are idempotent.
 
-The client persists each batch under account and device before acknowledging the Executor. It removes records only after HTTP acceptance and retains failed deliveries. Replays preserve UUID, occurrence time and the anonymous installation identity captured during handoff. Because SDK `capture` only confirms in-memory enqueueing, the existing telemetry client uses the same SDK request router and receipt-capable transport for durable facts. SDK upgrades must verify this adapter.
+The client persists each batch under account and device before acknowledging the Executor. It removes records only after HTTP acceptance and retains failed deliveries. Replays preserve UUID, occurrence time and the configured `distinct_id` captured during handoff: the installation identifier in `anonymous` mode, or the email prefix in `email_prefix` mode (anonymous when signed out). Because SDK `capture` only confirms in-memory enqueueing, the existing telemetry client uses the same SDK request router and receipt-capable transport for durable facts. SDK upgrades must verify this adapter. Records with a mismatched current identity remain queued until the identity returns or retention expires, while later matching records can proceed; transport failures stop the current flush.
 
 Each queue retains at most 30 days and 10,000 records per account or account/device scope. Oldest records are discarded on expiry or overflow. Executor diagnostics include counts, not payloads. Window closure does not change Executor lifecycle: replay covers facts actually recorded while the Executor was running. Unconfirmed crash outcomes are not guessed.
 
 Disabling telemetry clears client queues; each Executor stops and clears its queue when next connected. Re-enabling updates the collection boundary, and reconnecting devices discard earlier facts so disabled-period data is not replayed. UTC boundaries assume synchronized device clocks.
 
-This is durable, replayable delivery, not immediate exactly-once delivery. PostHog eventual deduplication requires matching UUID, event, timestamp and anonymous identity. Concurrent consumers of a remote queue with different installation identities cannot rely on PostHog to merge duplicate deliveries.
+This is durable, replayable delivery, not immediate exactly-once delivery. PostHog eventual deduplication requires matching UUID, event, timestamp and `distinct_id`. Concurrent consumers of a remote queue with different installation identities cannot rely on PostHog to merge duplicate deliveries.
 
 ## Verification
 

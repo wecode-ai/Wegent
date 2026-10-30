@@ -3,20 +3,13 @@ import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getPlatform } from '@/lib/platform'
 import type { CommonTelemetryProperties } from './events'
 
-const SESSION_ID_KEY = 'wework.telemetry.session-id.v1'
+import {
+  parseTelemetryIdentity,
+  parseTelemetryContextFields,
+  type TelemetryContextField,
+} from './collectionPolicy'
 
-export const TELEMETRY_CONTEXT_FIELDS = [
-  'smart_app_key',
-  'smart_app_name',
-  'smart_app_version',
-  'smart_app_source',
-  'plugin_key',
-  'plugin_marketplace',
-  'plugin_version',
-  'tool_name',
-  'tool_duration_ms',
-] as const
-export type TelemetryContextField = (typeof TELEMETRY_CONTEXT_FIELDS)[number]
+const SESSION_ID_KEY = 'wework.telemetry.session-id.v1'
 
 export interface TelemetryConfig {
   contextFields: readonly TelemetryContextField[]
@@ -40,30 +33,13 @@ function sampleRate(value: string): number {
   return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 0.05
 }
 
-function configuredFields<T extends string>(name: keyof ImportMetaEnv, allowed: readonly T[]): T[] {
-  const value = env(name)
-  if (!value) return []
-  const parsed: unknown = JSON.parse(value)
-  if (!Array.isArray(parsed) || parsed.some(field => !allowed.includes(field))) {
-    throw new Error(`Invalid telemetry field policy: ${name}`)
-  }
-  return [...new Set(parsed)] as T[]
-}
-
 export function getTelemetryConfig(): TelemetryConfig {
   const desktopE2ERuntimeConfig = getDesktopE2ERuntimeConfig()
-  const identity =
-    desktopE2ERuntimeConfig.telemetryIdentity ||
-    env('VITE_WEWORK_TELEMETRY_IDENTITY') ||
-    'anonymous'
-  if (identity !== 'anonymous' && identity !== 'email_prefix') {
-    throw new Error('Invalid telemetry distinct ID source')
-  }
+  const identity = parseTelemetryIdentity(
+    desktopE2ERuntimeConfig.telemetryIdentity || env('VITE_WEWORK_TELEMETRY_IDENTITY')
+  )
   return {
-    contextFields: configuredFields(
-      'VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS',
-      TELEMETRY_CONTEXT_FIELDS
-    ),
+    contextFields: parseTelemetryContextFields(env('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS')),
     identity,
     source: env('VITE_WEWORK_TELEMETRY_SOURCE') || 'wework',
     environment: env('VITE_WEWORK_TELEMETRY_ENVIRONMENT') || import.meta.env.MODE,

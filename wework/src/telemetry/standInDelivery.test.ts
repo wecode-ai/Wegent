@@ -44,6 +44,27 @@ beforeEach(() => {
 })
 
 describe('durable stand-in delivery', () => {
+  test('retains mismatched identities without blocking later deliverable facts', async () => {
+    const { api, fact } = fixture()
+    const delivery = createStandInDelivery('account:device')
+    await delivery.collect(api, 7, 'device', active)
+    const nextId = '22345678-1234-4234-8234-123456789012'
+    vi.mocked(api.telemetryFacts).mockResolvedValue({ items: [{ ...fact, id: nextId }] })
+    mocks.identity.mockResolvedValue({
+      distinctId: 'alice',
+      common: {},
+      scope: telemetryDeliveryScope(),
+    })
+    await delivery.collect(api, 7, 'device', active)
+    mocks.deliver.mockResolvedValueOnce('identity_mismatch')
+
+    await delivery.flush(active)
+
+    expect(mocks.deliver).toHaveBeenCalledTimes(2)
+    expect(mocks.deliver.mock.calls.map(call => call[3].distinctId)).toEqual(['anonymous', 'alice'])
+    const queued = JSON.parse(localStorage.getItem('wework.stand-in-telemetry:account:device')!)
+    expect(queued.map((row: { fact: { eventId: string } }) => row.fact.eventId)).toEqual([id])
+  })
   test('adds the routed Executor location without exposing its identifier', async () => {
     const { api } = fixture()
     const delivery = createStandInDelivery('account:private-remote-device')

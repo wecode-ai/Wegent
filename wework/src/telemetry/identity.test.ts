@@ -46,6 +46,14 @@ describe('telemetry collection policy', () => {
     vi.stubEnv('VITE_WEWORK_TELEMETRY_IDENTITY', 'anonymous')
     expect(telemetryDistinctId('installation')).toBe('installation')
   })
+  test('uses anonymous identity when the stored profile has no email', () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_IDENTITY', 'email_prefix')
+    setTelemetryUser(alice)
+    for (const email of [null, undefined, '', 'invalid']) {
+      setTelemetryUser({ id: 7, email })
+      expect(telemetryDistinctId('installation')).toBe('installation')
+    }
+  })
   test('selects application metadata and bounds untrusted context values', () => {
     vi.stubEnv(
       'VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS',
