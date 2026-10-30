@@ -324,11 +324,11 @@ The center dot in the sidebar running indicator represents only an `active`
 goal. Paused and blocked goals still exist but do not show this dot; its absence
 does not mean that no goal exists.
 
-The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
-
-- Task execution is known only when `running` is an explicit boolean. A missing field means the state is unknown and must not pause the goal.
-- This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
-- When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
+The lifecycle Store owns Goal running presentation and elapsed time. When `executionState`
+exists, its native phase takes precedence over the legacy `running` field. Only legacy
+snapshots without native evidence derive an active Goal as paused from explicit
+`running: false`; an absent field preserves unknown state. This presentation derivation
+does not call the Goal pause API; persisting a pause remains a user action.
 
 The executor's shared lifecycle transition owns Codex execution state independently of RPC
 completion and message content. Task lists, task details, and `runtime.turn.updated` events
@@ -360,8 +360,14 @@ resources and includes the current execution snapshot in its existing terminal e
 must preserve recovery journals for still-active Goal executions. Context compaction can
 update content routing without replacing execution state.
 
+The lifecycle owner receives native events through a bounded channel with backpressure,
+so congestion cannot discard events. Ordinary broadcast serves observers such as reply
+prediction. Request cleanup does not wait for native publication; no completion handshake
+or timeout fallback connects the two lifetimes. The sole native owner retains source order.
+
 Native start also establishes the content turn. The request-created callback only binds
-user-message identity. Binding may arrive after content or even completion, but cannot
+user-message identity. An early binding retains a pending record without claiming model
+execution has started. Binding may also arrive after content or even completion, but cannot
 drop received text, move subsequent turns, or restore streaming on a settled turn.
 
 When the user stops the current response for a task with an active goal, Wework must persist

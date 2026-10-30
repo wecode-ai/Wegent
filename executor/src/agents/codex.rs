@@ -789,6 +789,16 @@ impl CodexAppServerClient {
         Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
+    pub(crate) async fn subscribe_runtime_notifications(
+        &self,
+    ) -> Result<mpsc::Receiver<CodexNotification>, String> {
+        Ok(self
+            .ensure_process()
+            .await?
+            .notifications
+            .subscribe_runtime())
+    }
+
     pub(crate) async fn subscribe_thread_notifications(
         &self,
         thread_id: &str,
@@ -1327,6 +1337,7 @@ type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 #[derive(Clone)]
 struct CodexNotificationHub {
     all: broadcast::Sender<CodexNotification>,
+    runtime: Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
 }
 
@@ -1335,12 +1346,24 @@ impl CodexNotificationHub {
         let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
         Self {
             all,
+            runtime: Arc::new(StdMutex::new(Vec::new())),
             threads: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
     fn subscribe_all(&self) -> broadcast::Receiver<CodexNotification> {
         self.all.subscribe()
+    }
+
+    fn subscribe_runtime(&self) -> mpsc::Receiver<CodexNotification> {
+        let (sender, receiver) = mpsc::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
+        let mut subscribers = self
+            .runtime
+            .lock()
+            .expect("runtime notification registry poisoned");
+        subscribers.retain(|subscriber| !subscriber.is_closed());
+        subscribers.push(sender);
+        receiver
     }
 
     fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<CodexNotification> {
@@ -1357,8 +1380,20 @@ impl CodexNotificationHub {
             .subscribe()
     }
 
-    fn send(&self, message: Value) {
+    async fn send(&self, message: Value) {
         let message = CodexNotification::from(message);
+        let subscribers = {
+            let mut subscribers = self
+                .runtime
+                .lock()
+                .expect("runtime notification registry poisoned");
+            subscribers.retain(|subscriber| !subscriber.is_closed());
+            subscribers.clone()
+        };
+        // The lifecycle owner applies backpressure instead of dropping native events.
+        for subscriber in subscribers {
+            let _ = subscriber.send(message.clone()).await;
+        }
         let _ = self.all.send(message.clone());
         let thread_id =
             stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
@@ -1593,7 +1628,8 @@ async fn read_persistent_codex_app_server_stdout(
                 notify_shared_process_closed(
                     &notifications,
                     "codex app-server exited while shared process was running",
-                );
+                )
+                .await;
                 fail_all_pending(
                     &pending,
                     "codex app-server exited while shared process was running".to_owned(),
@@ -1607,7 +1643,8 @@ async fn read_persistent_codex_app_server_stdout(
                     notify_shared_process_closed(
                         &notifications,
                         &format!("failed to parse codex JSON-RPC message: {error}"),
-                    );
+                    )
+                    .await;
                     fail_all_pending(
                         &pending,
                         format!("failed to parse codex JSON-RPC message: {error}"),
@@ -1620,7 +1657,8 @@ async fn read_persistent_codex_app_server_stdout(
                 notify_shared_process_closed(
                     &notifications,
                     &format!("failed to read codex JSON-RPC message: {error}"),
-                );
+                )
+                .await;
                 fail_all_pending(
                     &pending,
                     format!("failed to read codex JSON-RPC message: {error}"),
@@ -1641,7 +1679,9 @@ async fn read_persistent_codex_app_server_stdout(
 
         log_codex_mcp_startup_status(&message);
 
-        notifications.send(external_work::project_review_notification(message));
+        notifications
+            .send(external_work::project_review_notification(message))
+            .await;
     }
 }
 
@@ -1695,13 +1735,15 @@ fn log_codex_mcp_startup_status(message: &Value) {
     );
 }
 
-fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
-    notifications.send(json!({
-        "method": "codex/app-server/exited",
-        "params": {
-            "message": message,
-        }
-    }));
+async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
+    notifications
+        .send(json!({
+            "method": "codex/app-server/exited",
+            "params": {
+                "message": message,
+            }
+        }))
+        .await;
 }
 
 async fn fail_all_pending(

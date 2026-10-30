@@ -579,7 +579,11 @@ impl RuntimeWorkRpcHandler {
             return;
         }
 
-        let notification_rx = match self.codex_app_server.subscribe_notifications().await {
+        let notification_rx = match self
+            .codex_app_server
+            .subscribe_runtime_notifications()
+            .await
+        {
             Ok(receiver) => receiver,
             Err(error) => {
                 log_executor_event(
@@ -606,19 +610,12 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn run_notification_router(
         &self,
-        mut notification_rx: broadcast::Receiver<CodexNotification>,
+        mut notification_rx: mpsc::Receiver<CodexNotification>,
     ) {
         loop {
             let message = match notification_rx.recv().await {
-                Ok(message) => message,
-                Err(broadcast::error::RecvError::Lagged(count)) => {
-                    log_executor_event(
-                        "runtime work notification router lagged",
-                        &[("count", count.to_string())],
-                    );
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => {
+                Some(message) => message,
+                None => {
                     log_executor_event("runtime work notification router closed", &[]);
                     return;
                 }
@@ -775,7 +772,6 @@ impl RuntimeWorkRpcHandler {
                     poisoned.into_inner()
                 });
             if message.claim_runtime_delivery() {
-                let _publication = message.publication_guard();
                 let mut message = message;
                 let stopped = self
                     .active_local_executions

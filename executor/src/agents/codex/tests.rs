@@ -523,7 +523,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
                 "turnId": "turn-b",
                 "delta": index.to_string()
             }
-        }));
+        }))
+        .await;
     }
     hub.send(json!({
         "method": "turn/completed",
@@ -531,7 +532,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
             "threadId": "thread-a",
             "turn": {"id": "turn-a", "status": "completed"}
         }
-    }));
+    }))
+    .await;
 
     let message = thread_a
         .recv()
@@ -542,9 +544,37 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
 }
 
 #[tokio::test]
+async fn notification_hub_backpressures_runtime_without_losing_terminal_events() {
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    for index in 0..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        hub.send(json!({"method": "item/started", "index": index}))
+            .await;
+    }
+    let mut terminal = Box::pin(hub.send(json!({"method": "turn/completed"})));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(terminal.as_mut().poll(&mut context).is_pending());
+    assert_eq!(runtime.recv().await.unwrap()["index"], 0);
+    terminal.await;
+    for index in 1..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        assert_eq!(runtime.recv().await.unwrap()["index"], index);
+    }
+    assert_eq!(runtime.recv().await.unwrap()["method"], "turn/completed");
+    drop(runtime);
+    hub.send(json!({"method": "turn/started"})).await;
+    assert!(hub.runtime.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
     let hub = CodexNotificationHub::new();
     let mut all = hub.subscribe_all();
+    let mut runtime = hub.subscribe_runtime();
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
     let message = json!({
@@ -552,15 +582,18 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
         "params": {"threadId": "thread-a", "turnId": "turn-a"}
     });
 
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
 
     let global = all.recv().await.unwrap();
     let scoped = thread_a.recv().await.unwrap();
+    let owned = runtime.recv().await.unwrap();
     assert_eq!(*global, message);
     assert_eq!(*scoped, message);
+    assert_eq!(*owned, message);
+    assert_eq!(owned.sequence(), global.sequence());
     assert!(global.claim_runtime_delivery());
     assert!(!scoped.claim_runtime_delivery());
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
     assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
 }
@@ -571,7 +604,7 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
 
-    notify_shared_process_closed(&hub, "app-server stopped");
+    notify_shared_process_closed(&hub, "app-server stopped").await;
 
     for receiver in [&mut thread_a, &mut thread_b] {
         let message = receiver.recv().await.unwrap();

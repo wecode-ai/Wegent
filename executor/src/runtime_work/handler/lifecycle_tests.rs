@@ -4,6 +4,27 @@
 
 use super::*;
 
+#[tokio::test]
+async fn request_observer_does_not_wait_for_native_publication() {
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    let (handler, root, request) = setup("independent-request-publication");
+    let mut observation = Box::pin(handler.observe_execution_codex_notification(
+        "task-1",
+        0,
+        &request,
+        None,
+        notification("turn/completed", "turn-1"),
+    ));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(observation.as_mut().poll(&mut context).is_ready());
+    drop(observation);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn notification(method: &str, turn: &str) -> CodexNotification {
     json!({"method": method, "params": {"threadId": "thread-1", "turn": {
         "id": turn, "status": "completed", "agent_path": "/root"

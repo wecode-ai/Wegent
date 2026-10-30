@@ -992,11 +992,7 @@ impl RuntimeWorkRpcHandler {
         {
             self.register_scoped_child_route(&turn.thread_id, &thread);
         }
-        // The global thread receiver publishes content and lifecycle in native order.
-        // Drain its terminal publication before releasing this request's resources.
-        if codex_notification(&message).method == "turn/completed" {
-            message.wait_runtime_publication().await;
-        }
+        // Request resources do not depend on the independently owned native publication.
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
