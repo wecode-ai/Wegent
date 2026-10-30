@@ -16,6 +16,11 @@ import {
 
 const user = text => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] })
 
+test('loads desktop checkpoints that consume the shared user message reader', async () => {
+  await import('../e2e/desktop/modules/task-state-flows.mjs')
+  await import('../e2e/desktop/modules/plugin-composer-route-messaging.mjs')
+})
+
 async function respond(input) {
   const server = new DesktopE2EServer('/tmp/async-input-fixture')
   server.scenario = 'request_user_input_async'

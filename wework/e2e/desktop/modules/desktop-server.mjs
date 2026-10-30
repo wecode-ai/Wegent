@@ -376,6 +376,18 @@ function requestContainsSkillLocator(body, skillPath) {
   )
 }
 
+/** Text of top-level user messages, excluding quoted messages inside tool output. */
+function inputUserMessageTexts(request) {
+  const input = Array.isArray(request.input) ? request.input : []
+  return input
+    .filter(item => item.type === 'message' && item.role === 'user')
+    .map(item => {
+      const content = Array.isArray(item.content) ? item.content : [item.content]
+      return content.map(part => (typeof part === 'string' ? part : part?.text) ?? '').join('')
+    })
+    .filter(text => text.trim())
+}
+
 /** Match the actual reply after this question's acknowledgement, not injected context. */
 function hasUserReplyAfterToolOutput(request, callId, answer) {
   const input = Array.isArray(request.input) ? request.input : []
@@ -383,12 +395,9 @@ function hasUserReplyAfterToolOutput(request, callId, answer) {
     item => item.type === 'function_call_output' && item.call_id === callId
   )
   if (outputIndex === -1) return false
-  return input.slice(outputIndex + 1).some(item => {
-    if (item.type !== 'message' || item.role !== 'user') return false
-    const content = Array.isArray(item.content) ? item.content : [item.content]
-    const text = content.map(part => (typeof part === 'string' ? part : part?.text) ?? '').join('')
-    return text.trim() === answer
-  })
+  return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
+    text => text.trim() === answer
+  )
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -6243,4 +6252,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, requestContainsSkillLocator }
+export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }
