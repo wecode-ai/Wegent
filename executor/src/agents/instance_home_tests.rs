@@ -152,6 +152,69 @@ fn compact_records_keep_identity_once_and_do_not_rewrite_on_followup() {
 }
 
 #[test]
+fn resume_imports_a_missing_session_next_to_other_home_sessions() {
+    let root = tempfile::tempdir().unwrap();
+    let global = tempfile::tempdir().unwrap();
+    let _lock = crate::test_env::lock();
+    let _home = EnvVar::set("WEGENT_CLAUDE_HOME", global.path());
+    let source = global
+        .path()
+        .join("projects/-sim-workspace/session-1.jsonl");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(&source, "{\"sessionId\":\"session-1\",\"type\":\"user\"}\n").unwrap();
+
+    let mut request = request();
+    request.bot[0]["shell_type"] = json!("ClaudeCode");
+    request.new_session = false;
+    request.inherited_sessions =
+        vec![json!({"agent":"ClaudeCode","sessionId":"session-1","botId":"23"})];
+    let home = named_home_at(root.path(), &request).unwrap();
+    // The Home is shared by every task of the agent, so it already holds
+    // sessions written by earlier runs.
+    let other = home.join("projects/-other-workspace/other.jsonl");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    fs::write(&other, "{\"sessionId\":\"other\",\"type\":\"user\"}\n").unwrap();
+
+    drop(acquire_at(&request, root.path(), &home).unwrap());
+
+    assert_eq!(
+        fs::read_to_string(home.join("projects/-sim-workspace/session-1.jsonl")).unwrap(),
+        "{\"sessionId\":\"session-1\",\"type\":\"user\"}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&other).unwrap(),
+        "{\"sessionId\":\"other\",\"type\":\"user\"}\n"
+    );
+    assert_eq!(
+        read_marker(&task_binding(&home, &request.task_id).unwrap()).unwrap()["migrated_session"]
+            ["id"],
+        json!("session-1")
+    );
+}
+
+struct EnvVar {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVar {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVar {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+#[test]
 fn followup_reuses_existing_home_and_session_across_backend_urls() {
     for shell in ["Codex", "ClaudeCode"] {
         let root = tempfile::tempdir().unwrap();
