@@ -7,6 +7,45 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn cloud_config_bundle_failures_are_detected() {
+    assert!(is_codex_cloud_config_error(
+        "failed to load configuration: timed out refreshing cloud config bundle"
+    ));
+    assert!(is_codex_cloud_config_error(
+        "failed to reload config: timed out waiting for cloud config bundle after 20s"
+    ));
+    assert!(!is_codex_cloud_config_error("model not found"));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // The shared env lock serializes process-global test env changes.
+async fn cloud_config_fallback_does_not_disrupt_other_active_threads() {
+    let _lock = crate::test_env::lock();
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
+    let client = CodexAppServerClient::new("codex-cloud-config-active-thread-test");
+    client.mark_thread_active("thread-1").await;
+
+    let degraded = client
+        .degrade_auth_after_cloud_config_failure(
+            "model/list",
+            "failed to load configuration: timed out refreshing cloud config bundle",
+            None,
+            None,
+            true,
+        )
+        .await
+        .expect("fallback decision should not fail");
+
+    assert!(!degraded);
+    assert_eq!(
+        client.state.lock().await.auth_mode,
+        CodexAuthMode::LocalSubscription
+    );
+    client.mark_thread_idle("thread-1", false).await;
+}
+
+#[test]
 fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
     let mut message = json!({"id":1,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["touch"]}}]}});
     restrict_stand_in_approval(&mut message);
@@ -1417,6 +1456,39 @@ fn prepare_wework_codex_home_removes_existing_link_when_subscription_disabled() 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
     assert!(!linked_auth.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_with_auth_removes_managed_link_for_router_mode() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-router-only");
+    let user_codex_home = root.join("user-codex");
+    let codex_home = root.join("wework-codex");
+    let source_auth = user_codex_home.join("auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+        .expect("user Codex home should be created");
+    fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+    env::set_var(CODEX_HOME_ENV, &user_codex_home);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
+
+    prepare_wework_codex_home_with_auth(&codex_home, true)
+        .expect("Codex home should link managed auth");
+    assert_eq!(
+        fs::read_link(&linked_auth).expect("auth should be a symlink"),
+        source_auth
+    );
+
+    prepare_wework_codex_home_with_auth(&codex_home, false)
+        .expect("Codex home should remove managed auth");
+    assert!(!linked_auth.exists());
+    assert!(source_auth.is_file());
+
     let _ = fs::remove_dir_all(root);
 }
 
