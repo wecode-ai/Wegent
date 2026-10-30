@@ -368,8 +368,17 @@ export function removeEquivalentAssistantTextItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[],
 ): RuntimeConversationItem[] {
+  const localById = new Map(localItems.map((item) => [item.id, item]));
   const candidateGroups = new Map<string, AssistantTextCandidateGroup>();
   snapshotItems.forEach((item, index) => {
+    // Exact provisional identities receive their native positions before text alias matching.
+    if (
+      item.position !== undefined &&
+      localById.has(item.id) &&
+      localById.get(item.id)?.position === undefined
+    ) {
+      return;
+    }
     const content = assistantTextRepresentationContent(item);
     if (content === undefined) return;
     const group =

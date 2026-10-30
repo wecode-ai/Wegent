@@ -34,6 +34,25 @@ describe('native assistant text identity reconciliation', () => {
     expect(projectRuntimeConversationTurns(merged)[0].content).toBe(`${content}\n\n${content}`)
   })
 
+  it('preserves same-text provisional items outside a page with an exact identity boundary', () => {
+    const page = turn('boundary', 1)
+    const local = turn('before-page')
+    local.items.push(...turn('boundary').items, ...turn('after-page').items)
+    for (const [previous, incoming] of [[local, page], [page, local]] as const) {
+      const merged = mergeRuntimeConversationTurns([previous], [incoming])[0]
+      expect(merged.items.map(item => item.id)).toEqual(['before-page', 'boundary', 'after-page'])
+      expect(merged.items[1].position).toBe(1)
+    }
+  })
+
+  it('removes a late provisional alias of an already positioned native item', () => {
+    const native = turn('native-answer', 1)
+    const local = { ...native, items: [...native.items, ...turn('live-answer').items] }
+    const merged = mergeRuntimeConversationTurns([local], [native])
+    expect(merged[0].items).toEqual(native.items)
+    expect(projectRuntimeConversationTurns(merged)[0].content).toBe(content)
+  })
+
   it('keeps unmatched live output alongside positioned history', () => {
     const local = turn('live-answer')
     local.items.push({ id: 'new-output', type: 'assistant_text', content: 'New output' })
