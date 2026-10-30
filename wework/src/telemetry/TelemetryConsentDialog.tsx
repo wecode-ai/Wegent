@@ -1,3 +1,4 @@
+import { TelemetryCollectionNotice } from './TelemetryCollectionNotice'
 import { ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -62,6 +63,7 @@ export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryCon
         <p className="mt-3 rounded-xl bg-muted/60 px-3 py-2.5 text-xs leading-5 text-text-muted">
           {t('workbench.telemetry_consent_privacy')}
         </p>
+        <TelemetryCollectionNotice />
         {error ? (
           <p role="alert" className="mt-3 text-sm text-destructive">
             {error}

@@ -4,11 +4,11 @@ sidebar_position: 27
 
 # Plugin and Smart App telemetry
 
-Audit date: September 20, 2026. Existing PostHog connectivity is confirmed by the operator. This change repairs client coverage and event semantics; local tests are not proof of production ingestion.
+This document defines plugin and Smart App event coverage, success boundaries and verification requirements.
 
 ## Contract
 
-`wework/src/telemetry/registry/` generates the TypeScript allowlists and public JSON/Markdown catalogs. There are 38 plugin and 35 Smart App events. See `wework/telemetry/catalog/public-events.md` for names and failure stages.
+`wework/src/telemetry/registry/` generates the TypeScript allowlists and JSON/Markdown catalogs. There are 38 plugin and 35 Smart App events. See `wework/telemetry/catalog/public-events.md` for names and failure stages.
 
 | Area                             | Coverage and success boundary                                                                                                                                                                                                                                                                                                                    |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -29,7 +29,7 @@ The current `recordPluginUsageFromInput` parses `plugin://` references after a m
 
 Actual invocation uses executor-produced MCP tool start and completion blocks, then enters the shared telemetry dispatcher. The `pluginId` carried by a Codex `mcpToolCall` is the primary ownership fact; the executor projects it as `plugin_id`, and the client joins it with the current device's installed and enabled plugin catalog for distribution, marketplace and version. An MCP server mapping is only a fallback for executors that do not provide `plugin_id`. Only calls with confirmed ownership are counted, so built-in workspace, browser and computer tools do not enter plugin usage. Start and completion are deduplicated by device, task, turn and tool-call ID. Skills provide prompt and context capabilities without one uniform terminal invocation, so skill activation and MCP calls require separate metrics.
 
-Public PostHog emits one `plugin_invocation_succeeded` or `plugin_invocation_failed` event for each confirmed MCP call, with only these bounded dimensions:
+PostHog emits one `plugin_invocation_succeeded` or `plugin_invocation_failed` event for each confirmed MCP call, with only these bounded dimensions:
 
 - `capability_type`: `mcp`
 - `execution_surface`: `task`, `project_task`, `automation` or `unknown`
@@ -37,15 +37,15 @@ Public PostHog emits one `plugin_invocation_succeeded` or `plugin_invocation_fai
 - `plugin_distribution`: `official`, `enterprise`, `personal` or `unknown`
 - `failure_stage` on failures: `invoke`, `timeout`, `cancelled` or `unknown`
 
-Public events exclude plugin names, MCP server names, tool names, task IDs, arguments, outputs and raw errors. Failed terminal blocks currently use `failure_stage=invoke`; until the runtime supplies reliable timeout and cancellation classifications, the client does not infer them from error text. The internal sink also carries a stable `plugin_key`, marketplace, version, tool name and duration for per-plugin analysis and diagnostics, while still excluding arguments, output and credentials. Trace IDs and controlled error codes require stable executor fields before they can be added.
+Default events exclude plugin names, MCP server names, tool names, task IDs, arguments, outputs and raw errors. Failed terminal blocks currently use `failure_stage=invoke`; until the runtime supplies reliable timeout and cancellation classifications, the client does not infer them from error text. Explicit field configuration can include a stable `plugin_key`, marketplace, version, tool name and duration for per-plugin analysis and diagnostics, while still excluding arguments, output and credentials. Trace IDs and controlled error codes require stable executor fields before they can be added.
 
-Ordinary backend logs should not be the source of truth for usage. Local execution can complete offline without reaching the backend, and relayed backend events may not include reliable plugin provenance. The executor should produce the structured invocation fact; the cloud backend may receive, persist and aggregate it. Sampled operational logs can use the same internal fields and a defined retention period instead of writing free-form text for every call.
+Ordinary backend logs should not be the source of truth for usage. Local execution can complete offline without reaching the backend, and relayed backend events may not include reliable plugin provenance. The executor should produce the structured invocation fact; the cloud backend may receive, persist and aggregate it. Sampled operational logs can use the same structured fields and a defined retention period instead of writing free-form text for every call.
 
-## Distribution and privacy
+## Collection policy and privacy
 
-Business code publishes typed observations or operation results through `TelemetryAgent`. Public builds retain consent and the PostHog SDK. Internal builds deliver to internal sinks only. Observer errors cannot change business outcomes, and cancellation or duplicate terminal notifications do not produce extra results.
+Business code publishes typed observations or operation results through `TelemetryAgent`. All builds share consent and the PostHog SDK; explicit field policies control identity and application context, with no identity collected by default. Observer errors cannot change business outcomes, and cancellation or duplicate terminal notifications do not produce extra results.
 
-Public properties are allowlisted enums such as domain, failure_stage, source, scope, surface and enabled. Names, resource IDs, paths, account data and raw error text are excluded. Anonymous installation identity is not authenticated-account UV; public data cannot rank named individual plugins.
+Default properties are allowlisted enums such as domain, failure_stage, source, scope, surface and enabled. Names, resource IDs, paths, account data and raw error text are excluded. Anonymous installation identity is not authenticated-account UV; default data cannot rank named individual plugins.
 
 The packaging workflow maps existing `WEWORK_POSTHOG_KEY` and `WEWORK_POSTHOG_HOST` secrets to Vite variables. Catalog synchronization updates definitions rather than collecting events; a skipped synchronization job is not evidence of broken ingestion.
 
@@ -56,7 +56,7 @@ Use an isolated worktree and Electron home, real local backend, synthetic plugin
 1. Verify pending, failed, matching device/release, duplicate notification and explicit retry installation outcomes.
 2. Exercise API resolution, rejected requests and resolved failure states. Preserve original errors; throwing telemetry observers cannot break operations.
 3. Check OAuth/local authorization success, cancellation and failure with no private account/error fields.
-4. Test safe public projection, internal-only delivery, declined/revoked consent and independent retries.
+4. Test allowlisted projection, configured identity fields, declined/revoked consent and independent retries.
 5. Run CI-owned `plugin-marketplace-lifecycle`: marketplace navigation and ZIP import must reach the receiver, alongside existing real installation/update/uninstall cleanup.
 6. Run CI-owned `harness-apps`: create/install/start/stop/export/share/uninstall and publication-dialog cancellation, asserting receiver events and forbidden-property absence alongside existing recovery coverage.
 7. Independently launch `ai:verify`, inspect the snapshot, navigate plugin and Smart App entries, retain final evidence and stop the isolated session to remove auth links.

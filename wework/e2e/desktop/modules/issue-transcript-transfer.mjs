@@ -133,6 +133,7 @@ async function verifyCachedInitialRecovery({
       'click',
       scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
     )
+    await control.command('waitFor', modal, { visible: true, timeoutMs: 10_000 })
     await control.command('waitFor', `${modal} [data-testid="runtime-transcript-error"]`)
     assert.match(await control.command('getText', modal), new RegExp(RESTORED))
     assert.ok(
