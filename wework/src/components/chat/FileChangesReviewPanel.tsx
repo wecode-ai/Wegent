@@ -318,6 +318,8 @@ export function FileChangesReviewPanel({
                 canComment={Boolean(onAddCodeComment)}
                 commentSelection={commentSelection}
                 onCommentSelectionChange={selection => {
+                  // A typed draft keeps its selection until it is cancelled or added.
+                  if (comment.trim()) return
                   setCommentSelection(selection)
                   setComment('')
                 }}
