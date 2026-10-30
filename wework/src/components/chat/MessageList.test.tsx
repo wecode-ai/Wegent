@@ -50,6 +50,52 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('keeps a text-only async answer visible after its input card is done', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'async-question-and-waiting',
+            role: 'assistant',
+            content: 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_WAITING',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'fc_wework-e2e-request-user-input-async',
+                subtaskId: 11,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+                renderPayload: {
+                  kind: 'request_user_input',
+                  delivery: 'async',
+                  itemId: 'wework-e2e-request-user-input-async',
+                  questions: [
+                    {
+                      id: 'question_1',
+                      question: 'Which async implementation direction should be used?',
+                      options: ['Minimal', 'Complete'],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent(
+      'Which async implementation direction should be used?'
+    )
+    expect(screen.getByTestId('message-assistant')).toHaveTextContent(
+      'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_WAITING'
+    )
+    expect(screen.queryByTestId('final-processing-timeline')).not.toBeInTheDocument()
+  })
+
   test.each([
     { name: 'message list', Conversation: MessageList },
     { name: 'scrollable conversation', Conversation: ScrollableMessageArea },

@@ -57,6 +57,10 @@ import {
   hasTrailingCompletedProcessText,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
+import {
+  isAsyncRequestUserInputPayload,
+  isRequestUserInputBlock,
+} from "@wegent/chat-core/runtime-user-input";
 
 export function AssistantMessage({
   imageServices,
@@ -184,6 +188,14 @@ export function AssistantMessage({
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
     expandedToolDetailStateKeys,
   );
+  // A completed async question is still waiting for its user answer. Keep the
+  // live tool layout for its explanatory text instead of folding it into a
+  // completed-process summary.
+  const hasPendingAsyncQuestion = (message.blocks ?? []).some(
+    (block) =>
+      isRequestUserInputBlock(block) &&
+      isAsyncRequestUserInputPayload(block.renderPayload),
+  );
   const usesFinalProcessingShell =
     hasBlocks &&
     !isAssistantRunning &&
@@ -192,6 +204,7 @@ export function AssistantMessage({
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
+    !hasPendingAsyncQuestion &&
     ((isProcessingOnlyBeforeGuidance && !isActiveTurn) ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
