@@ -116,7 +116,7 @@ impl HttpPackageProvider {
         let response = request.send().await.map_err(|error| {
             let error = error.without_url();
             CapabilitySyncError::invalid_payload(format!(
-                "Capability package download failed: {error}"
+                "Capability package download failed: {error:?}"
             ))
         })?;
         let status = response.status();
@@ -130,8 +130,9 @@ impl HttpPackageProvider {
             .await
             .map(|bytes| bytes.to_vec())
             .map_err(|error| {
+                let error = error.without_url();
                 CapabilitySyncError::invalid_payload(format!(
-                    "Capability package read failed: {error}"
+                    "Capability package read failed: {error:?}"
                 ))
             })
     }
@@ -237,4 +238,36 @@ fn canonical_digest(value: &Value) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+#[cfg(test)]
+mod download_error_tests {
+    use super::HttpPackageProvider;
+    use tokio::{io::AsyncReadExt, net::TcpListener, time::Duration};
+
+    #[tokio::test]
+    async fn download_error_retains_transport_cause_without_signed_url_or_auth() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            assert!(stream.read(&mut buffer).await.unwrap() > 0);
+            // Close before response headers to reproduce a transport-level failure.
+        });
+        let provider = HttpPackageProvider::new(format!("http://{address}"), "backend-secret");
+        let error = tokio::time::timeout(
+            Duration::from_secs(3),
+            provider.get_bytes("/package.zip?signature=private-signature"),
+        )
+        .await
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+        server.await.unwrap();
+        assert!(error.contains("source:"), "{error}");
+        assert!(!error.contains("private-signature"));
+        assert!(!error.contains("backend-secret"));
+        assert!(!error.contains("package.zip"));
+    }
 }
