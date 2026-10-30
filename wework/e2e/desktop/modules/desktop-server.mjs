@@ -1,3 +1,5 @@
+import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
+
 import {
   DIAGRAM_REGRESSION_MARKER,
   DIAGRAM_REGRESSION_RESPONSE,
@@ -3959,7 +3961,7 @@ class DesktopE2EServer {
         if (toolOutput !== null) {
           assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
           const answered = inputUserMessageTexts(body).some(
-            text => text.trim() === REQUEST_USER_INPUT_FREE_TEXT_ANSWER
+            text => visibleRuntimeUserMessage(text) === REQUEST_USER_INPUT_FREE_TEXT_ANSWER
           )
           this.writeSse(response, [
             responseCreated(responseId),
@@ -4009,7 +4011,7 @@ class DesktopE2EServer {
           return
         }
         const answered = inputUserMessageTexts(body).some(
-          text => text.trim() === REQUEST_USER_INPUT_ASYNC_ANSWER
+          text => visibleRuntimeUserMessage(text) === REQUEST_USER_INPUT_ASYNC_ANSWER
         )
         this.writeSse(response, [
           responseCreated(responseId),
