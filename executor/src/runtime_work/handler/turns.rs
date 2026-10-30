@@ -986,6 +986,7 @@ impl RuntimeWorkRpcHandler {
                     // prevents a duplicate when the global router already delivered it.
                     if message.claim_runtime_delivery() {
                         self.record_background_terminal_notification(local_task_id, &message);
+                        self.record_async_question_notification(local_task_id, &message);
                         let event_request = self.request_for_codex_event(
                             local_task_id,
                             request,
@@ -1006,7 +1007,7 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
             self.record_background_terminal_notification(local_task_id, &message);
-            self.record_async_user_input_notification(local_task_id, &message);
+            self.record_async_question_notification(local_task_id, &message);
 
             let hook_input =
                 if let (Some(active_turn), Some(cwd)) = (active_turn.as_ref(), request.cwd()) {
