@@ -61,6 +61,10 @@ test.describe('system browser handoff page', () => {
 
     await expect(page.getByTestId('open-wework-button')).toHaveAttribute(
       'href',
+      'wegent://boards/12/issues/ISSUE-1'
+    )
+    await expect(page.getByTestId('open-wework-button')).toHaveAttribute(
+      'data-fallback-url',
       'wework://boards/12/issues/ISSUE-1'
     )
     await expect(page.getByTestId('view-task-button')).toHaveAttribute(

@@ -25,6 +25,13 @@ describe('parseWeworkIssueLink', () => {
     })
   })
 
+  it('accepts a comment suffix and keeps the issue destination', () => {
+    expect(parseWeworkIssueLink('wework://boards/12/issues/ISSUE-1/comments/comment-1')).toEqual({
+      projectId: '12',
+      itemId: 'ISSUE-1',
+    })
+  })
+
   it('parses the HTTPS App Link handoff URL only for a trusted origin', () => {
     const input = 'https://wegent.example/open-wework?projectId=12&itemId=gitlab%3A12%2Fissue%233'
 
@@ -33,6 +40,15 @@ describe('parseWeworkIssueLink', () => {
       itemId: 'gitlab:12/issue#3',
     })
     expect(parseWeworkIssueLink(input, ['https://other.example'])).toBeNull()
+  })
+
+  it('accepts a comment query on HTTPS App Links', () => {
+    expect(
+      parseWeworkIssueLink(
+        'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&commentId=comment-1',
+        ['https://wegent.example']
+      )
+    ).toEqual({ projectId: '12', itemId: 'ISSUE-1' })
   })
 
   it('collects trusted App Link origins from the Web URL and build configuration', () => {
@@ -52,13 +68,15 @@ describe('parseWeworkIssueLink', () => {
     'wework://tasks/device/task',
     'wework://boards/12',
     'wework://boards/12/issues/',
-    'wework://boards/12/issues/ISSUE-1/comments/c-1',
+    'wework://boards/12/issues/ISSUE-1/comments/',
+    'wework://boards/12/issues/ISSUE-1/comments/%ZZ',
     'wework://boards/12/issues/ISSUE-1?redirect=https://evil.test',
     'wework://user@boards/12/issues/ISSUE-1',
     'wework://boards/12/issues/%ZZ',
     'https://wegent.example/open-wework?projectId=12',
     'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&redirect=https://evil.test',
     'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&itemId=ISSUE-2',
+    'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&commentId=..',
     'https://wegent.example/open-wework?projectId=0&itemId=ISSUE-1',
     'https://wegent.example/other?projectId=12&itemId=ISSUE-1',
   ])('rejects unsupported destinations: %s', input => {

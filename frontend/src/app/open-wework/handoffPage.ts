@@ -1,7 +1,14 @@
 import en from '@/i18n/locales/en/wework-open.json'
 import zh from '@/i18n/locales/zh-CN/wework-open.json'
 
-import { isDingTalkUserAgent, isMobileUserAgent, type WeworkHandoffDestination } from './handoff'
+import {
+  isDingTalkUserAgent,
+  isMobileUserAgent,
+  weworkLaunchUrls,
+  type WeworkHandoffDestination,
+} from './handoff'
+
+const MOBILE_FALLBACK_DELAY_MS = 1200
 
 type HandoffLanguage = 'en' | 'zh'
 
@@ -24,6 +31,7 @@ export function renderWeworkHandoffPage({
   const copy = language === 'en' ? en : zh
   const dingTalk = isDingTalkUserAgent(userAgent)
   const mobile = isMobileUserAgent(userAgent)
+  const launch = destination ? weworkLaunchUrls(destination.weworkUrl, userAgent) : null
   const title = destination ? (dingTalk ? copy.dingtalk_title : copy.title) : copy.invalid_title
   const description = destination
     ? dingTalk
@@ -37,17 +45,35 @@ export function renderWeworkHandoffPage({
           <p class="step">1. ${escapeHtml(copy.dingtalk_step_menu)}</p>
           <p class="step">2. ${escapeHtml(copy.dingtalk_step_browser)}</p>
         </div>`
-      : `<a class="button primary" href="${escapeHtml(destination.weworkUrl)}" data-testid="open-wework-button">${escapeHtml(copy.open_wework)}</a>`
+      : `<a class="button primary" href="${escapeHtml(launch?.primary ?? destination.weworkUrl)}"${
+          launch?.fallback ? ` data-fallback-url="${escapeHtml(launch.fallback)}"` : ''
+        } data-testid="open-wework-button">${escapeHtml(copy.open_wework)}</a>`
     : ''
   const webAction = destination
     ? `<a class="button secondary" href="${escapeHtml(destination.webPath)}" data-testid="view-task-button">${escapeHtml(copy.view_task)}</a>`
     : ''
   const autoLaunch =
-    destination && !mobile
+    destination && launch && !mobile
       ? `<script>
   window.setTimeout(function () {
-    window.location.href = ${escapeScriptValue(destination.weworkUrl)};
+    window.location.href = ${escapeScriptValue(launch.primary)};
   }, 50);
+</script>`
+      : ''
+  const fallbackLaunch =
+    destination && launch?.fallback && mobile && !dingTalk
+      ? `<script>
+  (function () {
+    var button = document.querySelector('[data-testid="open-wework-button"]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      window.setTimeout(function () {
+        if (document.visibilityState === 'visible') {
+          window.location.href = ${escapeScriptValue(launch.fallback)};
+        }
+      }, ${MOBILE_FALLBACK_DELAY_MS});
+    });
+  })();
 </script>`
       : ''
 
@@ -95,6 +121,7 @@ export function renderWeworkHandoffPage({
       </div>
     </main>
     ${autoLaunch}
+    ${fallbackLaunch}
   </body>
 </html>`
 }

@@ -63,7 +63,11 @@ export function WebIssueScreen({ accessToken, projectId, itemId, webUrl }: WebIs
         <View style={[styles.error, { backgroundColor: theme.colors.background }]}>
           <Text style={styles.errorTitle}>Issue 页面加载失败</Text>
           <Text style={styles.errorText}>请确认当前登录态有效，然后重试。</Text>
-          <Button mode="contained" onPress={() => webViewRef.current?.reload()}>
+          <Button
+            mode="contained"
+            onPress={() => webViewRef.current?.reload()}
+            testID="web-issue-retry"
+          >
             重试
           </Button>
         </View>

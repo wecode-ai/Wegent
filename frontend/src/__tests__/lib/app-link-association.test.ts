@@ -41,5 +41,16 @@ describe('App Link associations', () => {
         ],
       },
     })
+    expect(appleAppSiteAssociation('', '  ')).toEqual(appleAppSiteAssociation())
+    expect(appleAppSiteAssociation(' team ', ' bundle ')).toEqual({
+      applinks: {
+        details: [
+          {
+            appID: 'team.bundle',
+            paths: ['/open-wework'],
+          },
+        ],
+      },
+    })
   })
 })

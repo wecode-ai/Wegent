@@ -54,14 +54,16 @@ export function androidAssetLinks(
 }
 
 export function appleAppSiteAssociation(
-  teamId = WEWORK_IOS_TEAM_ID,
-  bundleId = WEWORK_IOS_BUNDLE_ID
+  teamId?: string,
+  bundleId?: string
 ): AppleAppSiteAssociation {
+  const resolvedTeamId = teamId?.trim() || WEWORK_IOS_TEAM_ID
+  const resolvedBundleId = bundleId?.trim() || WEWORK_IOS_BUNDLE_ID
   return {
     applinks: {
       details: [
         {
-          appID: `${teamId}.${bundleId}`,
+          appID: `${resolvedTeamId}.${resolvedBundleId}`,
           paths: [WEWORK_APP_LINK_PATH],
         },
       ],

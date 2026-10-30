@@ -25,7 +25,8 @@ describe('renderWeworkHandoffPage', () => {
     })
 
     expect(html).toContain('data-testid="open-wework-button"')
-    expect(html).toContain('href="wework://boards/12/issues/ISSUE-1"')
+    expect(html).toContain('href="wegent://boards/12/issues/ISSUE-1"')
+    expect(html).toContain('data-fallback-url="wework://boards/12/issues/ISSUE-1"')
     expect(html).not.toContain('data-testid="dingtalk-browser-hint"')
   })
 

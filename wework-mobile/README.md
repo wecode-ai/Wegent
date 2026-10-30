@@ -65,3 +65,7 @@ Release builds that receive Wework notification App Links must set
 with `EXPO_PUBLIC_WEWORK_APP_LINK_HOST`. The host must serve
 `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association`; the notification
 handoff path is `/open-wework`.
+
+For iOS, pass `WEWORK_APP_LINK_HOST` in the Xcode build invocation, for example
+`xcodebuild WEWORK_APP_LINK_HOST=wegent.example.com ...`. The entitlement references that build
+setting so release packaging can embed the same public host as Android and the JavaScript bundle.

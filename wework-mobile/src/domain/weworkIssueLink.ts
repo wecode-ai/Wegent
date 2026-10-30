@@ -51,12 +51,21 @@ function parseSchemeLink(url: URL): WeworkIssueLink | null {
   }
 
   const segments = url.pathname.split('/').filter(Boolean)
-  if (segments.length !== 3 || segments[1] !== 'issues') return null
+  const hasCommentSuffix =
+    segments.length === 5 && segments[1] === 'issues' && segments[3] === 'comments'
+  if ((segments.length !== 3 && !hasCommentSuffix) || segments[1] !== 'issues') return null
 
   const projectId = decodeSegment(segments[0])
   const itemId = decodeSegment(segments[2])
-  if (!projectId || !itemId) return null
-  if (!validProjectId(projectId) || !validItemId(itemId)) return null
+  const commentId = hasCommentSuffix ? decodeSegment(segments[4]) : null
+  if (!projectId || !itemId || (hasCommentSuffix && !commentId)) return null
+  if (
+    !validProjectId(projectId) ||
+    !validItemId(itemId) ||
+    (commentId !== null && !validItemId(commentId))
+  ) {
+    return null
+  }
 
   return { projectId, itemId }
 }
@@ -74,8 +83,10 @@ function parseAppLink(url: URL): WeworkIssueLink | null {
 
   const projectId = url.searchParams.get('projectId')
   const itemId = url.searchParams.get('itemId')
+  const commentId = url.searchParams.get('commentId')
   if (!projectId || !/^[1-9]\d*$/.test(projectId)) return null
   if (!itemId || !validProjectId(projectId) || !validItemId(itemId)) return null
+  if (commentId !== null && !validItemId(commentId)) return null
 
   return { projectId, itemId }
 }

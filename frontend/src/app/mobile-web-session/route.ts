@@ -36,6 +36,7 @@ const HTML = `<!doctype html>
           if (expiry === null) window.localStorage.removeItem('auth_token_expire')
           else window.localStorage.setItem('auth_token_expire', String(expiry))
           var cookie = 'auth_token=' + encodeURIComponent(token) + '; path=/; SameSite=Lax'
+          if (window.location.protocol === 'https:') cookie += '; Secure'
           if (expiry !== null) cookie += '; expires=' + new Date(expiry).toUTCString()
           document.cookie = cookie
           window.history.replaceState(null, '', '/mobile-web-session')
