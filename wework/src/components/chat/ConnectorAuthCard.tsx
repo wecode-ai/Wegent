@@ -1,5 +1,5 @@
 import { ExternalLink, Loader2, QrCode } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
@@ -7,7 +7,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import { waitForLocalConnectorSync } from '@/features/cloud-connection/connectorAppSync'
+import {
+  ConnectorSyncAbortedError,
+  waitForLocalConnectorSync,
+} from '@/features/cloud-connection/connectorAppSync'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
@@ -46,12 +49,24 @@ export function CloudConnectorAuthCard({
   const { t } = useTranslation('common')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // One attempt owns one account/backend identity. Changing any of them, or
+  // unmounting the card, ends the attempt: its pending poll, catalog wait and
+  // local sync must not configure or resume against the next identity.
+  const attemptGenerationRef = useRef(0)
+  useEffect(() => {
+    attemptGenerationRef.current += 1
+    return () => {
+      attemptGenerationRef.current += 1
+    }
+  }, [apiBaseUrl, token, slug])
 
   const authorize = async () => {
     if (!apiBaseUrl || !token) {
       setError(t('workbench.plugins_connector_cloud_required'))
       return
     }
+    const generation = attemptGenerationRef.current
+    const isCurrentAttempt = () => attemptGenerationRef.current === generation
     setBusy(true)
     setError(null)
     try {
@@ -59,8 +74,10 @@ export function CloudConnectorAuthCard({
         apiBaseUrl,
         token,
         slug,
-        openCloudAuthorizationWindow
+        openCloudAuthorizationWindow,
+        { isCurrent: isCurrentAttempt }
       )
+      if (!isCurrentAttempt()) return
       if (connection.status !== 'connected') {
         setError(t('workbench.plugins_connector_auth_failed', { name: slug }))
         return
@@ -70,12 +87,19 @@ export function CloudConnectorAuthCard({
       // runtime, so a cloud-only confirmation would still start it without the
       // connector. A timeout keeps the card retryable instead of resuming.
       const catalogReady = await waitForConnectorToolCatalog(apiBaseUrl, token, slug)
+      if (!isCurrentAttempt()) return
       if (!catalogReady) {
         setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
         return
       }
       if (isLocalFirstAppRuntime()) {
-        const synced = await waitForLocalConnectorSync({ apiBaseUrl, token, slug })
+        const synced = await waitForLocalConnectorSync({
+          apiBaseUrl,
+          token,
+          slug,
+          isCurrent: isCurrentAttempt,
+        })
+        if (!isCurrentAttempt()) return
         if (!synced) {
           setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
           return
@@ -83,6 +107,10 @@ export function CloudConnectorAuthCard({
       }
       onSuccess()
     } catch (cause) {
+      // A cancelled attempt is not an error: the card is gone or now belongs
+      // to another identity.
+      if (cause instanceof ConnectorSyncAbortedError) return
+      if ((cause as { name?: unknown } | null)?.name === 'AbortError') return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)

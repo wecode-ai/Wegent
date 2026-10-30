@@ -178,11 +178,26 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
+/** Distinguishes a cancelled attempt from an authorization failure. */
+function abortError(): Error {
+  const error = new Error('Connector authorization was cancelled')
+  error.name = 'AbortError'
+  return error
+}
+
 export async function authorizeWegentConnector(
   apiBaseUrl: string,
   token: string,
   slug: string,
-  openAuthorizationUrl: (url: string) => Promise<CloudAuthorizationHandle | void>
+  openAuthorizationUrl: (url: string) => Promise<CloudAuthorizationHandle | void>,
+  options: {
+    /**
+     * Lifecycle of the attempt that started this authorization. Returning
+     * false closes the consent window and aborts with an `AbortError`, so a
+     * signed-out or unmounted card cannot keep polling for the old account.
+     */
+    isCurrent?: () => boolean
+  } = {}
 ): Promise<WegentConnectorConnection> {
   const attempt = beginOperation('plugin.authorize', {
     properties: pluginTelemetryIdentityFromParts({
@@ -201,6 +216,10 @@ export async function authorizeWegentConnector(
     const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
     while (Date.now() < session.expires_at * 1000) {
       await delay(intervalMs)
+      if (options.isCurrent && !options.isCurrent()) {
+        attempt.cancel()
+        throw abortError()
+      }
       // The close notification is the fast path; ask the host for the real
       // state too so a late or lost notification still cancels promptly.
       if (!windowClosed && authorizationHandle?.isOpen) {

@@ -272,18 +272,22 @@ describe('CloudConnectorAuthCard', () => {
       'https://wegent.test/api',
       'cloud-token',
       'dingtalk_log',
-      cloudMocks.open
+      cloudMocks.open,
+      expect.objectContaining({ isCurrent: expect.any(Function) })
     )
     expect(cloudMocks.catalog).toHaveBeenCalledWith(
       'https://wegent.test/api',
       'cloud-token',
       'dingtalk_log'
     )
-    expect(syncMocks.waitForSync).toHaveBeenCalledWith({
-      apiBaseUrl: 'https://wegent.test/api',
-      token: 'cloud-token',
-      slug: 'dingtalk_log',
-    })
+    expect(syncMocks.waitForSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiBaseUrl: 'https://wegent.test/api',
+        token: 'cloud-token',
+        slug: 'dingtalk_log',
+        isCurrent: expect.any(Function),
+      })
+    )
   })
 
   test('resumes only after the tool catalog lists the connector', async () => {
@@ -429,6 +433,75 @@ describe('CloudConnectorAuthCard', () => {
 
     await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
     expect(syncMocks.waitForSync).not.toHaveBeenCalled()
+  })
+
+  test('does not resume when the card unmounts during the local sync', async () => {
+    cloudMocks.authorize.mockResolvedValue({ status: 'connected' })
+    let releaseSync: (synced: boolean) => void = () => {}
+    syncMocks.waitForSync.mockReturnValue(
+      new Promise(resolve => {
+        releaseSync = (synced: boolean) => resolve(synced)
+      })
+    )
+    const onSuccess = vi.fn()
+
+    const view = render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="cloud-token"
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+
+    await waitFor(() => expect(syncMocks.waitForSync).toHaveBeenCalledTimes(1))
+    const isCurrent = syncMocks.waitForSync.mock.calls[0][0].isCurrent as () => boolean
+    expect(isCurrent()).toBe(true)
+
+    // The card disappears (cancel, new chat, sign-out): the attempt is over.
+    view.unmount()
+    expect(isCurrent()).toBe(false)
+
+    await act(async () => releaseSync(true))
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  test('ends the attempt when the signed-in identity changes', async () => {
+    cloudMocks.authorize.mockResolvedValue({ status: 'connected' })
+    let releaseSync: (synced: boolean) => void = () => {}
+    syncMocks.waitForSync.mockReturnValue(
+      new Promise(resolve => {
+        releaseSync = (synced: boolean) => resolve(synced)
+      })
+    )
+    const onSuccess = vi.fn()
+
+    const view = render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="account-a-token"
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+    await waitFor(() => expect(syncMocks.waitForSync).toHaveBeenCalledTimes(1))
+    const isCurrent = syncMocks.waitForSync.mock.calls[0][0].isCurrent as () => boolean
+
+    // The same card now belongs to another account: the old attempt must end.
+    view.rerender(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="account-b-token"
+        onSuccess={onSuccess}
+      />
+    )
+    await waitFor(() => expect(isCurrent()).toBe(false))
+
+    await act(async () => releaseSync(true))
+    expect(onSuccess).not.toHaveBeenCalled()
   })
 
   test('explains that the Wegent account must be connected first', async () => {

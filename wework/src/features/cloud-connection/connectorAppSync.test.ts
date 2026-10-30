@@ -83,6 +83,7 @@ describe('synchronizeConnectorApps', () => {
       apiBaseUrl: 'https://cloud.example.test/api',
       token: 'cloud-token',
       requestedAtMs: 1_000,
+      isCurrent: () => true,
     }).then(result => {
       resolved = true
       return result
@@ -117,6 +118,7 @@ describe('synchronizeConnectorApps', () => {
       token: 'cloud-token',
       requestedAtMs: 5_000,
       onConfigured: deadline => deadlines.push(deadline.expiresAtMs),
+      isCurrent: () => true,
     })
 
     expect(deadlines).toEqual([5_000 + 900_000])
@@ -131,6 +133,7 @@ describe('synchronizeConnectorApps', () => {
       apiBaseUrl: 'https://cloud.example.test/api',
       token: 'cloud-token',
       syncRevision: 42,
+      isCurrent: () => true,
     })
 
     expect(mocks.request).toHaveBeenCalledWith(
@@ -202,6 +205,7 @@ describe('waitForLocalConnectorSync', () => {
       apiBaseUrl: 'https://cloud.example.test/api',
       token: 'cloud-token',
       slug: 'ready-app',
+      isCurrent: () => true,
       timeoutMs: 10_000,
       intervalMs: 1_000,
     })
@@ -218,6 +222,7 @@ describe('waitForLocalConnectorSync', () => {
       apiBaseUrl: 'https://cloud.example.test/api',
       token: 'cloud-token',
       slug: 'missing-app',
+      isCurrent: () => true,
       timeoutMs: 3_000,
       intervalMs: 1_000,
     })
@@ -241,6 +246,7 @@ describe('waitForLocalConnectorSync', () => {
       apiBaseUrl: 'https://cloud.example.test/api',
       token: 'cloud-token',
       slug: 'ready-app',
+      isCurrent: () => true,
       timeoutMs: 10_000,
       intervalMs: 1_000,
     })
@@ -248,5 +254,88 @@ describe('waitForLocalConnectorSync', () => {
 
     await expect(waiting).resolves.toBe(true)
     expect(calls).toBe(2)
+  })
+})
+
+describe('waitForLocalConnectorSync lifecycle', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mocks.issueToken.mockResolvedValue({
+      access_token: 'connector-token',
+      token_type: 'bearer',
+      expires_in: 900,
+    })
+    mocks.listCatalog.mockResolvedValue([])
+    mocks.listInstalled.mockResolvedValue({ apps: [] })
+    mocks.request.mockResolvedValue({ changed: false })
+  })
+
+  test('reuses one attempt-scoped revision across retries', async () => {
+    let attempt = 0
+    mocks.listInstalled.mockImplementation(async () => ({
+      apps:
+        ++attempt < 2
+          ? []
+          : [
+              {
+                id: 'ready-app',
+                slug: 'ready-app',
+                runtime_name: 'ready-app',
+                enabled: true,
+                callable: true,
+                tool_summaries: [],
+                connection: { status: 'connected' },
+              },
+            ],
+    }))
+
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'ready-app',
+      isCurrent: () => true,
+      timeoutMs: 10_000,
+      intervalMs: 1_000,
+    })
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    await expect(waiting).resolves.toBe(true)
+    const revisions = mocks.request.mock.calls
+      .filter(([method]) => method === 'runtime.connectors.configure')
+      .map(([, params]) => (params as { syncRevision: number }).syncRevision)
+    expect(revisions).toHaveLength(2)
+    expect(new Set(revisions).size).toBe(1)
+  })
+
+  test('stops between retries once the attempt is superseded', async () => {
+    let current = true
+    // The first round finds the app, but not yet callable.
+    const waiting = waitForLocalConnectorSync({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      slug: 'ready-app',
+      isCurrent: () => current,
+      timeoutMs: 30_000,
+      intervalMs: 1_000,
+    })
+
+    await vi.advanceTimersByTimeAsync(500)
+    const configureCallsBeforeSignOut = mocks.request.mock.calls.filter(
+      ([method]) => method === 'runtime.connectors.configure'
+    ).length
+    expect(configureCallsBeforeSignOut).toBe(1)
+
+    // Signing out runs `runtime.connectors.clear` with a newer revision.
+    current = false
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(waiting).rejects.toBeInstanceOf(ConnectorSyncAbortedError)
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
+    ).toHaveLength(configureCallsBeforeSignOut)
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.apps.sync')
+    ).toHaveLength(1)
   })
 })

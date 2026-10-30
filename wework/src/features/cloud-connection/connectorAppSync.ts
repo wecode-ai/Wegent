@@ -60,11 +60,15 @@ export async function synchronizeConnectorApps({
   syncRevision?: number
   /** Called once the runtime accepted the connector token. */
   onConfigured?: (deadline: ConnectorTokenDeadline) => void
-  /** False once the attempt no longer owns the current account/connection. */
-  isCurrent?: () => boolean
+  /**
+   * False once the attempt no longer owns the current account/connection.
+   * Required so every caller (bridge, authorization card) is bound to the
+   * lifecycle that started it.
+   */
+  isCurrent: () => boolean
 }): Promise<ConnectorAppSyncResult> {
   const checkCurrent = () => {
-    if (isCurrent && !isCurrent()) throw new ConnectorSyncAbortedError()
+    if (!isCurrent()) throw new ConnectorSyncAbortedError()
   }
   checkCurrent()
   const connectorToken = await issueWegentConnectorToken(apiBaseUrl, token)
@@ -135,24 +139,43 @@ export async function waitForLocalConnectorSync({
   apiBaseUrl,
   token,
   slug,
+  isCurrent,
   timeoutMs = 30_000,
   intervalMs = 1_000,
 }: {
   apiBaseUrl: string
   token: string
   slug: string
+  /**
+   * Lifecycle of the authorization attempt this wait belongs to.
+   *
+   * Every retry reuses one attempt-scoped revision and re-checks this guard, so
+   * a retry that outlives a sign-out can neither configure the old account with
+   * a newer revision than the `clear` that ran nor report success.
+   */
+  isCurrent: () => boolean
   timeoutMs?: number
   intervalMs?: number
 }): Promise<boolean> {
+  const syncRevision = nextConnectorSyncRevision()
   const deadline = Date.now() + timeoutMs
   for (;;) {
+    if (!isCurrent()) throw new ConnectorSyncAbortedError()
     try {
-      const result = await synchronizeConnectorApps({ apiBaseUrl, token })
+      const result = await synchronizeConnectorApps({
+        apiBaseUrl,
+        token,
+        syncRevision,
+        isCurrent,
+      })
       if (result.callableSlugs.includes(slug)) return true
-    } catch {
+    } catch (error) {
+      // A superseded attempt must stop, never fall into the retry interval.
+      if (error instanceof ConnectorSyncAbortedError) throw error
       // The reason is reported by the next successful attempt or by the
       // caller's timeout message; the card stays retryable either way.
     }
+    if (!isCurrent()) throw new ConnectorSyncAbortedError()
     if (Date.now() >= deadline) return false
     await new Promise(resolve => window.setTimeout(resolve, intervalMs))
   }
