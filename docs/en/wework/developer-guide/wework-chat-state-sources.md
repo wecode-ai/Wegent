@@ -330,11 +330,26 @@ The goal bar's running presentation must be constrained by the current runtime t
 - This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
 - When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
 
-Automatic continuation for an active goal is driven separately by root-turn lifecycle events. After
-`runtime.goal.continuation: started`, the goal bar must keep showing “Goal continuing” while the
-assistant is producing output, thinking, or invoking tools. Assistant output starting is not a turn
-completion signal and must not clear continuation state. Clear that state only for the matching
-`settled` event, a non-active goal update, a cleared goal, or a pane switch to another task.
+The executor's shared lifecycle transition owns Codex execution state independently of RPC
+completion and message content. Task lists, task details, and `runtime.turn.updated` events
+carry the same `executionState`, including execution phase, current/latest turn identity,
+turn outcome, native timing, and revision. Revisions travel as decimal strings so JavaScript
+does not lose nanosecond sequence precision. Viewers accept newer revisions only; old lists,
+history reads, and previous RPC completions cannot overwrite a newer turn. Executor restart
+never reuses an in-memory running state.
+
+`running` denotes an executing native turn, `continuing` a completed turn awaiting Goal
+continuation, and `starting` an admitted request. Continuing executions remain busy without
+an active turn or a model-thinking indicator. Goal status and execution status are separate:
+completing a Goal does not cancel its open turn, and completing a turn does not finish an
+execution that is continuing toward its Goal.
+
+Content mappers neither cache Goal status nor gate native lifecycle delivery. Native turn
+completion settles that turn's messages and thinking blocks. Late content can enrich a
+settled message but cannot restore streaming. An ordinary RPC releases its own scheduling
+resources and includes the current execution snapshot in its existing terminal event; it
+must preserve recovery journals for still-active Goal executions. Context compaction can
+update content routing without replacing execution state.
 
 When the user stops the current response for a task with an active goal, Wework must persist
 `paused` through the runtime goal API before cancelling the current turn. This ordering disables
@@ -348,11 +363,11 @@ merely because the goal bar has not rendered yet.
 
 The sidebar running indicator, composer state, message state, and unread reminder represent different facts and must not share one ambiguous "active" boolean:
 
-| State          | Definition                                                                        | UI contract                                                                                                  |
-| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Running        | `task.running === true`                                                           | Show the sidebar spinner, pause in the current pane composer, and "Thinking" in the message area             |
-| Turn streaming | `task.running === true` with a streaming assistant message                        | Use only for streaming-message lifecycle; it must not create a second running definition for other UI states |
-| Settled unread | The task transitions from running to not running while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                      |
+| State          | Definition                                                                        | UI contract                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Running        | `task.running === true`                                                           | Show the sidebar spinner and pause in the current pane composer; the active turn determines the thinking indicator |
+| Turn streaming | `task.running === true` with a streaming assistant message                        | Use only for streaming-message lifecycle; it must not create a second running definition for other UI states       |
+| Settled unread | The task transitions from running to not running while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                            |
 
 `running` is the executor's authoritative task-lifecycle state, not the state of one individual turn. While an Active Goal continuation loop is alive, the executor must continue reporting `running: true` even when no assistant message is streaming between two automatic turns. The sidebar spinner, composer pause button, and message-area "Thinking" therefore remain visible without creating unread state. If the executor restarts without restoring that execution loop, it must report `running: false` even when the persisted `goalStatus` is still `active`; Wework must not infer execution from the Goal status. A stale streaming message from the previous turn must not be revived.
 

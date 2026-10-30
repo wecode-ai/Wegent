@@ -77,6 +77,8 @@ pub(crate) struct RuntimeTaskLink {
     pub recency_at: i64,
     pub completed_at: Option<i64>,
     pub runtime_handle: Value,
+    #[serde(skip)]
+    pub execution_state: Option<super::lifecycle::NativeExecutionState>,
     pub parent: Option<Value>,
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
@@ -133,6 +135,7 @@ impl RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle: json!({ "runtime": runtime }),
+            execution_state: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -179,6 +182,7 @@ impl RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle,
+            execution_state: None,
             parent: Some(parent),
             ephemeral: false,
             runtime_project_key: None,
@@ -301,6 +305,9 @@ impl RuntimeTaskLink {
             } else {
                 local_completed_at.or_else(|| timestamp_ms_field(thread, "updatedAt"))
             },
+            execution_state: local_link
+                .as_ref()
+                .and_then(|link| link.execution_state.clone()),
             runtime_handle: local_link
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
@@ -354,6 +361,7 @@ impl RuntimeTaskLink {
             recency_at: self.recency_at,
             completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
+            execution_state: self.execution_state.clone(),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
@@ -480,6 +488,7 @@ impl Default for RuntimeTaskLink {
             recency_at: now,
             completed_at: None,
             runtime_handle: json!({}),
+            execution_state: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -644,7 +653,11 @@ pub(crate) fn search_result_item(
     })
 }
 
-pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
+pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
+    if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
+        crate::runtime_work::lifecycle::project_native_execution(&mut link, &state);
+    }
+    let native_state = crate::runtime_work::lifecycle::native_execution_state(&link);
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
@@ -660,6 +673,9 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     );
     if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
+    }
+    if let Some(state) = native_state {
+        task.insert("executionState".to_owned(), json!(state));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
     if let Some(queue_position) = link

@@ -22,6 +22,7 @@ pub(crate) mod dingtalk;
 mod events;
 pub mod fork_transfer;
 mod handler;
+pub(crate) mod lifecycle;
 pub(crate) mod local_connector_auth;
 mod local_execution;
 mod mcp_elicitation;

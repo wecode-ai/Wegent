@@ -3046,6 +3046,7 @@ mod tests {
             updated_at: 0,
             recency_at: 0,
             completed_at: None,
+            execution_state: None,
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,

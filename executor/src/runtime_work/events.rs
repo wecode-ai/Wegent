@@ -22,9 +22,7 @@ use crate::{
 };
 
 use super::{
-    codex_notifications::{
-        codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
-    },
+    codex_notifications::{codex_notification, debug_ignored_codex_notification},
     codex_user_input::async_question_payload_from_item,
     notification_mapping::{
         codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
@@ -279,7 +277,6 @@ pub(crate) struct CodexNotificationEventMapper {
     process_text_count: usize,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
-    goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
     proxy_retry_wait_ids: BTreeSet<String>,
     native_retry_waits: BTreeMap<String, Value>,
@@ -647,12 +644,7 @@ impl CodexNotificationEventMapper {
             "thread/started" => {
                 self.observe_root_thread(notification.params);
             }
-            "turn/started" if self.has_active_goal() => {
-                emit_goal_continuation_event(&emit_context, notification.params, "started");
-            }
-            "turn/completed" if self.has_active_goal() => {
-                emit_goal_continuation_event(&emit_context, notification.params, "settled");
-            }
+            "turn/started" | "turn/completed" | "thread/status/changed" => {}
             "thread/goal/updated" => {
                 let goal = notification
                     .params
@@ -660,8 +652,6 @@ impl CodexNotificationEventMapper {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
-                self.goal_status =
-                    string_field(&goal, "status").map(|status| status.to_ascii_lowercase());
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -678,7 +668,6 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/goal/cleared" => {
-                self.goal_status = None;
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -723,10 +712,6 @@ impl CodexNotificationEventMapper {
                 );
             }
         }
-    }
-
-    fn has_active_goal(&self) -> bool {
-        self.goal_status.as_deref() == Some("active")
     }
 
     fn emit_context_compaction_once(&mut self, context: &EventEmitContext<'_>, params: &Value) {
@@ -1682,28 +1667,6 @@ fn log_unhandled_codex_raw_message(
             ("raw_len", raw.len().to_string()),
             ("raw_sha256", raw_hash),
         ],
-    );
-}
-
-fn emit_goal_continuation_event(context: &EventEmitContext<'_>, params: &Value, status: &str) {
-    if !is_root_codex_turn_event(params) {
-        return;
-    }
-    let turn = params.get("turn").unwrap_or(params);
-    emit_response_event(
-        context.event_tx,
-        context.device_id,
-        "runtime.goal.continuation",
-        context.local_task_id,
-        context.request,
-        json!({
-            "status": status,
-            "thread_id": string_field(params, "threadId")
-                .or_else(|| string_field(params, "thread_id")),
-            "turn_id": string_field(turn, "id")
-                .or_else(|| string_field(turn, "turnId"))
-                .or_else(|| string_field(turn, "turn_id")),
-        }),
     );
 }
 
@@ -4671,7 +4634,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_goal_turn_lifecycle_only_for_the_root_thread() {
+    fn normalizes_goal_timestamps_without_owning_execution_state() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
@@ -4706,60 +4669,6 @@ mod tests {
             goal["payload"]["data"]["goal"]["updatedAt"],
             1_787_636_001_000_i64
         );
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/started",
-                "params": {
-                    "threadId": "thread-root",
-                    "turn": { "id": "turn-2", "agent_path": "/root" }
-                }
-            }),
-        );
-        let started = event_rx
-            .try_recv()
-            .expect("started event should be emitted");
-        assert_eq!(started["event"], "runtime.goal.continuation");
-        assert_eq!(started["payload"]["data"]["status"], "started");
-        assert_eq!(started["payload"]["data"]["turn_id"], "turn-2");
-
-        mapper.map(
-            &Some(event_tx.clone()),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/started",
-                "params": {
-                    "threadId": "thread-worker",
-                    "turn": { "id": "child-turn", "agent_path": "/root/worker" }
-                }
-            }),
-        );
-        assert!(event_rx.try_recv().is_err());
-
-        mapper.map(
-            &Some(event_tx),
-            "device-1",
-            "local-1",
-            &request,
-            json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "thread-root",
-                    "turn": { "id": "turn-2", "agent_path": "/root" }
-                }
-            }),
-        );
-        let settled = event_rx
-            .try_recv()
-            .expect("settled event should be emitted");
-        assert_eq!(settled["event"], "runtime.goal.continuation");
-        assert_eq!(settled["payload"]["data"]["status"], "settled");
     }
 
     #[test]

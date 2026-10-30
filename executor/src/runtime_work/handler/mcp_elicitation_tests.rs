@@ -73,7 +73,7 @@ fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer
         &json!({"answers": {"choice": {"answers": ["No"]}}}),
     );
     assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     let link = handler.local_task_link("task-1").unwrap();
     let recovered = super::transcript_overlays::runtime_transcript_overlay_turns(
         &link,
@@ -455,7 +455,7 @@ async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_i
                 }),
             );
         } else {
-            handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+            handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
         }
         handler.clear_active_codex_transcript("task-1");
         assert!(handler
@@ -536,7 +536,7 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
             "answers": {"action": {"answers": [choice]}}
         });
         handler.record_active_codex_transcript_item("task-1", turn_id, &settled);
-        handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+        handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
         previous_settled = Some(settled);
     }
     let history = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());

@@ -1904,7 +1904,7 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
-    onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
+    onRuntimeTurnUpdated: route(handlers.onRuntimeTurnUpdated),
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),
     onRuntimeEventLagged: handlers.onRuntimeEventLagged,

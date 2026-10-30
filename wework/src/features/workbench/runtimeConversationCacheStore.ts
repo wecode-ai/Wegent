@@ -8,7 +8,6 @@ import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
@@ -32,7 +31,6 @@ interface Subscription {
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
-  goalContinuation: RuntimeGoalContinuationPayload | null
   taskPlan: RuntimePlanEventPayload | null
   subagentStatuses: RuntimeSubagentStatus[]
 }
@@ -237,7 +235,6 @@ function mergeMetadata(
         : previousGoalIsNewer
           ? previous.goal
           : current.goal,
-    goalContinuation: current.goalContinuation ?? previous.goalContinuation,
     taskPlan: current.taskPlan ?? previous.taskPlan,
     subagentStatuses: [...statuses.values()]
       .sort((left, right) => (right.updatedAtMs ?? 0) - (left.updatedAtMs ?? 0))

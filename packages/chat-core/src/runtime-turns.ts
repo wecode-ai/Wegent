@@ -17,6 +17,7 @@ import {
   mergeRuntimeConversationItem,
   orderRuntimeConversationTurns,
   isTerminalProcessingBlockStatus,
+  isUnsettledTurnStatus,
 } from "./runtime-turn-merge";
 import {
   seedRuntimeConversationTurns,
@@ -322,7 +323,9 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
-          status: "streaming",
+          status: isUnsettledTurnStatus(turn.status)
+            ? "streaming"
+            : turn.status,
           streamingThinkingContent: resolveRuntimeStreamingThinkingContent(
             turn,
             action,

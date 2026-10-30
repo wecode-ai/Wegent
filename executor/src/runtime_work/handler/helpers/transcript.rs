@@ -147,45 +147,13 @@ fn merge_latest_completed_transcript_messages(
     if before_cursor.is_some() || after_cursor.is_some() {
         return;
     }
-    for mut completed in completed_transcript_messages(link) {
+    for completed in completed_transcript_messages(link) {
         let message_id = string_field(&completed, "id");
         if let Some(existing) = messages
             .iter_mut()
             .find(|message| message_id.is_some() && string_field(message, "id") == message_id)
         {
-            // Exit snapshots are authoritative; running commands use their live event buffer.
-            visit_transcript_blocks_mut(&mut completed, |block| {
-                if block
-                    .pointer("/render_payload/kind")
-                    .and_then(Value::as_str)
-                    != Some("command_execution")
-                {
-                    return;
-                }
-                if let Some(native) = existing
-                    .get("blocks")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .find(|native| {
-                        native.get("id") == block.get("id")
-                            && native
-                                .pointer("/render_payload/kind")
-                                .and_then(Value::as_str)
-                                == Some("command_execution")
-                            && matches!(
-                                native.get("status").and_then(Value::as_str),
-                                Some("done" | "error")
-                            )
-                    })
-                {
-                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object())
-                    {
-                        block.extend(native.clone());
-                    }
-                }
-            });
-            *existing = merge_assistant_transcript_message(existing, completed);
+            merge_completed_transcript_message(existing, completed);
         } else {
             messages.push(completed);
         }
@@ -1335,4 +1303,40 @@ fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Valu
     let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
     object.insert("modelSelection".to_owned(), Value::Object(selection));
     *runtime_handle = Value::Object(object);
+}
+
+fn merge_completed_transcript_message(existing: &mut Value, mut completed: Value) {
+    // Exit snapshots are authoritative; running commands use their live event buffer.
+    visit_transcript_blocks_mut(&mut completed, |block| {
+        if block
+            .pointer("/render_payload/kind")
+            .and_then(Value::as_str)
+            != Some("command_execution")
+        {
+            return;
+        }
+        if let Some(native) = existing
+            .get("blocks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|native| {
+                native.get("id") == block.get("id")
+                    && native
+                        .pointer("/render_payload/kind")
+                        .and_then(Value::as_str)
+                        == Some("command_execution")
+                    && matches!(
+                        native.get("status").and_then(Value::as_str),
+                        Some("done" | "error")
+                    )
+            })
+        {
+            if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object())
+            {
+                block.extend(native.clone());
+            }
+        }
+    });
+    *existing = merge_assistant_transcript_message(existing, completed);
 }

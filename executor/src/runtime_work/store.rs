@@ -232,6 +232,7 @@ impl PersistedRuntimeTask {
             recency_at,
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
+            execution_state: None,
             parent: self.parent,
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,

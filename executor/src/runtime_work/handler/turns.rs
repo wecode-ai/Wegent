@@ -479,7 +479,7 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    fn journal_active_goal_turn(
+    pub(super) fn journal_active_goal_turn(
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
@@ -941,163 +941,49 @@ impl RuntimeWorkRpcHandler {
         self.start_turn(turn);
     }
 
-    pub(super) async fn map_execution_codex_notification(
+    pub(super) async fn observe_execution_codex_notification(
         &self,
         local_task_id: &str,
         execution_id: u64,
         request: &ExecutionRequest,
         active_turn: Option<ActiveCodexTurn>,
-        event_mapper: &mut CodexNotificationEventMapper,
-        message: impl Into<CodexNotification>,
+        message: CodexNotification,
     ) {
-        let hook_input = {
-            let _delivery = self
-                .codex_notification_delivery
-                .lock()
-                .unwrap_or_else(|poisoned| {
-                    log_executor_event("Codex notification delivery recovered after panic", &[]);
-                    poisoned.into_inner()
-                });
-            let mut message = message.into();
-            if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
-                return;
-            }
-            if self.sync_runtime_task_goal_from_notification(local_task_id, &message) {
-                self.journal_active_goal_turn(local_task_id, request, active_turn.as_ref());
-            }
-            self.persist_completed_codex_turn_from_notification(local_task_id, &message);
-
-            if let (Some(active_turn), Some(notification_turn_id)) =
-                (active_turn.as_ref(), codex_notification_turn_id(&message))
-            {
-                if notification_turn_id != active_turn.turn_id {
-                    if codex_stream_debug_enabled() {
-                        log_executor_event(
-                            "runtime work execution mapper reroutes non-active turn notification",
-                            &[
-                                ("local_task_id", local_task_id.to_owned()),
-                                ("active_turn_id", active_turn.turn_id.clone()),
-                                ("notification_turn_id", notification_turn_id.clone()),
-                            ],
-                        );
-                    }
-                    // The global router may have skipped this notification while its turn was
-                    // still active. Deliver it with its own identity; the shared claim also
-                    // prevents a duplicate when the global router already delivered it.
-                    if message.claim_runtime_delivery() {
-                        self.record_background_terminal_notification(local_task_id, &message);
-                        let event_request = self.request_for_codex_event(
-                            local_task_id,
-                            request,
-                            Some(&notification_turn_id),
-                        );
-                        event_mapper.map(
-                            &self.event_tx,
-                            &self.device_id,
-                            local_task_id,
-                            &event_request,
-                            message.into_value(),
-                        );
-                    }
-                    return;
-                }
-            }
-            if !message.claim_runtime_delivery() {
-                return;
-            }
-            self.record_background_terminal_notification(local_task_id, &message);
-            if matches!(
-                message.get("method").and_then(Value::as_str),
-                Some("item/completed")
-            ) && crate::runtime_work::codex_user_input::async_question_payload_from_item(
-                &message["params"],
-            )
-            .is_some()
-            {
-                self.set_interaction_status(local_task_id, Some(INTERACTION_AWAITING_USER_REPLY));
-            }
-
-            let hook_input =
-                if let (Some(active_turn), Some(cwd)) = (active_turn.as_ref(), request.cwd()) {
-                    let resolved_hook_user = hook_user(request);
-                    let context = CodexHookContext {
-                        user: resolved_hook_user.clone(),
-                        session_id: active_turn.thread_id.clone(),
-                        turn_id: active_turn.turn_id.clone(),
-                        cwd: PathBuf::from(cwd),
-                        model: string_field(&request.model_config, "model_id"),
-                        permission_mode: "workspace-write".to_owned(),
-                    };
-                    match post_tool_use_from_notification(&context, &message) {
-                        Ok(Some(input)) => {
-                            log_executor_event(
-                                "runtime work hook identity resolved",
-                                &[
-                                    (
-                                        "request_user_name",
-                                        request
-                                            .user_name
-                                            .clone()
-                                            .unwrap_or_else(|| "<none>".to_owned()),
-                                    ),
-                                    ("hook_user_name", resolved_hook_user.name.clone()),
-                                ],
-                            );
-                            Some(input)
-                        }
-                        Ok(None) => None,
-                        Err(error) => {
-                            log_executor_event(
-                                "runtime work hook notification mapping failed",
-                                &[("error", error.to_string())],
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-            if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
-                return;
-            }
-            let event_request = self.request_for_codex_event(
-                local_task_id,
-                request,
-                active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
-            );
-            if let Some(active_turn) = active_turn {
-                event_mapper.observe_root_thread_id(&active_turn.thread_id);
-                self.record_active_codex_transcript_item(
-                    local_task_id,
-                    &active_turn.turn_id,
-                    &message,
-                );
-                if !self.normalize_pending_mcp_elicitation(local_task_id, &mut message) {
-                    return;
-                }
-            }
-            if codex_notification_requires_user_input(&message)
-                || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
-                || message["method"] == super::super::codex_user_input::APPROVAL_SETTLED_METHOD
-            {
-                self.refresh_pending_user_input_status(local_task_id);
-            }
-            event_mapper.map(
-                &self.event_tx,
-                &self.device_id,
-                local_task_id,
-                &event_request,
-                message.into_value(),
-            );
-            hook_input
+        if let (Some(turn), Some(thread)) =
+            (active_turn.as_ref(), codex_notification_thread_id(&message))
+        {
+            self.register_scoped_child_route(&turn.thread_id, &thread);
+        }
+        // The global thread receiver publishes content and lifecycle in native order.
+        // Drain its terminal publication before releasing this request's resources.
+        if codex_notification(&message).method == "turn/completed" {
+            message.wait_runtime_publication().await;
+        }
+        if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
+            return;
+        }
+        let (Some(turn), Some(cwd)) = (active_turn, request.cwd()) else {
+            return;
         };
-        // Post-tool hooks run after publication, without blocking ordered native delivery.
-        if let Some(input) = hook_input {
-            self.hook_service.dispatch(input).await;
+        let context = CodexHookContext {
+            user: hook_user(request),
+            session_id: turn.thread_id,
+            turn_id: turn.turn_id,
+            cwd: PathBuf::from(cwd),
+            model: string_field(&request.model_config, "model_id"),
+            permission_mode: "workspace-write".into(),
+        };
+        match post_tool_use_from_notification(&context, &message) {
+            Ok(Some(input)) => self.hook_service.dispatch(input).await,
+            Ok(None) => {}
+            Err(error) => log_executor_event(
+                "runtime work hook notification mapping failed",
+                &[("error", error.to_string())],
+            ),
         }
     }
 
-    fn request_for_codex_event(
+    pub(super) fn request_for_codex_event(
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
@@ -1279,19 +1165,17 @@ impl RuntimeWorkRpcHandler {
             let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
             let mapper_hook_turn = Arc::clone(&hook_turn);
             let mapper_handle = tokio::spawn(async move {
-                let mut event_mapper = CodexNotificationEventMapper::default();
                 while let Some(message) = notification_rx.recv().await {
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
                         .clone();
                     mapper_handler
-                        .map_execution_codex_notification(
+                        .observe_execution_codex_notification(
                             &mapper_local_task_id,
                             mapper_execution_id,
                             &mapper_request,
                             active_turn,
-                            &mut event_mapper,
                             message,
                         )
                         .await;
@@ -1351,11 +1235,6 @@ impl RuntimeWorkRpcHandler {
                         thread_id.clone(),
                         turn_id.clone(),
                     );
-                    active_turn_handler.begin_active_codex_transcript(
-                        &active_turn_local_task_id,
-                        &thread_id,
-                        &turn_id,
-                    );
                     let presentation = callback_turn_presentation
                         .lock()
                         .expect("turn presentation lock should not be poisoned")
@@ -1382,9 +1261,7 @@ impl RuntimeWorkRpcHandler {
                         event_request.clone(),
                         true,
                     );
-                    emit_response_event(
-                        &active_turn_handler.event_tx,
-                        &active_turn_handler.device_id,
+                    active_turn_handler.emit_task_response(
                         "response.created",
                         &active_turn_local_task_id,
                         &event_request,
@@ -1493,7 +1370,11 @@ impl RuntimeWorkRpcHandler {
                     &request,
                     active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
                 );
-                handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
+                handler.persist_and_clear_active_codex_transcript(
+                    &turn_local_task_id,
+                    "cancelled",
+                    active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+                );
                 if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
                 {
                     handler.finish_automation_run(
@@ -1507,9 +1388,7 @@ impl RuntimeWorkRpcHandler {
                         Some("cancelled".to_owned()),
                         None,
                     );
-                    emit_response_event(
-                        &handler.event_tx,
-                        &handler.device_id,
+                    handler.emit_task_response(
                         "response.incomplete",
                         &turn_local_task_id,
                         &event_request,
@@ -1537,12 +1416,15 @@ impl RuntimeWorkRpcHandler {
                 Err(_) if interrupted_by_runtime_stop(&result) => "inProgress",
                 Err(_) => "failed",
             };
-            handler
-                .persist_and_clear_active_codex_transcript(&turn_local_task_id, transcript_status);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")
                 .clone();
+            handler.persist_and_clear_active_codex_transcript(
+                &turn_local_task_id,
+                transcript_status,
+                active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+            );
             handler.handle_turn_result(
                 &turn_local_task_id,
                 execution_id,
@@ -1555,17 +1437,8 @@ impl RuntimeWorkRpcHandler {
             if runtime_was_stopped {
                 return;
             }
-            if goal_execution_needs_attention
-                && handler
-                    .local_task_link(&turn_local_task_id)
-                    .and_then(|link| link.goal_status)
-                    .as_deref()
-                    == Some("active")
-            {
-                handler.mark_active_goal_turn_needs_attention(&turn_local_task_id);
-            } else {
-                handler.clear_active_goal_turn(&turn_local_task_id);
-            }
+            handler
+                .settle_native_request_journal(&turn_local_task_id, goal_execution_needs_attention);
         });
         drop(turn_handle);
     }
@@ -1819,9 +1692,7 @@ impl RuntimeWorkRpcHandler {
                 let response_item_id = turn.response_item_id;
                 let response_value_origin = turn.response_value_origin;
                 match turn.outcome {
-                    ExecutionOutcome::Completed { content } => emit_response_event(
-                        &self.event_tx,
-                        &self.device_id,
+                    ExecutionOutcome::Completed { content } => self.emit_task_response(
                         "response.completed",
                         local_task_id,
                         &event_request,
@@ -1835,27 +1706,24 @@ impl RuntimeWorkRpcHandler {
                             "durationMs": turn.duration_ms,
                         }),
                     ),
-                    ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
-                        &self.event_tx,
-                        &self.device_id,
-                        "response.completed",
-                        local_task_id,
-                        &event_request,
-                        json!({
-                            "value": "",
-                            "valueOrigin": "empty",
-                            "turnId": active_turn.map(|turn| &turn.turn_id),
-                            "startedAt": turn.started_at_ms,
-                            "completedAt": turn.completed_at_ms,
-                            "durationMs": turn.duration_ms,
-                            "stop_reason": stop_reason,
-                            "silent_exit": true,
-                            "silent_exit_reason": "waiting_for_user_input"
-                        }),
-                    ),
-                    ExecutionOutcome::Cancelled { message } => emit_response_event(
-                        &self.event_tx,
-                        &self.device_id,
+                    ExecutionOutcome::WaitingForUserInput { stop_reason } => self
+                        .emit_task_response(
+                            "response.completed",
+                            local_task_id,
+                            &event_request,
+                            json!({
+                                "value": "",
+                                "valueOrigin": "empty",
+                                "turnId": active_turn.map(|turn| &turn.turn_id),
+                                "startedAt": turn.started_at_ms,
+                                "completedAt": turn.completed_at_ms,
+                                "durationMs": turn.duration_ms,
+                                "stop_reason": stop_reason,
+                                "silent_exit": true,
+                                "silent_exit_reason": "waiting_for_user_input"
+                            }),
+                        ),
+                    ExecutionOutcome::Cancelled { message } => self.emit_task_response(
                         "response.incomplete",
                         local_task_id,
                         &event_request,
@@ -1878,9 +1746,7 @@ impl RuntimeWorkRpcHandler {
                         fields.push(("error", message.clone()));
                         fields.push(("error_len", message.len().to_string()));
                         log_executor_event("runtime work turn failed", &fields);
-                        emit_response_event(
-                            &self.event_tx,
-                            &self.device_id,
+                        self.emit_task_response(
                             "response.failed",
                             local_task_id,
                             &event_request,
@@ -1913,9 +1779,7 @@ impl RuntimeWorkRpcHandler {
                 fields.push(("error", error.clone()));
                 fields.push(("error_len", error.len().to_string()));
                 log_executor_event("runtime work turn failed", &fields);
-                emit_response_event(
-                    &self.event_tx,
-                    &self.device_id,
+                self.emit_task_response(
                     "response.failed",
                     local_task_id,
                     &event_request,

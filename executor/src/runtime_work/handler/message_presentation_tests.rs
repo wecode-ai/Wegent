@@ -57,7 +57,7 @@ fn active_codex_text_without_phase_stays_process_text_until_completion() {
             }}
         }),
     );
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     let completed = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(completed[0]["content"], "Live answer");
     assert!(completed[0]["blocks"].as_array().unwrap().is_empty());
@@ -135,7 +135,7 @@ fn active_codex_text_deltas_survive_interruption() {
     assert_eq!(thread["turns"][0]["items"][0]["text"], "Partial answer");
     assert_eq!(thread["turns"][0]["items"][0]["phase"], "final_answer");
 
-    handler.persist_and_clear_active_codex_transcript("task-1", "cancelled");
+    handler.persist_and_clear_active_codex_transcript("task-1", "cancelled", None);
     let link = handler.local_task_link("task-1").unwrap();
     let messages = completed_transcript_messages(&link);
     assert_eq!(messages.len(), 1);
@@ -381,21 +381,19 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         turn_id: "turn-next".to_owned(),
     };
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-next");
-    let mut mapper = CodexNotificationEventMapper::default();
-    handler.map_execution_codex_notification(
-        "task-1", execution_id, &request, Some(active.clone()), &mut mapper,
+    handler.deliver_native_notification_for_execution(
+        "task-1", execution_id, &request, Some(active.clone()),
         json!({"method": "item/started", "params": {
             "threadId": "thread-1", "turnId": "turn-next",
             "item": {"id": "message-next", "type": "agentMessage", "phase": "final_answer", "text": ""},
         }}),
     ).await;
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             "task-1",
             execution_id,
             &request,
             Some(active.clone()),
-            &mut mapper,
             json!({"method": "item/agentMessage/delta", "params": {
                 "threadId": "thread-1", "turnId": "turn-next", "itemId": "message-next",
                 "delta": "Continuation output",
