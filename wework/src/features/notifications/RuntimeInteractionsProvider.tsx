@@ -551,11 +551,12 @@ function RuntimeInteractionsState({
           : 'tasks'
       // An inactive window with system notifications disabled has delivered nothing.
       // Keep the request eligible for its in-app reminder when the user returns.
-      if (!alreadyViewed && !preferences[category][focused ? 'in_app' : 'system']) continue
+      const systemAvailable = isElectronRuntime() && preferences[category].system
+      if (!alreadyViewed && !(focused ? preferences[category].in_app : systemAvailable)) continue
       next[item.id] = { version: 'delivered', savedAt: Date.now() }
       changed = true
       if (alreadyViewed) continue
-      if (!focused && preferences[category].system) {
+      if (!focused && systemAvailable) {
         void sendSystemNotification({
           title: item.task.task.title,
           body: item.question,
@@ -613,7 +614,8 @@ function RuntimeInteractionsState({
           const item = Object.values(loadedRef.current)
             .flat()
             .find(item => item.id === reply.interactionId)
-          if (!item || inFlight.current.has(item.id)) continue
+          // Cached entries cannot authorize a response; leave the host reply queued.
+          if (!item || item.cached || inFlight.current.has(item.id)) continue
           setDraft(item.id, reply.text)
           const accepted = await respond(item, reply.text, reply.id)
           // Accepted sends must be acknowledged even if a refresh replaced this effect.

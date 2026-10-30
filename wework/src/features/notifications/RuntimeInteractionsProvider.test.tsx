@@ -8,6 +8,10 @@ import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import {
+  cacheNotificationPreferences,
+  defaultNotificationPreferences,
+} from './notificationPreferences'
+import {
   interactionQuestion,
   interactionTask,
   interactionTranscript,
@@ -349,6 +353,71 @@ describe('unified human response', () => {
     )
     expect(replies).toEqual([])
     expect(harness.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a native reply queued until the pending cache regains live response authority', async () => {
+    const first = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const id = context!.pending[0].id
+    first.unmount()
+    harness.desktop = true
+    harness.list.mockResolvedValue({
+      projects: [],
+      chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+      totalTasks: 1,
+    })
+    let replies = [{ id: 'native-startup', interactionId: id, text: 'keep' }]
+    harness.host.mockImplementation(async (command: string) => {
+      if (command === 'notification.pendingReplies') return replies
+      if (command === 'notification.acknowledgeReply') replies = []
+    })
+    let load!: (value: ReturnType<typeof interactionTranscript>) => void
+    harness.transcript.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          load = resolve
+        })
+    )
+    let accept!: (value: { accepted: boolean }) => void
+    harness.send.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          accept = resolve
+        })
+    )
+    view()
+    await waitFor(() =>
+      expect(harness.host).toHaveBeenCalledWith('notification.pendingReplies', {
+        accountKey: 'test:1',
+      })
+    )
+    await waitFor(() => expect(load).toBeTypeOf('function'))
+    try {
+      expect(context!.pending[0]?.cached).toBe(true)
+      expect(harness.send).not.toHaveBeenCalled()
+      expect(harness.host).not.toHaveBeenCalledWith(
+        'notification.acknowledgeReply',
+        expect.anything()
+      )
+    } finally {
+      await act(async () => {
+        load(interactionTranscript())
+      })
+    }
+    await waitFor(() => expect(harness.send).toHaveBeenCalledTimes(1))
+    expect(harness.host).not.toHaveBeenCalledWith(
+      'notification.acknowledgeReply',
+      expect.anything()
+    )
+    await act(async () => {
+      accept({ accepted: true })
+    })
+    await waitFor(() => expect(replies).toEqual([]))
+    expect(harness.send).toHaveBeenCalledTimes(1)
+    expect(harness.host).toHaveBeenCalledWith('notification.acknowledgeReply', {
+      id: 'native-startup',
+      accountKey: 'test:1',
+    })
   })
 
   it.each([true, false])(
@@ -717,6 +786,30 @@ describe('unified human response', () => {
     act(() => harness.focusListeners.forEach(listener => listener(true)))
     expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
     expect(context!.pending).toHaveLength(1)
+  })
+
+  it.each([false, true])('uses only available reminder channels (desktop=%s)', async desktop => {
+    harness.desktop = desktop
+    harness.focused = false
+    cacheNotificationPreferences('test:1', {
+      ...defaultNotificationPreferences,
+      tasks: { ...defaultNotificationPreferences.tasks, system: true },
+    })
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    if (desktop) {
+      await waitFor(() =>
+        expect(harness.host).toHaveBeenCalledWith(
+          'notification.show',
+          expect.objectContaining({ body: 'Keep existing customer behavior?' })
+        )
+      )
+    } else {
+      expect(harness.host).not.toHaveBeenCalledWith('notification.show', expect.anything())
+    }
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    if (desktop) expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    else await screen.findByTestId('runtime-interaction-notice')
   })
 
   it('keeps pending work when a reminder is dismissed or opened, independently of unread', async () => {
