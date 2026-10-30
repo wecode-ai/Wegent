@@ -22,6 +22,7 @@ export interface TaskSuggestionCategory {
 interface DeveloperHomeProps {
   heading: ReactNode
   onSelectSuggestion: (prompt: string) => void
+  showWorkbenchBackground?: boolean
 }
 
 function ExploreSuggestionIcon(props: SVGProps<SVGSVGElement>) {
@@ -169,7 +170,11 @@ const TASK_SUGGESTION_CATEGORIES: TaskSuggestionCategory[] = [
   },
 ]
 
-export default function DeveloperHome({ heading, onSelectSuggestion }: DeveloperHomeProps) {
+export default function DeveloperHome({
+  heading,
+  onSelectSuggestion,
+  showWorkbenchBackground = false,
+}: DeveloperHomeProps) {
   const { t } = useTranslation('common')
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const selectedCategory = TASK_SUGGESTION_CATEGORIES.find(
@@ -201,7 +206,12 @@ export default function DeveloperHome({ heading, onSelectSuggestion }: Developer
                 onClick={() =>
                   onSelectSuggestion(t(suggestion.promptKey, suggestion.fallbackPrompt))
                 }
-                className="flex min-h-11 items-center rounded-xl border border-border/70 bg-background/50 px-4 text-left text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,transform] hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 active:scale-[0.99]"
+                className={cn(
+                  'flex min-h-11 items-center rounded-xl border border-border/70 px-4 text-left text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,transform] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 active:scale-[0.99]',
+                  showWorkbenchBackground
+                    ? 'bg-background/15 hover:bg-background/30'
+                    : 'bg-background/50 hover:bg-muted'
+                )}
               >
                 {t(suggestion.labelKey, suggestion.fallbackLabel)}
               </button>
@@ -225,7 +235,12 @@ export default function DeveloperHome({ heading, onSelectSuggestion }: Developer
                   type="button"
                   data-testid={`task-suggestion-category-${category.id}`}
                   onClick={() => setSelectedCategoryId(category.id)}
-                  className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
+                  className={cn(
+                    'group flex min-h-[104px] flex-col justify-between rounded-2xl px-4 py-3 text-left transition-[background-color,box-shadow,transform] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99]',
+                    showWorkbenchBackground
+                      ? 'border border-border/45 bg-transparent shadow-none ring-0 hover:bg-background/30'
+                      : 'border-0 bg-background shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 hover:bg-muted dark:ring-white/10'
+                  )}
                 >
                   <Icon className={cn('h-4 w-4', CATEGORY_TONES[category.tone])} />
                   <span className="text-sm font-medium leading-5 text-text-primary">

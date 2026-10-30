@@ -1,6 +1,13 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import {
+  acknowledgeNotificationReply,
+  enqueueNotificationReply,
+  pendingNotificationReplies,
+} from './notification-replies.js'
+import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import {
   app,
   BrowserWindow,
@@ -127,6 +134,9 @@ export interface ProcessExplorerHostService {
 }
 
 export interface ElectronDesktopServices {
+  registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
+  executorPid?: () => number | null
+  requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
   executorHome: string
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
@@ -158,6 +168,7 @@ interface ElectronNotificationInput {
   body: string
   url?: string
   taskAddressId?: string
+  reply?: { interactionId: string; accountKey: string; placeholder: string }
 }
 
 export function activateElectronNotification(
@@ -174,10 +185,14 @@ export function activateElectronNotification(
 
 export function showElectronNotification(
   input: ElectronNotificationInput,
-  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'> & {
+    events?: ElectronDesktopServices['events']
+  },
   createNotification: (options: {
     title: string
     body: string
+    hasReply?: boolean
+    replyPlaceholder?: string
   }) => ElectronNotificationHandle = options => new Notification(options)
 ): void {
   if (input.url && !input.url.startsWith('wework://')) {
@@ -189,11 +204,23 @@ export function showElectronNotification(
   const notification = createNotification({
     title: input.title,
     body: input.body,
+    ...(input.reply ? { hasReply: true, replyPlaceholder: input.reply.placeholder } : {}),
   })
   showRetainedNotification(
     notification,
     input.url || input.taskAddressId
       ? () => activateElectronNotification(input, navigation)
+      : undefined,
+    input.reply && input.url
+      ? text => {
+          enqueueNotificationReply({
+            interactionId: input.reply!.interactionId,
+            accountKey: input.reply!.accountKey,
+            text,
+            url: input.url!,
+          })
+          navigation.events?.publish('notification-reply', {})
+        }
       : undefined
   )
 }
@@ -241,6 +268,7 @@ export interface ProcessExplorerWindowSnapshot {
 }
 
 export interface ElectronE2EHost {
+  disconnectMcpAppSession?: (sessionId: string) => void
   capturePopout: () => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
@@ -885,22 +913,51 @@ export function createElectronCapabilityRouter(
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )
   const mcpAppDocuments = new McpAppDocuments()
+  let mcpDiscoveryFault: McpDiscoveryNetworkFault | undefined
   protocol.handle(MCP_APP_SCHEME, request => mcpAppDocuments.respond(request))
   app.once('will-quit', () => {
     protocol.unhandle(MCP_APP_SCHEME)
     mcpAppDocuments.dispose()
+    mcpDiscoveryFault?.configure(false)
   })
-  router.register('mcpApps.createDocument', params =>
-    mcpAppDocuments.create(stringParam(params, 'html'), objectParam(params, 'metadata'))
-  )
   router.register('mcpApps.releaseDocument', params => {
     mcpAppDocuments.release(stringParam(params, 'id'))
     return {}
   })
-  router.register('mcpApps.renewDocument', params => {
-    mcpAppDocuments.renew(stringParam(params, 'id'))
-    return {}
+  const mcpAppSessions = new McpAppSessions(
+    payload => {
+      if (!desktopServices.requestMcpApp) throw new Error('Desktop runtime is unavailable')
+      return desktopServices.requestMcpApp(payload)
+    },
+    payload => (payload.target ? null : (desktopServices.executorPid?.() ?? null))
+  )
+  desktopServices.registerMcpAppCleanup?.(() => mcpAppSessions.dispose())
+  router.register('mcpApps.createDocument', async params => {
+    const document = await mcpAppDocuments.create(
+      stringParam(params, 'html'),
+      objectParam(params, 'metadata')
+    )
+    mcpAppSessions.attach(stringParam(params, 'sessionId'), () =>
+      mcpAppDocuments.release(document.id)
+    )
+    return document
   })
+  router.register('mcpApps.retainSession', params => {
+    const owner = e2eHost.captureTarget(stringParam(params, 'windowLabel'))
+    if (!owner || owner.isDestroyed()) throw new Error('MCP App owner is unavailable')
+    return mcpAppSessions.retain(
+      stringParam(params, 'sessionId'),
+      {
+        target: params.target,
+        address: objectParam(params, 'address'),
+        callId: stringParam(params, 'callId'),
+      },
+      owner
+    )
+  })
+  router.register('mcpApps.releaseSession', params =>
+    mcpAppSessions.release(stringParam(params, 'sessionId'))
+  )
   router.register('mcpApps.saveFile', async params => {
     if (typeof params.data !== 'string') throw new Error('Missing MCP App download data')
     const data = params.data
@@ -916,9 +973,22 @@ export function createElectronCapabilityRouter(
     await writeFile(result.filePath, Buffer.from(data, 'base64'))
     return {}
   })
+  router.register('e2e.mcpAppDiscoveryFault', params => {
+    assertE2EEnabled('MCP App discovery network fault')
+    if (typeof params.enabled !== 'boolean') throw new Error('Expected enabled boolean')
+    const contents = e2eHost.captureTarget('main')
+    if (!contents) throw new Error('MCP App host is unavailable')
+    mcpDiscoveryFault ??= new McpDiscoveryNetworkFault(contents.session)
+    return mcpDiscoveryFault.configure(params.enabled)
+  })
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
+    if (params.action === 'disconnect-session') {
+      e2eHost.disconnectMcpAppSession?.(stringParam(params, 'sessionId'))
+      return {}
+    }
+    if (params.action === 'sessions') return mcpAppSessions.ids()
     if (params.action === 'document-status') {
       return mcpAppDocuments.respond(new Request(url)).status
     }
@@ -975,10 +1045,28 @@ export function createElectronCapabilityRouter(
         body,
         url: optionalStringParam(params, 'url')?.trim() || undefined,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
+        ...(params.reply && typeof params.reply === 'object' && !Array.isArray(params.reply)
+          ? {
+              reply: {
+                interactionId: stringParam(
+                  params.reply as Record<string, unknown>,
+                  'interactionId'
+                ),
+                accountKey: stringParam(params.reply as Record<string, unknown>, 'accountKey'),
+                placeholder: stringParam(params.reply as Record<string, unknown>, 'placeholder'),
+              },
+            }
+          : {}),
       },
       desktopServices
     )
   })
+  router.register('notification.pendingReplies', params =>
+    pendingNotificationReplies(stringParam(params, 'accountKey'))
+  )
+  router.register('notification.acknowledgeReply', params =>
+    acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
+  )
   router.register('preferences.get', () => preferences.read())
   const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
     const updated = desktopServices.updatePreferences

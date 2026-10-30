@@ -7,6 +7,48 @@ import {
 } from '../../../../packages/collaboration/src/conversation/turnNavigationUtils'
 
 describe('paginated turn navigation identity', () => {
+  it('resolves an itemless failed turn to its projected error row', () => {
+    const messages = [
+      {
+        id: 'runtime-view:failed:assistant',
+        turnId: 'failed',
+        role: 'assistant',
+        content: '',
+      },
+    ]
+    const item = {
+      id: 'failed',
+      turnId: 'failed',
+      userMessageId: null,
+      messageIndex: 2,
+      turnIndex: 2,
+      promptPreview: '',
+      responsePreview: 'Request failed',
+      cursor: 'failed-cursor',
+    }
+    expect(buildUserTurnsForNavigation(messages, [item])[0]).toMatchObject({
+      id: messages[0].id,
+      loaded: true,
+      responsePreview: 'Request failed',
+    })
+    expect(
+      findLoadedNavigationMessageId(messages, {
+        navigationId: item.id,
+        userMessageId: null,
+        turnId: item.turnId,
+        messageIndex: item.messageIndex,
+      })
+    ).toBe(messages[0].id)
+    expect(
+      findLoadedNavigationMessageId(messages, {
+        navigationId: item.id,
+        userMessageId: 'unloaded-user',
+        turnId: item.turnId,
+        messageIndex: item.messageIndex,
+      })
+    ).toBeNull()
+  })
+
   const navigation = Array.from({ length: 25 }, (_, index) => ({
     id: `turn-${index}`,
     turnId: `turn-${index}`,

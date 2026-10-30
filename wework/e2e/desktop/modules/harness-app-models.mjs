@@ -10,6 +10,11 @@ import {
 } from './harness-app-fixture.mjs'
 import { LOCAL_MODEL_CASES } from './shared.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { fetchLocalRuntime } from './runtime-request.mjs'
+import {
+  readActiveHarnessModelRoutes,
+  readPendingHarnessModelRoutes,
+} from './harness-app-model-configuration.mjs'
 
 /** Created by this checkpoint so its DSH profile pins the Wework default model. */
 const INSTALLED_APP_ID = 'dsh-e2e-multi-model'
@@ -33,6 +38,7 @@ export async function verifyHarnessAppModels(
   control.setScenario('harness_app_models')
 
   await setExperimentalFeatures(control, true, uiTimeoutMs)
+  await verifyCoreDshModels(control)
   const readyCountBeforeSeed = control.readyCount
   await control.command('reloadMainWindow', 'body', {
     value: JSON.stringify({
@@ -47,7 +53,7 @@ export async function verifyHarnessAppModels(
   await openSmartAppsTab(control, uiTimeoutMs)
   await openOwnedApps(control, uiTimeoutMs)
 
-  const packagePath = await createHarnessPackage(resultDir, INSTALLED_APP_ID, '0.1.0-rc.8', {
+  const packagePath = await createHarnessPackage(resultDir, INSTALLED_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '[]\n',
   })
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
@@ -84,9 +90,7 @@ export async function verifyHarnessAppModels(
     'instances',
     INSTALLED_APP_ID
   )
-  const routes = parseHarnessModelRoutes(
-    await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-  )
+  const routes = await waitForActiveHarnessModelRoutes(instanceDirectory)
   const defaultRoute = routes.find(route => route.id === 'wework-local')
   assert.ok(defaultRoute, 'The selected Wework model must keep the original default provider')
   const extraRoute = routes.find(route => route.displayName === EXTRA_MODEL.labels[1])
@@ -102,10 +106,10 @@ export async function verifyHarnessAppModels(
     'A model whose proxy route failed was still registered as a DSH provider'
   )
 
-  // DSH reads the generated settings itself; llm.models proves it loaded every
+  // DSH reads the generated settings itself; its catalog proves it loaded every
   // provider instead of this test only inspecting the file Wework wrote.
   const providerGroups = await waitForDshValue(
-    () => dshRequest(installation.webUrl, 'llm.models', {}),
+    () => dshRequest(control, installation.webUrl, 'session/modelCatalog', {}),
     value => value.groups.some(group => group.id === 'wework-local'),
     30_000
   ).then(value => value.groups)
@@ -128,7 +132,7 @@ export async function verifyHarnessAppModels(
 
   // A failed launch must release the routes it registered before DSH started,
   // and it must not disturb the app that is already running.
-  const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.1.0-rc.8', {
+  const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '- id: [unterminated\n',
   })
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
@@ -156,13 +160,16 @@ export async function verifyHarnessAppModels(
   await waitForReleasedRoutes(failedRoutes, 120_000)
 
   const afterFailurePrompt = `HARNESS_AFTER_FAILURE_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: afterFailurePrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: afterFailurePrompt }],
+    },
   })
   await waitForHarnessModelRequest(control, afterFailurePrompt, EXTRA_MODEL.modelId, 30_000)
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
 
   // Closing the app tab must stop the runtime and release every route, not just
   // the route used by the selected model.
@@ -174,9 +181,7 @@ export async function verifyHarnessAppModels(
     uiTimeoutMs,
     electronUserDataDirectory,
   })
-  const reopenedRoutes = parseHarnessModelRoutes(
-    await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-  )
+  const reopenedRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
   const reopenedDefaultRoute = reopenedRoutes.find(route => route.id === 'wework-local')
   const reopenedExtraRoute = reopenedRoutes.find(
     route => route.displayName === EXTRA_MODEL.labels[1]
@@ -217,6 +222,29 @@ export async function verifyHarnessAppModels(
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
     timeoutMs: uiTimeoutMs,
   })
+}
+
+async function verifyCoreDshModels(control) {
+  const coreUrl = await control.command('getLocationOrigin', 'body')
+  const labels = [MODEL_LABEL, EXTRA_MODEL.labels[1]]
+  const catalog = await waitForDshValue(
+    () => dshRequest(control, coreUrl, 'session/modelCatalog', {}),
+    value =>
+      labels.every(label =>
+        value.groups.some(group => group.id.startsWith('wework-model-') && group.name === label)
+      ),
+    30_000
+  )
+  for (const label of labels) {
+    const provider = catalog.groups.find(
+      group => group.id.startsWith('wework-model-') && group.name === label
+    )
+    assert.deepEqual(
+      provider.models.map(model => model.id),
+      ['wework-selected'],
+      `Core DSH did not receive the synchronized Wework model ${label}`
+    )
+  }
 }
 
 async function armHostResponse(gates, id, name, hold = true) {
@@ -329,9 +357,7 @@ async function verifyCloseDuringTokenHandoff(
       'Starting a stopped app must not mount its stale running URL'
     )
     await gates.wait(ids[0], undefined, 600_000)
-    const oldRoutes = parseHarnessModelRoutes(
-      await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-    )
+    const oldRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
     assert.ok(oldRoutes.length > 1, 'The held launch did not register default and extra routes')
     assert.equal(
       Number(
@@ -383,9 +409,7 @@ async function verifyCloseDuringTokenHandoff(
       INSTALLED_APP_ID,
       30_000
     )
-    const newRoutes = parseHarnessModelRoutes(
-      await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
-    )
+    const newRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
     assert.ok(newRoutes.length > 1, 'Rapid reopen lost the additional provider')
     for (const route of newRoutes) {
       assert.equal(
@@ -509,7 +533,7 @@ async function exerciseModelRoutes(
   installation,
   { resultDir, screenshotName, captureScreenshot }
 ) {
-  const models = await dshRequest(installation.webUrl, 'llm.models', {})
+  const models = await dshRequest(control, installation.webUrl, 'session/modelCatalog', {})
   const defaultProvider = models.groups.find(group => group.id === 'wework-local')
   assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
   assert.deepEqual(
@@ -524,33 +548,42 @@ async function exerciseModelRoutes(
 
   const workspace = join(resultDir, 'harness-app-models-workspace')
   await mkdir(workspace, { recursive: true })
-  const { sessionId } = await dshRequest(installation.webUrl, 'session.create', { cwd: workspace })
-  const sessionModels = await dshRequest(installation.webUrl, 'session.models', { sessionId })
   assert.deepEqual(
-    { provider: sessionModels.current.provider, model: sessionModels.current.model },
+    { provider: models.default.provider, model: models.default.model },
     { provider: 'wework-local', model: 'wework-selected' },
-    'A new DSH session did not start on the original default model route'
+    'The DSH catalog lost the original default model route'
   )
+  const { sessionId } = await dshRequest(control, installation.webUrl, 'session/create', {
+    request: { cwd: workspace },
+  })
 
   const defaultPrompt = `HARNESS_DEFAULT_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: defaultPrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: defaultPrompt }],
+    },
   })
   await waitForHarnessModelRequest(control, defaultPrompt, DEFAULT_MODEL.modelId, 30_000)
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
+  await assertSessionModel(control, installation.webUrl, sessionId, {
+    provider: 'wework-local',
+    model: 'wework-selected',
+  })
 
-  await dshRequest(installation.webUrl, 'session.selectModel', {
-    sessionId,
-    provider: extraProvider.id,
-    model: extraModelId,
+  await dshRequest(control, installation.webUrl, 'session/selectModel', {
+    request: { sessionId, provider: extraProvider.id, model: extraModelId },
   })
   const extraPrompt = `HARNESS_EXTRA_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: extraPrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: extraPrompt }],
+    },
   })
   const extraRequest = await waitForHarnessModelRequest(
     control,
@@ -568,7 +601,11 @@ async function exerciseModelRoutes(
     false,
     'A model with an incomplete proxy configuration still reached the model service'
   )
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
+  await assertSessionModel(control, installation.webUrl, sessionId, {
+    provider: extraProvider.id,
+    model: extraModelId,
+  })
   await captureScreenshot(control, screenshotName, 'body')
   return sessionId
 }
@@ -625,38 +662,31 @@ async function waitForRunningInstallation(userDataDirectory, installationId, tim
   throw new Error(`Smart app ${installationId} did not report a running DSH instance`)
 }
 
-function parseHarnessModelRoutes(settings) {
-  const routes = []
-  let current = null
-  for (const line of settings.split('\n')) {
-    const provider = /^ {4}([A-Za-z0-9_.:-]+):\s*$/.exec(line)
-    if (provider) {
-      current = { id: provider[1], displayName: '', baseUrl: '' }
-      routes.push(current)
-      continue
-    }
-    if (!current) continue
-    const field = /^ {6}(displayName|baseURL):\s*(.+?)\s*$/.exec(line)
-    if (!field) continue
-    const value = field[2].startsWith('"') ? JSON.parse(field[2]) : field[2]
-    if (field[1] === 'displayName') current.displayName = value
-    else current.baseUrl = value
-  }
-  return routes.filter(route => route.baseUrl)
+async function waitForActiveHarnessModelRoutes(instanceDirectory) {
+  // DSH imports startup settings into this profile before exposing its providers.
+  return waitForDshValue(
+    () => readActiveHarnessModelRoutes(instanceDirectory),
+    routes => routes.length > 1,
+    30_000
+  )
 }
 
-async function dshRequest(baseUrl, method, payload) {
-  const response = await fetch(new URL(`api/${method}`, normalizeBaseUrl(baseUrl)), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      type: 'client-request',
-      rpcId: randomUUID(),
-      method,
-      payload,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  })
+async function dshRequest(control, baseUrl, method, payload) {
+  const response = await fetchLocalRuntime(
+    control,
+    new URL(`api/${method}`, normalizeBaseUrl(baseUrl)),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: randomUUID(),
+        method,
+        payload: { args: payload },
+      }),
+      timeoutMs: 60_000,
+    }
+  )
   assert.equal(response.ok, true, `DSH ${method} returned HTTP ${response.status}`)
   const message = await response.json()
   assert.equal(message.type, 'server-response', `DSH ${method} returned an unexpected message`)
@@ -688,15 +718,28 @@ async function waitForDshValue(read, accept, timeoutMs) {
   throw new Error('DSH did not expose the expected model providers')
 }
 
-async function waitForSessionIdle(baseUrl, sessionId, timeoutMs) {
+async function waitForSessionIdle(control, baseUrl, sessionId, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const { items } = await dshRequest(baseUrl, 'session.list', {})
+    const { items } = await dshRequest(control, baseUrl, 'session/list', { _request: {} })
     const session = items.find(item => item.sessionId === sessionId)
     if (session && !session.running) return
     await delay(100)
   }
   throw new Error(`DSH session ${sessionId} did not finish its turn`)
+}
+
+async function assertSessionModel(control, baseUrl, sessionId, expected) {
+  const projections = await dshRequest(control, baseUrl, 'session/projections', {
+    request: { sessionId },
+  })
+  const selection = projections?.values.modelSelection?.lastUsed
+  assert.ok(selection, 'The DSH session did not persist its model selection')
+  assert.deepEqual(
+    { provider: selection.provider, model: selection.model },
+    expected,
+    'The DSH session did not persist the model route consumed by its request'
+  )
 }
 
 async function waitForHarnessModelRequest(control, prompt, expectedModelId, timeoutMs) {
@@ -721,17 +764,11 @@ async function waitForHarnessModelRequest(control, prompt, expectedModelId, time
 
 async function waitForFailedLaunchRoutes(userDataDirectory, installationId, timeoutMs) {
   const startedAt = Date.now()
-  const settingsPath = join(
-    userDataDirectory,
-    'harness-apps',
-    'instances',
-    installationId,
-    'settings.yaml'
-  )
+  const instanceDirectory = join(userDataDirectory, 'harness-apps', 'instances', installationId)
   let routes = []
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      routes = parseHarnessModelRoutes(await readFile(settingsPath, 'utf8'))
+      routes = await readPendingHarnessModelRoutes(instanceDirectory)
       if (routes.length > 1) break
     } catch {
       // The launch has not written its runtime settings yet.

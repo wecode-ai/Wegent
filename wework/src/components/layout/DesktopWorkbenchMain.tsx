@@ -20,6 +20,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -37,6 +38,7 @@ import {
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
@@ -736,6 +738,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
+  const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const isDesktop = isDesktopRuntime()
   const splitGroups = props.splitGroups
   const splitMode = splitGroups?.splitMode ?? false
@@ -1060,6 +1063,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
+      showWorkbenchBackground={hasMainBackground}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
       activeTestId={props.visible === false ? null : 'desktop-workbench-main'}
@@ -2983,6 +2987,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneSession.answeredRequestUserInputIds
   )
   useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
+  const interactions = useRuntimeInteractions()
+  const interactionViewOwner = useId()
+  const registerInteractionView = interactions?.registerView
+  const pendingRequestUserInputKey = requestUserInputPayloadKey(pendingRequestUserInput)
+  const viewedInteraction = interactions?.pending
+    .filter(
+      item =>
+        pendingRequestUserInputKey !== null &&
+        item.task.address.deviceId === currentRuntimeTask?.deviceId &&
+        item.task.address.taskId === currentRuntimeTask?.taskId &&
+        (requestUserInputPayloadKey(item.payload) === pendingRequestUserInputKey ||
+          (pendingRequestUserInput &&
+            !pendingRequestUserInput.interactionScope &&
+            (item.payload.requestId ??
+              item.payload.request_id ??
+              item.payload.itemId ??
+              item.payload.item_id) ===
+              (pendingRequestUserInput.requestId ??
+                pendingRequestUserInput.request_id ??
+                pendingRequestUserInput.itemId ??
+                pendingRequestUserInput.item_id)))
+    )
+    .at(-1)
+  useEffect(() => {
+    registerInteractionView?.(
+      interactionViewOwner,
+      paneActive && workbenchVisible ? (viewedInteraction?.id ?? null) : null
+    )
+    return () => registerInteractionView?.(interactionViewOwner, null)
+  }, [
+    interactionViewOwner,
+    paneActive,
+    registerInteractionView,
+    viewedInteraction?.id,
+    workbenchVisible,
+  ])
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]
@@ -5642,6 +5682,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
+                  showWorkbenchBackground={hasMainBackground}
                   onOpenProjectSelector={anchorElement => {
                     setProjectMenuAnchorElement(anchorElement)
                     setProjectMenuOpenSignal(signal => signal + 1)

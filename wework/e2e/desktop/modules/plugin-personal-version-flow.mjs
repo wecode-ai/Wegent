@@ -84,6 +84,7 @@ export async function verifyPersonalPluginVersionSubmission({
   codexHome,
   userDataDirectory,
 }) {
+  const flowStartedAt = Date.now()
   const runtimeCost = { processRestarts: [], accountSwitches: [] }
   const restartDesktopApp = async options => {
     const startedAt = Date.now()
@@ -369,7 +370,8 @@ export async function verifyPersonalPluginVersionSubmission({
     accountCommands.every(command => command.value === '[redacted]'),
     'Account-switch diagnostics exposed a backend token'
   )
-  console.log(`[personal-plugin-cost] ${JSON.stringify(runtimeCost)}`)
+  const cost = { ...runtimeCost, durationMs: Date.now() - flowStartedAt }
+  console.log(`[personal-plugin-cost] ${JSON.stringify(cost)}`)
   await writeFile(
     join(root, 'verification.json'),
     `${JSON.stringify(
@@ -383,7 +385,7 @@ export async function verifyPersonalPluginVersionSubmission({
         recipientAccess,
         rejectedPackage,
         revokedAccess,
-        runtimeCost,
+        runtimeCost: cost,
       },
       null,
       2

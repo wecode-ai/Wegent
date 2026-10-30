@@ -2725,7 +2725,10 @@ export function createRuntimeWorkApiFromIpc(
       try {
         const response = await request(
           'runtime.tasks.list',
-          requestOptions?.preferCached ? { preferCached: true } : {},
+          {
+            ...(requestOptions?.preferCached ? { preferCached: true } : {}),
+            ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+          },
           localDeviceId
         )
         if (identity) {

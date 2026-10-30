@@ -12,6 +12,10 @@ import { APIRequestContext, Page, expect, test, type Route } from '@playwright/t
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import {
+  assertCodexPhaseTransition,
+  type PhaseRegressionStep,
+} from '../../utils/codex-phase-regression'
 import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
@@ -800,6 +804,38 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
+
+  for (const rewriteCompletedText of [false, true]) {
+    test(
+      rewriteCompletedText
+        ? 'Codex completed text rewrites replace the same block and survive reload'
+        : 'Codex phase changes keep one text block during streaming and after reload',
+      async ({ page, request }) => {
+        await assertCodexPhaseTransition(
+          {
+            page,
+            configure: (prompt, steps) => configureToolScenario(request, prompt, steps),
+            start: async prompt => {
+              await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
+              await sendMessage(page, prompt)
+              const taskId = await waitForTaskId(page)
+              createdTaskIds.add(taskId)
+              return taskId
+            },
+            waitForTerminal: taskId => waitForBackendTerminal(request, taskId),
+            readTask: async taskId => {
+              const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+                headers: authHeaders(),
+              })
+              expect(response.status()).toBe(200)
+              return response.json()
+            },
+          },
+          { rewriteCompletedText }
+        )
+      }
+    )
+  }
 
   test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
     const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
@@ -1708,10 +1744,7 @@ test.describe('Agent conversation regression', () => {
   async function configureToolScenario(
     request: APIRequestContext,
     matchText: string,
-    steps: Array<{
-      toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
-      responseContent?: string
-    }>
+    steps: PhaseRegressionStep[]
   ): Promise<void> {
     toolScenarioMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {

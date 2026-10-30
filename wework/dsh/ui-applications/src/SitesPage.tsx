@@ -126,6 +126,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
   } = useWorkbench()
 
   const apiBaseUrl = getRuntimeConfig().apiBaseUrl
@@ -442,6 +443,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
+            onCloneGitRepository={cloneGitRepository}
             onOpenSettings={options => {
               if (options?.settingsPage) {
                 navigateTo(`/settings/${options.settingsPage}`)

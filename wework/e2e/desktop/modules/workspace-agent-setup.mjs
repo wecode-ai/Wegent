@@ -179,9 +179,8 @@ export async function createAndAssignCloudIssue(
   })
   const selectAssignee = async () => {
     const prefix = assignDuringCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'
-    await control.command('clickWhenEnabled', scoped(`[data-testid="${prefix}"]`), {
-      visible: true,
-    })
+    await control.command('waitFor', scoped(`[data-testid="${prefix}"]`), { visible: true })
+    await control.command('clickWhenEnabled', scoped(`[data-testid="${prefix}"]`))
     const option = `[data-testid="${prefix}-option-${assigneeTarget}"]`
     await control.command('waitFor', option, { visible: true, timeoutMs })
     await control.command('click', option)
@@ -200,10 +199,6 @@ export async function createAndAssignCloudIssue(
     timeoutMs
   )
   if (!assignDuringCreate) {
-    // API persistence can precede the renderer receiving its create response.
-    await control.command('waitFor', scoped('[data-testid="cloud-todo-create-confirm"]'), {
-      visible: false,
-    })
     await selectAssignee()
     await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
       timeoutMs,
