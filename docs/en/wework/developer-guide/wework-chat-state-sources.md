@@ -54,6 +54,25 @@ target is treated as unordered and the drag result is lost.
 | Attachment/model/skill selection      | `projectChat` context                                                                                                                                                                    | Send payload, composer controls                                                                                    | In-task option locking is derived from `projectChat.isOptionsLocked`                                                                                                                                                                        |
 | Device availability                   | `state.devices` + current task/project device selection                                                                                                                                  | Composer disabled reason, device prompts                                                                           | Use only for send preconditions; never for assistant streaming status                                                                                                                                                                       |
 
+## Conversation Scrolling and Diagram Rendering
+
+TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
+
+Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. The boundary marker always occupies one pixel; loading feedback and pagination actions are portaled outside the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop. Manual retries retain the control and keyboard focus.
+
+Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Message rows mount static images with a lightweight zoom canvas, and fullscreen presentation reuses the same artifact. Inline diagrams allow vertical touch scrolling of the conversation; fullscreen retains unrestricted dragging. Remounting an offscreen row must not recompile the same diagram or retain a full file viewer for every row.
+
+```mermaid
+flowchart LR
+  A[Scroll container] --> B[History boundary prefetch]
+  B --> C[Prepend history]
+  C --> D[Restore semantic reader anchor]
+  B --> E[Loading feedback or pagination action outside transcript]
+  F[Message row] --> G[Diagram artifact cache]
+  G --> H[Static image with lightweight zoom]
+  H -->|Open full diagram| I[Fullscreen presentation of same artifact]
+```
+
 ## Board Conversation Split Views
 
 The project-space board Hover task panel is a split view of the original task conversation, not a separate preview conversation. The Task page, Hover panel, and card summary must use the same runtime task address and read the same canonical `RuntimeConversationTurn[]` from `runtimeConversationCache`.
@@ -264,11 +283,15 @@ must not implicitly broaden a remote execution scope.
 
 ### Context Compaction Results
 
+The context indicator uses the smaller of the runtime window and the model input budget. When no window is configured, it reads the selected Wework Catalog window; local custom models use their own Catalog window. The input budget reserves the explicit output ceiling, or 96,000 tokens for Chat Completions and Anthropic Messages when no ceiling is configured. Native Responses preserves provider defaults without an explicit output ceiling. With an explicit or translated-protocol output reservation, the executor auto-compacts at 80% of the input budget; the manual compaction hint defaults to 75%.
+
 The executor live-item cache must retain compaction start/completion status. Persisting an interrupted turn must preserve the incomplete result of an unfinished compaction.
 
 Only a compaction completion event can mark `context_compaction` successful. When a turn ends or the user stops it, an unfinished compaction displays “Context compaction did not complete”; ordinary block settlement must not mark it `done`. A completed compaction stays successful even if its containing turn is subsequently stopped.
 
 Interrupted compaction has not reduced the context, so the next turn may compact again. History refresh must not turn an interrupted attempt into a success; Codex history may omit unfinished attempts. The desktop `context-compaction` checkpoint covers successful compaction, interruption, history refresh, and subsequent compaction recovery.
+
+The same checkpoint also loads models from the real configuration file to verify shared and Kimi Catalog default windows, default and explicit output reservations for translated protocols, and explicit and omitted Responses output ceilings. Each case checks no compaction below the threshold, automatic compaction above it, summary-backed continuation, and stable conversation identity. Only the model service is mocked; model configuration, Electron, the executor, Codex, and protocol conversion use real implementations. These cases reuse the existing Core CI checkpoint and build artifacts.
 
 ### Web Search Tool Blocks
 

@@ -415,7 +415,7 @@ function spawnTaskFlow(args, env, label, xvfbLogPath) {
       ? [
           `--server-num=${allocateXvfbDisplay()}`,
           `--error-file=${xvfbLogPath}`,
-          '--server-args=-screen 0 1280x720x24',
+          '--server-args=-noreset -screen 0 1280x720x24',
           'sh',
           isolatedXvfbPath,
           process.execPath,

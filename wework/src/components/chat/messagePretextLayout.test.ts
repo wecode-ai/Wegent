@@ -305,6 +305,47 @@ describe('messagePretextLayout', () => {
     expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 21.6 + 84 + 32)
   })
 
+  test.each(['mermaid', 'mmd', 'plantuml', 'puml', 'Mermaid'])(
+    'estimates %s by the fixed preview geometry regardless of source length',
+    language => {
+      for (const count of [2, 100]) {
+        const message: WorkbenchMessage = {
+          id: `${language}-${count}`,
+          role: 'assistant',
+          status: 'done',
+          createdAt: '',
+          content: [
+            `\`\`\`${language}`,
+            ...Array.from({ length: count }, () => 'A --> B'),
+            '```',
+          ].join('\n'),
+        }
+        expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(404 + 32)
+        expect(
+          getMessagePretextIntrinsicHeight(message, 500, {
+            ...readMessageLayoutTypography(),
+            rootFontSize: 20,
+          })
+        ).toBe(505 + 32)
+      }
+    }
+  )
+
+  test('estimates an unfinished diagram in a completed message as the preview it actually renders', () => {
+    expect(
+      getMessagePretextIntrinsicHeight(
+        {
+          id: 'unclosed-completed-diagram',
+          role: 'assistant',
+          status: 'done',
+          createdAt: '',
+          content: '```mermaid\ngraph LR\nA --> B',
+        },
+        500
+      )
+    ).toBe(404 + 32)
+  })
+
   test('closes a fence only with its own marker', () => {
     const message: WorkbenchMessage = {
       id: 'assistant-fence-marker',

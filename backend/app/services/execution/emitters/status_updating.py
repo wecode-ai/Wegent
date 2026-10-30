@@ -99,6 +99,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         subtask_id: int,
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
+        expected_status: Optional[str] = None,
     ):
         """Initialize the status updating emitter.
 
@@ -108,19 +109,29 @@ class StatusUpdatingEmitter(ResultEmitter):
             subtask_id: Subtask ID for status updates
             executor_name: Optional executor name for container reuse
             executor_namespace: Optional executor namespace
+            expected_status: When set, terminal updates are applied only while
+                the subtask still has this status; a lost transition drops the
+                stale event instead of forwarding it.
         """
         self._wrapped = wrapped
         self._task_id = task_id
         self._subtask_id = subtask_id
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
+        self._expected_status = expected_status
         self._status_updated = False
         self._terminal_event_deferred = False
+        self._terminal_transition_lost = False
         self._stream_storage_buffer: list[_BufferedStreamContent] = []
         self._stream_storage_lock = asyncio.Lock()
         self._stream_storage_flush_task: Optional[asyncio.Task[None]] = None
         self._stream_storage_flush_in_progress = False
         self._last_task_activity_touch = 0.0
+
+    @property
+    def terminal_transition_lost(self) -> bool:
+        """True when a terminal update was dropped because status changed."""
+        return self._terminal_transition_lost
 
     def _resolve_owner_user_id(self) -> Optional[int]:
         from app.db.session import SessionLocal
@@ -397,6 +408,16 @@ class StatusUpdatingEmitter(ResultEmitter):
                 if final_result is not None:
                     event.result = final_result
 
+        if self._terminal_transition_lost:
+            logger.info(
+                "[StatusUpdatingEmitter] Dropping stale %s event: "
+                "task_id=%s subtask_id=%s status changed",
+                event.type,
+                self._task_id,
+                self._subtask_id,
+            )
+            return
+
         # Forward event to wrapped emitter
         await self._wrapped.emit(event)
 
@@ -601,7 +622,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     self._subtask_id,
                 )
                 return result
-            await persist_completed_result(
+            persisted = await persist_completed_result(
                 subtask_id=self._subtask_id,
                 task_id=self._task_id,
                 status="FAILED",
@@ -609,7 +630,17 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
+                expected_status=self._expected_status,
             )
+            if self._expected_status is not None and persisted is False:
+                self._terminal_transition_lost = True
+                logger.info(
+                    "[StatusUpdatingEmitter] Skipped failed transition for "
+                    "subtask %s: status is no longer %s",
+                    self._subtask_id,
+                    self._expected_status,
+                )
+                return None
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "

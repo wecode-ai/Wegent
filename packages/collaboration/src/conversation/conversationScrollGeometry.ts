@@ -59,11 +59,30 @@ export function createUserViewportAnchor(
   const anchors = Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
   const anchorIndex = anchors.indexOf(visibleAnchor)
   if (anchorIndex < 0) return null
+  const item = visibleAnchor.closest<HTMLElement>(
+    '[data-runtime-item-id], [data-processing-block-id]'
+  )
+  const itemId = item?.dataset.runtimeItemId ?? item?.dataset.processingBlockId
+  const chunk = visibleAnchor.closest<HTMLElement>('[data-markdown-chunk-index]')
+  const scope = chunk ?? item
+  const itemAnchorIndex = scope
+    ? Array.from(scope.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)).indexOf(visibleAnchor)
+    : -1
   const textPosition = getViewportTextPosition(visibleAnchor, scrollerRect)
 
   return {
     messageId,
     element: visibleAnchor,
+    ...(itemId && itemAnchorIndex >= 0
+      ? {
+          item: {
+            id: itemId,
+            chunkIndex: chunk?.dataset.markdownChunkIndex ?? null,
+            anchorIndex: itemAnchorIndex,
+            text: visibleAnchor.textContent ?? '',
+          },
+        }
+      : {}),
     anchorIndex,
     offsetFromScrollerTop:
       (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
@@ -79,9 +98,52 @@ export function findUserViewportAnchor(
   // Windowed Markdown inserts and removes preceding semantic anchors as chunks render. An ordinal
   // can then identify another paragraph even though the reader's original node is still mounted.
   const element = anchor.element
-  if (!content.contains(element) || !element.matches(SCROLL_ANCHOR_SELECTOR)) return null
   const message = element.closest<HTMLElement>('[data-message-id]')
-  return message?.dataset.messageId === anchor.messageId ? element : null
+  const currentItem = element.closest<HTMLElement>(
+    '[data-runtime-item-id], [data-processing-block-id]'
+  )
+  const sameItem =
+    !anchor.item ||
+    (currentItem?.dataset.runtimeItemId ?? currentItem?.dataset.processingBlockId) ===
+      anchor.item.id
+  if (
+    content.contains(element) &&
+    message?.dataset.messageId === anchor.messageId &&
+    element.matches(SCROLL_ANCHOR_SELECTOR) &&
+    sameItem
+  )
+    return element
+  if (!anchor.item) return null
+  const item = findMessageItem(content, anchor.messageId, anchor.item.id)
+  const scope =
+    anchor.item.chunkIndex === null
+      ? item
+      : Array.from(item?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
+          chunk => chunk.dataset.markdownChunkIndex === anchor.item?.chunkIndex
+        )
+  const candidate =
+    scope?.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)[anchor.item.anchorIndex]
+  // Resolve only the same paragraph in the same immutable item/chunk; a message-wide
+  // ordinal can identify unrelated text after preceding Markdown chunks mount.
+  return candidate?.textContent === anchor.item.text ? candidate : null
+}
+
+function findMessageItem(
+  content: HTMLElement,
+  messageId: string,
+  itemId: string | null
+): HTMLElement | null {
+  const message = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+    element => element.dataset.messageId === messageId
+  )
+  if (!message || itemId === null) return message ?? null
+  return (
+    Array.from(
+      message.querySelectorAll<HTMLElement>('[data-runtime-item-id], [data-processing-block-id]')
+    ).find(
+      element => (element.dataset.runtimeItemId ?? element.dataset.processingBlockId) === itemId
+    ) ?? null
+  )
 }
 
 export function getViewportTextPosition(
@@ -189,21 +251,7 @@ export function restoreConversationAnchor(
 ): boolean {
   const anchor = snapshot.anchor
   if (!anchor || snapshot.pinnedToBottom) return false
-  const message = Array.from(scroller.querySelectorAll<HTMLElement>('[data-message-id]')).find(
-    element => element.dataset.messageId === anchor.messageId
-  )
-  if (!message) return false
-  const root =
-    anchor.itemId === null
-      ? message
-      : Array.from(
-          message.querySelectorAll<HTMLElement>(
-            '[data-runtime-item-id], [data-processing-block-id]'
-          )
-        ).find(
-          element =>
-            (element.dataset.runtimeItemId ?? element.dataset.processingBlockId) === anchor.itemId
-        )
+  const root = findMessageItem(scroller, anchor.messageId, anchor.itemId)
   if (!root) return false
   const rect =
     anchor.textOffset === null

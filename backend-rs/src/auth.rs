@@ -9,7 +9,7 @@
 //! keys, `app.core.session_token.is_user_session_payload`), then load the user
 //! row and reject missing or inactive users with `401 {"detail": ...}`.
 use brz_mysql::{FromMysqlRow, Json};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::Algorithm;
 use serde::Deserialize;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -130,8 +130,7 @@ impl brz_http_server::Authenticator<SessionUser> for AppAuthenticator {
     ) -> brz_http_server::Response {
         use brz_http_server::IntoHttpError as _;
 
-        crate::http_compat::FastApiError::unauthorized(session_auth_detail(failure))
-            .into_http_error(arena)
+        session_rejection(failure).into_http_error(arena)
     }
 }
 
@@ -163,8 +162,7 @@ impl brz_http_server::Authenticator<TransactionSessionUser> for AppAuthenticator
     ) -> brz_http_server::Response {
         use brz_http_server::IntoHttpError as _;
 
-        crate::http_compat::FastApiError::unauthorized(session_auth_detail(failure))
-            .into_http_error(arena)
+        session_rejection(failure).into_http_error(arena)
     }
 }
 
@@ -196,33 +194,37 @@ pub(crate) fn session_auth_failure(failure: AuthFailure) -> brz_http_server::Aut
         AuthFailure::UserNotActivated => {
             brz_http_server::AuthFailure::invalid_credentials(USER_NOT_ACTIVATED)
         }
+        AuthFailure::Dependency => brz_http_server::AuthFailure::Internal,
     }
 }
 
 /// JWT claims carried by a user-session token.
 ///
-/// Shared across all authentication paths. `sub` is optional because a token
-/// may lack it (rejected later); `scope` is accepted as arbitrary JSON and a
-/// session is only valid when it is absent or null; `exp` is consumed by
-/// `jsonwebtoken`'s validation and is otherwise unused here.
+/// Shared across authentication paths. Scope uses Python truthiness and
+/// NumericDate claims are checked before typed deserialization.
 #[derive(Debug, Deserialize)]
 pub struct SessionClaims {
     pub sub: Option<String>,
     #[serde(default)]
-    pub scope: Option<serde::de::IgnoredAny>,
+    pub scope: Option<serde_json::Value>,
     #[serde(default)]
     pub token_use: Option<String>,
-    /// Validated by the decoder; not read by application code.
+    /// Validated with Python integer coercion before deserialization.
     #[serde(default)]
-    #[allow(dead_code, reason = "validated by jsonwebtoken, not read directly")]
-    pub exp: Option<i64>,
+    #[allow(
+        dead_code,
+        reason = "validated by the shared JWT verifier, not read directly"
+    )]
+    pub exp: Option<serde_json::Value>,
 }
 
 impl SessionClaims {
-    /// `is_user_session_payload`: no `scope` claim and `token_use` either
-    /// absent or `wework_access`.
+    /// Match Python's falsey scope and allowed session token_use values.
     pub fn is_user_session_payload(&self) -> bool {
-        self.scope.is_none()
+        !self
+            .scope
+            .as_ref()
+            .is_some_and(brz_json::adapters::python_truthy)
             && matches!(
                 self.token_use.as_deref(),
                 None | Some(WEWORK_ACCESS_TOKEN_USE)
@@ -253,11 +255,12 @@ fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
 }
 
 /// Algorithm from settings (`HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
+pub(crate) fn algorithm(config: &AuthConfig) -> Option<Algorithm> {
     match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
+        "HS256" => Some(Algorithm::HS256),
+        "HS384" => Some(Algorithm::HS384),
+        "HS512" => Some(Algorithm::HS512),
+        _ => None,
     }
 }
 
@@ -277,26 +280,14 @@ pub fn extract_authorization_token(authorization: Option<&str>) -> String {
 
 /// `verify_token` with key rotation: try the active key, then legacy keys.
 pub(crate) fn verify_token(config: &AuthConfig, token: &str) -> Result<String, ()> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose rejects the `none` algorithm; HS256 is the configured
-    // algorithm and no audience is required. A present `exp`/`nbf` is
-    // validated with no leeway and neither is a required claim, matching
-    // python-jose's default decode options. `jsonwebtoken` otherwise defaults to
-    // a 60-second leeway and skips `nbf`, which would accept a session token the
-    // source rejects.
-    validation.validate_aud = false;
-    validation.validate_exp = true;
-    validation.validate_nbf = true;
-    validation.leeway = 0;
-    validation.required_spec_claims.clear();
-    for key_bytes in decoding_keys(config) {
-        let key = DecodingKey::from_secret(&key_bytes);
-        if let Ok(token) = decode::<SessionClaims>(token, &key, &validation) {
-            let claims = token.claims;
-            return claims.username().ok_or(());
-        }
-    }
-    Err(())
+    decode_session_claims(config, token)
+        .and_then(|claims| claims.username())
+        .ok_or(())
+}
+
+/// Shared claim verification for standard and flexible session dependencies.
+pub(crate) fn decode_session_claims(config: &AuthConfig, token: &str) -> Option<SessionClaims> {
+    crate::jwt_compat::decode_jose(token, decoding_keys(config), algorithm(config)?)
 }
 
 /// Database user row (`users` table) for authentication.
@@ -362,7 +353,7 @@ pub(crate) const USER_BY_NAME_QUERY: &str = "SELECT users.id AS users_id, users.
 /// header, or any other scheme never reaches `get_current_user`: the scheme
 /// itself answers `401 {"detail": "Not authenticated"}`. An empty `Bearer`
 /// credential still reaches verification and fails there.
-fn bearer_credential(authorization: Option<&str>) -> Option<&str> {
+pub(crate) fn bearer_credential(authorization: Option<&str>) -> Option<&str> {
     let header = authorization?;
     let (scheme, token) = header.split_once(' ').unwrap_or((header, ""));
     scheme.eq_ignore_ascii_case("bearer").then_some(token)
@@ -385,7 +376,7 @@ where
     let user: Option<UserRow> = mysql
         .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
         .await
-        .map_err(|_| AuthFailure::InvalidCredentials)?;
+        .map_err(user_lookup_failure)?;
     select_active_user(user)
 }
 
@@ -413,7 +404,7 @@ where
     let user: Option<UserRow> = transaction
         .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
         .await
-        .map_err(|_| AuthFailure::InvalidCredentials)?;
+        .map_err(user_lookup_failure)?;
     select_active_user(user)
 }
 
@@ -429,9 +420,21 @@ fn select_active_user(user: Option<UserRow>) -> Result<UserRow, AuthFailure> {
 /// Render a deferred session lookup failure exactly like
 /// [`AppAuthenticator`]'s `reject` path.
 pub(crate) fn session_auth_error(failure: AuthFailure) -> crate::http_compat::FastApiError {
-    crate::http_compat::FastApiError::unauthorized(session_auth_detail(session_auth_failure(
-        failure,
-    )))
+    session_rejection(session_auth_failure(failure))
+}
+
+fn session_rejection(failure: brz_http_server::AuthFailure) -> crate::http_compat::FastApiError {
+    match failure {
+        brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+            crate::http_compat::FastApiError::unhandled()
+        }
+        _ => crate::http_compat::FastApiError::unauthorized(session_auth_detail(failure)),
+    }
+}
+
+fn user_lookup_failure(error: brz_mysql::MysqlError) -> AuthFailure {
+    tracing::error!(%error, "session user lookup failed");
+    AuthFailure::Dependency
 }
 
 /// Authentication failure classification for source-compatible 401 mapping.
@@ -443,6 +446,8 @@ pub enum AuthFailure {
     InvalidCredentials,
     /// `401 {"detail": "User not activated"}`.
     UserNotActivated,
+    /// User lookup failed; this is a server failure, not an invalid credential.
+    Dependency,
 }
 
 #[cfg(test)]
@@ -624,6 +629,53 @@ mod tests {
     }
 
     #[test]
+    fn python_scope_truthiness_matches_session_classification() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/jwt-python-jose.json")).unwrap();
+        for case in fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case["name"].as_str().unwrap().starts_with("scope_"))
+        {
+            assert_eq!(
+                verify_token(&config(), &token_for(case["claims"].clone())).is_ok(),
+                case["session_valid"].as_bool().unwrap(),
+                "Python session case {}",
+                case["name"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn reader_failure_stays_a_server_error() {
+        let mysql = crate::sql_test_support::KindQueryCapture::failing_reads();
+        let token = token_for(serde_json::json!({"sub":"u"}));
+        let authorization = format!("Bearer {token}");
+        let failure = get_current_user(&config(), &mysql, Some(&authorization))
+            .await
+            .expect_err("reader must fail");
+        assert!(matches!(failure, AuthFailure::Dependency));
+        assert_eq!(mysql.queries().len(), 1);
+
+        use brz_http_server::IntoHttpError as _;
+        let arena = brz_http_server::EphemeralBytesArena::new(256);
+        let response = session_auth_error(failure).into_http_error(&arena);
+        assert_eq!(
+            response.status(),
+            brz_http_server::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn unsupported_configured_algorithm_cannot_fall_back_to_hs256() {
+        let token = token_for(serde_json::json!({"sub":"u"}));
+        let mut config = config();
+        config.algorithm = "RS256".to_string();
+        assert!(verify_token(&config, &token).is_err());
+    }
+
+    #[test]
     fn rotates_to_legacy_keys() {
         let config = AuthConfig {
             jwt_key: "new-key".to_string(),
@@ -643,17 +695,37 @@ mod tests {
 mod scope_contract_tests {
     use super::*;
     #[test]
-    fn only_missing_or_null_scope_is_a_session() {
+    fn scope_matches_python_truthiness() {
         for raw in ["null", "false", "0", "0.0", "\"\"", "[]", "{}", "\"read\""] {
             let claims: SessionClaims =
                 serde_json::from_str(&format!(r#"{{"sub":"user","scope":{raw}}}"#)).unwrap();
             assert_eq!(
                 claims.is_user_session_payload(),
-                raw == "null",
+                raw != "\"read\"",
                 "scope={raw}"
             );
         }
         let claims: SessionClaims = serde_json::from_str(r#"{"sub":"user"}"#).unwrap();
         assert!(claims.is_user_session_payload());
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::verify_token(&config, &token).is_ok(),
+                expected,
+                "{name}"
+            );
+        }
     }
 }

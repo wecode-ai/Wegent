@@ -29,6 +29,7 @@ pub struct KindQueryCapture {
     writes: std::sync::Arc<std::sync::Mutex<Vec<Query>>>,
     /// Whether `execute` records the write instead of rejecting it.
     allow_writes: bool,
+    fail_reads: bool,
 }
 
 impl KindQueryCapture {
@@ -38,6 +39,13 @@ impl KindQueryCapture {
     pub fn writing() -> Self {
         Self {
             allow_writes: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn failing_reads() -> Self {
+        Self {
+            fail_reads: true,
             ..Self::default()
         }
     }
@@ -91,6 +99,11 @@ impl Mysql for KindQueryCapture {
             .lock()
             .unwrap()
             .push(self.capture(sql.as_ref(), args));
+        if self.fail_reads {
+            return Err(brz_mysql::MysqlError::InvalidQuery {
+                reason: "test reader unavailable".to_string(),
+            });
+        }
         Ok(None)
     }
 

@@ -1072,11 +1072,15 @@ async function reopenCurrentTurnNavigationTask(
       paginatedSnapshot.pane?.transcript.hasMoreBefore === true &&
       Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS
     ) {
-      await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+      await control.command('waitFor', '[data-testid="runtime-transcript-history-start"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       const previousMessageCount = paginatedSnapshot.pane?.messageSummary.total ?? 0
-      await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+      await control.command(
+        'scrollToRatioAsUser',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+        { value: '0' }
+      )
       while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
         paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         if (
