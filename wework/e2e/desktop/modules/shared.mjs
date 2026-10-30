@@ -114,7 +114,7 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const REQUEST_USER_INPUT_ASYNC_PROMPT =
-  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn. Complete root-cause investigation before changing behavior; this context is not an answer.'
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
 const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
 const REQUEST_USER_INPUT_FREE_TEXT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT_FREE_TEXT: ask a long question without options.'

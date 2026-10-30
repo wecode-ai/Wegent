@@ -376,28 +376,26 @@ function requestContainsSkillLocator(body, skillPath) {
   )
 }
 
-/** Text of top-level user messages, excluding quoted messages inside tool output. */
+/** Text of the user-authored turns codex forwarded to the model, in order. */
 function inputUserMessageTexts(request) {
-  const input = Array.isArray(request.input) ? request.input : []
-  return input
-    .filter(item => item.type === 'message' && item.role === 'user')
-    .map(item => {
-      const content = Array.isArray(item.content) ? item.content : [item.content]
-      return content.map(part => (typeof part === 'string' ? part : part?.text) ?? '').join('')
-    })
-    .filter(text => text.trim())
-}
-
-/** Match the actual reply after this question's acknowledgement, not injected context. */
-function hasUserReplyAfterToolOutput(request, callId, answer) {
-  const input = Array.isArray(request.input) ? request.input : []
-  const outputIndex = input.findIndex(
-    item => item.type === 'function_call_output' && item.call_id === callId
-  )
-  if (outputIndex === -1) return false
-  return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
-    text => text.trim() === answer
-  )
+  const texts = []
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (value.type === 'message' && value.role === 'user') {
+      const content = Array.isArray(value.content) ? value.content : [value.content]
+      for (const part of content) {
+        const text = typeof part === 'string' ? part : part?.text
+        if (typeof text === 'string' && text.trim()) texts.push(text)
+      }
+    }
+    Object.values(value).forEach(visit)
+  }
+  visit(request.input)
+  return texts
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -3960,10 +3958,8 @@ class DesktopE2EServer {
         const toolOutput = toolOutputText(body, callId)
         if (toolOutput !== null) {
           assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
-          const answered = hasUserReplyAfterToolOutput(
-            body,
-            callId,
-            REQUEST_USER_INPUT_FREE_TEXT_ANSWER
+          const answered = inputUserMessageTexts(body).some(text =>
+            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
           )
           this.writeSse(response, [
             responseCreated(responseId),
@@ -4012,7 +4008,9 @@ class DesktopE2EServer {
           ])
           return
         }
-        const answered = hasUserReplyAfterToolOutput(body, callId, REQUEST_USER_INPUT_ASYNC_ANSWER)
+        const answered = inputUserMessageTexts(body).some(text =>
+          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(
