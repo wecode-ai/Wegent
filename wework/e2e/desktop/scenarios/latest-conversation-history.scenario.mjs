@@ -231,6 +231,68 @@ export function createDesktopScenario({
         'The latest turn must reproduce navigation while its user message is not loaded'
       )
       await verifyHistoryNavigation(control)
+      const failedMarker = `${WORKBENCH} [data-testid="message-turn-navigation-marker"][data-turn-index="2"]`
+      const failedPreview = `${WORKBENCH} [data-testid="message-turn-navigation-preview"][data-turn-index="2"]`
+      // Report both defects so an empty preview cannot hide a broken click target.
+      const navigationFailures = []
+      await control.command('hover', failedMarker)
+      try {
+        await control.command('waitFor', `${failedPreview}.opacity-100`, {
+          text: 'Historical request failed before producing items',
+        })
+        assert.match(
+          await control.command('getText', failedPreview),
+          /Conversation turn 3|第 3 轮对话/,
+          'A turn without a prompt must still have a visible navigation title'
+        )
+      } catch (error) {
+        const previewText = await control.command('getText', failedPreview)
+        navigationFailures.push(
+          new Error(
+            `Failed-turn hover preview: text=${JSON.stringify(previewText)}; ${error.message}`
+          )
+        )
+      }
+      await control.command('click', failedMarker)
+      try {
+        await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
+          text: 'Historical request failed before producing items',
+          visible: true,
+        })
+        await control.command('waitFor', `${failedMarker}[data-active="true"]`)
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `${WORKBENCH} [data-testid="message-turn-navigation-loading"]`
+            )
+          ),
+          0,
+          'An itemless failed turn must navigate to its error without waiting for a user item'
+        )
+      } catch (error) {
+        const loadingIndicators = await control.command(
+          'getElementCount',
+          `${WORKBENCH} [data-testid="message-turn-navigation-loading"]`
+        )
+        navigationFailures.push(
+          new Error(`Failed-turn click navigation: loading=${loadingIndicators}; ${error.message}`)
+        )
+      }
+      if (navigationFailures.length > 0) {
+        throw new AggregateError(
+          navigationFailures,
+          navigationFailures.map(error => error.message).join('\n')
+        )
+      }
+      await control.command(
+        'click',
+        `${WORKBENCH} [data-testid="message-turn-navigation-marker"][data-turn-index="10"]`
+      )
+      await control.command(
+        'waitFor',
+        `${WORKBENCH} [data-testid="message-turn-navigation-marker"][data-turn-index="10"][data-active="true"]`
+      )
 
       const navigation = await requestExecutor(
         control,
