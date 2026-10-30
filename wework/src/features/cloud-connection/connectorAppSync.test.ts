@@ -319,6 +319,7 @@ describe('waitForLocalConnectorSync lifecycle', () => {
       timeoutMs: 30_000,
       intervalMs: 1_000,
     })
+    const outcome = waiting.catch((error: unknown) => error)
 
     await vi.advanceTimersByTimeAsync(500)
     const configureCallsBeforeSignOut = mocks.request.mock.calls.filter(
@@ -330,7 +331,7 @@ describe('waitForLocalConnectorSync lifecycle', () => {
     current = false
     await vi.advanceTimersByTimeAsync(5_000)
 
-    await expect(waiting).rejects.toBeInstanceOf(ConnectorSyncAbortedError)
+    expect(await outcome).toBeInstanceOf(ConnectorSyncAbortedError)
     expect(
       mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
     ).toHaveLength(configureCallsBeforeSignOut)
