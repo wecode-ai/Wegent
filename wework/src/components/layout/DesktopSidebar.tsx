@@ -312,7 +312,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
+  onCloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
   onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
   onDismissGitCloneOperation?: (operationId: string) => void
