@@ -179,6 +179,24 @@ export async function restorePersonalPluginRuntime(control, deviceId) {
   )
 }
 
+export async function switchPersonalPluginAccount(control, cloud) {
+  const startedAt = Date.now()
+  const user = await pluginApi(cloud, '/users/me')
+  const before = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(before.ready && before.deviceId, 'Account switching requires the existing device')
+  const disconnected = JSON.parse(await control.command('disconnectLocalExecutorCloud', 'body'))
+  assert.deepEqual(disconnected, { configured: false, connected: false })
+  await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
+  await restorePersonalPluginRuntime(control, before.deviceId)
+  const connection = JSON.parse(
+    await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+  )
+  assert.equal(connection.user.id, user.id, 'The renderer retained the previous cloud account')
+  const after = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.equal(after.deviceId, before.deviceId, 'An account switch changed the existing device')
+  return { userId: user.id, deviceId: after.deviceId, durationMs: Date.now() - startedAt }
+}
+
 export async function verifyAuthorSourceUninstall({
   control,
   cloudEnvironment,

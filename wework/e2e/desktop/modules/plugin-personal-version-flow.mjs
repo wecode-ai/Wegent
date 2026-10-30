@@ -10,6 +10,7 @@ import { createZipFixture } from './zip-fixtures.mjs'
 import { verifyPersonalRecipientManagedInstall } from './plugin-personal-recipient-install.mjs'
 import {
   prepareAuthorAccountInstall,
+  switchPersonalPluginAccount,
   verifyAuthorAccountUninstall,
   verifyAuthorSourceUninstall,
   verifyRecipientUninstallDoesNotRemoveOwner,
@@ -83,11 +84,17 @@ export async function verifyPersonalPluginVersionSubmission({
   codexHome,
   userDataDirectory,
 }) {
+  const runtimeCost = { processRestarts: [], accountSwitches: [] }
   const restartDesktopApp = async options => {
+    const startedAt = Date.now()
     await restartDesktopProcess(options)
     // The control connection precedes the asynchronous Core workbench mount.
     await control.command('waitFor', testId('new-chat-button'), {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    runtimeCost.processRestarts.push({
+      deviceSwitch: options?.expectNewDeviceIdentity === true,
+      durationMs: Date.now() - startedAt,
     })
   }
   await control.command('navigate', 'body', { value: '/' })
@@ -232,9 +239,7 @@ export async function verifyPersonalPluginVersionSubmission({
   let crossAccountUninstall
   try {
     // Keep the real local source on disk: cloud recipient authority must override it.
-    await restartDesktopApp({
-      appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: login.access_token },
-    })
+    runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, recipientCloud))
     await control.command('navigate', 'body', { value: '/plugins' })
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('click', testId('plugins-distribution-tab-personal'))
@@ -312,9 +317,7 @@ export async function verifyPersonalPluginVersionSubmission({
       `${JSON.stringify({ before: workBeforeEdit.totalTasks, after: workAfterEdit.totalTasks })}\n`
     )
   } finally {
-    await restartDesktopApp({
-      appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken },
-    })
+    runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, cloudEnvironment))
   }
   await verifyAuthorAccountUninstall({
     control,
@@ -356,6 +359,17 @@ export async function verifyPersonalPluginVersionSubmission({
     request,
     recipientToken: login.access_token,
   })
+  assert.equal(runtimeCost.processRestarts.length, 3, 'Personal publication added a process restart')
+  assert.equal(runtimeCost.accountSwitches.length, 2)
+  const accountCommands = control.commandHistory.filter(
+    command => command.action === 'setCloudSessionToken'
+  )
+  assert.equal(accountCommands.length, 2)
+  assert.ok(
+    accountCommands.every(command => command.value === '[redacted]'),
+    'Account-switch diagnostics exposed a backend token'
+  )
+  console.log(`[personal-plugin-cost] ${JSON.stringify(runtimeCost)}`)
   await writeFile(
     join(root, 'verification.json'),
     `${JSON.stringify(
@@ -369,6 +383,7 @@ export async function verifyPersonalPluginVersionSubmission({
         recipientAccess,
         rejectedPackage,
         revokedAccess,
+        runtimeCost,
       },
       null,
       2

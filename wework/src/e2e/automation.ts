@@ -79,6 +79,7 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
+  setDesktopE2ECloudSessionToken,
   type DesktopE2ERuntimeConfig,
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
@@ -2419,6 +2420,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await flushDesktopLocalStoragePersistence()
       return JSON.stringify(config)
     }
+    case 'setCloudSessionToken':
+      setDesktopE2ECloudSessionToken(command.value ?? '')
+      return ''
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {

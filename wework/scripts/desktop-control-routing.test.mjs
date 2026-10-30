@@ -68,6 +68,19 @@ test('delivers the runner wait budget to the renderer and preserves explicit bud
   }
 })
 
+test('delivers account credentials without retaining them in diagnostic command history', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const result = control.command('setCloudSessionToken', 'body', { value: 'recipient-token' })
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  assert.equal(command.value, 'recipient-token')
+  assert.equal(control.commandHistory.at(-1).value, '[redacted]')
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true })
+  assert.equal(await result, '')
+})
+
 test('keeps main-window commands on main after the popout registers', async t => {
   const control = await startControl(t)
   await register(control, 'main', 'main-1')

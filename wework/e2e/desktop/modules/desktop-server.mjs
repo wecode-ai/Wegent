@@ -1268,6 +1268,7 @@ class DesktopE2EServer {
     const { command } = this.commandQueue[commandIndex]
     this.commandHistory.push({
       ...command,
+      ...(command.action === 'setCloudSessionToken' ? { value: '[redacted]' } : {}),
       clientId,
       deliveredAt: new Date().toISOString(),
     })
