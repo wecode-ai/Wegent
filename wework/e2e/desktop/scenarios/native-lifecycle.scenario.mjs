@@ -241,6 +241,7 @@ export function createDesktopScenario(options) {
           executionRequest: {
             task_id: namedTaskId,
             subtask_id: `${namedTaskId}-request`,
+            user_id: 7300,
             user_name: 'native-lifecycle-user',
             team_namespace: 'default',
             team_name: 'native-lifecycle-agent',
