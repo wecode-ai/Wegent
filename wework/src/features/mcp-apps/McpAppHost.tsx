@@ -5,6 +5,7 @@ import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   McpAppDescriptor,
+  McpAppDiscovery,
   McpAppRequest,
   McpAppResult,
   McpAppResource,
@@ -68,7 +69,8 @@ export function McpAppHost({
   onDisplayModeChange?: (mode: McpUiDisplayMode, dismiss: () => void) => void
 }) {
   const { t } = useTranslation('common')
-  const [descriptor, setDescriptor] = useState<McpAppDescriptor | null>()
+  const [descriptor, setDescriptor] = useState<McpAppDescriptor>()
+  const [app, setApp] = useState<McpAppDiscovery>()
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   const [closed, setClosed] = useState(false)
@@ -134,32 +136,55 @@ export function McpAppHost({
     const epoch = discoveryEpoch.current
     const status = block.status
     discoveryPending.current = true
-    void requestApp({})
+    void requestApp({ method: 'discover' })
       .then(value => {
         if (epoch !== discoveryEpoch.current) return
         if (value) discovered.current = true
-        setDescriptor(value as McpAppDescriptor | null)
-        // A call can finish while discovery is pending; inspect the completed result once.
-        if (!value && status !== latest().block.status) setAttempt(value => value + 1)
+        setApp((value as McpAppDiscovery | null) ?? undefined)
       })
       .catch(error => {
         if (epoch === discoveryEpoch.current) {
-          console.debug(
-            '[Wework] MCP App discovery failed',
-            JSON.stringify({
-              callId: block.id,
-              requestedStatus: status,
-              currentStatus: latest().block.status,
-            })
+          console.warn(
+            '[Wework] Executor transport diagnostic ' +
+              JSON.stringify({
+                stage: 'mcp_app_discovery_failed',
+                callId: block.id,
+                taskId: address.taskId,
+                errorType: error instanceof Error ? error.name : typeof error,
+                code: record(error).code,
+                requestedStatus: status,
+                currentStatus: latest().block.status,
+              })
           )
-          discovered.current = true
-          setFailure(String(error.message ?? error))
+          // An unavailable discovery transport does not establish that an app exists.
         }
       })
       .finally(() => {
-        if (epoch === discoveryEpoch.current) discoveryPending.current = false
+        if (epoch !== discoveryEpoch.current) return
+        discoveryPending.current = false
+        // Schedule after clearing pending so the next effect cannot lose this transition.
+        if (!discovered.current && status !== latest().block.status) setAttempt(value => value + 1)
       })
   }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, attempt])
+
+  useEffect(() => {
+    if (!app || closed) return
+    let active = true
+    void requestApp({ method: 'initialize' })
+      .then(value => {
+        if (active) setDescriptor(value as McpAppDescriptor)
+      })
+      .catch(error => {
+        if (active) setFailure(String(error.message ?? error))
+      })
+      .finally(() => {
+        // A closed host must not retain a lease acquired by a late initialization.
+        if (!active) void requestApp({ method: 'release' }).catch(() => {})
+      })
+    return () => {
+      active = false
+    }
+  }, [app, closed])
 
   useEffect(() => {
     if (!descriptor || closed) return
@@ -394,10 +419,9 @@ export function McpAppHost({
       bridge.current.setHostContext(appHostContext(frame.current, mode, descriptor, block.id))
   }, [mode, descriptor, block.id])
 
-  if (descriptor === null && !failure) return null
-  if (descriptor === undefined && !failure) return null
+  if (!app) return null
   const availableModes = appDisplayModes(descriptor)
-  const title = descriptor?.tool?.title ?? descriptor?.server ?? t('mcp_apps.title')
+  const title = app.tool?.title ?? app.server ?? t('mcp_apps.title')
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false
@@ -427,6 +451,7 @@ export function McpAppHost({
               aria-label={t('mcp_apps.retry')}
               onClick={() => {
                 discovered.current = false
+                setApp(undefined)
                 setDescriptor(undefined)
                 setFailure(undefined)
                 setDocument(undefined)
@@ -447,6 +472,7 @@ export function McpAppHost({
             onClick={() => {
               if (closed) {
                 discovered.current = false
+                setApp(undefined)
                 setDescriptor(undefined)
                 setFailure(undefined)
                 setAttempt(value => value + 1)

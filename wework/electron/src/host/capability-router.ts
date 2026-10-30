@@ -6,6 +6,7 @@ export const HOST_CAPABILITIES = [
   'mcpApps.renewDocument',
   'mcpApps.saveFile',
   'e2e.mcpAppFrame',
+  'e2e.mcpAppDiscoveryFault',
   'app.getVersion',
   'app.quit',
   'app.relaunch',

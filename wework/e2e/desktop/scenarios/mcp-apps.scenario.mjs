@@ -1,4 +1,5 @@
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
+import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,6 +27,7 @@ const composer =
 export function createDesktopScenario({
   workspacePath,
   resultDir,
+  electronUserDataDirectory,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   captureScreenshot,
@@ -84,6 +86,24 @@ export function createDesktopScenario({
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
       assert.ok(address.taskId)
+      const discoveredApp = await requestExecutor(
+        control,
+        'runtime.mcp_apps.request',
+        { address, callId, method: 'discover' },
+        uiTimeoutMs
+      )
+      assert.equal(discoveredApp.server, 'counter')
+      assert.ok(discoveredApp.resourceUri.startsWith('ui://'))
+      assert.equal(Object.hasOwn(discoveredApp, 'resource'), false)
+      assert.equal(
+        await requestExecutor(
+          control,
+          'runtime.mcp_apps.request',
+          { address, callId: 'foreign', method: 'discover' },
+          uiTimeoutMs
+        ),
+        null
+      )
       const origin = await control.command('getLocationOrigin', 'body')
       let frameUrl = await control.command('getAttribute', '[data-testid="mcp-app-frame"]', {
         value: 'src',
@@ -356,6 +376,7 @@ export function createDesktopScenario({
       assert.ok(released, 'Leaving the task must release its app document')
       assert.ok(calls >= 8)
       await ordinaryMcp.verify(control)
+      await verifyMcpDiscoveryNetworkFailure(control, electronUserDataDirectory, uiTimeoutMs)
     },
   }
 }

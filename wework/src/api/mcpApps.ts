@@ -4,14 +4,16 @@ import type { RuntimeTaskAddress } from '@/types/api'
 export type McpAppTool = NonNullable<McpUiHostContext['toolInfo']>['tool']
 export type McpAppResult = Parameters<AppBridge['sendToolResult']>[0]
 export type McpAppResource = Awaited<ReturnType<NonNullable<AppBridge['onreadresource']>>>
-export interface McpAppDescriptor {
-  resource: McpAppResource
+export interface McpAppDiscovery {
   resourceUri: string
   tool: McpAppTool | null
   server: string
   arguments: Record<string, unknown>
   result: McpAppResult | null
   preferredDisplayMode?: 'inline' | 'fullscreen' | null
+}
+export interface McpAppDescriptor extends McpAppDiscovery {
+  resource: McpAppResource
 }
 export interface McpAppRequest {
   address: RuntimeTaskAddress

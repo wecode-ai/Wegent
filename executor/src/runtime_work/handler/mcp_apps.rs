@@ -69,6 +69,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| app_error("The task has no active session"))?;
         let call_id = string_field(&payload, "callId")
             .ok_or_else(|| app_error("Missing source invocation"))?;
+        let discovering = payload["method"].is_null() || payload["method"] == "discover";
         if payload["method"] == "release" {
             self.codex_app_server
                 .set_mcp_app_lease(&thread_id, &call_id, false)
@@ -85,7 +86,7 @@ impl RuntimeWorkRpcHandler {
         let source = match source_call(&read["thread"], &call_id) {
             Some(source) => source,
             // Streamed model calls can precede the native MCP invocation record.
-            None if payload["method"].is_null() => return Ok(Value::Null),
+            None if discovering => return Ok(Value::Null),
             None => return Err(app_error("Source invocation does not belong to this task")),
         };
         if read["thread"]["status"]["type"] == "notLoaded" {
@@ -120,7 +121,7 @@ impl RuntimeWorkRpcHandler {
         let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
             // Discovery is optional for ordinary MCP calls, including historical calls
             // whose server or tool is no longer in the current catalog.
-            return if payload["method"].is_null() {
+            return if discovering {
                 Ok(Value::Null)
             } else {
                 Err(app_error("Source invocation has no MCP App resource"))
@@ -134,6 +135,15 @@ impl RuntimeWorkRpcHandler {
         }
         if origin.is_none() {
             return Err(app_error("The source app is no longer available"));
+        }
+        let descriptor = || {
+            json!({"tool":origin,"server":server,
+            "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
+            "resourceUri":uri,"arguments":source["arguments"],"result":source["result"]})
+        };
+        // Discovery confirms app identity without loading HTML or retaining a connection.
+        if payload["method"] == "discover" {
+            return Ok(descriptor());
         }
         self.codex_app_server
             .set_mcp_app_lease(&thread_id, &call_id, true)
@@ -178,9 +188,9 @@ impl RuntimeWorkRpcHandler {
                     )
                     .await
                     .map_err(|_| app_error("Cannot read MCP App resource"))?;
-                Ok(json!({"resource":resource,"tool":origin,"server":server,
-                    "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
-                    "resourceUri":uri,"arguments":source["arguments"],"result":source["result"]}))
+                let mut descriptor = descriptor();
+                descriptor["resource"] = resource;
+                Ok(descriptor)
             }
             "tools/list" => {
                 Ok(json!({"tools":catalog.into_iter().filter(app_visible).collect::<Vec<_>>()}))
@@ -453,6 +463,7 @@ done
                 handler.upsert_local_task(task);
                 for call in ["missing-server", "missing-tool", "ordinary", "broken-catalog"] {
                     assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap(), Value::Null, "{call}");
+                    assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap(), Value::Null, "{call}");
                     for method in ["initialize", "tools/call", "resources/read", "ui/update-model-context"] {
                         assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":method})).await.is_err(), "{call}: {method}");
                     }
@@ -461,6 +472,9 @@ done
                     assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.is_err(), "{call}");
                 }
                 for call in ["catalog-app", "result-app"] {
+                    let discovery = handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap();
+                    assert_eq!(discovery["resourceUri"], "ui://app");
+                    assert!(discovery.get("resource").is_none());
                     let app = handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap();
                     assert_eq!(app["resourceUri"], "ui://app");
                     assert_eq!(app["resource"]["contents"][0]["text"], "Ready");

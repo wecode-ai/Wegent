@@ -118,6 +118,14 @@ When no request ID exists, the protocol layer omits the `request_id` field inste
 
 To investigate a request, take the `request_id` from the Wework frontend, DSH, or Backend log near the user-visible failure, then search for that exact value in the same diagnostic directory or centralized log system. Start and finish entries also record the method, outcome, and elapsed time, so a missing boundary identifies the component where the request stopped without relying on approximate timestamps or task names.
 
+### MCP App Discovery and Request Failure Diagnostics
+
+An ordinary MCP tool invocation does not establish that a visual app exists. The conversation first uses `discover` on `runtime.mcp_apps.request` to validate the source invocation and the app resource identity from its tool catalog. A call without an app returns `null`, creates no app card, and retains no app connection. Once an app is confirmed, `initialize` reads its resource and establishes its lease. Discovery failures produce diagnostics only; resource loading failures for confirmed apps retain the error and retry controls.
+
+`executor-transport.log` in the Electron log directory records local RPC request IDs, methods, elapsed time, and failure stages: `fetch_failed`, `body_parse_failed`, or `rpc_failed`. MCP discovery failures also record call IDs, task IDs, and tool status. Chromium local RPC network errors record the path, window identity, and `net::ERR_*` code without request bodies, cookies, or authentication data. Correlate request IDs with DSH and executor logs, then correlate window identity and time with Chromium errors. `Failed to fetch` alone does not establish a server business error or a specific network cause.
+
+The desktop CI `mcp-apps` checkpoint covers real app loading, resource failure recovery, ordinary historical calls, and the absence of cards after Chromium cancels a real discovery request, followed by network recovery. Fault injection is restricted to isolated E2E runs and never replaces Runtime responses.
+
 ### Executor Startup Environment and Codex Home Initialization
 
 Automatic credential synchronization applies cooldowns to credential attempts. When login or logout invalidates an old migration intent, `plugin_auth_migration_expired` must not suppress a fresh login on the next cycle. Other failures retain their cooldown to avoid repeated native authorization prompts. Synchronization logs contain only plugin and connector identifiers and result codes, never credentials or migration-intent tokens.

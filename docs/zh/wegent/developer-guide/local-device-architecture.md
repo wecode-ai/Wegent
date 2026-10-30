@@ -118,6 +118,14 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
 
+### MCP 应用探测与请求失败诊断
+
+普通 MCP 工具调用不代表存在可视化应用。会话先通过 `runtime.mcp_apps.request` 的 `discover` 方法验证源调用和工具目录中的应用资源标识；无应用时返回 `null`，不创建应用卡片，也不保留应用连接。确认存在应用后，`initialize` 才读取资源并建立租约。探测失败仅记录诊断；已确认应用的资源加载失败仍显示错误和重试入口。
+
+Electron 日志目录中的 `executor-transport.log` 保存本地 RPC 的请求 ID、方法、耗时和失败阶段：`fetch_failed`、`body_parse_failed` 或 `rpc_failed`。MCP 探测失败另记录调用 ID、任务 ID 和工具状态。Chromium 本地 RPC 网络错误记录路径、窗口标识和 `net::ERR_*` 错误码，不记录请求正文、Cookie 或认证信息。先按请求 ID 对照 DSH 和 executor 日志，再用窗口标识及时间对照 Chromium 错误；仅凭 `Failed to fetch` 不能认定为服务端业务错误或某一种网络故障。
+
+桌面 CI 的 `mcp-apps` 检查点覆盖真实应用加载、资源失败重试、普通历史调用，以及通过 Chromium 取消真实探测请求后的无卡片状态和网络恢复。故障注入只在隔离 E2E 环境启用，不替换 Runtime 响应。
+
 ### Executor 启动环境与 Codex Home 初始化
 
 自动凭据同步只对实际凭据尝试应用冷却。登录或退出使旧迁移意图失效时，`plugin_auth_migration_expired` 不得阻止下一轮处理新登录意图；其他失败仍保留冷却，避免反复触发原生授权。同步日志仅记录插件、连接标识和结果码，不记录凭据或迁移意图令牌。

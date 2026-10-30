@@ -27,3 +27,18 @@ test('persists task diagnostics from separate renderer surfaces without recordin
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('persists executor transport diagnostics with the configured prefix', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-transport-log-'))
+  try {
+    const path = join(directory, 'executor-transport.log')
+    const prefix = '[Wework] Executor transport diagnostic '
+    const log = new RuntimeDiagnosticsLog(path, prefix)
+    await log.record(2, prefix + JSON.stringify({ requestId: 'rpc-1', stage: 'fetch_failed' }))
+    await log.record(2, 'unrelated console output')
+    expect(await readFile(path, 'utf8')).toContain('"requestId":"rpc-1"')
+    expect(await readFile(path, 'utf8')).not.toContain('unrelated console output')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

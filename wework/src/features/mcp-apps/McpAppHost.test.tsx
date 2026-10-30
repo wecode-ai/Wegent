@@ -40,6 +40,13 @@ const running: ToolBlock = {
   subtaskId: 'turn',
   createdAt: 0,
 }
+const discovery = {
+  server: 'app',
+  resourceUri: 'ui://app',
+  tool: null,
+  arguments: {},
+  result: null,
+}
 
 beforeEach(() => {
   native.invoke.mockClear()
@@ -65,10 +72,37 @@ describe('MCP App discovery', () => {
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
-  it('preserves a pending resource error across transcript updates and retries only on user action', async () => {
+  it('does not create cards for failed optional discovery and discovers on the next status update', async () => {
+    const requestMcpApp = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    const api = { requestMcpApp }
+    const hosts = (status: ToolBlock['status']) => (
+      <>
+        {Array.from({ length: 12 }, (_, index) => (
+          <McpAppHost
+            key={index}
+            block={{ ...running, id: `call-${index}`, status }}
+            address={address}
+            api={api}
+          />
+        ))}
+      </>
+    )
+    const view = render(hosts('running'))
+    await act(async () => {})
+    expect(requestMcpApp).toHaveBeenCalledTimes(12)
+    expect(screen.queryByTestId('mcp-app')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    requestMcpApp.mockResolvedValue(null)
+    await act(async () => view.rerender(hosts('done')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(24)
+    expect(screen.queryByTestId('mcp-app')).not.toBeInTheDocument()
+  })
+
+  it('preserves a confirmed app resource error across transcript updates and retries only on user action', async () => {
     let reject!: (error: Error) => void
     const requestMcpApp = vi
       .fn()
+      .mockResolvedValueOnce(discovery)
       .mockImplementationOnce(
         () =>
           new Promise((_, fail) => {
@@ -78,7 +112,15 @@ describe('MCP App discovery', () => {
       .mockResolvedValue(null)
     const api = { requestMcpApp }
     const { rerender } = render(<McpAppHost block={running} address={address} api={api} />)
-    expect(requestMcpApp).toHaveBeenCalledTimes(1)
+    await act(async () => {})
+    expect(requestMcpApp).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ method: 'discover' })
+    )
+    expect(requestMcpApp).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ method: 'initialize' })
+    )
     rerender(
       <McpAppHost
         block={{ ...running, status: 'done', toolOutput: { content: [] } }}
@@ -86,11 +128,38 @@ describe('MCP App discovery', () => {
         api={api}
       />
     )
-    await act(async () => reject(new Error('Resource unavailable')))
-    expect(screen.getByRole('alert')).toHaveTextContent('Resource unavailable')
-    expect(requestMcpApp).toHaveBeenCalledTimes(1)
-    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
+    await act(async () => reject(new TypeError('Failed to fetch')))
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch')
+    expect(screen.getByTestId('mcp-app')).toHaveTextContent('app')
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('discovers a completed app when an earlier in-flight discovery fails', async () => {
+    let reject!: (error: Error) => void
+    const loaded = {
+      ...discovery,
+      resource: { contents: [{ uri: 'ui://app', mimeType: 'text/html', text: '<p>Ready</p>' }] },
+    }
+    native.invoke.mockResolvedValue({ id: 'recovered', url: 'http://127.0.0.1/recovered' })
+    const requestMcpApp = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, fail) => {
+            reject = fail
+          })
+      )
+      .mockResolvedValueOnce(discovery)
+      .mockResolvedValue(loaded)
+    const api = { requestMcpApp }
+    const view = render(<McpAppHost block={running} address={address} api={api} />)
+    view.rerender(<McpAppHost block={{ ...running, status: 'done' }} address={address} api={api} />)
+    await act(async () => reject(new TypeError('Failed to fetch')))
+    expect(requestMcpApp).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
@@ -104,6 +173,27 @@ describe('MCP App close completion', () => {
     result: { content: [] },
     arguments: {},
   }
+
+  it('releases a late initialization after its host is closed', async () => {
+    let finish!: (value: typeof descriptor) => void
+    const requestMcpApp = vi
+      .fn()
+      .mockResolvedValueOnce(discovery)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValue({})
+    const view = render(<McpAppHost block={running} address={address} api={{ requestMcpApp }} />)
+    await act(async () => {})
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
+    await act(async () => finish(descriptor))
+    expect(requestMcpApp).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'release' }))
+    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
+    view.unmount()
+  })
 
   it('preserves widget state across equivalent transcript results and sends actual changes', async () => {
     native.invoke.mockResolvedValue({
