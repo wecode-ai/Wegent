@@ -23,6 +23,8 @@ const harness = vi.hoisted(() => ({
   },
   locks: new Map<string, Promise<unknown>>(),
   desktop: false,
+  focused: true,
+  focusListeners: new Set<(focused: boolean) => void>(),
   host: vi.fn(),
   hostListeners: new Set<(event: { type: string }) => void>(),
   transcript: vi.fn(),
@@ -37,8 +39,11 @@ vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
   useWorkspaceTabs: () => harness.tabs,
 }))
 vi.mock('@/desktop/windowFocus', () => ({
-  isMainWindowFocused: () => true,
-  subscribeMainWindowFocus: () => () => {},
+  isMainWindowFocused: () => harness.focused,
+  subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
+    harness.focusListeners.add(listener)
+    return () => harness.focusListeners.delete(listener)
+  },
 }))
 vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => harness.desktop,
@@ -125,6 +130,8 @@ beforeEach(() => {
       },
     },
   })
+  harness.focused = true
+  harness.focusListeners.clear()
   harness.desktop = false
   harness.hostListeners.clear()
   harness.host.mockReset()
@@ -698,6 +705,20 @@ describe('unified human response', () => {
     expect(context!.pending[0].question).toBe('Keep existing customer behavior?')
     viewResult.unmount()
   })
+  it('delivers once on return when no channel could deliver while inactive', async () => {
+    harness.focused = false
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    await screen.findByTestId('runtime-interaction-notice')
+    fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+    act(() => harness.focusListeners.forEach(listener => listener(false)))
+    act(() => harness.focusListeners.forEach(listener => listener(true)))
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(context!.pending).toHaveLength(1)
+  })
+
   it('keeps pending work when a reminder is dismissed or opened, independently of unread', async () => {
     view()
     await screen.findByTestId('runtime-interaction-notice')

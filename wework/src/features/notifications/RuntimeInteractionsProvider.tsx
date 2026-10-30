@@ -539,9 +539,7 @@ function RuntimeInteractionsState({
     let changed = false
     for (const item of pending) {
       if (records[item.id]) continue
-      next[item.id] = { version: 'delivered', savedAt: Date.now() }
-      changed = true
-      if (focused && [...views.current.values()].includes(item.id)) continue
+      const alreadyViewed = focused && [...views.current.values()].includes(item.id)
       const origin = item.task.task.runtimeHandle?.origin
       const category =
         item.project ||
@@ -551,6 +549,12 @@ function RuntimeInteractionsState({
           origin.initiatedBy === 'stand_in')
           ? 'collaboration'
           : 'tasks'
+      // An inactive window with system notifications disabled has delivered nothing.
+      // Keep the request eligible for its in-app reminder when the user returns.
+      if (!alreadyViewed && !preferences[category][focused ? 'in_app' : 'system']) continue
+      next[item.id] = { version: 'delivered', savedAt: Date.now() }
+      changed = true
+      if (alreadyViewed) continue
       if (!focused && preferences[category].system) {
         void sendSystemNotification({
           title: item.task.task.title,

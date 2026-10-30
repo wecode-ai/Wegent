@@ -228,6 +228,15 @@ export function createDesktopScenario({
           responseCompleted(responseId),
         ])
       )
+      // macOS background runs do not focus the native window through renderer clicks.
+      // Wait for the real request before focusing, so model latency cannot lose the prerequisite.
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('waitFor', '[data-testid="wework-notifications-pending"]', {
+        text: QUESTION,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('focusMainWindow', 'body')
       await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
         text: QUESTION,
         timeoutMs: modelResponseTimeoutMs,
