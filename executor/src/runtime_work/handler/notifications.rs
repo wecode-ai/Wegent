@@ -645,8 +645,8 @@ impl RuntimeWorkRpcHandler {
 
             if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
                 log_executor_event("runtime work notification router app-server exited", &[]);
-                self.settle_native_transport_exit();
-                return;
+                self.settle_native_transport_exit(message.process_generation());
+                continue;
             }
 
             self.route_codex_notification(message);

@@ -361,7 +361,11 @@ must preserve recovery journals for still-active Goal executions. Context compac
 update content routing without replacing execution state.
 
 The lifecycle owner receives native events through a bounded channel with backpressure,
-so congestion cannot discard events. Ordinary broadcast serves observers such as reply
+so congestion cannot discard events. Subscriptions belong to the long-lived client and
+survive app-server replacement. Events and native turn executions carry a process generation;
+an old process exit settles only executions it owns, preserving replacement executions and
+unbound request admissions. Explicit stops also publish an exit boundary, while the owner
+keeps receiving events from the replacement process. Ordinary broadcast serves observers such as reply
 prediction. Request cleanup does not wait for native publication; no completion handshake
 or timeout fallback connects the two lifetimes. The sole native owner retains source order.
 

@@ -694,8 +694,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let empty_launch_environment = BTreeMap::new();
         let launch_environment = launch_config
@@ -728,6 +727,7 @@ impl CodexAppServerClient {
                 &self.binary,
                 state.next_id,
                 &process_launch_config,
+                Arc::clone(&state.runtime_notifications),
             )
             .await?;
             state.thread_mcp_configurations.clear();
@@ -838,8 +838,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         Ok(state
             .process
@@ -1062,8 +1061,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let mut initialize_elapsed = None;
         let process_environment =
@@ -1089,9 +1087,13 @@ impl CodexAppServerClient {
                 ..CodexLaunchConfig::default()
             };
             let initialize_started_at = Instant::now();
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &launch_config,
+                Arc::clone(&state.runtime_notifications),
+            )
+            .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
             state.thread_mcp_configurations.clear();
             state.process = Some(process);
@@ -1118,8 +1120,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
@@ -1145,6 +1146,7 @@ impl CodexAppServerClient {
                 &self.binary,
                 state.next_id,
                 &process_launch_config,
+                Arc::clone(&state.runtime_notifications),
             )
             .await?;
             state.thread_mcp_configurations.clear();
@@ -1291,6 +1293,7 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    runtime_notifications: RuntimeNotificationSubscribers,
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
@@ -1318,6 +1321,8 @@ async fn stop_codex_app_server_process(
         fail_all_pending(&process.pending, error.to_owned()).await;
     }
     process.reader_task.abort();
+    let _ = (&mut process.reader_task).await;
+    notify_shared_process_closed(&process.notifications, "codex app-server stopped").await;
     terminate_codex_app_server_child(&mut process.child).await;
     true
 }
@@ -1326,6 +1331,7 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            runtime_notifications: Arc::new(StdMutex::new(Vec::new())),
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
@@ -1343,19 +1349,29 @@ impl Default for CodexAppServerSharedState {
 
 type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
+type RuntimeNotificationSubscribers = Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>;
+
 #[derive(Clone)]
 struct CodexNotificationHub {
+    process_generation: u64,
     all: broadcast::Sender<CodexNotification>,
-    runtime: Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>,
+    runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
 }
 
 impl CodexNotificationHub {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::for_runtime(Arc::new(StdMutex::new(Vec::new())))
+    }
+
+    fn for_runtime(runtime: RuntimeNotificationSubscribers) -> Self {
+        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
         Self {
             all,
-            runtime: Arc::new(StdMutex::new(Vec::new())),
+            process_generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
@@ -1390,7 +1406,8 @@ impl CodexNotificationHub {
     }
 
     async fn send(&self, message: Value) {
-        let message = CodexNotification::from(message);
+        let message =
+            CodexNotification::from(message).with_process_generation(self.process_generation);
         self.send_runtime(message.clone()).await;
         let _ = self.all.send(message.clone());
         let thread_id =
@@ -1412,6 +1429,7 @@ impl CodexNotificationHub {
     }
 
     async fn send_runtime(&self, message: CodexNotification) {
+        let message = message.with_process_generation(self.process_generation);
         let subscribers = {
             let mut subscribers = self
                 .runtime
@@ -1488,6 +1506,7 @@ async fn start_persistent_codex_app_server(
     binary: &str,
     next_id: u64,
     request_launch_config: &CodexLaunchConfig,
+    runtime_notifications: RuntimeNotificationSubscribers,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
@@ -1530,7 +1549,7 @@ async fn start_persistent_codex_app_server(
                 &[("process_id", process_id)],
             );
             let pending = Arc::new(Mutex::new(HashMap::new()));
-            let notifications = CodexNotificationHub::new();
+            let notifications = CodexNotificationHub::for_runtime(runtime_notifications);
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 Arc::clone(&pending),

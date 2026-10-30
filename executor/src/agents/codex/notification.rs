@@ -18,10 +18,20 @@ use serde_json::Value;
 pub struct CodexNotification {
     message: Value,
     sequence: u64,
+    process_generation: u64,
     runtime_delivery: Arc<AtomicBool>,
 }
 
 impl CodexNotification {
+    pub(crate) fn process_generation(&self) -> u64 {
+        self.process_generation
+    }
+
+    pub(crate) fn with_process_generation(mut self, generation: u64) -> Self {
+        self.process_generation = generation;
+        self
+    }
+
     pub(crate) fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -40,6 +50,7 @@ impl From<Value> for CodexNotification {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         Self {
             sequence: SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1,
+            process_generation: 0,
             message,
             runtime_delivery: Arc::new(AtomicBool::new(false)),
         }

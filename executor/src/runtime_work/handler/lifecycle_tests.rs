@@ -42,10 +42,8 @@ fn rpc_success_cannot_consume_a_native_turn_before_its_answer_settlement() {
 
 #[tokio::test]
 async fn request_observer_does_not_wait_for_native_publication() {
-    use std::{
-        future::Future,
-        task::{Context, Waker},
-    };
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
 
     let (handler, root, request) = setup("independent-request-publication");
     let mut observation = Box::pin(handler.observe_execution_codex_notification(
@@ -55,7 +53,8 @@ async fn request_observer_does_not_wait_for_native_publication() {
         None,
         notification("turn/completed", "turn-1"),
     ));
-    let mut context = Context::from_waker(Waker::noop());
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
     assert!(observation.as_mut().poll(&mut context).is_ready());
     drop(observation);
     let _ = std::fs::remove_dir_all(root);
@@ -295,7 +294,7 @@ async fn transport_exit_stops_execution_without_rewriting_the_completed_turn_or_
     let (handler, root, _) = setup("native-transport-exit");
     handler.route_codex_notification(notification("turn/started", "turn-1"));
     handler.route_codex_notification(notification("turn/completed", "turn-1"));
-    handler.settle_native_transport_exit();
+    handler.settle_native_transport_exit(0);
     let task = handler.local_task_link("task-1").unwrap();
     let state = task.execution_state.unwrap();
     assert_eq!(
@@ -306,6 +305,44 @@ async fn transport_exit_stops_execution_without_rewriting_the_completed_turn_or_
     assert_eq!(state.execution_outcome.as_deref(), Some("cancelled"));
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert!(!task.running);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn old_process_exit_cannot_cancel_replacement_or_unbound_admission() {
+    let (handler, root, _) = setup("native-process-replacement");
+    let (sender, receiver) = tokio::sync::mpsc::channel(4);
+    for message in [
+        notification("turn/started", "turn-old").with_process_generation(1),
+        CodexNotification::from(json!({"method":"codex/app-server/exited"}))
+            .with_process_generation(1),
+        notification("turn/started", "turn-new").with_process_generation(2),
+        CodexNotification::from(json!({"method":"codex/app-server/exited"}))
+            .with_process_generation(1),
+    ] {
+        sender.send(message).await.unwrap();
+    }
+    drop(sender);
+    handler.run_notification_router(receiver).await;
+    let task = handler.local_task_link("task-1").unwrap();
+    assert!(task.running);
+    assert_eq!(
+        task.execution_state.unwrap().turn_id.as_deref(),
+        Some("turn-new")
+    );
+    handler.settle_native_transport_exit(2);
+    assert!(!handler.local_task_link("task-1").unwrap().running);
+
+    handler.store.update_task("task-1", |link| {
+        crate::runtime_work::lifecycle::begin_native_request(link);
+    });
+    handler.settle_native_transport_exit(2);
+    let task = handler.local_task_link("task-1").unwrap();
+    assert!(task.running);
+    assert_eq!(
+        task.execution_state.unwrap().phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+    );
     let _ = fs::remove_dir_all(root);
 }
 

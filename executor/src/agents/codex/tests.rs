@@ -75,6 +75,38 @@ async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
     assert_eq!(observer.recv().await.unwrap()["method"], "turn/completed");
 }
 
+#[tokio::test]
+async fn native_subscription_survives_process_stop_and_replacement() {
+    let mut state = CodexAppServerSharedState::default();
+    let hub = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let generation = hub.process_generation;
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    state.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    assert!(stop_codex_app_server_process(&mut state, None).await);
+    let exit = runtime.try_recv().unwrap();
+    assert_eq!(exit["method"], "codex/app-server/exited");
+    assert_eq!(exit.process_generation(), generation);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    let replacement = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    assert_ne!(replacement.process_generation, generation);
+    replacement.send(json!({"method": "turn/started"})).await;
+    let start = runtime.try_recv().unwrap();
+    assert_eq!(start["method"], "turn/started");
+    assert_eq!(start.process_generation(), replacement.process_generation);
+}
+
 #[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
@@ -588,10 +620,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
 
 #[tokio::test]
 async fn notification_hub_backpressures_runtime_without_losing_terminal_events() {
-    use std::{
-        future::Future,
-        task::{Context, Waker},
-    };
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
 
     let hub = CodexNotificationHub::new();
     let mut runtime = hub.subscribe_runtime();
@@ -600,7 +630,8 @@ async fn notification_hub_backpressures_runtime_without_losing_terminal_events()
             .await;
     }
     let mut terminal = Box::pin(hub.send(json!({"method": "turn/completed"})));
-    let mut context = Context::from_waker(Waker::noop());
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
     assert!(terminal.as_mut().poll(&mut context).is_pending());
     assert_eq!(runtime.recv().await.unwrap()["index"], 0);
     terminal.await;
@@ -6156,7 +6187,19 @@ async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers(
 
 #[tokio::test]
 async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
-    let client = CodexAppServerClient::new("unused-expired-approval");
+    let mut client = CodexAppServerClient::new("expired-approval");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(async {}),
+    });
     let (_answer_tx, answer_rx) = mpsc::channel(1);
     let router = InteractionAnswerRouter::new(answer_rx);
     let (notifications, mut received) = mpsc::unbounded_channel();
@@ -6180,8 +6223,12 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
     assert_eq!(event["params"]["interactionStatus"], "expired");
     assert_eq!(event["params"]["expiresAtUnixMs"], 0);
     assert_eq!(event["params"]["approvalMethod"], request["method"]);
+    let native_event = runtime.try_recv().unwrap();
+    assert_eq!(native_event.sequence(), event.sequence());
+    assert_eq!(*native_event, *event);
     assert_eq!(
         codex_approval_result(&request, &json!({})).unwrap()["decision"],
         "decline"
     );
+    client.restart().await;
 }

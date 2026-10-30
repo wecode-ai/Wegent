@@ -56,15 +56,21 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn settle_native_transport_exit(&self) {
+    pub(super) fn settle_native_transport_exit(&self, generation: u64) {
         for task in self.local_task_links(true) {
             if !native_execution_state(&task).is_some_and(|state| {
-                state.phase != NativeExecutionPhase::Idle && !state.phase.awaits_admission()
+                state.phase != NativeExecutionPhase::Idle
+                    && !state.phase.awaits_admission()
+                    && state.process_generation == Some(generation)
             }) {
                 continue;
             }
             if let Some(link) = self.store.update_task(&task.local_task_id, |link| {
-                settle_native_execution(link, "cancelled");
+                if native_execution_state(link)
+                    .is_some_and(|state| state.process_generation == Some(generation))
+                {
+                    settle_native_execution(link, "cancelled");
+                }
             }) {
                 let request = ExecutionRequest {
                     task_id: task.local_task_id.clone(),
@@ -226,6 +232,7 @@ impl RuntimeWorkRpcHandler {
                 epoch: native_execution_epoch().to_owned(),
                 updated_at: now_ms(),
                 native_sequence: message.sequence(),
+                process_generation: Some(message.process_generation()),
                 phase: if started {
                     NativeExecutionPhase::Running
                 } else if continuing {

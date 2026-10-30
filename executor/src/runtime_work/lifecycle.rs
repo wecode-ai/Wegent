@@ -33,6 +33,8 @@ pub(crate) struct NativeExecutionState {
     pub epoch: String,
     pub updated_at: i64,
     pub native_sequence: u64,
+    #[serde(skip)]
+    pub process_generation: Option<u64>,
     pub phase: NativeExecutionPhase,
     pub turn_id: Option<String>,
     pub latest_turn_id: Option<String>,
@@ -87,6 +89,7 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
         epoch: native_execution_epoch().into(),
         updated_at: now_ms(),
         native_sequence: previous.as_ref().map_or(0, |state| state.native_sequence),
+        process_generation: None,
         phase: NativeExecutionPhase::Starting,
         turn_id: None,
         latest_turn_id: previous.and_then(|state| state.latest_turn_id),
