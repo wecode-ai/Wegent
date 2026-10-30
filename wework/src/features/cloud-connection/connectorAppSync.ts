@@ -22,39 +22,68 @@ export interface ConnectorTokenDeadline {
   expiresInSeconds: number
 }
 
+/** Thrown when the attempt owning a synchronization is no longer current. */
+export class ConnectorSyncAbortedError extends Error {
+  constructor() {
+    super('Connector synchronization was superseded')
+    this.name = 'ConnectorSyncAbortedError'
+  }
+}
+
 /**
  * Push the cloud connector catalog into the local executor.
  *
  * Resolving means the executor has finished applying the app list, so callers
  * can treat it as the barrier between "authorization stored in the cloud" and
  * "the local runtime can actually call the connector's tools".
+ *
+ * The caller allocates the revision before its first await and passes
+ * `isCurrent`, which every stage re-checks. A synchronization that lost its
+ * account, backend or connection while a request was in flight must neither
+ * publish the old catalog nor allocate a revision newer than the `clear` that
+ * already ran: the executor compares revisions, so a late attempt would
+ * otherwise undo a logout.
  */
 export async function synchronizeConnectorApps({
   apiBaseUrl,
   token,
   requestedAtMs = Date.now(),
+  syncRevision = nextConnectorSyncRevision(),
   onConfigured,
+  isCurrent,
 }: {
   apiBaseUrl: string
   token: string
   /** When the caller started the attempt; keeps the deadline off clock drift. */
   requestedAtMs?: number
+  /** Revision allocated when the attempt started; never regenerated later. */
+  syncRevision?: number
   /** Called once the runtime accepted the connector token. */
   onConfigured?: (deadline: ConnectorTokenDeadline) => void
+  /** False once the attempt no longer owns the current account/connection. */
+  isCurrent?: () => boolean
 }): Promise<ConnectorAppSyncResult> {
+  const checkCurrent = () => {
+    if (isCurrent && !isCurrent()) throw new ConnectorSyncAbortedError()
+  }
+  checkCurrent()
   const connectorToken = await issueWegentConnectorToken(apiBaseUrl, token)
+  checkCurrent()
   const expiresAtMs = requestedAtMs + connectorToken.expires_in * 1_000
   await requestLocalExecutor('runtime.connectors.configure', {
     apiBaseUrl,
     connectorToken: connectorToken.access_token,
     expiresAtMs,
-    syncRevision: nextConnectorSyncRevision(),
+    syncRevision,
   })
+  checkCurrent()
   onConfigured?.({ expiresAtMs, expiresInSeconds: connectorToken.expires_in })
   const installed = await listWegentInstalledConnectorApps(apiBaseUrl, token)
+  checkCurrent()
   // Guidance for unauthorized apps is additive: a catalog failure must not
   // stop the authorized apps from syncing.
   const catalog = await listWegentConnectorApps(apiBaseUrl, token).catch(() => [])
+  checkCurrent()
   const callable = installed.apps
     .filter(app => app.enabled && app.callable)
     .map(app => ({
@@ -84,6 +113,7 @@ export async function synchronizeConnectorApps({
   const result = await requestLocalExecutor<{ changed: boolean }>('runtime.connectors.apps.sync', {
     apps: [...callable, ...awaitingAuthorization],
   })
+  checkCurrent()
   return {
     changed: Boolean(result.changed),
     callableSlugs: [...callableSlugs],

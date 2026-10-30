@@ -328,6 +328,7 @@ async fn a_stale_renewal_keeps_a_newer_grant() {
                 stale.kinds_id,
                 &stale_document,
                 "old-refresh",
+                "",
             )
             .await
             .unwrap();
@@ -419,8 +420,14 @@ async fn a_disconnect_during_refresh_is_not_revived() {
                 }
             });
             assert_eq!(
-                refresh::write_json_if_grant(&mysql, stale.kinds_id, &renewed, "old-refresh")
-                    .await
+                refresh::write_json_if_grant(
+                    &mysql,
+                    stale.kinds_id,
+                    &renewed,
+                    "old-refresh",
+                    "",
+                )
+                .await
                     .unwrap(),
                 0
             );
@@ -435,6 +442,135 @@ async fn a_disconnect_during_refresh_is_not_revived() {
             assert_eq!(spec["status"], json!("disconnected"));
             assert_eq!(spec["refreshTokenEncrypted"], json!(null));
             assert_eq!(spec["accessTokenEncrypted"], json!(""));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// A rejection for the started grant can commit before the rotation it lost.
+///
+/// The token endpoint rotates the refresh token on first use, so the losing
+/// request is answered with `invalid_grant` for the same starting grant. If
+/// that rejection commits first, the delayed successful rotation still has to
+/// restore the grant instead of leaving the connection unusable.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_rejection_committed_first_still_keeps_the_rotation() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+
+            // The competing request is rejected first for the same grant.
+            assert_eq!(
+                refresh::reject_if_grant(&mysql, stale.kinds_id, "old-refresh")
+                    .await
+                    .unwrap(),
+                1
+            );
+            let rejected = read_spec(&mysql).await;
+            assert_eq!(rejected["status"], json!("expired"));
+            assert_eq!(rejected["refreshTokenEncrypted"], json!(null));
+            assert_eq!(rejected["accessTokenEncrypted"], json!("old-access"));
+
+            let rotated = json!({
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "ConnectorConnection",
+                "metadata": {"name": SLUG, "namespace": "system"},
+                "spec": {
+                    "connectorAppSlug": SLUG,
+                    "status": "connected",
+                    "grantedScopes": ["mcp.read"],
+                    "expiresAt": "2035-01-01T00:00:00",
+                    "accessTokenEncrypted": "rotated-access",
+                    "refreshTokenEncrypted": "rotated-refresh",
+                    "tokenType": "bearer",
+                }
+            });
+            assert_eq!(
+                refresh::write_json_if_grant(
+                    &mysql,
+                    stale.kinds_id,
+                    &rotated,
+                    "old-refresh",
+                    "old-access",
+                )
+                .await
+                .unwrap(),
+                1,
+                "the delayed rotation restores the cleared grant"
+            );
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("connected"));
+            assert_eq!(spec["accessTokenEncrypted"], json!("rotated-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("rotated-refresh"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// The same delayed rotation must not reopen a grant the user replaced.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_delayed_rotation_does_not_replace_a_reauthorized_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+            refresh::reject_if_grant(&mysql, stale.kinds_id, "old-refresh")
+                .await
+                .unwrap();
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+
+            let rotated = json!({
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "ConnectorConnection",
+                "metadata": {"name": SLUG, "namespace": "system"},
+                "spec": {
+                    "connectorAppSlug": SLUG,
+                    "status": "connected",
+                    "accessTokenEncrypted": "stale-access",
+                    "refreshTokenEncrypted": "stale-refresh",
+                }
+            });
+            assert_eq!(
+                refresh::write_json_if_grant(
+                    &mysql,
+                    stale.kinds_id,
+                    &rotated,
+                    "old-refresh",
+                    "old-access",
+                )
+                .await
+                .unwrap(),
+                0,
+                "the re-authorized grant is authoritative"
+            );
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["accessTokenEncrypted"], json!("new-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("new-refresh"));
         }
     })
     .await;

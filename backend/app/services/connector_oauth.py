@@ -459,6 +459,7 @@ class ConnectorOAuthService:
                     else None
                 ),
                 expected_refresh_token_encrypted=grant,
+                expected_access_token_encrypted=connection.access_token_encrypted,
             )
             if saved is not None:
                 return saved

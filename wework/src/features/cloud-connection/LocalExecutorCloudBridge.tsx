@@ -7,7 +7,7 @@ import {
 } from './localExecutorCloudConnection'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
 import { nextConnectorSyncRevision } from './connectorSyncRevision'
-import { synchronizeConnectorApps } from './connectorAppSync'
+import { ConnectorSyncAbortedError, synchronizeConnectorApps } from './connectorAppSync'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
@@ -170,11 +170,16 @@ export function LocalExecutorCloudBridge({
       const generation = ++attemptGeneration
       const isCurrentAttempt = () => !cancelled && generation === attemptGeneration
       const requestedAtMs = Date.now()
+      // Allocate the revision before the first await so a late attempt can
+      // never outbid a `clear` that already ran for this connection.
+      const syncRevision = nextConnectorSyncRevision()
       try {
         const result = await synchronizeConnectorApps({
           apiBaseUrl,
           token: authToken,
           requestedAtMs,
+          syncRevision,
+          isCurrent: isCurrentAttempt,
           onConfigured: ({ expiresAtMs, expiresInSeconds }) => {
             if (!isCurrentAttempt()) return
             scheduleConnectorSync(connectorRefreshDelayMs(expiresAtMs, expiresInSeconds))
@@ -184,6 +189,7 @@ export function LocalExecutorCloudBridge({
         // change even when a newer renewal superseded the attempt meanwhile.
         if (!cancelled && result.changed) notifyLocalPluginSkillsChanged()
       } catch (error) {
+        if (error instanceof ConnectorSyncAbortedError) return
         if (isCurrentAttempt()) {
           console.error('[CloudConnection] Failed to synchronize connector authorization', error)
           scheduleConnectorSync(30_000)

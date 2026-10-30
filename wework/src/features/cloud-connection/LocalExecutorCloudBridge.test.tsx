@@ -739,7 +739,7 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
-  test('notifies an applied change when renewal supersedes a pending synchronization', async () => {
+  test('a superseded synchronization does not publish its catalog', async () => {
     vi.useFakeTimers()
     const firstSynchronization = deferred<{ changed: boolean }>()
     let synchronizationCount = 0
@@ -776,7 +776,10 @@ describe('LocalExecutorCloudBridge', () => {
         firstSynchronization.resolve({ changed: true })
         await firstSynchronization.promise
       })
-      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+      // The renewal already owns the surface: a late result from the attempt
+      // it replaced must not publish a catalog for an older attempt, and the
+      // same rule is what keeps a signed-out account from being republished.
+      expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
     } finally {
       view.unmount()
       vi.useRealTimers()
@@ -928,5 +931,41 @@ describe('LocalExecutorCloudBridge', () => {
     })
 
     expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+  })
+
+  test('never reconfigures a signed-out account with a late token', async () => {
+    const token = deferred<{ access_token: string; token_type: string; expires_in: number }>()
+    mocks.issueToken.mockReturnValueOnce(token.promise)
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="account-a-token"
+      />
+    )
+
+    await waitFor(() => expect(mocks.issueToken).toHaveBeenCalledTimes(1))
+
+    // Signing out clears the executor before the old token request returns.
+    view.rerender(<LocalExecutorCloudBridge preferencesLoaded isConnected={false} token={null} />)
+    await waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.clear', {
+        syncRevision: expect.any(Number),
+      })
+    )
+
+    await act(async () => {
+      token.resolve({ access_token: 'stale-account-token', token_type: 'bearer', expires_in: 900 })
+      await token.promise
+    })
+    await flushAsyncEffects()
+
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
+    ).toHaveLength(0)
+    expect(
+      mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.apps.sync')
+    ).toHaveLength(0)
   })
 })

@@ -277,3 +277,102 @@ async def test_successful_refresh_keeps_discovered_tools(
     assert refreshed is not None
     assert refreshed.access_token() == "A1"
     assert [tool["name"] for tool in refreshed.tool_summaries] == ["race_search"]
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_committed_first_still_keeps_the_rotated_grant(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The valid rotation survives when the competing rejection lands first.
+
+    A provider rotates the refresh token on first use, so the request that
+    loses the race is answered with ``invalid_grant`` for the same starting
+    grant. Committing that rejection first must not discard the successful
+    rotation that arrives afterwards.
+    """
+    _create_app(test_db, test_user)
+    _connect(test_db, test_user, access="A0", refresh="R0")
+    stale = _current(test_db, test_user)
+    assert stale is not None
+    grant = stale.refresh_token_encrypted
+
+    connector_connection_service.reject_refresh_if_current(
+        test_db,
+        connection=stale,
+        expected_refresh_token_encrypted=grant,
+        clear_refresh_token=True,
+    )
+    rejected = _current(test_db, test_user)
+    assert rejected is not None
+    assert rejected.status == "expired"
+    assert rejected.refresh_token() is None
+
+    _install_token_endpoint(
+        monkeypatch,
+        lambda _data: {
+            "access_token": "A1",
+            "refresh_token": "R1",
+            "expires_in": 3600,
+        },
+    )
+
+    refreshed = await ConnectorOAuthService.refresh_connection(test_db, stale)
+
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.status == "connected"
+    assert current.access_token() == "A1"
+    assert current.refresh_token() == "R1"
+    assert refreshed is not None
+    assert refreshed.access_token() == "A1"
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_does_not_reopen_a_reauthorized_account(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delayed rotation cannot replace a grant the user re-authorized."""
+    _create_app(test_db, test_user)
+    _connect(test_db, test_user, access="A0", refresh="R0")
+    stale = _current(test_db, test_user)
+    assert stale is not None
+    grant = stale.refresh_token_encrypted
+
+    connector_connection_service.reject_refresh_if_current(
+        test_db,
+        connection=stale,
+        expected_refresh_token_encrypted=grant,
+        clear_refresh_token=True,
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=SLUG,
+        user_id=test_user.id,
+        access_token="A2",
+        refresh_token="R2",
+        token_type="bearer",
+        granted_scopes=["race:read"],
+        external_account_name="other@example.test",
+        expires_at=None,
+    )
+
+    _install_token_endpoint(
+        monkeypatch,
+        lambda _data: {
+            "access_token": "A1",
+            "refresh_token": "R1",
+            "expires_in": 3600,
+        },
+    )
+
+    await ConnectorOAuthService.refresh_connection(test_db, stale)
+
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.access_token() == "A2"
+    assert current.refresh_token() == "R2"
+    assert current.external_account_name == "other@example.test"

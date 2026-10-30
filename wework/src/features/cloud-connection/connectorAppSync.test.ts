@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { synchronizeConnectorApps, waitForLocalConnectorSync } from './connectorAppSync'
+import {
+  ConnectorSyncAbortedError,
+  synchronizeConnectorApps,
+  waitForLocalConnectorSync,
+} from './connectorAppSync'
 
 const mocks = vi.hoisted(() => ({
   issueToken: vi.fn(),
@@ -120,6 +124,46 @@ describe('synchronizeConnectorApps', () => {
       'runtime.connectors.configure',
       expect.objectContaining({ expiresAtMs: 5_000 + 900_000 })
     )
+  })
+
+  test('uses the revision the caller allocated before its first await', async () => {
+    await synchronizeConnectorApps({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      syncRevision: 42,
+    })
+
+    expect(mocks.request).toHaveBeenCalledWith(
+      'runtime.connectors.configure',
+      expect.objectContaining({ syncRevision: 42 })
+    )
+  })
+
+  test('never writes a configuration once the attempt was superseded', async () => {
+    let releaseToken: (value: {
+      access_token: string
+      token_type: string
+      expires_in: number
+    }) => void = () => undefined
+    mocks.issueToken.mockReturnValue(
+      new Promise(resolve => {
+        releaseToken = resolve
+      })
+    )
+    let current = true
+    const synchronization = synchronizeConnectorApps({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'account-a-token',
+      syncRevision: 7,
+      isCurrent: () => current,
+    })
+
+    // The user signed out while the cloud token request was in flight.
+    current = false
+    releaseToken({ access_token: 'stale-token', token_type: 'bearer', expires_in: 900 })
+
+    await expect(synchronization).rejects.toBeInstanceOf(ConnectorSyncAbortedError)
+    expect(mocks.request).not.toHaveBeenCalled()
   })
 })
 

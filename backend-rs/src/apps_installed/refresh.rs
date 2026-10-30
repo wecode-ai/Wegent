@@ -208,7 +208,16 @@ where
     match parse_grant(&payload) {
         Ok(grant) => {
             let document = connection_payload(&app.slug, &previous, &grant, &refresh_token)?;
-            if write_json_if_grant(mysql, row.kinds_id, &document, expected).await? == 0 {
+            if write_json_if_grant(
+                mysql,
+                row.kinds_id,
+                &document,
+                expected,
+                &previous.access_token_encrypted,
+            )
+            .await?
+                == 0
+            {
                 // Another attempt already rotated or revoked this grant; its
                 // result is authoritative and ours is dropped.
                 return reload(mysql, &app.slug, user_id).await;
@@ -428,12 +437,21 @@ where
     Ok(outcome.rows_affected)
 }
 
-/// Write a renewed grant only while `expected` is still the stored credential.
+/// Write a renewed grant only while it still belongs on this connection.
+///
+/// The write applies while `expected` is the stored refresh credential, or
+/// while a competing refresh already committed its `invalid_grant` for that
+/// same credential: the token endpoint rotates the refresh token on first use,
+/// so the losing request is rejected and the delayed successful rotation must
+/// still be able to restore the grant. That recovery is limited to an expired
+/// connection that still carries the access token this attempt started from,
+/// which keeps disconnects and re-authorizations authoritative.
 pub(crate) async fn write_json_if_grant<M>(
     mysql: &M,
     id: i64,
     document: &Value,
     expected: &str,
+    expected_access: &str,
 ) -> Result<u64, RefreshError>
 where
     M: Mysql,
@@ -443,8 +461,16 @@ where
         .execute(
             "UPDATE kinds SET json = CAST(? AS JSON), updated_at = NOW() \
              WHERE id = ? \
-             AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?",
-            (payload.as_str(), id, expected),
+             AND ( \
+               JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ? \
+               OR ( \
+                 COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')), '') \
+                   IN ('', 'null') \
+                 AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.status')) = 'expired' \
+                 AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted')), '') = ? \
+               ) \
+             )",
+            (payload.as_str(), id, expected, expected_access),
         )
         .await
         .map_err(RefreshError::Database)?;
@@ -647,14 +673,15 @@ mod tests {
         assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
     }
 
-    /// A renewed grant is written only while the credential it replaces is
-    /// still the stored one.
+    /// A renewed grant is written while the credential it replaces is still the
+    /// stored one, or when a competing rejection already cleared that same
+    /// credential for this attempt's access token.
     #[tokio::test]
     async fn renewal_is_conditional_on_the_replaced_grant() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
         let document = json!({"spec": {"status": "connected"}});
 
-        write_json_if_grant(&mysql, 42, &document, "refresh-ciphertext")
+        write_json_if_grant(&mysql, 42, &document, "refresh-ciphertext", "access-ciphertext")
             .await
             .unwrap();
 
@@ -664,6 +691,13 @@ mod tests {
         assert!(sql.contains("CAST(? AS JSON)"), "{sql}");
         assert!(
             sql.contains("JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?"),
+            "{sql}"
+        );
+        // The delayed rotation still applies after a competing `invalid_grant`
+        // cleared this attempt's grant.
+        assert!(sql.contains("'$.spec.status')) = 'expired'"), "{sql}");
+        assert!(
+            sql.contains("JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted'))"),
             "{sql}"
         );
     }

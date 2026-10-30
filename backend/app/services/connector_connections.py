@@ -149,6 +149,7 @@ class ConnectorConnectionService:
         external_account_name: str | None,
         expires_at: datetime | None,
         expected_refresh_token_encrypted: str | None = None,
+        expected_access_token_encrypted: str | None = None,
     ) -> ConnectorConnection | None:
         """Persist a grant for ``slug``.
 
@@ -157,6 +158,14 @@ class ConnectorConnectionService:
         the stored grant. Racing refreshes, re-authorizations and disconnects
         then win over the older result, which returns ``None`` so the caller can
         re-read the current connection instead of trusting a stale snapshot.
+
+        A token endpoint rotates the refresh token on first use, so the request
+        that loses that race is answered with ``invalid_grant`` for the same
+        starting grant. When that rejection commits first it clears the grant,
+        and the delayed successful rotation must still be able to restore it:
+        the write is also accepted while the connection is expired without a
+        refresh token and still carries the access token the caller started
+        from. ``expected_access_token_encrypted`` supplies that check.
         """
         spec = {
             "connectorAppSlug": slug,
@@ -196,13 +205,25 @@ class ConnectorConnectionService:
             db.refresh(row)
             return ConnectorConnectionService._row_to_connection(row)
         current = dict((row.json or {}).get("spec") or {})
-        if expected_refresh_token_encrypted is not None and (
-            not row.is_active
-            or _grant_snapshot(current) != expected_refresh_token_encrypted
-        ):
-            # Someone else committed a newer grant or disconnected first.
-            db.commit()
-            return None
+        if expected_refresh_token_encrypted is not None:
+            if not row.is_active:
+                # Disconnecting during the refresh stays disconnected.
+                db.commit()
+                return None
+            if _grant_snapshot(current) != expected_refresh_token_encrypted:
+                # The starting grant is gone: a competing rejection cleared it,
+                # or the user re-authorized / disconnected. Only the rejection
+                # case leaves the starting access token in place.
+                cleared_by_rejection = (
+                    not _grant_snapshot(current)
+                    and str(current.get("status") or "") == "expired"
+                    and expected_access_token_encrypted is not None
+                    and str(current.get("accessTokenEncrypted") or "")
+                    == expected_access_token_encrypted
+                )
+                if not cleared_by_rejection:
+                    db.commit()
+                    return None
         if row.is_active:
             # A refresh keeps the existing discovery result: the account and the
             # tools it can see did not change, only the tokens.
