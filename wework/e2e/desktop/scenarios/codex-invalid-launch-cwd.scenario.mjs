@@ -1,3 +1,4 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
@@ -11,7 +12,6 @@ import {
 import {
   WORKBENCH_READY_TIMEOUT_MS,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
   waitForLogPattern,
 } from '../modules/shared.mjs'
@@ -357,7 +357,7 @@ export function createDesktopScenario({
       await selectE2EModel(control, BUILTIN_MODEL_ID, BUILTIN_MODEL_LABEL, '', 'openai')
       await captureConfigState('before-send')
       const origin = await control.command('getLocationOrigin', 'body')
-      const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+      const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

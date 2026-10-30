@@ -1,0 +1,124 @@
+{
+  "models": [
+    {
+      "slug": "wework-deepseek-v4-1-flash",
+      "upstream_model_id_contains": ["deepseek-v4.1-flash"],
+      "display_name": "DeepSeek-V4.1-Flash",
+      "description": "DeepSeek V4.1 Flash profile for long-context coding",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "priority": 20,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "auto_compact_token_limit": null,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "wework-glm-5-3",
+      "upstream_model_id_contains": ["glm-5.3"],
+      "display_name": "GLM-5.3",
+      "description": "GLM 5.3 profile for long-context coding and reasoning",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "priority": 21,
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "auto_compact_token_limit": null,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "wework-qwen-3-8-max",
+      "upstream_model_ids": ["qwen3.8-max"],
+      "display_name": "Qwen3.8-Max",
+      "description": "Qwen 3.8 Max profile for long-context coding and reasoning",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "priority": 22,
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "auto_compact_token_limit": null,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    },
+    {
+      "slug": "wework-gpt-6-luna",
+      "upstream_model_ids": ["gpt-6-luna"],
+      "display_name": "GPT-6-Luna",
+      "description": "GPT-6 Luna profile for long-context coding and reasoning",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "priority": 23,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "auto_compact_token_limit": null,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      }
+    }
+  ]
+}

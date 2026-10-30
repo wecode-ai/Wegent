@@ -80,7 +80,7 @@ fn buffered_content_flush_deadline_is_armed_by_the_first_piece() {
     let mut emitter = StatusUpdatingEmitter::new(StubRedis, 1, 2);
     assert!(emitter.flush_deadline().is_none());
 
-    emitter.buffer_content(StreamContentType::Text, "first");
+    emitter.buffer_content(StreamContentType::Text, "first", None, None);
     let first = emitter.first_buffered_at.expect("first piece recorded");
     let deadline = emitter.flush_deadline().expect("deadline armed");
     assert_eq!(deadline, first + STREAMING_STORAGE_FLUSH_INTERVAL);
@@ -88,7 +88,7 @@ fn buffered_content_flush_deadline_is_armed_by_the_first_piece() {
     // `_buffer_stream_content` only arms the task when none is pending, so
     // later pieces join the same one-second batch.
     std::thread::sleep(std::time::Duration::from_millis(5));
-    emitter.buffer_content(StreamContentType::Text, "second");
+    emitter.buffer_content(StreamContentType::Text, "second", None, None);
     assert_eq!(emitter.flush_deadline(), Some(deadline));
 }
 
@@ -111,6 +111,7 @@ struct RecordingState {
     task_streaming_reads: usize,
     /// Every `SET key value` payload, in call order.
     sets: Vec<(String, Vec<u8>)>,
+    evals: Vec<Vec<String>>,
 }
 
 impl RecordingRedis {
@@ -122,6 +123,26 @@ impl RecordingRedis {
 }
 
 impl brz_redis::Redis for RecordingRedis {
+    async fn eval<S, K, A, R>(&self, script: S, keys: K, arguments: A) -> brz_redis::RedisResult<R>
+    where
+        S: brz_redis::EncodeRedisArg + Send,
+        K: brz_redis::EncodeRedisArgs + Send,
+        A: brz_redis::EncodeRedisArgs + Send,
+        R: brz_redis::FromRedisValue + Send,
+    {
+        let mut command = brz_redis::cmd("EVAL");
+        command.arg_encoded(script)?;
+        command.arg_encoded(keys.num_args())?;
+        keys.encode_args(&mut command)?;
+        arguments.encode_args(&mut command)?;
+        let captured = (1..command.arg_count())
+            .filter_map(|index| command.arg_at(index))
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .collect();
+        self.state.lock().expect("state").evals.push(captured);
+        R::from_redis_value(&brz_redis::Value::Int(1))
+    }
+
     async fn get<K, R>(&self, key: K) -> brz_redis::RedisResult<Option<R>>
     where
         K: brz_redis::EncodeRedisArg + Send,
@@ -283,11 +304,54 @@ impl brz_redis::Redis for RecordingRedis {
     }
 }
 
+/// Adjacent Unicode deltas merge within an item; replayed prefixes and distinct
+/// item IDs must remain separate Redis appends for atomic offset handling.
+#[tokio::test]
+async fn identified_text_flush_preserves_unicode_offsets_and_callback_replays() {
+    let redis = RecordingRedis::default();
+    let mut emitter = StatusUpdatingEmitter::new(redis.clone(), 7, 9);
+    for (id, offset, text) in [
+        ("one", 0, "检查🙂"),
+        ("one", 3, "中"),
+        ("one", 0, "检查🙂中"),
+        ("two", 0, "检查🙂中"),
+    ] {
+        emitter.buffer_content(StreamContentType::Text, text, Some(id), Some(offset));
+    }
+    emitter.flush_stream_storage().await;
+    let state = redis.state.lock().expect("state");
+    assert_eq!(state.evals.len(), 3);
+    for (call, id) in state.evals.iter().zip(["one", "one", "two"]) {
+        assert_eq!(call[1], "6");
+        assert_eq!(call[3], format!("chat:streaming:block_content:9:{id}"));
+        assert_eq!(
+            call[4],
+            format!("chat:streaming:block_content:9:{id}:offset")
+        );
+        assert_eq!(&call[8..11], ["0", "4", "检查🙂中"]);
+        assert_eq!(call[12], session::STREAMING_TTL.to_string());
+        assert_eq!(call[13], id);
+        let block: Value = serde_json::from_str(&call[11]).expect("block JSON");
+        assert_eq!(block["id"], id);
+        assert_eq!(block["_content_key"], call[3]);
+    }
+}
+
+#[test]
+fn overlapping_item_offsets_stay_in_separate_buffer_entries() {
+    let mut emitter = StatusUpdatingEmitter::new(StubRedis, 7, 9);
+    emitter.buffer_content(StreamContentType::Text, "检查🙂", Some("one"), Some(0));
+    emitter.buffer_content(StreamContentType::Text, "🙂中", Some("one"), Some(2));
+    assert_eq!(emitter.buffer.len(), 2);
+    assert_eq!(emitter.buffer[1].block_offset, Some(2));
+    assert_eq!(emitter.buffer[1].content, "🙂中");
+}
+
 #[tokio::test]
 async fn the_delayed_flush_writes_the_batch_without_a_cancellation_read() {
     let redis = RecordingRedis::default();
     let mut emitter = StatusUpdatingEmitter::new(redis.clone(), 7, 9);
-    emitter.buffer_content(StreamContentType::Text, "first");
+    emitter.buffer_content(StreamContentType::Text, "first", None, None);
 
     // `_flush_stream_storage_after_delay` is a detached task that only writes
     // the buffered `chat:streaming:*` batch. The cancellation reads belong to
@@ -333,7 +397,7 @@ async fn the_flush_reads_the_task_streaming_marker_after_the_batch() {
             .to_string(),
     );
     let mut emitter = StatusUpdatingEmitter::new(redis.clone(), 7, 9);
-    emitter.buffer_content(StreamContentType::Thinking, "first\n");
+    emitter.buffer_content(StreamContentType::Thinking, "first\n", None, None);
     emitter.flush_due().await;
 
     let calls = redis.state.lock().expect("state").calls.clone();
@@ -360,9 +424,9 @@ async fn content_appends_use_the_stored_block_id() {
     let redis = RecordingRedis::default();
     let mut emitter = StatusUpdatingEmitter::new(redis.clone(), 7, 9);
 
-    emitter.buffer_content(StreamContentType::Text, "first");
+    emitter.buffer_content(StreamContentType::Text, "first", None, None);
     emitter.flush_stream_storage().await;
-    emitter.buffer_content(StreamContentType::Text, "second");
+    emitter.buffer_content(StreamContentType::Text, "second", None, None);
     emitter.flush_stream_storage().await;
 
     let appends = redis.state.lock().expect("state").appends.clone();

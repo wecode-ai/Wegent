@@ -84,6 +84,7 @@ export function HarnessAppAutoLauncher({
       settle()
       return
     }
+    if (!projectChat.isModelCatalogReady) return
     const existingLaunch = launches.get(installationId)
     if (existingLaunch && !existingLaunch.lifetime.closed) {
       void existingLaunch.promise.finally(settle)
@@ -281,6 +282,7 @@ export function HarnessAppAutoLauncher({
     installationId,
     modelOptions,
     onStartupSettled,
+    projectChat.isModelCatalogReady,
     services.localDecisionRouterApi,
     services.localHarnessModelApi,
     t,

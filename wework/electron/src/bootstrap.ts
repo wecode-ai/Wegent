@@ -75,7 +75,8 @@ async function routeRelease(): Promise<boolean> {
     process.env.WEWORK_HARNESS_RUNTIME_ROOT = active.runtimeRoot
     process.env.WEWORK_ACTIVE_RELEASE_ID = active.id
     process.env.WEWORK_RELEASE_ROOT = root
-    process.env.WEWORK_COMPONENT_DATA_DIRECTORY = store.slot(active.id)
+    process.env.WEWORK_COMPONENT_DATA_DIRECTORY =
+      active.componentDataDirectory ?? store.slot(active.id)
     const activation = await store.activation()
     const live = currentCoreProfile(dataDirectory)
     const { lstat } = await import('node:fs/promises')

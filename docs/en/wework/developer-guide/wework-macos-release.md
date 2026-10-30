@@ -89,6 +89,19 @@ WeWork_<version>_linux_x64.AppImage
 
 ## Automatic updates
 
+Clients with the release-slot updater prepare the complete target in a separate
+directory and retain the running installation, its selected component cache,
+and its runtime as the rollback baseline. They neither copy nor prepare the old
+host again, including thin hosts installed by historical component updates.
+After stopping all writers, installation retains the original plugin profile
+directory in the source slot before switching to the target profile. Target
+preparation and execution do not write to the source components or profile.
+The shared real-package upgrade, rollback, and recovery scenarios additionally
+check retained host paths, component directories, and profile identity for
+independently built regression packages.
+Compatible manual rollback switches directly to the retained release. Incompatible
+rollback still requires confirmation before restoring the pre-update snapshot.
+
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new

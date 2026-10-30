@@ -67,6 +67,8 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
+import { requestE2ERuntime } from './host/e2e-runtime-request.js'
+import { dshBrowserAuthenticationCookies } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -126,6 +128,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
   type DesktopComponentUpdateController,
+  type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
 import {
   prepareElectronNodeRuntime,
@@ -142,6 +145,10 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import {
+  applyWorkbenchBackgroundPolicy,
+  workbenchBackgroundThrottling,
+} from './host/window-background-policy.js'
 import { redactLog } from './runtime/rotating-log.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -178,6 +185,7 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
 ])
+applyWorkbenchBackgroundPolicy(process.platform, app.commandLine)
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -361,6 +369,7 @@ const startupProgress = new StartupProgressReporter(update => {
 })
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let desktopComponentsPromise: Promise<PreparedDesktopComponents> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -530,6 +539,12 @@ const appUpdates = new AppUpdateService({
   currentVersion: app.getVersion(),
   executable: process.execPath,
   resources: process.resourcesPath,
+  componentDataDirectory:
+    process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
+  runningComponents: async () => {
+    if (runtimePhase === 'initializing') await startDesktopRuntime()
+    return (await runningDesktopComponents()).paths
+  },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
   dataSchema: packageMetadata.weworkDataSchema ?? 1,
@@ -678,7 +693,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = false
+      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -1000,7 +1015,7 @@ async function openWorkspaceWindow(input: {
     backgroundColor: '#181818',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1099,7 +1114,7 @@ async function createAuxiliaryWindow(
     type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1200,7 +1215,7 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1332,7 +1347,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1692,6 +1707,16 @@ async function startupDiagnosticsText(): Promise<string> {
 }
 
 function installIpc(): void {
+  if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    ipcMain.handle('e2e:runtime-request', (event, input) => {
+      if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Runtime verification requires a Wework main frame')
+      }
+      return requestE2ERuntime(process.env, input, url =>
+        dshBrowserAuthenticationCookies(session.defaultSession, url)
+      )
+    })
+  }
   ipcMain.handle('startup-recovery:retry', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-retry', 'started')
@@ -2564,16 +2589,16 @@ function reportLogCleanup(result: LogCleanupResult): void {
   }
 }
 
-async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+function desktopComponentResourcesRoot(): string {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
-  const componentResourcesRoot =
-    !packagedApplication && configuredComponentResourcesRoot
-      ? resolve(configuredComponentResourcesRoot)
-      : resourcesRoot
-  startupProgress.report('components')
-  logStartupStep('desktop-components-prepare', 'started')
-  const preparedComponents = await prepareDesktopComponents({
+  return !packagedApplication && configuredComponentResourcesRoot
+    ? resolve(configuredComponentResourcesRoot)
+    : resourcesRoot
+}
+
+function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
+  desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
       validateExecutor: path =>
@@ -2582,12 +2607,23 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
         }),
       log: event => appUpdateLogger.info(event),
-      resourcesRoot: componentResourcesRoot,
+      resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
       currentAppVersion: app.getVersion(),
     },
+  }).catch(error => {
+    desktopComponentsPromise = null
+    throw error
   })
+  return desktopComponentsPromise
+}
+
+async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+  const componentResourcesRoot = desktopComponentResourcesRoot()
+  startupProgress.report('components')
+  logStartupStep('desktop-components-prepare', 'started')
+  const preparedComponents = await runningDesktopComponents()
   logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths

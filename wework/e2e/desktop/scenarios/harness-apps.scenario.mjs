@@ -3,6 +3,7 @@ import {
   INSTALLATION_ID,
   createLocalDshPlugin,
   IMPORTED_INSTALLATION_ID,
+  LEGACY_INSTALLATION_ID,
   createOfficialSource,
   requestJson,
   RECIPIENT_NAME,
@@ -28,14 +29,19 @@ export async function createDesktopScenario({
   resultDir,
   uiTimeoutMs,
 }) {
-  const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
+  const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2')
+  const legacyPackagePath = await createHarnessPackage(
+    resultDir,
+    LEGACY_INSTALLATION_ID,
+    '0.1.0-rc.8'
+  )
   const localDshPluginPath = await createLocalDshPlugin(resultDir)
   const importedPackagePath = await createHarnessPackage(
     resultDir,
     IMPORTED_INSTALLATION_ID,
-    '0.1.0-rc.8'
+    '0.2.0-rc.2'
   )
-  const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8', {
+  const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.2.0-rc.2', {
     archiveName: 'dsh-e2e-shared-0.0.9',
     version: '0.0.9',
   })
@@ -219,6 +225,7 @@ export async function createDesktopScenario({
         return
       }
       const { legacyRuntimeCache } = await prepareHarnessAppUi(control, {
+        legacyPackagePath,
         uiTimeoutMs,
         captureScreenshot,
         electronUserDataDirectory,

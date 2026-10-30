@@ -140,7 +140,7 @@ fn sha256_is_lowercase_hex() {
 fn session_payload_filter() {
     let claims = |scope: Option<serde_json::Value>, token_use: Option<&str>| SessionClaims {
         sub: Some("yingeng".to_string()),
-        scope: scope.map(|_| serde::de::IgnoredAny),
+        scope,
         token_use: token_use.map(str::to_string),
         exp: None,
     };
