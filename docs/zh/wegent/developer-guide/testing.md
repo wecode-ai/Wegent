@@ -252,7 +252,8 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 ### 异步提问模型桩
 
 桌面 E2E 的异步提问模型桩仅将对应 `function_call_output` 回执之后、与预期答案
-完全一致的用户消息识别为回答。AGENTS.md 和环境上下文也可能通过 `role=user`
+完全一致的用户消息识别为回答；答案文本复用共享解析器移除运行时包装上下文。
+AGENTS.md 和环境上下文也可能通过 `role=user`
 传入模型，不能通过扫描全部请求或子串匹配判断用户是否作答。
 
 `desktop-async-input-fixture.test.mjs` 覆盖注入上下文、历史答案、工具输出和真实

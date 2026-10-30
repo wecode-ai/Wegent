@@ -1,3 +1,5 @@
+import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
+
 import {
   DIAGRAM_REGRESSION_MARKER,
   DIAGRAM_REGRESSION_RESPONSE,
@@ -396,7 +398,7 @@ function hasUserReplyAfterToolOutput(request, callId, answer) {
   )
   if (outputIndex === -1) return false
   return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
-    text => text.trim() === answer
+    text => visibleRuntimeUserMessage(text) === answer
   )
 }
 

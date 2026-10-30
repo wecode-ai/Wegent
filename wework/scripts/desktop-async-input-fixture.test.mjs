@@ -96,8 +96,15 @@ for (const fixture of [
     assert.equal(await respond([...history, user(`Context: ${fixture.answer}`)]), fixture.waiting)
   })
 
-  for (const content of [fixture.answer, [{ type: 'input_text', text: ` ${fixture.answer}\n` }]]) {
-    test(`${fixture.name}: an actual reply completes the question (${typeof content})`, async () => {
+  for (const [format, content] of [
+    ['plain text', fixture.answer],
+    ['text parts', [{ type: 'input_text', text: ` ${fixture.answer}\n` }]],
+    [
+      'runtime context',
+      `<application_context>Terminal state</application_context>\n${fixture.answer}`,
+    ],
+  ]) {
+    test(`${fixture.name}: an actual reply completes the question (${format})`, async () => {
       assert.equal(
         await respond([...history, { type: 'message', role: 'user', content }]),
         fixture.complete

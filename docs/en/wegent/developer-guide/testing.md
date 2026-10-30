@@ -253,7 +253,8 @@ scope so an accidental full-suite run is caught immediately.
 ### Async Question Model Fixtures
 
 The desktop E2E async question fixture recognizes only an exact expected answer
-in a user message after the matching `function_call_output` acknowledgement.
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
 AGENTS.md and environment context can also arrive with `role=user`; scanning the
 whole request or matching an answer substring cannot establish a user reply.
 
