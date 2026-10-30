@@ -14,6 +14,7 @@ interface ContinueInImDialogProps {
   sessions: IMPrivateSession[]
   title?: string
   emptyGuide?: string
+  error?: string
   submitLabel?: string
   allowMultiple?: boolean
   rememberSelection?: boolean
@@ -30,6 +31,7 @@ export function ContinueInImDialog({
   sessions,
   title,
   emptyGuide,
+  error,
   submitLabel,
   allowMultiple,
   rememberSelection,
@@ -49,6 +51,7 @@ export function ContinueInImDialog({
       sessions={sessions}
       title={title}
       emptyGuide={emptyGuide}
+      error={error}
       submitLabel={submitLabel}
       allowMultiple={allowMultiple}
       rememberSelection={rememberSelection}
@@ -126,6 +129,7 @@ function ContinueInImDialogContent({
   sessions,
   title,
   emptyGuide,
+  error,
   submitLabel,
   allowMultiple = true,
   rememberSelection = true,
@@ -299,6 +303,11 @@ function ContinueInImDialogContent({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {error && (
+            <p role="alert" className="mb-3 text-sm text-status-error">
+              {error}
+            </p>
+          )}
           {loading ? (
             <div
               data-testid="continue-im-loading"

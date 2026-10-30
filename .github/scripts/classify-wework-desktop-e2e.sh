@@ -7,6 +7,10 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   notification-tab-navigation
+  human-interactions
+  human-interactions-browser
+  human-interactions-hidden
+  human-interactions-issue
   collaboration-shared-core
   project-space-tool-discovery
   collaboration-deliveries
@@ -248,6 +252,11 @@ core_shards=(
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
+core_shards[1]+=',human-interactions'
+# Keep new unmeasured checks off the heaviest measured shard so Windows can rebalance it.
+core_shards[2]+=',human-interactions-browser'
+core_shards[2]+=',human-interactions-hidden'
+core_shards[4]+=',human-interactions-issue'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -831,13 +840,19 @@ classify_wework_path() {
       return
       ;;
 
-    wework/src/features/notifications/* | \
+    wework/e2e/desktop/scenarios/human-interactions.scenario.mjs | \
+      wework/e2e/desktop/modules/human-interaction-*.mjs | \
+      wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
       select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
       select_target "core:notification-tab-navigation"
+      select_target "core:human-interactions"
+      select_target "core:human-interactions-browser"
+      select_target "core:human-interactions-hidden"
+      select_target "core:human-interactions-issue"
       if [[ "$path" == wework/src/features/notifications/WeworkSchemeBridge* || \
         "$path" == wework/src/features/notifications/scheme* ]]; then
         select_target "core:collaboration-issue-comment-notification"

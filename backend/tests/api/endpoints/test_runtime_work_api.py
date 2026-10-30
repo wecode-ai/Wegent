@@ -35,6 +35,23 @@ def test_list_runtime_work_endpoint_uses_current_user(
     assert "client_origin" not in service_mock.await_args.kwargs
 
 
+def test_pending_runtime_work_endpoint_keeps_authenticated_user_scope(
+    test_client, test_token, monkeypatch
+):
+    from app.api.endpoints import runtime_work
+
+    service = AsyncMock(return_value={"projects": [], "chats": [], "totalTasks": 0})
+    monkeypatch.setattr(runtime_work.runtime_work_service, "list_runtime_work", service)
+    response = test_client.get(
+        "/api/runtime-work?pending_only=true&device_id=owned-device",
+        headers=_auth_headers(test_token),
+    )
+    assert response.status_code == 200
+    assert service.await_args.kwargs["pending_only"] is True
+    assert service.await_args.kwargs["device_id"] == "owned-device"
+    assert service.await_args.kwargs["user_id"] is not None
+
+
 @pytest.mark.parametrize(
     ("http_method", "path", "rpc_method", "payload"),
     [

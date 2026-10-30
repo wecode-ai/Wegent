@@ -6,10 +6,32 @@ export class LocalPluginObjectStorage {
     this.buckets = new Set()
     this.objects = new Map()
     this.uploads = new Map()
+    this.transportEvents = []
+    this.connectionSequence = 0
+    this.connections = new WeakMap()
+  }
+
+  recordTransport(event) {
+    this.transportEvents.push({ at: Date.now(), ...event })
+    if (this.transportEvents.length > 64) this.transportEvents.shift()
   }
 
   async start() {
     this.server = createServer((request, response) => {
+      const connection = this.connections.get(request.socket)
+      if (connection) connection.lastRequestAt = Date.now()
+      this.recordTransport({
+        event: 'request',
+        connection: connection?.id,
+        method: request.method,
+      })
+      response.once('finish', () =>
+        this.recordTransport({
+          event: 'response',
+          connection: connection?.id,
+          status: response.statusCode,
+        })
+      )
       void this.handle(request, response).catch(error => {
         if (response.headersSent) {
           response.destroy(error instanceof Error ? error : undefined)
@@ -18,6 +40,28 @@ export class LocalPluginObjectStorage {
         response.writeHead(error instanceof URIError ? 400 : 500)
         response.end()
       })
+    })
+    this.server.on('connection', socket => {
+      const connection = { id: ++this.connectionSequence, lastRequestAt: Date.now() }
+      this.connections.set(socket, connection)
+      this.recordTransport({ event: 'connect', connection: connection.id })
+      socket.on('error', error =>
+        this.recordTransport({
+          event: 'socket-error',
+          connection: connection.id,
+          code: error.code,
+        })
+      )
+      socket.once('close', hadError =>
+        this.recordTransport({
+          event: 'close',
+          connection: connection.id,
+          hadError,
+          sinceRequestMs: Date.now() - connection.lastRequestAt,
+          bytesRead: socket.bytesRead,
+          bytesWritten: socket.bytesWritten,
+        })
+      )
     })
     await new Promise((resolvePromise, reject) => {
       this.server.once('error', reject)

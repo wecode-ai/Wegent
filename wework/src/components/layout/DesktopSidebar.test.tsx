@@ -113,6 +113,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
     onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     onCreateDeviceDirectory: vi.fn(),
+    onCloneGitRepository: vi.fn(),
     onOpenSettings: vi.fn(),
     onLogout: vi.fn(),
     ...overrides,
@@ -929,7 +930,7 @@ describe('DesktopSidebar', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
+  test('keeps the account settings trigger inside the sidebar width', () => {
     renderSidebar()
 
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
@@ -941,11 +942,7 @@ describe('DesktopSidebar', () => {
       'lucide-user-round'
     )
     expect(screen.getByTestId('sidebar-account-avatar')).not.toHaveTextContent('AL')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
-      'h-8',
-      'w-8',
-      'shrink-0'
-    )
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('keeps the account menu available before cloud login', async () => {
@@ -1291,7 +1288,11 @@ describe('DesktopSidebar', () => {
       'bg-primary/10',
       'text-[rgb(var(--color-sidebar-attention))]'
     )
-    expect(waitingStatus.querySelector('svg')).toHaveClass('lucide-bell', 'h-4', 'w-4')
+    expect(waitingStatus.querySelector('svg')).toHaveClass(
+      'lucide-circle-question-mark',
+      'h-4',
+      'w-4'
+    )
     expect(screen.getByTestId('runtime-local-task-waiting-running-waiting-task')).toHaveAttribute(
       'aria-label',
       '等待回复'
@@ -5721,248 +5722,25 @@ describe('DesktopSidebar', () => {
     expect(openLocalWorkspace).not.toHaveBeenCalled()
   })
 
-  test('opens away reminder controls from the account IM message button', async () => {
-    const user = userEvent.setup()
-    const onToggleGlobalImNotification = vi.fn()
-    const openNotificationSettings = vi.fn()
-    window.addEventListener('wework:open-notification-settings', openNotificationSettings)
-
-    renderSidebar({
-      imNotificationSettings: {
-        global: {
-          enabled: false,
-          sessionKey: 'session-telegram',
-          session: {
-            sessionKey: 'session-telegram',
-            channelType: 'telegram',
-            channelLabel: 'Telegram',
-            channelId: 9,
-            conversationId: 'telegram-1',
-            senderId: '100200300',
-            displayName: 'Alice',
-          },
-        },
-        runtimeTaskSubscriptions: [],
-      },
-      onToggleGlobalImNotification,
-    })
-
-    const toggle = screen.getByTestId('sidebar-global-im-notification-button')
-
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toHaveClass(
-      'lucide-message-circle-off'
-    )
-    expect(toggle).toHaveAttribute('aria-label', expect.stringContaining('Telegram'))
-    expect(toggle).not.toHaveAttribute('title')
-
-    await user.click(toggle)
-    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
-      '离开电脑提醒'
-    )
-    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
-      'Telegram / Alice'
-    )
-    await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
-
-    expect(openNotificationSettings).toHaveBeenCalledTimes(1)
-    expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
-    window.removeEventListener('wework:open-notification-settings', openNotificationSettings)
+  test('uses the global notification center instead of an account-area notification menu', () => {
+    renderSidebar()
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-global-im-notification-menu')).not.toBeInTheDocument()
   })
 
-  test('shows global IM notifications while experimental features are disabled', () => {
-    experimentalFeatures.enabled = false
-
-    renderSidebar({ onToggleGlobalImNotification: vi.fn() })
-
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toBeInTheDocument()
-  })
-
-  test('anchors the away reminder menu to the full-width account area', async () => {
-    // Regression guard (POPOVER-CONTAINING-BLOCK-MISMATCH): the menu must portal
-    // into the full-width account/settings container (group/account), not remain
-    // a child of the narrow 32px icon-action group, otherwise `left-4 right-4`
-    // resolves against the icon group and the panel collapses to a sliver.
-    const user = userEvent.setup()
-
-    renderSidebar({
-      imNotificationSettings: {
-        global: {
-          enabled: false,
-          sessionKey: 'session-telegram',
-          session: {
-            sessionKey: 'session-telegram',
-            channelType: 'telegram',
-            channelLabel: 'Telegram',
-            channelId: 9,
-            conversationId: 'telegram-1',
-            senderId: '100200300',
-            displayName: 'Alice',
-          },
-        },
-        runtimeTaskSubscriptions: [],
-      },
-      onToggleGlobalImNotification: vi.fn(),
-    })
-
-    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
-
-    const menu = screen.getByTestId('sidebar-global-im-notification-menu')
-
-    // The menu DOM owner must be the account area, reachable through the
-    // group/account container — never the icon-action group wrapper.
-    const accountArea = menu.closest('.group\\/account')
-    expect(accountArea, 'menu must be portalled into the account area').not.toBeNull()
-
-    const iconGroup = screen.getByTestId('sidebar-global-im-notification-button').parentElement
-    expect(
-      iconGroup?.contains(menu),
-      'menu must NOT stay inside the narrow icon-action group'
-    ).toBe(false)
-
-    // jsdom does not compute CSS layout, so a numeric width floor is not
-    // enforceable here; the DOM-ownership assertions above are the durable
-    // guard against the containing-block regression.
-    expect(menu).toBeInTheDocument()
-  })
-
-  test('opens away reminder channel settings from the bell menu', async () => {
-    const user = userEvent.setup()
-    const onToggleGlobalImNotification = vi.fn()
-    const onOpenGlobalImNotificationSettings = vi.fn()
-
-    renderSidebar({
-      imNotificationSettings: {
-        global: {
-          enabled: true,
-          sessionKey: 'session-telegram',
-          session: {
-            sessionKey: 'session-telegram',
-            channelType: 'telegram',
-            channelLabel: 'Telegram',
-            channelId: 9,
-            conversationId: 'telegram-1',
-            senderId: '100200300',
-            displayName: 'Alice',
-          },
-        },
-        runtimeTaskSubscriptions: [],
-      },
-      onToggleGlobalImNotification,
-      onOpenGlobalImNotificationSettings,
-    })
-
-    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
-    expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
-    const settingsButton = screen.getByTestId('sidebar-global-im-notification-settings-button')
-    expect(settingsButton).toHaveClass('shrink-0', 'whitespace-nowrap')
-    await user.click(settingsButton)
-
-    expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
-    expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
-  })
-
-  test('keeps the away reminder bell neutral when cloud is disconnected', async () => {
-    const user = userEvent.setup()
-
+  test('keeps the account available during cloud errors without a second notification surface', () => {
     renderSidebar(
-      {
-        imNotificationSettings: {
-          global: {
-            enabled: false,
-            sessionKey: null,
-            session: null,
-          },
-          runtimeTaskSubscriptions: [],
-        },
-        onToggleGlobalImNotification: vi.fn(),
-      },
-      {
-        status: 'disconnected',
-        isConnected: false,
-        token: null,
-        user: null,
-        error: null,
-      }
-    )
-
-    const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
-    expect(bell).not.toHaveClass('text-red-500')
-    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
-
-    await user.click(bell)
-
-    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
-      '登录云端后可开启离开电脑提醒'
-    )
-  })
-
-  test('shows the away reminder bell even when notification handlers are unavailable', async () => {
-    const user = userEvent.setup()
-
-    renderSidebar(
-      {
-        onToggleGlobalImNotification: undefined,
-        onOpenGlobalImNotificationSettings: undefined,
-      },
-      {
-        status: 'disconnected',
-        isConnected: false,
-        token: null,
-        user: null,
-        error: null,
-      }
-    )
-
-    const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toBeInTheDocument()
-    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
-    expect(bell).not.toHaveClass('text-red-500')
-    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
-
-    await user.click(bell)
-
-    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
-      '登录云端后可开启离开电脑提醒'
-    )
-  })
-
-  test('wraps cloud connection errors without turning the away reminder bell red', async () => {
-    const user = userEvent.setup()
-    const error = '读取云端用户失败 (http://localhost:8000/api/users/me): Cloud connection failed'
-
-    renderSidebar(
-      {
-        imNotificationSettings: {
-          global: {
-            enabled: false,
-            sessionKey: null,
-            session: null,
-          },
-          runtimeTaskSubscriptions: [],
-        },
-      },
+      {},
       {
         status: 'error',
         isConnected: false,
         token: null,
         user: null,
-        error,
+        error: 'Cloud connection failed',
       }
     )
-
-    const bell = screen.getByTestId('sidebar-global-im-notification-button')
-    expect(bell).toHaveAttribute('aria-label', '登录云端后可开启离开电脑提醒')
-    expect(bell).not.toHaveClass('text-red-500')
-    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
-    expect(screen.queryByTestId('sidebar-global-im-notification-indicator')).not.toBeInTheDocument()
-
-    await user.click(bell)
-
-    const errorMessage = screen.getByTestId('sidebar-global-im-notification-error')
-    expect(errorMessage).toHaveTextContent(error)
-    expect(errorMessage).toHaveClass('break-words', '[overflow-wrap:anywhere]')
+    expect(screen.getByTestId('settings-button')).toBeVisible()
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('shows archive all menus on project and chat headers with chat create action', async () => {
