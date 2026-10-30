@@ -55,7 +55,7 @@ if [ "${PUSH_GATE_TEST_VERIFY_GIT_ISOLATION:-0}" = "1" ]; then
             echo "Quality check inherited repository-local variable: $git_env_name" >&2
             exit 11
         fi
-    done < <(git rev-parse --local-env-vars)
+    done < <(git rev-parse --local-env-vars; printf '%s\n' WEGENT_APP_LIFECYCLE_FD WEGENT_APP_IPC_ENDPOINT WEGENT_APP_IPC_OWNER_TOKEN WEGENT_APP_IPC_TOKEN)
 fi
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
@@ -251,6 +251,10 @@ AI_PUSH_FULL_TESTS=1 \
 PUSH_GATE_TEST_VERIFY_GIT_ISOLATION=1 \
 GIT_DIR="$(git rev-parse --absolute-git-dir)" \
 GIT_WORK_TREE="$PROJECT_ROOT" \
+WEGENT_APP_LIFECYCLE_FD=99 \
+WEGENT_APP_IPC_ENDPOINT=parent-workbench \
+WEGENT_APP_IPC_OWNER_TOKEN=test-owner \
+WEGENT_APP_IPC_TOKEN=test-connection \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FULL_TEST_OUT" 2>&1
 refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
@@ -663,7 +667,7 @@ if ! grep -qE '^cargo test --all-features --lib$' "$CALL_LOG"; then
     exit 1
 fi
 
-if grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+if grep -qE '^cargo test --all-features --no-fail-fast$' "$CALL_LOG"; then
     echo "Expected Executor changes to skip the full Rust test suite by default."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -679,10 +683,15 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$EXECUTOR_FULL_TEST_O
 refs/heads/topic $EXECUTOR_LOCAL_SHA refs/heads/topic $EXECUTOR_REMOTE_SHA
 EOF
 
-if ! grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+if ! grep -qE '^cargo test --all-features --no-fail-fast$' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Rust test suite."
     echo "Calls:"
     cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^cargo test --all-features --lib$' "$CALL_LOG"; then
+    echo "Full Rust runs must not execute the same library suite twice."
     exit 1
 fi
 
