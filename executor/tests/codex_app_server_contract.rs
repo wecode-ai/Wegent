@@ -396,6 +396,173 @@ async fn codex_shared_app_server_rejects_a_cross_provider_resume() {
     );
 }
 
+async fn codex_shared_app_server_retries_cloud_models_without_subscription_auth_after_cloud_config_failure(
+) {
+    // Regression for the wake-from-sleep failure: the first app-server sees the
+    // linked ChatGPT subscription auth and returns the same cloud-config
+    // timeout that used to block every WeWork cloud-model turn. The executor
+    // must restart in router-only mode and finish the resumed turn.
+    let _lock = env_lock().await;
+    let fixture = cloud_config_fallback_fixture("resume");
+    let fake_codex =
+        write_fake_codex_cloud_config_fallback(&fixture.log_path, &fixture.auth_log_path);
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request = cloud_config_fallback_request();
+
+    let outcome = client
+        .run_turn_with_cancel(
+            request,
+            CodexAppServerTurnOptions {
+                resume_thread_id: Some("thread-1".to_owned()),
+                ..CodexAppServerTurnOptions::default()
+            },
+        )
+        .await
+        .expect("cloud model turn should survive a ChatGPT cloud-config failure");
+
+    assert_eq!(
+        outcome.outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+
+    assert_cloud_config_fallback_auth_states(&fixture.auth_log_path);
+
+    let messages = read_json_lines(&fixture.log_path);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "initialize")
+            .count(),
+        2,
+        "the poisoned app-server must be restarted exactly once"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "thread/resume")
+            .count(),
+        2,
+        "the failed resume must be retried on the router-only app-server"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "turn/start")
+            .count(),
+        1
+    );
+}
+
+async fn codex_shared_app_server_starts_cloud_thread_after_cloud_config_failure() {
+    let _lock = env_lock().await;
+    let fixture = cloud_config_fallback_fixture("start");
+    let fake_codex = write_fake_codex_cloud_config_fallback_for(
+        &fixture.log_path,
+        &fixture.auth_log_path,
+        "thread/start",
+    );
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+
+    let outcome = client
+        .run_turn_with_cancel(
+            cloud_config_fallback_request(),
+            CodexAppServerTurnOptions::default(),
+        )
+        .await
+        .expect("a new cloud-model thread should survive a ChatGPT cloud-config failure");
+
+    assert_eq!(
+        outcome.outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    assert_cloud_config_fallback_auth_states(&fixture.auth_log_path);
+
+    let messages = read_json_lines(&fixture.log_path);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "initialize")
+            .count(),
+        2
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "thread/start")
+            .count(),
+        2
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "turn/start")
+            .count(),
+        1
+    );
+}
+
+async fn codex_shared_app_server_recovers_config_read_after_cloud_config_failure() {
+    let _lock = env_lock().await;
+    let fixture = cloud_config_fallback_fixture("config-read");
+    let fake_codex = write_fake_codex_cloud_config_fallback_for(
+        &fixture.log_path,
+        &fixture.auth_log_path,
+        "config/read",
+    );
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+
+    client
+        .ensure_started()
+        .await
+        .expect("the app-server should start before the config request");
+    let response = client
+        .request("config/read", json!({}))
+        .await
+        .expect("config/read should recover without the subscription auth");
+
+    assert!(response.get("config").is_some());
+    let models = client
+        .request("model/list", json!({}))
+        .await
+        .expect("the model catalog should stay available after the fallback");
+    assert_eq!(models["data"], json!([]));
+    assert_cloud_config_fallback_auth_states(&fixture.auth_log_path);
+
+    let messages = read_json_lines(&fixture.log_path);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "initialize")
+            .count(),
+        2
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "config/read")
+            .count(),
+        2
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "thread/start")
+            .count(),
+        0
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "model/list")
+            .count(),
+        1
+    );
+}
+
 async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -1427,6 +1594,113 @@ done
     path
 }
 
+fn write_fake_codex_cloud_config_fallback(log_path: &Path, auth_log_path: &Path) -> PathBuf {
+    write_fake_codex_cloud_config_fallback_for(log_path, auth_log_path, "thread/resume")
+}
+
+fn write_fake_codex_cloud_config_fallback_for(
+    log_path: &Path,
+    auth_log_path: &Path,
+    failing_method: &str,
+) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-cloud-config-fallback-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let process_count_path = path.with_extension("process-count");
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_file(auth_log_path);
+    let _ = fs::remove_file(&process_count_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+AUTH_LOG_PATH='{}'
+PROCESS_COUNT_PATH='{}'
+FAILING_METHOD='{}'
+process_count=0
+if [ -f "$PROCESS_COUNT_PATH" ]; then
+  process_count=$(cat "$PROCESS_COUNT_PATH")
+fi
+process_count=$((process_count + 1))
+printf '%s\n' "$process_count" > "$PROCESS_COUNT_PATH"
+if [ -f "$CODEX_HOME/auth.json" ]; then
+  auth_state='present'
+else
+  auth_state='absent'
+fi
+if [ -n "$WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION" ]; then
+  browser_auth='present'
+else
+  browser_auth='absent'
+fi
+printf '%s %s %s\n' "$process_count" "$auth_state" "$browser_auth" >> "$AUTH_LOG_PATH"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"id":%s,"result":{{"protocolVersion":1}}}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/resume"'*)
+      if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "thread/resume" ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{"modelProvider":"wework-router","thread":{{"id":"thread-1","modelProvider":"wework-router"}}}}}}\n' "$request_id"
+      fi
+      ;;
+    *'"method":"thread/start"'*)
+      if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "thread/start" ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{"modelProvider":"wework-router","thread":{{"id":"thread-1","modelProvider":"wework-router"}}}}}}\n' "$request_id"
+      fi
+      ;;
+    *'"method":"config/read"'*)
+      if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "config/read" ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{"config":{{}}}}}}\n' "$request_id"
+      fi
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      if [ "$process_count" -eq 1 ]; then
+        printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
+      else
+        printf '{{"id":%s,"result":{{}}}}\n' "$request_id"
+      fi
+      ;;
+    *'"method":"model/list"'*)
+      printf '{{"id":%s,"result":{{"data":[]}}}}\n' "$request_id"
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{{"id":%s,"result":{{"goal":null}}}}\n' "$request_id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{{"id":%s,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}\n' "$request_id"
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"turn-1","item":{{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"done"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        auth_log_path.display(),
+        process_count_path.display(),
+        failing_method
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn write_fake_codex_for_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "fake-codex-shared-proxy-{}-{}",
@@ -1936,6 +2210,79 @@ fn unique_dir(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+struct CloudConfigFallbackFixture {
+    _home: EnvGuard,
+    _codex_home: EnvGuard,
+    _wework_codex_home: EnvGuard,
+    _executor_home: EnvGuard,
+    _subscription: EnvGuard,
+    log_path: PathBuf,
+    auth_log_path: PathBuf,
+}
+
+fn cloud_config_fallback_fixture(name: &str) -> CloudConfigFallbackFixture {
+    let home = unique_dir(&format!("cloud-config-{name}-home"));
+    let user_codex_home = unique_dir(&format!("cloud-config-{name}-user-codex"));
+    let wework_codex_home = unique_dir(&format!("cloud-config-{name}-wework-codex"));
+    let executor_home = unique_dir(&format!("cloud-config-{name}-executor"));
+    fs::write(
+        user_codex_home.join("auth.json"),
+        br#"{"auth_mode":"chatgpt"}"#,
+    )
+    .unwrap();
+    CloudConfigFallbackFixture {
+        _home: EnvGuard::set("HOME", &home.display().to_string()),
+        _codex_home: EnvGuard::set("CODEX_HOME", &user_codex_home.display().to_string()),
+        _wework_codex_home: EnvGuard::set(
+            "WEGENT_CODEX_HOME",
+            &wework_codex_home.display().to_string(),
+        ),
+        _executor_home: EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string()),
+        _subscription: EnvGuard::set("WEWORK_CODEX_SUBSCRIPTION_ENABLED", "true"),
+        log_path: std::env::temp_dir().join(format!(
+            "wegent-executor-codex-cloud-config-{name}-{}.jsonl",
+            std::process::id()
+        )),
+        auth_log_path: std::env::temp_dir().join(format!(
+            "wegent-executor-codex-cloud-config-{name}-auth-{}.log",
+            std::process::id()
+        )),
+    }
+}
+
+fn cloud_config_fallback_request() -> ExecutionRequest {
+    ExecutionRequest {
+        task_id: "cloud-config-fallback-task".to_owned(),
+        subtask_id: "cloud-config-fallback-subtask".to_owned(),
+        prompt: json!("continue"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-6.1-sol",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "test-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true
+        }),
+        ..ExecutionRequest::default()
+    }
+}
+
+fn assert_cloud_config_fallback_auth_states(path: &Path) {
+    let states = fs::read_to_string(path).unwrap();
+    let lines = states.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    let first = lines[0].split_whitespace().collect::<Vec<_>>();
+    let second = lines[1].split_whitespace().collect::<Vec<_>>();
+    assert_eq!(&first[..2], &["1", "present"]);
+    assert_eq!(&second[..2], &["2", "absent"]);
+    assert_eq!(
+        first.get(2),
+        second.get(2),
+        "the launch environment must survive the auth restart"
+    );
 }
 
 struct EnvGuard {
