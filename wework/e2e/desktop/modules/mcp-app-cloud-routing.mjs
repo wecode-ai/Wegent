@@ -20,7 +20,7 @@ export async function verifyNativeMcpCloudRouting(control, cloudEnvironment) {
     sessionId,
     windowLabel: 'main',
     target: {
-      apiBaseUrl: `${cloudEnvironment.backendUrl}/api/v1`,
+      apiBaseUrl: `${cloudEnvironment.backendUrl}/api`,
       socketBaseUrl: cloudEnvironment.backendUrl,
       socketPath: '/socket.io',
     },

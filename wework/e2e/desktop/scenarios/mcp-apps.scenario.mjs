@@ -406,8 +406,19 @@ export function createDesktopScenario({
       )
       assert.notEqual(frameUrl, oldDocumentUrl)
       await frameAction('click', '#refresh')
-      // Startup model synchronization restarts the app-server; this fixture's counter is process-local.
-      await waitText('Counter 1')
+      // Startup model synchronization may restart this process-local fixture.
+      const counterDeadline = Date.now() + uiTimeoutMs
+      let counterText
+      do {
+        counterText = await frameAction('text', '#status')
+        if (/^Counter \d+$/.test(counterText)) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < counterDeadline)
+      assert.match(counterText, /^Counter \d+$/)
+      const firstCount = Number(counterText.slice('Counter '.length))
+      assert.ok(firstCount > 0)
+      await frameAction('click', '#refresh')
+      await waitText(`Counter ${firstCount + 1}`)
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })
@@ -422,6 +433,7 @@ export function createDesktopScenario({
       } while (Date.now() < releaseDeadline)
       assert.ok(released, 'Leaving the task must release its app document')
       assert.ok(calls >= 8)
+      await selectE2EModel(control)
       await ordinaryMcp.verify(control)
       await verifyMcpDiscoveryNetworkFailure(control, electronUserDataDirectory, uiTimeoutMs)
     },
