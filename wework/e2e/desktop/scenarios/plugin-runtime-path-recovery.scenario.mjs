@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { lstat, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -87,11 +88,11 @@ export async function createDesktopScenario({
 
   async function requestExecutor(control, method) {
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: `recovery-${method}`, method, params: {} }),
-      signal: AbortSignal.timeout(workbenchReadyTimeoutMs),
+      timeoutMs: workbenchReadyTimeoutMs,
     })
     assert.equal(response.ok, true, `Recovery runtime RPC failed: ${method}`)
     const payload = await response.json()

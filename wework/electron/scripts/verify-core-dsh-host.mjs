@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { once } from 'node:events'
 import { prepareCoreDshLaunch } from '../dist/runtime/core-dsh-runtime.js'
 
 const requestedRoot = process.argv[2]
@@ -18,6 +19,7 @@ if (!requestedRoot || !requestedPluginsRoot) {
 const home = await mkdtemp(join(tmpdir(), 'wework-electron-dsh-'))
 const token = randomBytes(32).toString('base64url')
 let child = null
+let browserRequest
 let stderr = ''
 const executor = await startFakeExecutor(home)
 
@@ -37,7 +39,8 @@ try {
     cwd: launch.cwd,
     detached: process.platform !== 'win32',
     env: {
-      ...process.env,
+      ...launch.environment,
+      WEWORK_DSH_BROWSER_AUTH_FD: '5',
       DSH_HOME: launch.dshHome,
       DSH_TELEMETRY_DISABLED: '1',
       PATH: `${join(launch.cwd, 'node_modules', '.bin')}:${process.env.PATH ?? ''}`,
@@ -48,20 +51,21 @@ try {
       WEWORK_EXECUTOR_ENDPOINT: executor.endpoint,
       WEWORK_EXECUTOR_TOKEN: executor.token,
     },
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
   })
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', chunk => {
     stderr += String(chunk)
   })
   attachFakeElectronHost(child, token)
+  browserRequest = await authenticatedBrowserRequest(child, `http://127.0.0.1:${port}`)
 
   const baseUrl = `http://127.0.0.1:${port}/wework/electron-host/v1`
   const description = await waitForJson(baseUrl, child)
   assertEqual(description.protocolVersion, 1, 'protocol version')
   assertDeepEqual(description.capabilities, ['app.getVersion'], 'capabilities')
 
-  const response = await fetch(`${baseUrl}/invoke`, {
+  const response = await browserRequest(`${baseUrl}/invoke`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -83,7 +87,7 @@ try {
     child
   )
   assertEqual(executorDescription.protocolVersion, 1, 'executor protocol version')
-  const executorResponse = await fetch(`http://127.0.0.1:${port}/wework/executor/v1/rpc`, {
+  const executorResponse = await browserRequest(`http://127.0.0.1:${port}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'executor.health', params: {} }),
@@ -291,7 +295,7 @@ async function waitForJson(url, processHandle) {
       throw new Error(`DSH exited before becoming ready: ${processHandle.exitCode}`)
     }
     try {
-      const response = await fetch(url)
+      const response = await browserRequest(url)
       const contentType = response.headers.get('content-type') ?? ''
       if (response.ok && contentType.startsWith('application/json')) {
         return response.json()
@@ -314,7 +318,7 @@ async function waitForText(url, processHandle) {
       throw new Error(`DSH exited before becoming ready: ${processHandle.exitCode}`)
     }
     try {
-      const response = await fetch(url)
+      const response = await browserRequest(url)
       if (response.ok) return response.text()
       lastError = new Error(`DSH route is not ready: HTTP ${response.status}`)
     } catch (error) {
@@ -357,6 +361,33 @@ function freePort() {
       })
     })
   })
+}
+
+async function authenticatedBrowserRequest(processHandle, origin) {
+  const lines = createInterface({ input: processHandle.stdio[5] })
+  let url
+  try {
+    const [line] = await once(lines, 'line', { signal: AbortSignal.timeout(30_000) })
+    url = new URL(JSON.parse(line).url)
+  } finally {
+    lines.close()
+  }
+  if (url.origin !== origin || url.pathname !== '/' || !url.searchParams.get('token')) {
+    throw new Error('Invalid private DSH browser authentication response')
+  }
+  const exchange = await fetch(url, { redirect: 'manual' })
+  const cookie = exchange.headers
+    .getSetCookie()
+    .map(value => value.split(';')[0])
+    .join('; ')
+  await exchange.arrayBuffer()
+  if (exchange.status !== 302 || !cookie) throw new Error('DSH browser authentication failed')
+  return (target, init = {}) => {
+    if (new URL(target).origin !== origin) throw new Error('Unexpected DSH request origin')
+    const headers = new Headers(init.headers)
+    headers.set('cookie', cookie)
+    return fetch(target, { ...init, headers })
+  }
 }
 
 async function terminate(processHandle) {

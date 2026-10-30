@@ -95,6 +95,7 @@ runs:
         test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
         test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
         test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
+        test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
         test -f wework/electron/release/WeWork-win32-x64/resources/components.json
 
     - name: Save Windows build dependencies
