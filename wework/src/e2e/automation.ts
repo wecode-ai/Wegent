@@ -19,6 +19,7 @@ import {
 } from '@/lib/runtime-environment'
 import {
   normalizeCloudBackendUrl,
+  normalizeStoredCloudConnection,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
@@ -530,10 +531,19 @@ function resolveDesktopE2EModelServerUrl(
   )
 }
 
-async function seedDesktopE2ECloudConnection(runtimeConfig: DesktopE2ERuntimeConfig) {
+async function seedDesktopE2ECloudConnection(
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  restoreNativeProfile = false
+) {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   if (!backendUrl) return null
-  const config = normalizeCloudBackendUrl(backendUrl)
+  const nativeProfile = restoreNativeProfile
+    ? normalizeStoredCloudConnection((await getAppPreferences()).cloudConnection)
+    : null
+  const config = normalizeCloudBackendUrl(
+    nativeProfile?.backendUrl ?? backendUrl,
+    nativeProfile?.socketBaseUrlOverride ?? nativeProfile?.socketBaseUrl
+  )
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -543,7 +553,10 @@ async function seedDesktopE2ECloudConnection(runtimeConfig: DesktopE2ERuntimeCon
   const user = await response.json()
   const connection = {
     ...config,
-    webUrl: config.backendUrl,
+    ...(nativeProfile?.socketBaseUrlOverride
+      ? { socketBaseUrlOverride: nativeProfile.socketBaseUrlOverride }
+      : {}),
+    webUrl: nativeProfile?.webUrl ?? config.backendUrl,
     user,
     connectedAt: new Date().toISOString(),
   }
@@ -560,7 +573,7 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   if (modelServerUrl) {
     seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig)
+  await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
