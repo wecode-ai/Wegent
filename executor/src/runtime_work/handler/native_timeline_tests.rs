@@ -345,7 +345,7 @@ async fn native_timeline_restores_completed_approval_evidence_with_native_histor
             }}
         }));
     }
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     let response = read_and_stop(&mut handler).await.unwrap();
     let reviews = response["runtimeTurns"]
         .as_array()

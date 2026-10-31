@@ -91,7 +91,7 @@ import type {
 } from '@wegent/chat-core/runtime-stream-types'
 export type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
+  RuntimeTurnUpdatedPayload,
   RuntimeSupervisorState,
   RuntimeTaskTitleUpdatedPayload,
   ChatChunkPayload,
@@ -106,7 +106,7 @@ export type {
   RuntimeSubagentActivityPayload,
   RuntimeSupervisorEventPayload,
   RuntimeGoalStatus,
-  RuntimeGoalContinuationStatus,
+  RuntimeTurnUpdateStatus,
   RuntimeSupervisorMode,
   RuntimeSupervisorStatus,
   ModelSelectionConfig,

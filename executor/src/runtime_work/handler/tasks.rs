@@ -2023,7 +2023,10 @@ impl RuntimeWorkRpcHandler {
             })?;
             (previous, turn, scheduler.queued_turns.clone())
         };
-        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+        if let Err(error) = self
+            .persist_turn_queue(remaining_turns, Some(&previous))
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -2106,7 +2109,7 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>();
             (previous, ordered_task_ids, reordered)
         };
-        if let Err(error) = self.persist_turn_queue(reordered).await {
+        if let Err(error) = self.persist_turn_queue(reordered, Some(&previous)).await {
             *self
                 .turn_scheduler
                 .lock()

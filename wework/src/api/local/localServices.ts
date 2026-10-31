@@ -842,6 +842,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(taskRecord.executionState
+      ? { executionState: taskRecord.executionState as RuntimeTaskSummary['executionState'] }
+      : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),

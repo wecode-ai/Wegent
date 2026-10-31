@@ -944,6 +944,9 @@ importers:
       autoprefixer:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
+      chokidar:
+        specifier: 3.6.0
+        version: 3.6.0
       dingtalk-workspace-cli:
         specifier: 1.0.58
         version: 1.0.58

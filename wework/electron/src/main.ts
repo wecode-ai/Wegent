@@ -48,6 +48,8 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
+import { RendererStartupLoader } from './host/renderer-startup-loader.js'
+import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -433,6 +435,7 @@ const pendingEmbeddedBrowserAttachments = new Map<
   >
 >()
 const rendererHealth = new RendererHealthService()
+const rendererStartupLoader = new RendererStartupLoader()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
@@ -808,6 +811,7 @@ function installDshWindowLabelHeaders(): void {
   session.defaultSession.webRequest.onErrorOccurred(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
     details => {
+      rendererStartupLoader.requestFailed(details)
       const diagnostic = {
         at: new Date().toISOString(),
         path: new URL(details.url).pathname,
@@ -861,12 +865,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     registerDshWindowLabel(contents, 'main')
     primaryDshSecurityInstalled = true
   }
-  contents.once('did-finish-load', () => {
-    primaryDshLoaded = true
-    runtimeError = null
-    rendererHealth.ready()
-    logStartupStep('primary-renderer-load', 'completed')
-  })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
   contents.once('render-process-gone', (_event, details) => {
@@ -901,9 +899,29 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
-    await contents.loadURL(targetUrl.toString(), {
-      extraHeaders: 'X-Wework-Window-Label: main',
-    })
+    const disposeFault =
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
+        ? installStartupNetworkFault(contents.session, targetUrl.origin)
+        : undefined
+    try {
+      await rendererStartupLoader.load({
+        webContentsId: contents.id,
+        url: targetUrl.toString(),
+        load: () =>
+          contents.loadURL(targetUrl.toString(), {
+            extraHeaders: 'X-Wework-Window-Label: main',
+          }),
+        onRecovery: () =>
+          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+      })
+    } finally {
+      disposeFault?.()
+    }
+    primaryDshLoaded = true
+    runtimeError = null
+    rendererHealth.ready()
+    logStartupStep('primary-renderer-load', 'completed')
     const plugins = await desktopRuntime.listCoreDshPlugins()
     const pluginName = await detectCoreDshStartupPluginFailure(
       contents,

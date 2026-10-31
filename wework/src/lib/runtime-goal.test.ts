@@ -1,20 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import type { RuntimeGoal, RuntimeGoalContinuationPayload } from '@/types/api'
+import type { RuntimeGoal, RuntimeTaskSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import {
-  isRuntimeGoalContinuationTurn,
-  projectRuntimeGoalContinuing,
-  projectRuntimeGoalContinuationActive,
-  updateRuntimeGoalContinuation,
-} from './runtime-goal'
-
-const started: RuntimeGoalContinuationPayload = {
-  taskId: 'task-1',
-  deviceId: 'device-1',
-  threadId: 'thread-1',
-  turnId: 'turn-2',
-  status: 'started',
-}
+import { projectRuntimeGoalContinuing, projectRuntimeGoalContinuationActive } from './runtime-goal'
 
 const activeGoal: RuntimeGoal = {
   threadId: 'thread-1',
@@ -25,16 +12,6 @@ const activeGoal: RuntimeGoal = {
   timeUsedSeconds: 0,
   createdAt: 1787618000000,
   updatedAt: 1787618000000,
-}
-
-const initialUserMessage: WorkbenchMessage = {
-  id: 'user-1',
-  role: 'user',
-  content: 'Start the Goal',
-  status: 'done',
-  turnId: 'turn-1',
-  subtaskId: 'turn-1',
-  createdAt: '2026-08-25T00:00:00.000Z',
 }
 
 const continuedAssistantMessage: WorkbenchMessage = {
@@ -48,43 +25,25 @@ const continuedAssistantMessage: WorkbenchMessage = {
   createdAt: '2026-08-25T00:00:01.000Z',
 }
 
-describe('runtime goal continuation', () => {
-  test('stays active when the continued turn starts producing assistant output', () => {
-    const continuing = updateRuntimeGoalContinuation(null, {
-      type: 'turn_lifecycle',
-      payload: started,
-    })
+const execution: NonNullable<RuntimeTaskSummary['executionState']> = {
+  revision: '2',
+  phase: 'running',
+  turnId: 'turn-2',
+  latestTurnId: 'turn-2',
+  outcome: null,
+  continuation: true,
+}
 
-    expect(updateRuntimeGoalContinuation(continuing, { type: 'assistant_started' })).toEqual(
-      started
-    )
-  })
-
-  test('settles only when the turn lifecycle settles or the goal becomes inactive', () => {
-    expect(
-      updateRuntimeGoalContinuation(started, {
-        type: 'turn_lifecycle',
-        payload: { ...started, status: 'settled' },
-      })
-    ).toBeNull()
-    expect(updateRuntimeGoalContinuation(started, { type: 'goal_inactive' })).toBeNull()
-  })
-
-  test('projects an assistant-only active turn as Goal continuation when its event was missed', () => {
-    const messages = [initialUserMessage, continuedAssistantMessage]
-
-    expect(isRuntimeGoalContinuationTurn(messages, continuedAssistantMessage)).toBe(true)
+describe('native Goal presentation', () => {
+  test('uses the native continuation snapshot without a separate event cache', () => {
     expect(
       projectRuntimeGoalContinuing({
         goal: activeGoal,
-        continuation: null,
-        taskRunning: true,
-        messages,
+        execution,
         activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(true)
   })
-
   test.each([
     { content: 'Checking CI results' },
     {
@@ -95,49 +54,50 @@ describe('runtime goal continuation', () => {
   ] as Partial<WorkbenchMessage>[])(
     'keeps continuation active without treating visible output as startup',
     output => {
-      const assistant = { ...continuedAssistantMessage, ...output }
       const input = {
         goal: activeGoal,
-        continuation: started,
-        taskRunning: true,
-        messages: [initialUserMessage, assistant],
-        activeAssistantMessage: assistant,
+        execution,
+        activeAssistantMessage: { ...continuedAssistantMessage, ...output },
       }
-      expect(projectRuntimeGoalContinuing(input)).toBe(false)
       expect(projectRuntimeGoalContinuationActive(input)).toBe(true)
+      expect(projectRuntimeGoalContinuing(input)).toBe(false)
     }
   )
-
-  test('does not show startup for a stopped task with a stale lifecycle event', () => {
+  test('settles presentation only after authoritative execution settlement', () => {
     expect(
       projectRuntimeGoalContinuing({
         goal: activeGoal,
-        continuation: started,
-        taskRunning: false,
-        messages: [initialUserMessage],
+        execution: { ...execution, phase: 'idle', turnId: null },
         activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(false)
   })
-
-  test('does not project the initial Goal turn as continuation', () => {
-    const initialAssistantMessage: WorkbenchMessage = {
-      ...continuedAssistantMessage,
-      id: 'assistant-1',
-      turnId: 'turn-1',
-      subtaskId: 'turn-1',
-    }
-    const messages = [initialUserMessage, initialAssistantMessage]
-
-    expect(isRuntimeGoalContinuationTurn(messages, initialAssistantMessage)).toBe(false)
+  test('does not project the initial request turn as Goal continuation', () => {
     expect(
       projectRuntimeGoalContinuing({
         goal: activeGoal,
-        continuation: null,
-        taskRunning: true,
-        messages,
-        activeAssistantMessage: initialAssistantMessage,
+        execution: { ...execution, continuation: false },
+        activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(false)
+  })
+  test('shows continuation between turns without showing an active assistant', () => {
+    expect(
+      projectRuntimeGoalContinuing({
+        goal: activeGoal,
+        execution: { ...execution, phase: 'continuing', turnId: null },
+        activeAssistantMessage: null,
+      })
+    ).toBe(true)
+  })
+  test('does not project inactive Goals or unknown execution as continuing', () => {
+    for (const status of ['paused', 'blocked', 'complete'] as const) {
+      expect(
+        projectRuntimeGoalContinuationActive({ goal: { ...activeGoal, status }, execution })
+      ).toBe(false)
+    }
+    expect(projectRuntimeGoalContinuationActive({ goal: activeGoal, execution: undefined })).toBe(
+      false
+    )
   })
 })
