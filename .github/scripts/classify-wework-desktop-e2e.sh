@@ -1259,6 +1259,7 @@ classify_wework_path() {
     wework/src/features/workbench/runtimeConversationCache*)
       select_target "core:core-task-flow"
       select_target "core:conversation-state"
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/src/features/workbench/runtimePaneMessages* | \

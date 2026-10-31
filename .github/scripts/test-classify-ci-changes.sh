@@ -1274,13 +1274,17 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$terminal_path"
 done
 
-assert_desktop_case "conversation cache selects guidance and conversation segments" \
-  'wework_desktop_e2e=true
+for conversation_cache_path in \
+  wework/src/features/workbench/runtimeConversationCache.ts \
+  wework/src/features/workbench/runtimeConversationCacheStore.ts; do
+  assert_desktop_case "conversation cache selects guidance, conversation and board segments" \
+    'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow,goal-state-sync,native-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow,goal-state-sync,native-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"board-transcript-followup"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/src/features/workbench/runtimeConversationCache.ts"
+    "$conversation_cache_path"
+done
 
 assert_desktop_case "split interaction latency uses an independent runner" \
   'wework_desktop_e2e=true
