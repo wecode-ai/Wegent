@@ -24,6 +24,21 @@ else
 fi
 `
 
+const delayedXDisplay = `#!/bin/sh
+if [ -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
+  echo 'Openbox started before the X connection was ready' >&2
+  exit 1
+fi
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
+if [ "$queries" -lt 3 ]; then
+  echo "X connection unavailable probe=$queries" >&2
+  exit 1
+fi
+`
+
 function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
   try {
@@ -102,24 +117,7 @@ echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
 })
 
 it('waits for the X connection before starting Openbox', () => {
-  const result = runFixture(
-    runningOpenbox,
-    windowManagerProperties,
-    `#!/bin/sh
-if [ -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
-  echo 'Openbox started before the X connection was ready' >&2
-  exit 1
-fi
-queries=0
-if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
-queries=$((queries + 1))
-echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
-if [ "$queries" -lt 3 ]; then
-  echo "X connection unavailable probe=$queries" >&2
-  exit 1
-fi
-`
-  )
+  const result = runFixture(runningOpenbox, windowManagerProperties, delayedXDisplay)
   expect(result.status, result.stderr).toBe(0)
   expect(result.displayQueries).toBe(3)
   expect(result.openboxStarted).toBe(true)
@@ -166,14 +164,17 @@ fi
 const fs = require('node:fs')
 const directory = process.env.OPENBOX_TEST_DIR
 fs.writeFileSync(directory + '/pid', String(process.pid))
-if (Number(fs.readFileSync(directory + '/queries', 'utf8')) < 3) process.exit(1)
+// Display probes have finished; window-manager probes must not rewrite this counter.
+if (Number(fs.readFileSync(directory + '/display-queries', 'utf8')) < 3) process.exit(1)
 fs.writeFileSync(directory + '/registered', '')
 setInterval(() => {}, 1000)
 `,
     xprop,
-    xprop
+    delayedXDisplay
   )
   expect(result.status, result.stderr).toBe(0)
+  expect(result.displayQueries).toBe(3)
+  expect(result.applicationLaunched).toBe(true)
 })
 
 it('fails without launching the window manager when the display never connects', () => {
