@@ -39,13 +39,13 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (isReplyPredictionRequest(body)) return false
       if (
         JSON.stringify(body.input ?? []).includes('PROJECT_COORDINATOR_VERIFY') ||
         JSON.stringify(body.input ?? []).includes('STAND_IN_SCHEDULE_VERIFY')
       ) {
         return coordinator.handleHttp(req, response, url)
       }
-      if (isReplyPredictionRequest(body)) return false
       const latestUser = [...(body.input ?? [])].reverse().find(item => item.role === 'user')
       const marker = JSON.stringify(latestUser).match(
         /MEMORY_VERIFY_(ONE|UPDATED|FORGOTTEN|REMEMBER)/
