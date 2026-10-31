@@ -259,7 +259,6 @@ pub struct LocalPluginCloudLink {
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct LocalPluginCloudLinkRegistry {
-    #[serde(default)]
     cloud_links: Vec<LocalPluginCloudLink>,
 }
 
@@ -396,9 +395,19 @@ pub fn read_plugin_cloud_links(
     let resolved = Path::new(&request.marketplace_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    Ok(load_plugin_cloud_links(&marketplace_root_from_path(
-        &resolved,
-    )))
+    read_plugin_cloud_links_strict(&marketplace_root_from_path(&resolved))
+}
+
+pub(crate) fn personal_plugin_has_cloud_link(
+    marketplace_root: &Path,
+    plugin_name: &str,
+) -> Result<bool, String> {
+    let marketplace_root = marketplace_root
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    Ok(read_plugin_cloud_links_strict(&marketplace_root)?
+        .iter()
+        .any(|link| link.local_plugin_name == plugin_name))
 }
 
 pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), String> {
@@ -416,7 +425,7 @@ pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), Stri
     {
         return Err("Local plugin manifest is unavailable".to_owned());
     }
-    let mut links = load_plugin_cloud_links(&marketplace_root);
+    let mut links = read_plugin_cloud_links_strict(&marketplace_root)?;
     links.retain(|link| link.local_plugin_name != plugin_name);
     links.push(LocalPluginCloudLink {
         local_plugin_name: plugin_name.to_owned(),
@@ -433,7 +442,7 @@ pub fn unlink_plugin_release(request: UnlinkPluginReleaseRequest) -> Result<(), 
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
     let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
-    let mut links = load_plugin_cloud_links(&marketplace_root);
+    let mut links = read_plugin_cloud_links_strict(&marketplace_root)?;
     links.retain(|link| link.local_plugin_name != plugin_name);
     write_plugin_cloud_links(&marketplace_root, links)
 }
@@ -491,6 +500,8 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
         })
         .transpose()?;
 
+    let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
+    let cloud_link_backup = read_optional_file(&cloud_link_path)?;
     let backup_root = canonical_plugin.as_ref().map(|_| {
         marketplace_root.join(".wegent").join(format!(
             "plugin-delete-{}-{}",
@@ -510,8 +521,6 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
         .iter()
         .map(|path| fs::read(path).ok())
         .collect::<Vec<_>>();
-    let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
-    let cloud_link_backup = fs::read(&cloud_link_path).ok();
     if let (Some(canonical_plugin), Some(backup_root)) = (&canonical_plugin, &backup_root) {
         fs::rename(canonical_plugin, backup_root.join("plugin"))
             .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
@@ -533,7 +542,7 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
                 )?;
             }
         }
-        let mut links = load_plugin_cloud_links(&marketplace_root);
+        let mut links = read_plugin_cloud_links_strict(&marketplace_root)?;
         links.retain(|link| link.local_plugin_name != plugin_name);
         write_plugin_cloud_links(&marketplace_root, links)?;
         Ok(())
@@ -1938,6 +1947,10 @@ fn package_plugin_directory(
 #[path = "plugin_import_hash_tests.rs"]
 mod hash_tests;
 
+#[cfg(test)]
+#[path = "plugin_import_cloud_links_tests.rs"]
+mod cloud_links_tests;
+
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|error| format!("Failed to open plugin package for verification: {error}"))?;
@@ -2823,33 +2836,16 @@ fn plugin_cloud_link_registry_path(marketplace_root: &Path) -> PathBuf {
     marketplace_root.join(".wegent/plugin-cloud-links.json")
 }
 
-fn load_plugin_cloud_links(marketplace_root: &Path) -> Vec<LocalPluginCloudLink> {
+fn read_plugin_cloud_links_strict(
+    marketplace_root: &Path,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
     let path = plugin_cloud_link_registry_path(marketplace_root);
-    match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice::<LocalPluginCloudLinkRegistry>(&bytes)
-            .map(|registry| registry.cloud_links)
-            .unwrap_or_else(|error| {
-                log_executor_event(
-                    "invalid plugin cloud link registry ignored",
-                    &[
-                        ("path", path.display().to_string()),
-                        ("error", error.to_string()),
-                    ],
-                );
-                Vec::new()
-            }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => {
-            log_executor_event(
-                "plugin cloud link registry read failed",
-                &[
-                    ("path", path.display().to_string()),
-                    ("error", error.to_string()),
-                ],
-            );
-            Vec::new()
-        }
-    }
+    let Some(bytes) = read_optional_file(&path)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_slice::<LocalPluginCloudLinkRegistry>(&bytes)
+        .map(|registry| registry.cloud_links)
+        .map_err(|error| format!("Invalid plugin cloud link registry: {error}"))
 }
 
 fn write_plugin_cloud_links(
@@ -3182,7 +3178,7 @@ mod tests {
         let request = plugin_copy_request(&marketplace, &package);
         let imported = import_plugin_copy_package(&marketplace, &package, &request).unwrap();
         let cloud_link_path = plugin_cloud_link_registry_path(&marketplace);
-        fs::create_dir(&cloud_link_path).unwrap();
+        fs::write(&cloud_link_path, b"invalid cloud registry").unwrap();
 
         let error = delete_personal_plugin(DeletePersonalPluginRequest {
             marketplace_path: marketplace.display().to_string(),
@@ -3190,7 +3186,14 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.contains("plugin registry") || error.contains("atomically replace"));
+        assert!(
+            error.starts_with("Invalid plugin cloud link registry:"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read(&cloud_link_path).unwrap(),
+            b"invalid cloud registry"
+        );
         assert!(marketplace
             .join("plugins/example-plugin-copy/.codex-plugin/plugin.json")
             .is_file());
@@ -3203,7 +3206,7 @@ mod tests {
             assert!(marketplace_manifest_contains_plugin(&path, "example-plugin-copy").unwrap());
         }
 
-        fs::remove_dir(&cloud_link_path).unwrap();
+        fs::remove_file(&cloud_link_path).unwrap();
         delete_personal_plugin(DeletePersonalPluginRequest {
             marketplace_path: marketplace.display().to_string(),
             plugin_name: imported.plugin_name,

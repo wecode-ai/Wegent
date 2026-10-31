@@ -85,7 +85,7 @@ function installedItem(
 }
 
 describe('findMarketplaceItemForInstalled', () => {
-  test('matches by installedPluginId first', () => {
+  test('matches by installedPluginId when no cloud identity is known', () => {
     const items = [
       marketplaceItem({ id: 4, name: 'dingtalk', installedPluginId: '62' }),
       marketplaceItem({ id: 9, name: 'dingtalk', installedPluginId: '99' }),
@@ -93,10 +93,26 @@ describe('findMarketplaceItemForInstalled', () => {
     const plugin = installedItem({
       id: '62',
       pluginKey: 'dingtalk',
-      pluginId: 9,
       marketplace: 'wegent',
     })
     expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe(4)
+  })
+
+  test('never substitutes a same-name owner for an explicit cloud identity', () => {
+    const owner = marketplaceItem({
+      id: 4,
+      name: 'shared',
+      accessRole: 'owner',
+      installedPluginId: '62',
+    })
+    const recipient = marketplaceItem({ id: 9, name: 'shared', accessRole: 'recipient' })
+    const plugin = installedItem({ id: '62', pluginKey: 'shared', pluginId: 9 })
+    expect(findMarketplaceItemForInstalled(plugin, [owner, recipient])).toBe(recipient)
+    expect(findMarketplaceItemForInstalled(plugin, [owner])).toBeNull()
+    delete plugin.raw.spec.pluginId
+    plugin.raw.spec.sourcePayload = { cloudPluginId: 9 }
+    expect(findMarketplaceItemForInstalled(plugin, [owner, recipient])).toBe(recipient)
+    expect(findMarketplaceItemForInstalled(plugin, [owner])).toBeNull()
   })
 
   test('matches by cloud pluginId when installedPluginId is absent', () => {

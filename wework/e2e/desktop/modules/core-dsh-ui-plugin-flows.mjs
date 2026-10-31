@@ -507,7 +507,7 @@ async function assertDemoPluginVisible(control) {
     'Demo shell-after component was not mounted'
   )
 
-  await control.command('click', '[data-testid="dsh-extension-demo-navigation"]')
+  await control.command('clickWhenEnabled', '[data-testid="dsh-extension-demo-navigation"]')
   await control.command('waitFor', '[data-testid="dsh-extension-demo-route"]')
   await control.command('click', '[data-testid="dsh-extension-demo-open-settings"]')
   await control.command('waitFor', '[data-testid="dsh-extension-demo-settings"]')

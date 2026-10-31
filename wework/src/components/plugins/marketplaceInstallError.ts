@@ -11,6 +11,15 @@ export function humanizeMarketplacePluginError(
   operation: 'install' | 'uninstall' = 'install'
 ): string {
   const trimmed = stripExecutorPrefix(message.trim())
+  if (
+    trimmed === 'PLUGIN_UNINSTALL_PREFLIGHT_FAILED' ||
+    /account install id is unavailable/i.test(trimmed)
+  ) {
+    return t(
+      'workbench.plugins_uninstall_preflight_failed',
+      '暂时无法确认当前账号的插件安装状态，请刷新后重试。'
+    )
+  }
   if (trimmed === 'PLUGIN_UNINSTALL_UNCONFIRMED') {
     return t(
       'workbench.plugins_uninstall_unconfirmed',

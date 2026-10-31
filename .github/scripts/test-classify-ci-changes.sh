@@ -1201,6 +1201,40 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/ports/SharedWorkspaceApi.ts" \
   "packages/collaboration/src/dto-mappers/workspaceDtoMappers.ts"
 
+for personal_version_path in \
+  wework/e2e/desktop/scenarios/plugin-installation.scenario.mjs \
+  wework/scripts/plugin-personal-runtime.test.mjs \
+  wework/e2e/desktop/modules/plugin-personal-version-flow.mjs \
+  wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs \
+  wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs; do
+  assert_desktop_case "Personal plugin versions retain cloud publication coverage: $personal_version_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$personal_version_path"
+done
+
+for personal_version_implementation_path in \
+  wework/src/components/plugins/PluginVersionSubmitDrawer.tsx \
+  wework/src/components/plugins/pluginVersionSubmission.ts \
+  wework/src/components/plugins/hooks/usePluginDetailSelection.ts \
+  wework/src/components/plugins/hooks/usePluginDetailSelection.test.ts \
+  wework/src/components/plugins/hooks/usePluginVersionSubmission.tsx; do
+  assert_desktop_case "Personal plugin version implementation retains lifecycle and publication coverage: $personal_version_implementation_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+    "$personal_version_implementation_path"
+done
+
 assert_desktop_case "Creator resources select desktop and cloud delivery" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
@@ -1479,9 +1513,18 @@ wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle,plugin-composer-network-isolation"}]}' \
-  "wework/src/api/local/codexPlugins.ts" \
   "wework/src/api/local/codexPlugins.install.test.ts" \
   "wework/src/api/local/codexPluginInstallation.ts"
+
+assert_desktop_case "native plugin API retains import, lifecycle, network isolation, and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings,external-content-import"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle,plugin-composer-network-isolation"}]}' \
+  "wework/src/api/local/codexPlugins.ts"
 
 assert_desktop_case "embedded browser files select browser coverage" \
   'wework_desktop_e2e=true
@@ -1980,12 +2023,78 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/runtime_work/codex_transcript_page.rs"
 
-assert_desktop_case "plugin files select plugin lifecycle and project plugin coverage" \
+assert_desktop_case "plugin detail entry retains lifecycle and publication coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/components/plugins/PluginDetailView.tsx"
+
+assert_desktop_case "plugin owner actions retain lifecycle and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/components/plugins/pluginOwnerActions.ts"
+
+assert_desktop_case "plugin owner local package retains lifecycle and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/components/plugins/pluginOwnerLocalPackage.ts"
+
+assert_desktop_case "plugin uninstall implementation retains lifecycle and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/components/plugins/pluginUninstall.ts"
+
+for personal_plugin_dependency_path in \
+  wework/src/components/plugins/findMarketplaceItemForInstalled.ts \
+  wework/src/components/plugins/marketplaceCatalogMerge.ts \
+  wework/src/components/plugins/plugin-dialogs/InstallPluginDialog.tsx \
+  wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx; do
+  assert_desktop_case "Personal plugin dependency retains lifecycle and publication coverage: $personal_plugin_dependency_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+    "$personal_plugin_dependency_path"
+done
+
+assert_desktop_case "plugin inventory cache retains uninstall coordination and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication,plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/features/plugins/pluginMarketplaceCache.ts"
+
+assert_desktop_case "plugin workspace entry retains lifecycle, auth, uninstall, and publication coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication,plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
