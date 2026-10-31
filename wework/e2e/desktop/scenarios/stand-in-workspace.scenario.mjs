@@ -483,6 +483,7 @@ export function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
