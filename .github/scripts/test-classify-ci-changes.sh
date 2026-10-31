@@ -2894,22 +2894,18 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs"
 
-node --input-type=module - "$desktop_classifier" <<'NODE'
+for suffix in '' '_tests'; do
+  handler_path="executor/src/runtime_work/handler/stand_in_processing${suffix}.rs"
+  handler_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$handler_path")"
+  node --input-type=module - "$handler_path" "$handler_output" <<'NODE'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 
-for (const suffix of ['', '_tests']) {
-  const path = `executor/src/runtime_work/handler/stand_in_processing${suffix}.rs`
-  const output = execFileSync('bash', [process.argv[2]], {
-    input: `${path}\n`,
-    encoding: 'utf8',
-    env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
-  })
-  const matrix = output.split('\n').find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
-  const checkpoints = JSON.parse(matrix.slice(matrix.indexOf('=') + 1)).include
-    .flatMap(entry => entry.segments.split(','))
-  for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch']) {
-    assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
-  }
+const [path, output] = process.argv.slice(2)
+const matrix = output.split('\n').find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
+const checkpoints = JSON.parse(matrix.slice(matrix.indexOf('=') + 1)).include
+  .flatMap(entry => entry.segments.split(','))
+for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch']) {
+  assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
 }
 NODE
+done
