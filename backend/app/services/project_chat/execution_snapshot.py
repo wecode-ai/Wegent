@@ -4,6 +4,7 @@ Reports contain identities and outcomes only, never conversation contents.
 They repair execution state without replaying business workflow callbacks.
 """
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -25,6 +26,7 @@ from app.services.device.identity import (
 from app.services.project_chat.service import project_chat_service
 
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 def completed_activity_for_turn(
@@ -185,6 +187,18 @@ def reconcile_execution_snapshot(
         turn = _match_turn(row, snapshot, single_execution=len(rows) == 1)
         if turn is None or turn.status not in TERMINAL_STATUSES:
             continue
+        logger.info(
+            "[ExecutionSnapshot] Matched terminal activity=%s execution=%s "
+            "turn=%s turn_status=%s completed_at=%s running=%s device=%s task=%s",
+            row.id,
+            (row.metadata_json or {}).get("execution_id"),
+            turn.id,
+            turn.status,
+            turn.completed_at,
+            snapshot.running,
+            snapshot.device_id,
+            snapshot.task_id,
+        )
         project_chat_service._require_scope(
             db,
             user_id=user_id,
@@ -271,7 +285,11 @@ def _persist_outcome(
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(
-            db, execution_id=execution.id, runtime_status=status, running=False
+            db,
+            execution_id=execution.id,
+            runtime_status=status,
+            running=False,
+            source="history",
         )
         if execution is None or execution.status != status:
             return False

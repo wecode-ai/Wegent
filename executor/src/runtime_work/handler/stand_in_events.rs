@@ -23,7 +23,7 @@ impl RuntimeWorkRpcHandler {
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
         let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
-        let configs: Vec<Value> = project_configs
+        let mut configs: Vec<Value> = project_configs
             .iter()
             .filter(|config| {
                 config["enabled"] == true
@@ -60,6 +60,53 @@ impl RuntimeWorkRpcHandler {
         }
         if super::personal_stand_in::matching_personal_roles(&configs, &issue).is_empty() {
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
+            return Ok(());
+        }
+
+        let user = configs[0]["userId"].as_i64().unwrap_or_default();
+        if configs.iter().any(|config| {
+            !crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        }) {
+            let assignments = self
+                .stand_in_http(
+                    reqwest::Method::GET,
+                    &format!("/v1/loop-items/{issue_id}/assignments"),
+                    None,
+                )
+                .await?;
+            let Some(active) = assignments["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["id"] == assignment && row["status"] == "active")
+            else {
+                return Ok(());
+            };
+            let roles: Vec<Value> =
+                super::personal_stand_in::matching_personal_roles(&configs, &issue)
+                    .iter()
+                    .filter(|role| {
+                        !crate::task_runtime::personal_stand_in::immediate_policy(
+                            &role["handlingPolicy"],
+                        ) && super::stand_in::assignment_after_enable(active, role)
+                            && self
+                                .local_task_link(
+                                    &self.stand_in_task_id(role, &issue["human_task_binding"]),
+                                )
+                                .is_none()
+                    })
+                    .map(|role| role["id"].clone())
+                    .collect();
+            if !roles.is_empty() {
+                store.enqueue_stand_in_event(user, json!(["assignment","cloud",project,issue_id,assignment]),
+                json!({"kind":"assignment","projectId":project,"projectStore":"cloud","issueId":issue_id,"assignmentId":assignment,"issue":issue,"roleIds":roles})
+            ).map_err(settings_error)?;
+            }
+        }
+        configs.retain(|config| {
+            crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        });
+        if configs.is_empty() {
             return Ok(());
         }
         let result = self.start_cloud_stand_in_with_roles(&configs, &issue).await;
@@ -173,6 +220,29 @@ mod tests {
         );
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert!(fixture.handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_notifications_are_durable_intake_without_task_dispatch() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        for _ in 0..2 {
+            fixture
+                .handler
+                .handle_runtime_rpc(notification())
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+        assert_eq!(
+            store.stand_in_events(7).unwrap()[0]["assignmentId"],
+            "assignment"
+        );
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
 

@@ -14,7 +14,27 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import '@/i18n'
+import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { StandInOverviewPage } from './StandInOverviewPage'
+const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
+vi.mock('@/features/automations/AutomationsPage', async () => {
+  const { useImperativeHandle } = await import('react')
+  return {
+    AutomationsPage: ({ ref }: { ref: import('react').Ref<unknown> }) => {
+      useImperativeHandle(ref, () => ({ requestLeave: menuMocks.leave }))
+      return <div data-testid="scheduled-work-fixture" />
+    },
+  }
+})
+function requestScheduledWork() {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in?view=scheduled' },
+      })
+    )
+  })
+}
 vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
@@ -52,6 +72,7 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
         memories: vi.fn(async () => []),
         inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
         proposal: vi.fn(async () => null),
+        processingStatus: vi.fn(async () => ({ pendingCount: 0, running: false, actions: [] })),
         personalSave,
         personalAgents,
       },
@@ -363,4 +384,95 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+})
+
+it('routes a pending background confirmation to its real Runtime task', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  vi.mocked(api.personalGet).mockResolvedValue({
+    ...settings,
+  })
+  api.processingStatus = vi.fn().mockResolvedValue({
+    pendingCount: 1,
+    running: true,
+    awaitingUser: true,
+    taskId: 'stand-in-coordinator-7',
+    actions: [],
+  })
+  const onOpenTask = vi.fn()
+  render(<StandInOverviewPage {...props} onOpenTask={onOpenTask} />)
+  await userEvent.click(await screen.findByTestId('stand-in-processing-open-task'))
+  expect(onOpenTask).toHaveBeenCalledWith({
+    taskId: 'stand-in-coordinator-7',
+    deviceId: 'device',
+    runtime: 'codex',
+  })
+})
+
+it('shows plugin installation guidance for a failed source and clears it after reloading', async () => {
+  const { props } = fixture()
+  const source = {
+    providerId: 'dingtalk',
+    id: 'group-1',
+    profile: 'default',
+    name: 'Example group',
+    kind: 'group',
+    policy: { automatic: false, askBeforeAct: true },
+  }
+  const inbox = vi.mocked(props.services.standInApi.inbox)
+  inbox.mockResolvedValue({
+    items: [],
+    sourceErrors: [
+      { source, error: { code: 'dependency_missing', message: 'Dependency dingtalk is missing' } },
+    ],
+  })
+  const retrySource = vi.fn(async () => {
+    inbox.mockResolvedValue({ items: [], sourceErrors: [] })
+  })
+  props.services.standInApi.retrySource = retrySource
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  const guidance = await screen.findByText(/Example group · 来源所需插件尚未安装/)
+  expect(guidance).toHaveTextContent('「连接」')
+  expect(guidance).toHaveTextContent('「安装所需插件」')
+  expect(guidance).toHaveTextContent('安装后重新加载')
+  expect(screen.queryByText('Dependency dingtalk is missing')).not.toBeInTheDocument()
+  expect(retrySource).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-source-retry-group-1'))
+  expect(retrySource).toHaveBeenCalledWith(7, 'device', source)
+  await waitFor(() =>
+    expect(screen.queryByText(/Example group · 来源所需插件尚未安装/)).not.toBeInTheDocument()
+  )
+})
+
+it('keeps unsaved settings mounted when the menu requests scheduled work', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await user.click(await screen.findByTestId('stand-in-settings-open'))
+  const field = await screen.findByTestId('stand-in-preferences')
+  await user.type(field, '保留菜单切换前的草稿')
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-preferences')).toBe(field)
+  expect(field).toHaveValue('保留菜单切换前的草稿')
+  await user.click(screen.getByTestId('stand-in-profile-backdrop'))
+  expect(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).toBeInTheDocument()
+})
+
+it('handles repeated scheduled menu requests and guards each request after cancellation', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('stand-in-overview-role-default')
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByTestId('stand-in-work-view-work'))
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
+  menuMocks.leave.mockImplementationOnce(() => {})
+  requestScheduledWork()
+  const afterCancellation = menuMocks.leave.mock.calls.length
+  requestScheduledWork()
+  expect(menuMocks.leave).toHaveBeenCalledTimes(afterCancellation + 1)
 })

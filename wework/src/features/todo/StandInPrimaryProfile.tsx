@@ -73,7 +73,8 @@ export function StandInPrimaryProfile({
       active = false
     }
   }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
-  const dirty = !dequal(original, draft)
+  const [scheduleDirty, setScheduleDirty] = useState(false)
+  const dirty = !dequal(original, draft) || scheduleDirty
   const role = {
     ...newStandInRole(settings.executionDeviceId, 'primary'),
     ...draft,
@@ -135,6 +136,8 @@ export function StandInPrimaryProfile({
       <div className="mt-6 border-t border-border pt-5">
         <StandInConnectionSettings
           role={role}
+          scheduling={{ userId: settings.userId, roleId: '@primary' }}
+          onScheduleDirtyChange={setScheduleDirty}
           projects={projects}
           api={api}
           deviceId={settings.executionDeviceId}
@@ -235,7 +238,7 @@ export function StandInPrimaryProfile({
         <button
           type="button"
           data-testid="stand-in-primary-save"
-          disabled={saving || !dirty}
+          disabled={saving || !dirty || scheduleDirty}
           onClick={() => void onSave({ ...settings, primary: draft })}
           className="min-h-9 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50"
         >

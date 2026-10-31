@@ -115,7 +115,6 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   // The closing drawer retains its conversation until the exit animation ends.
   // Inject the next read failure only after that previous reader is unmounted.
@@ -124,6 +123,7 @@ async function verifyCachedInitialRecovery({
     snapshot => !snapshot.testIds.includes('ai-chat-modal'),
     'The previous Issue conversation did not unmount before testing its next history read'
   )
+  const start = proxy.requests.length
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'

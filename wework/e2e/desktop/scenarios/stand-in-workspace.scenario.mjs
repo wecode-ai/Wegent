@@ -303,7 +303,8 @@ export function createDesktopScenario({
       assert.equal(saved.workspace.executionMode, 'git_worktree')
       assert.equal(saved.model.model_id, model.model_id)
 
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-overview-role-default"]')
@@ -339,6 +340,7 @@ export function createDesktopScenario({
       )
       assert.equal(saved.goalMode, false)
       assert.equal(saved.enabled, false)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-home"]`)
       await control.command('waitFor', '[data-testid="collaboration-issue-project-trigger"]', {
         visible: true,
@@ -457,18 +459,18 @@ export function createDesktopScenario({
           '[data-testid="slash-command-option-skill-stand-in-catalog"]'
         )
         await control.command('click', '[data-testid="slash-command-option-plugin-marketplace"]')
-        await control.command(
-          'waitFor',
-          '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]'
-        )
         await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+        await control.command('waitFor', '[data-testid="stand-in-profile-backdrop"]', {
+          visible: false,
+        })
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         assert.equal(
           (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
           `${MARKER}_UNSAVED`
         )
+        await captureScreenshot(control, 'stand-in-marketplace-draft-preserved.png')
         await discardStandInDraft(control)
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
@@ -481,6 +483,7 @@ export function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
@@ -498,7 +501,8 @@ export function createDesktopScenario({
       assert.deepEqual(afterProject.roles[0].workspace, saved.workspace)
       assert.equal(afterProject.roles.length, beforeProject.roles.length)
       await control.command('click', '[data-testid="stand-in-cancel"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))

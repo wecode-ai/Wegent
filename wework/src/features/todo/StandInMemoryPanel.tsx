@@ -14,12 +14,16 @@ export function StandInMemoryPanel({
   api,
   settings,
   projects,
+  fixedScope,
+  scopeLabel,
   onClose,
   ref,
 }: {
   api: StandInExecutorApi
   settings: PersonalStandInSettings
   projects: CollaborationProject[]
+  fixedScope?: StandInMemoryScope
+  scopeLabel?: string
   onClose(): void
   ref?: Ref<StandInSettingsHandle>
 }) {
@@ -31,16 +35,19 @@ export function StandInMemoryPanel({
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
-  const scopes: { scope: StandInMemoryScope; label: string }[] = [
-    { scope: { kind: 'personal' }, label: t('standIn.memory.personal') },
-    ...settings.roles.map((role, index) => ({
-      scope: { kind: 'role' as const, roleId: role.id },
-      label: t('standIn.memory.role', {
-        name: standInRoleName(role, index, t('standIn.personal.default_role')),
-      }),
-    })),
-  ]
-  for (const identity of [settings.primary, ...settings.roles]) {
+  const scopeKey = fixedScope ? JSON.stringify(fixedScope) : undefined
+  const scopes: { scope: StandInMemoryScope; label: string }[] = fixedScope
+    ? [{ scope: fixedScope, label: scopeLabel ?? t('standIn.memory.project') }]
+    : [
+        { scope: fixedScope ?? { kind: 'personal' }, label: t('standIn.memory.personal') },
+        ...settings.roles.map((role, index) => ({
+          scope: { kind: 'role' as const, roleId: role.id },
+          label: t('standIn.memory.role', {
+            name: standInRoleName(role, index, t('standIn.personal.default_role')),
+          }),
+        })),
+      ]
+  for (const identity of fixedScope ? [] : [settings.primary, ...settings.roles]) {
     for (const source of identity?.connections ?? []) {
       const scope: StandInMemoryScope =
         source.providerId === '@wegent/dsh-connection-dingtalk/dingtalk' &&
@@ -80,7 +87,13 @@ export function StandInMemoryPanel({
       .memories(settings.userId, settings.executionDeviceId)
       .then(rows => {
         if (active) {
-          setItems(rows)
+          setItems(
+            rows.filter(row =>
+              scopeKey
+                ? dequal(row.scope, JSON.parse(scopeKey))
+                : row.scope.kind !== 'project_coordinator'
+            )
+          )
           setError(null)
         }
       })
@@ -90,12 +103,15 @@ export function StandInMemoryPanel({
     return () => {
       active = false
     }
-  }, [api, settings.userId, settings.executionDeviceId, retry])
+  }, [api, settings.userId, settings.executionDeviceId, retry, scopeKey])
   const dirty =
     editing !== null &&
     !dequal(
       editing,
-      items?.find(row => row.id === editing.id) ?? { content: '', scope: { kind: 'personal' } }
+      items?.find(row => row.id === editing.id) ?? {
+        content: '',
+        scope: fixedScope ?? { kind: 'personal' },
+      }
     )
   const close = () => {
     if (busy) return
@@ -157,7 +173,7 @@ export function StandInMemoryPanel({
             <button
               type="button"
               data-testid="stand-in-memory-add"
-              onClick={() => setEditing({ content: '', scope: { kind: 'personal' } })}
+              onClick={() => setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })}
               className="mb-4 inline-flex min-h-8 items-center gap-2 self-start rounded-md border border-border px-3 text-sm hover:bg-muted"
             >
               <Plus className="h-4 w-4" />
@@ -174,7 +190,7 @@ export function StandInMemoryPanel({
                   const row = await api.saveMemory(settings.userId, settings.executionDeviceId, {
                     ...editing,
                     content: editing.content ?? '',
-                    scope: editing.scope ?? { kind: 'personal' },
+                    scope: editing.scope ?? fixedScope ?? { kind: 'personal' },
                   })
                   setItems(current => [row, ...(current ?? []).filter(item => item.id !== row.id)])
                   setEditing(null)

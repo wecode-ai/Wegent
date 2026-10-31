@@ -151,6 +151,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
+        let _guard = gate.lock().await;
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)
@@ -438,8 +440,33 @@ impl RuntimeWorkRpcHandler {
             if bindings.iter().any(|row| row.task_id == previous) {
                 continue;
             }
+            let user = configs[0]["userId"].as_i64().unwrap_or_default();
+            {
+                let roles: Vec<Value> =
+                    super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
+                        .iter()
+                        .filter(|role| {
+                            let id = self.stand_in_task_id(role, &binding);
+                            !crate::task_runtime::personal_stand_in::immediate_policy(
+                                &role["handlingPolicy"],
+                            ) && self.local_task_link(&id).is_none()
+                                && !bindings.iter().any(|row| row.task_id == id)
+                        })
+                        .map(|role| role["id"].clone())
+                        .collect();
+                if !roles.is_empty() {
+                    store.enqueue_stand_in_event(user, json!(["assignment","local",project,issue.id,binding["humanAssignmentId"]]),
+                        json!({"kind":"assignment","projectId":project,"projectStore":"local","issueId":issue.id,"assignmentId":binding["humanAssignmentId"],"issue":issue_value,"roleIds":roles})
+                    ).map_err(settings_error)?;
+                }
+            }
             for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
+                if !crate::task_runtime::personal_stand_in::immediate_policy(
+                    &config["handlingPolicy"],
+                ) {
+                    continue;
+                }
                 let task_id = self.stand_in_task_id(config, &binding);
                 if self.stand_in_task_is_handled(
                     config,
@@ -741,7 +768,7 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
-    async fn start_local_stand_in(
+    pub(super) async fn start_local_stand_in(
         &self,
         config: &Value,
         issue: &Value,
@@ -817,7 +844,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn prepare_stand_in_execution(
         &self,
-        mut payload: Value,
+        payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = self.stand_in_agent(config).await?.or_else(|| {
@@ -827,6 +854,16 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         });
+        self.prepare_stand_in_execution_with_agent(payload, config, agent)
+            .await
+    }
+
+    pub(super) async fn prepare_stand_in_execution_with_agent(
+        &self,
+        mut payload: Value,
+        config: &Value,
+        agent: Option<Value>,
+    ) -> Result<Value, AppIpcError> {
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -884,7 +921,7 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
+pub(super) fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
     let parse = |value: &Value| {
         value
             .as_str()

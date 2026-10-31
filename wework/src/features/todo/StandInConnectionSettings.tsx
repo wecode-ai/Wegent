@@ -1,12 +1,15 @@
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ChevronRight, Folder, MessageSquare, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
-import { standInPolicy, type StandInHandlingPolicy, type StandInRole } from '@/api/personalStandIn'
+import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { AutomationsPage } from '@/features/automations/AutomationsPage'
+import { Clock } from 'lucide-react'
 import { findStandInProject } from './standInProjects'
 
 const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
@@ -20,6 +23,8 @@ export function StandInConnectionSettings({
   disabled,
   onChange,
   focusedProjectId,
+  scheduling,
+  onScheduleDirtyChange,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -29,8 +34,15 @@ export function StandInConnectionSettings({
   disabled: boolean
   onChange(role: StandInRole): void
   focusedProjectId?: string
+  scheduling?: { userId: number; roleId: string }
+  onScheduleDirtyChange?(dirty: boolean): void
 }) {
   const { t, i18n } = useTranslation('common')
+  const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [discardSchedule, setDiscardSchedule] = useState(false)
+  useEffect(() => {
+    onScheduleDirtyChange?.(scheduleDirty)
+  }, [scheduleDirty, onScheduleDirtyChange])
   const [view, setView] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [catalog, setCatalog] = useState<{
@@ -70,14 +82,6 @@ export function StandInConnectionSettings({
     }
   }, [api, deviceId, catalogKey, i18n.language])
   const provider = providers.find(item => item.id === view)
-  const policyLabel = (policy: StandInHandlingPolicy) =>
-    t(
-      !policy.automatic
-        ? 'standIn.workspace.policy_manual'
-        : policy.askBeforeAct
-          ? 'standIn.workspace.policy_confirm'
-          : 'standIn.workspace.policy_automatic'
-    )
   const source = role.collaboration
   const projectRows = !source.enabled
     ? []
@@ -140,12 +144,38 @@ export function StandInConnectionSettings({
             data-testid="stand-in-connections-back"
             disabled={disabled}
             className="flex min-h-8 items-center gap-2 text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
-            onClick={() => setView(null)}
+            onClick={() => {
+              if (scheduleDirty) setDiscardSchedule(true)
+              else setView(null)
+            }}
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
             {t('standIn.workspace.back_to_connections')}
           </button>
-          {view === 'projects' ? (
+          <ConfirmDialog
+            open={discardSchedule}
+            onClose={() => setDiscardSchedule(false)}
+            title={t('standIn.personal.discard_help')}
+            description={t('standIn.personal.discard_description')}
+            confirmLabel={t('standIn.personal.discard')}
+            cancelLabel={t('standIn.personal.keep_editing')}
+            confirmTestId="stand-in-schedule-discard"
+            onConfirm={() => {
+              setDiscardSchedule(false)
+              setScheduleDirty(false)
+              setView(null)
+            }}
+          />
+          {view === 'time' && scheduling ? (
+            <div className="flex h-[32rem] min-h-0 flex-col">
+              <AutomationsPage
+                embedded
+                standInOwner={scheduling}
+                standInDeviceId={deviceId}
+                onDirtyChange={setScheduleDirty}
+              />
+            </div>
+          ) : view === 'projects' ? (
             <StandInConnections
               role={role}
               projects={projects}
@@ -236,6 +266,21 @@ export function StandInConnectionSettings({
                 <Folder aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.personal.collaboration')}
               </button>
+              {scheduling && (
+                <button
+                  type="button"
+                  data-testid="stand-in-add-time-connection"
+                  disabled={disabled}
+                  onClick={() => {
+                    setView('time')
+                    setAdding(false)
+                  }}
+                  className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                >
+                  <Clock className="h-4 w-4" />
+                  {t('standIn.workspace.time_connection')}
+                </button>
+              )}
               {providers.map(item => (
                 <div key={item.id}>
                   <button
@@ -261,6 +306,19 @@ export function StandInConnectionSettings({
               ))}
             </div>
           )}
+          {scheduling && (
+            <button
+              type="button"
+              data-testid="stand-in-time-connections"
+              disabled={disabled}
+              onClick={() => setView('time')}
+              className="flex min-h-14 w-full items-center gap-3 rounded-md px-2 py-3 text-left hover:bg-muted"
+            >
+              <Clock className="h-4 w-4" />
+              <span className="flex-1 text-sm">{t('standIn.workspace.time_connection')}</span>
+              <ChevronRight className="h-4 w-4 text-text-muted" />
+            </button>
+          )}
           {rows.length ? (
             <div className="divide-y divide-border" data-testid="stand-in-connected-list">
               {rows.map(row => (
@@ -285,7 +343,11 @@ export function StandInConnectionSettings({
                     <span className="mt-1 block text-xs text-text-muted">{row.detail}</span>
                   </span>
                   <span className="max-w-32 text-right text-xs text-text-secondary">
-                    {policyLabel(row.policy)}
+                    {!row.policy.automatic
+                      ? t('standIn.workspace.connection_handling_disabled')
+                      : row.policy.immediate === false
+                        ? t('standIn.workspace.processing_background')
+                        : t('standIn.workspace.process_immediately')}
                   </span>
                   <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
                 </button>

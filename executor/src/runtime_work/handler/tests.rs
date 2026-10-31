@@ -66,6 +66,9 @@ mod transcript_turn_status_tests;
 #[path = "transcript_status_tests.rs"]
 mod transcript_status_tests;
 
+#[path = "async_question_delivery_tests.rs"]
+mod async_question_delivery_tests;
+
 /// Restores one environment variable when a test finishes.
 pub(super) struct ScalarEnv {
     key: &'static str,

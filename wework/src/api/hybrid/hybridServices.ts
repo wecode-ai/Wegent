@@ -1,3 +1,7 @@
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
   assertLocalRuntimeSidebarIdentity,
@@ -381,7 +385,20 @@ export function createHybridWorkbenchServices(
     listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
     user: options.user,
   })
+  const connectionDependencyProfile = { apiBaseUrl: options.apiBaseUrl, token: options.token }
+  const connectionDependencyPlugins = createLocalDevicePluginApi(
+    createPluginApi(
+      createHttpClient({
+        baseUrl: options.apiBaseUrl,
+        getToken: () => options.token,
+        redirectOnUnauthorized: false,
+      }),
+      options.apiBaseUrl
+    ),
+    deviceId => resolveLocalPluginDeviceRouteId(deviceId, connectionDependencyProfile)
+  )
   const localServices = createLocalAppServices({
+    connectionDependencyPlugins,
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
         createHttpClient({
@@ -1700,6 +1717,31 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async projectConversation(
+        userId,
+        deviceId,
+        projectId,
+        projectStore,
+        groupId,
+        message,
+        options
+      ) {
+        return (await standInApiForDevice(deviceId)).projectConversation(
+          userId,
+          deviceId,
+          projectId,
+          projectStore,
+          groupId,
+          message,
+          options
+        )
+      },
+      async processingStatus(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).processingStatus(userId, deviceId)
+      },
+      async checkProcessing(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).checkProcessing(userId, deviceId)
+      },
       async configureTelemetry(userId, deviceId, enabled, enabledSince) {
         return (await standInApiForDevice(deviceId)).configureTelemetry(
           userId,

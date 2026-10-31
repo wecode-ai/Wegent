@@ -4093,7 +4093,7 @@ fn build_codex_launch_config_with_route_scope(
     if request.extra.get("origin").is_some_and(|origin| {
         matches!(
             origin["initiatedBy"].as_str(),
-            Some("stand_in" | "stand_in_identity")
+            Some("stand_in" | "stand_in_identity" | "project_coordinator")
         )
     }) {
         // Wework owns memory scope and deletion; never mix in CODEX_HOME-wide memories.

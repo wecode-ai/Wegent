@@ -20,6 +20,7 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+mod project_coordinator;
 mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
@@ -64,6 +65,9 @@ mod stand_in_memories;
 
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
+
+#[path = "stand_in_processing.rs"]
+mod stand_in_processing;
 
 #[path = "stand_in_telemetry.rs"]
 pub(crate) mod stand_in_telemetry;

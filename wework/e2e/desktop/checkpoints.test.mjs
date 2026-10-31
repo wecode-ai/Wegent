@@ -16,13 +16,19 @@ test('the existing CI profile checkpoint includes the original and model catalog
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
     'stand-in-model-catalog',
+    'stand-in-processing',
   ])
 })
 
 test('group expansion preserves ordering and runs each checkpoint once', () => {
   assert.deepEqual(
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
-    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-controls']
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'stand-in-controls',
+    ]
   )
 })
 

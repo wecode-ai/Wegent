@@ -13,12 +13,30 @@ async function ownsInteraction(
 ): Promise<boolean> {
   if (!owner || owner.taskId !== item.task.address.taskId) return false
   if (owner.deviceId === item.task.address.deviceId) return true
-  const devices = createWorkbenchDeviceResolver(await services.deviceApi.listDevices())
-  return Boolean(
-    devices.resolve(owner.deviceId) &&
-    devices.resolve(item.task.address.deviceId) &&
+  const listed = await services.deviceApi.listDevices()
+  const devices = createWorkbenchDeviceResolver(listed)
+  const ownerDevice = devices.resolve(owner.deviceId)
+  const interactionDevice = devices.resolve(item.task.address.deviceId)
+  const matches = Boolean(
+    ownerDevice &&
+    interactionDevice &&
     devices.identityKey(owner.deviceId) === devices.identityKey(item.task.address.deviceId)
   )
+  if (!matches)
+    console.warn('[RuntimeInteraction] Issue owner identity unavailable', {
+      ownerDeviceId: owner.deviceId,
+      interactionDeviceId: item.task.address.deviceId,
+      ownerResolved: Boolean(ownerDevice),
+      interactionResolved: Boolean(interactionDevice),
+      devices: listed.map(device => ({
+        id: device.id,
+        deviceId: device.device_id,
+        appDeviceId: device.app_device_id,
+        runtimeInstanceId: device.runtime_instance_id,
+        type: device.device_type,
+      })),
+    })
+  return matches
 }
 
 /** Persist the reply on its owning Issue thread before continuing its execution. */

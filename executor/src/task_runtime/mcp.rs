@@ -36,10 +36,12 @@ use super::{
 mod comments;
 mod context;
 mod stand_in;
+pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
 pub(crate) use stand_in::stand_in_mcp_client_config;
+pub(crate) use stand_in::StandInMcpIdentity;
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";

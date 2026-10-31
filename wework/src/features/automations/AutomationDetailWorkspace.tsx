@@ -55,6 +55,7 @@ import {
 
 interface AutomationDetailWorkspaceProps {
   draft: AutomationDraft
+  inheritStandIn?: boolean
   automation: Automation | null
   runs: AutomationRun[]
   locale: string
@@ -80,6 +81,7 @@ interface AutomationDetailWorkspaceProps {
 
 export function AutomationDetailWorkspace({
   draft,
+  inheritStandIn = false,
   automation,
   runs,
   locale,
@@ -324,6 +326,10 @@ export function AutomationDetailWorkspace({
                 options={taskOptions}
               />
             </SettingsRow>
+          ) : inheritStandIn ? (
+            <p className="px-3 py-2 text-xs text-text-muted">
+              {t('standIn.workspace.schedule_inherits_settings')}
+            </p>
           ) : (
             <>
               <SettingsRow label={t('workbench.automation_location', '运行位置')}>

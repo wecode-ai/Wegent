@@ -998,6 +998,7 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+
     wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-profile.scenario.mjs|wework/src/features/todo/StandInConnectionSettings*|wework/src/features/todo/StandInDeviceSelect*|wework/src/features/todo/StandInMemory*|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/StandInSourceConnections*|wework/e2e/desktop/scenarios/stand-in-connections.scenario.mjs|wework/dsh/connection-*/*|wework/dsh/plugin-runtime/connections*|wework/dsh/plugin-runtime/connection-dependencies*|wework/dsh/plugin-runtime/connection-tools*|executor/src/runtime_work/connection_cli.rs|executor/src/runtime_work/connection_dependencies.rs|wework/e2e/desktop/scenarios/stand-in-cli.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-plugin-bridge.scenario.mjs|wework/e2e/desktop/fixtures/connection-source/*|executor/src/agents/codex/connection_mcp.rs|executor/src/runtime_work/connection_mcp*|wework/e2e/desktop/scenarios/stand-in-mcp.scenario.mjs|executor/src/runtime_work/connection_host.rs|executor/src/runtime_work/handler/connections.rs|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_memories.rs|executor/src/runtime_work/handler/stand_in_memory.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
       select_target "core:stand-in-identities"
       select_target "core:stand-in-connections"
@@ -1548,6 +1549,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/stand-in-processing.scenario.mjs|wework/src/features/todo/StandInProcessing*|wework/src/features/todo/useStandInProcessingStatus*|executor/src/runtime_work/handler/stand_in_processing*|executor/src/task_runtime/stand_in_processing.rs|executor/src/task_runtime/mcp/stand_in_processing.rs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-composer-route-messaging.mjs)
       select_target "cloud:plugin-runtime-route-refresh"

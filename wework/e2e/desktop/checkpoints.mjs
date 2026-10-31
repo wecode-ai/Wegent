@@ -32,6 +32,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-telemetry',
   'stand-in-profile-settings',
   'stand-in-model-catalog',
+  'stand-in-processing',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -217,7 +218,10 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
     'collaboration-issue-comment-notification',
     ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],
   ],
-  ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
+  [
+    'stand-in-profile',
+    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-processing'],
+  ],
   [
     'plugin-account-auth',
     [

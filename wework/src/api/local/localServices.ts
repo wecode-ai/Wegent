@@ -1,3 +1,4 @@
+import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
@@ -343,6 +344,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  connectionDependencyPlugins?: ConnectionDependencyPluginApi
   listCloudModels?: () => Promise<UnifiedModel[]>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
@@ -3499,6 +3501,24 @@ export function createAutomationApiFromIpc(
       schemaVersion: 2,
       deviceId: localDeviceId,
     }
+    if (taskRequest.standInOwner) {
+      const continuation = data.continuationPayload as RuntimeSendRequest | null | undefined
+      return {
+        id: data.id ?? '',
+        version: data.version ?? 0,
+        name: data.name,
+        description: data.description ?? '',
+        prompt: data.prompt,
+        schedule: serializeLocalAutomationSchedule(data.schedule),
+        timezone: data.timezone,
+        enabled: data.enabled,
+        conversationMode: data.conversationMode,
+        notificationPolicy: data.notificationPolicy,
+        taskRequest,
+        taskPayload: { runtime: 'codex', standaloneChatWorkspace: true },
+        continuationPayload: continuation ? { taskId: continuation.address.taskId } : null,
+      }
+    }
     const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
       taskRequest,
       localDeviceId,
@@ -4633,7 +4653,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload) => request(method, payload)),
+    standInApi: createStandInExecutorApi(
+      (method, payload) => request(method, payload),
+      deps.connectionDependencyPlugins
+    ),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

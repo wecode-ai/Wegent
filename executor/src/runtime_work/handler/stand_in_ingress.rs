@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_provider, stand_in_connection, stand_in_identities,
+    immediate_policy, source_provider, stand_in_connection, stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -106,14 +106,15 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
-                if stand_in_connection(role, &work["source"])
-                    .is_some_and(|source| source["policy"]["automatic"] == true)
-                {
+                if stand_in_connection(role, &work["source"]).is_some_and(|source| {
+                    source["policy"]["automatic"] == true && immediate_policy(&source["policy"])
+                }) {
                     if let Err(error) = self
                         .dispatch_connection_work(
                             user,
                             work["id"].as_str().unwrap_or_default(),
                             false,
+                            None,
                         )
                         .await
                     {
@@ -199,12 +200,38 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             let at = message_time(&message["at"])?;
+            {
+                let eligible: Vec<Value> = roles
+                    .iter()
+                    .filter(|role| {
+                        stand_in_connection(role, source).is_some_and(|connection| {
+                            connection["policy"]["automatic"] == true
+                                && !immediate_policy(&connection["policy"])
+                                && connection["enabledAfter"]
+                                    .as_str()
+                                    .and_then(|time| {
+                                        chrono::DateTime::parse_from_rfc3339(time).ok()
+                                    })
+                                    .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                        })
+                    })
+                    .map(|role| role["id"].clone())
+                    .collect();
+                if !eligible.is_empty() {
+                    store.enqueue_stand_in_event(user,
+                        json!([source_provider(source),source["profile"],source["kind"],source["id"],message["id"]]),
+                        json!({"kind":"connection","source":source,"message":message,"roleIds":eligible}),
+                    ).map_err(settings_error)?;
+                }
+            }
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
-                    connection["enabledAfter"]
-                        .as_str()
-                        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                        .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                    (connection["policy"]["automatic"] != true
+                        || immediate_policy(&connection["policy"]))
+                        && connection["enabledAfter"]
+                            .as_str()
+                            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+                            .is_some_and(|enabled| at >= enabled.timestamp_millis())
                 })
             }) {
                 if let Err(error) = self
@@ -226,7 +253,7 @@ impl RuntimeWorkRpcHandler {
         failure.map_or(Ok(next), Err)
     }
 
-    async fn collect_connection_message(
+    pub(super) async fn collect_connection_message(
         &self,
         store: &LocalTaskStore,
         user: i64,
@@ -403,7 +430,7 @@ fn validate_collection_version(
     Ok(())
 }
 
-fn message_time(value: &Value) -> Result<i64, AppIpcError> {
+pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
     let text = value.as_str().unwrap_or_default();
     if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
         return Ok(time.timestamp_millis());
@@ -423,6 +450,104 @@ fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn silent_collection_keeps_manual_sources_pending_and_automatic_sources_in_intake() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+        let source = json!({"id":"group","name":"Group","kind":"group","profile":"corp","providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER});
+        let base = settings["roles"][0].clone();
+        settings["roles"] = json!([base.clone(), base]);
+        for (role, automatic) in settings["roles"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip([true, false])
+        {
+            role["id"] = json!(if automatic { "automatic" } else { "manual" });
+            role["enabled"] = json!(true);
+            let mut connection = source.clone();
+            connection["policy"] = json!({"automatic":automatic,"askBeforeAct":true});
+            role["connections"] = json!([connection]);
+        }
+        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let message = json!({"id":"one","text":"New matter","at":"2099-01-01T00:00:00Z"});
+        for _ in 0..2 {
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    &source,
+                    &stand_in_identities(&settings),
+                    (vec![message.clone()], json!({"cursor":"next"})),
+                )
+                .await
+                .unwrap();
+        }
+        let events = store.stand_in_events(7).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["roleIds"], json!(["automatic"]));
+        let works = store.list_stand_in_work(7, None).unwrap();
+        assert_eq!(works.len(), 1);
+        assert_eq!(works[0]["roleId"], "manual");
+        assert_eq!(works[0]["status"], "pending");
+        assert_eq!(works[0]["messageCount"], 1);
+        assert!(handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_collection_persists_shared_events_without_grouping_or_work() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+        let source = json!({"id":"group","name":"Group","kind":"group","profile":"corp","providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"policy":{"automatic":true,"askBeforeAct":true}});
+        let base = settings["roles"][0].clone();
+        settings["roles"] = json!([base.clone(), base]);
+        for (index, role) in settings["roles"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            role["id"] = json!(format!("role-{index}"));
+            role["enabled"] = json!(true);
+            role["connections"] = json!([source]);
+        }
+        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let roles = stand_in_identities(&settings);
+        let messages = vec![
+            json!({"id":"one","text":"First matter","at":"2099-01-01T00:00:00Z"}),
+            json!({"id":"two","text":"Another matter","at":"2099-01-01T00:00:01Z"}),
+        ];
+        for _ in 0..2 {
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    &source,
+                    &roles,
+                    (messages.clone(), json!({"cursor":"next"})),
+                )
+                .await
+                .unwrap();
+        }
+        let events = store.stand_in_events(7).unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|event| event["roleIds"].as_array().unwrap().len() == 2));
+        assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
+        assert!(handler.local_task_links(true).is_empty());
+    }
 
     #[test]
     fn connection_host_restart_preserves_progress_and_allows_collection_to_resume() {

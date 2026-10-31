@@ -38,6 +38,20 @@ describe('stand-in error localization', () => {
     )
   })
 
+  it('explains how to recover a persisted missing source dependency in both languages', async () => {
+    const error = { code: 'dependency_missing', message: 'Dependency dingtalk is missing' }
+    await i18n.changeLanguage('zh-CN')
+    const chinese =
+      '来源所需插件尚未安装。请打开分身设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。'
+    expect(getStandInErrorMessage(error)).toBe(chinese)
+    expect(getStandInErrorMessage(new Error(chinese))).toBe(chinese)
+    await i18n.changeLanguage('en')
+    const english =
+      'A required source plugin is not installed. Open Stand-in settings, select the source under Connections, and choose Install required plugins. Then reload the source.'
+    expect(getStandInErrorMessage(error)).toBe(english)
+    expect(getStandInErrorMessage(new Error(english))).toBe(english)
+  })
+
   it('localizes persisted legacy failures without an error code', async () => {
     await i18n.changeLanguage('zh-CN')
     expect(getStandInErrorMessage('Error: Stand-in role no longer exists')).toBe(

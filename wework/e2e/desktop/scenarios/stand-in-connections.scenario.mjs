@@ -25,7 +25,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         const provider = catalog.items.find(item => item.id === DINGTALK)
         assert.ok(provider, 'The real Wework plugin registry must expose the DingTalk provider')
         assert.deepEqual(provider.resourceKinds, ['group', 'direct'])
-        assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wegent')
+        assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wework')
         const source = {
           id: 'connection-migration-fixture',
           profile: 'connection-test-account',
@@ -52,7 +52,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         )
         assert.equal(saved.primary.dingtalk, undefined)
         assert.equal(saved.primary.connections[0].providerId, DINGTALK)
-        assert.deepEqual(saved.primary.connections[0].policy, source.policy)
+        assert.deepEqual(saved.primary.connections[0].policy, { ...source.policy, immediate: true })
         const loaded = await requestExecutor(
           control,
           'runtime.stand_in.personal.get',
@@ -62,7 +62,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         assert.deepEqual(loaded.primary.connections, saved.primary.connections)
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await control.command('click', '[data-testid="stand-in-settings-open"]')
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')

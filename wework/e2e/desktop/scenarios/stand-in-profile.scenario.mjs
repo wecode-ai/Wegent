@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createStandInCoordinatorVerification } from '../modules/stand-in-coordinator.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import {
@@ -26,13 +27,25 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workspacePath,
   executorHome,
+  modelResponseTimeoutMs,
 }) {
+  const coordinator = createStandInCoordinatorVerification({
+    captureScreenshot,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   return {
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
       if (isReplyPredictionRequest(body)) return false
+      if (
+        JSON.stringify(body.input ?? []).includes('PROJECT_COORDINATOR_VERIFY') ||
+        JSON.stringify(body.input ?? []).includes('STAND_IN_SCHEDULE_VERIFY')
+      ) {
+        return coordinator.handleHttp(req, response, url)
+      }
       const latestUser = [...(body.input ?? [])].reverse().find(item => item.role === 'user')
       const marker = JSON.stringify(latestUser).match(
         /MEMORY_VERIFY_(ONE|UPDATED|FORGOTTEN|REMEMBER)/
@@ -123,7 +136,8 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       assert.equal(await control.command('getElementCount', `${PANEL} textarea`), '1')
@@ -208,7 +222,8 @@ export function createDesktopScenario({
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-open"]')
       await control.command('click', '[data-testid="stand-in-memory-open"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {
@@ -449,6 +464,7 @@ export function createDesktopScenario({
         2
       )
       await captureScreenshot(control, '22-work-split-undone.png')
+      await coordinator.verify(control)
     },
   }
 }

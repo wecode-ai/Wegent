@@ -1,3 +1,7 @@
+import {
+  installStandInConnectionDependencies,
+  type ConnectionDependencyPluginApi,
+} from './standInConnectionDependencies'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
@@ -16,7 +20,12 @@ export interface ConnectionProviderDescriptor {
   locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
   authTarget?: { pluginKey: string; connectorSlug: string }
   availability: { status: string; code?: string }
-  dependencies: Array<{ alias: string; status: string }>
+  dependencies: Array<{
+    alias: string
+    status: string
+    source?: { marketplaceId: string; pluginId: string }
+    version?: string
+  }>
 }
 
 export interface StandInInboxMessage {
@@ -46,6 +55,23 @@ export interface StandInSourceError {
   source: StandInSourceConnection
   error: { code: string; message: string }
 }
+
+export interface StandInProcessingStatus {
+  awaitingUser?: boolean
+  taskId?: string
+  pendingCount: number
+  running: boolean
+  nextCheckAt?: string
+  lastCheckAt?: string
+  error?: { code: string; message: string } | null
+  actions: Array<{
+    id: string
+    kind: string
+    status: string
+    createdAt: string
+    error?: { code: string; message: string } | null
+  }>
+}
 import {
   publishPersonalStandIn,
   type PersonalStandInAgent,
@@ -65,6 +91,7 @@ export type StandInMemoryScope =
   | { kind: 'personal' }
   | { kind: 'role'; roleId: string }
   | { kind: 'project'; id: string; store: 'local' | 'cloud' }
+  | { kind: 'project_coordinator'; id: string; store: 'local' | 'cloud' }
   | { kind: 'dingtalk'; id: string; profile: string; conversationKind: 'group' | 'direct' }
   | { kind: 'connection'; providerId: string; id: string; profile: string; resourceKind: string }
 
@@ -95,6 +122,8 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
+  checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
     deviceId: string,
@@ -160,6 +189,15 @@ export interface StandInExecutorApi {
     roleId?: string,
     options?: Record<string, unknown>
   ): Promise<WorkspaceRuntimeTaskAddress>
+  projectConversation(
+    userId: number,
+    deviceId: string,
+    projectId: string,
+    projectStore: ProjectStore,
+    groupId: string,
+    message?: string,
+    options?: Record<string, unknown>
+  ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
   resolveProposal(
     userId: number,
@@ -215,7 +253,10 @@ export interface StandInExecutorApi {
   ): Promise<WorkspaceStandInSettings>
 }
 
-export function createStandInExecutorApi(transport: Request): StandInExecutorApi {
+export function createStandInExecutorApi(
+  transport: Request,
+  dependencyPlugins?: ConnectionDependencyPluginApi
+): StandInExecutorApi {
   const request: Request = async (method, payload, deviceId) => {
     try {
       return await transport(method, payload, deviceId)
@@ -239,6 +280,10 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
     }
   }
   return {
+    processingStatus: (userId, deviceId) =>
+      request('runtime.stand_in.processing.status', { userId }, deviceId),
+    checkProcessing: (userId, deviceId) =>
+      request('runtime.stand_in.processing.check', { userId }, deviceId),
     configureTelemetry: async (userId, deviceId, enabled, enabledSince) => {
       await request(
         'runtime.stand_in.telemetry.configure',
@@ -253,7 +298,19 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
     },
     connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
     installConnectionDependencies: (deviceId, providerId, aliases) =>
-      request('runtime.connections.dependencies.install', { providerId, aliases }, deviceId),
+      installStandInConnectionDependencies({
+        deviceId,
+        providerId,
+        aliases,
+        plugins: dependencyPlugins,
+        catalog: () => request('runtime.connections.catalog', {}, deviceId),
+        installNative: selected =>
+          request(
+            'runtime.connections.dependencies.install',
+            { providerId, aliases: selected },
+            deviceId
+          ),
+      }),
     memories: async (userId, deviceId) =>
       (
         await request<{ items: StandInMemory[] }>(
@@ -296,6 +353,12 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
       request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
+    projectConversation: (userId, deviceId, projectId, projectStore, groupId, message, options) =>
+      request(
+        'runtime.project_coordinator.conversation',
+        { userId, projectId, projectStore, groupId, message, options },
+        deviceId
+      ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
     resolveProposal: async (userId, deviceId, proposalId, accept) => {

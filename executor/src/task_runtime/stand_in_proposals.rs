@@ -55,6 +55,7 @@ impl LocalTaskStore {
                 })
             };
             if previous["primary"] != settings["primary"]
+                || previous["processing"] != settings["processing"]
                 || other_roles(&previous) != other_roles(&settings)
             {
                 return Err(TaskRuntimeError::Invalid(
@@ -106,5 +107,39 @@ impl LocalTaskStore {
         )?;
         connection.commit()?;
         Ok(saved)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_proposals_cannot_change_primary_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        let previous = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let mut settings = previous.clone();
+        settings["primary"] =
+            json!({"enabled":true,"prompt":"","preferences":"Changed primary preferences"});
+        let error = store
+            .propose_stand_in_settings(
+                7,
+                "mac",
+                Some("default"),
+                "Change main preferences",
+                settings.clone(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("only propose changes to itself"));
+        assert!(store
+            .stand_in_proposal(7, Some("default"))
+            .unwrap()
+            .is_null());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), previous);
+        assert!(store
+            .propose_stand_in_settings(7, "mac", None, "Change main preferences", settings)
+            .is_ok());
     }
 }

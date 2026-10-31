@@ -168,11 +168,30 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       // Work-menu navigation opens real workspace surfaces.
       for (const [id, route] of [
         ['work.plugins', '/plugins'],
-        ['work.automations', '/automations'],
+        ['work.automations', '/stand-in'],
         ['work.applications', '/sites'],
       ]) {
         assert.equal(await activateMenuItem(control, id), true, `${id} could not be activated`)
         await waitForRoute(control, route, uiTimeoutMs)
+        if (id === 'work.automations') {
+          await control.command('waitFor', '[data-testid="stand-in-work-view-scheduled"]', {
+            timeoutMs: uiTimeoutMs,
+          })
+          assert.equal(
+            await control.command('getAttribute', '[data-testid="stand-in-work-view-scheduled"]', {
+              value: 'aria-pressed',
+            }),
+            'true'
+          )
+          await control.command('click', '[data-testid="stand-in-work-view-work"]')
+          assert.equal(await activateMenuItem(control, id), true)
+          await control.command(
+            'waitFor',
+            '[data-testid="stand-in-work-view-scheduled"][aria-pressed="true"]',
+            { timeoutMs: uiTimeoutMs }
+          )
+          await captureScreenshot(control, 'application-menu-stand-in-scheduled.png', 'body')
+        }
       }
 
       // Returning to the task workspace re-selects the existing tab instead of

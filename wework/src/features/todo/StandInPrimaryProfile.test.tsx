@@ -70,6 +70,31 @@ function fixture() {
   }
 }
 
+it('keeps existing identity and execution settings without a global processing switch', () => {
+  const props = fixture()
+  render(<StandInPrimaryProfile {...props} />)
+  expect(screen.getByTestId('stand-in-primary-enabled')).toBeChecked()
+  expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-mode')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it('does not save a changed receive switch when the user discards the draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-enabled'))
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-primary-discard'))
+  expect(props.onClose).toHaveBeenCalledOnce()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
   const props = fixture()
   const user = userEvent.setup()

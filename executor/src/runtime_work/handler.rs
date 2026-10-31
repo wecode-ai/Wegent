@@ -123,6 +123,7 @@ impl RestoreStartupGate {
 mod active_text;
 mod archives;
 mod assignment_receipts;
+mod async_questions;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
@@ -140,6 +141,7 @@ mod notifications;
 mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
+mod project_coordinator;
 mod project_preparation;
 mod queries;
 mod robot_queue_rpc;
@@ -148,12 +150,16 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_assignment_intake;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_events;
 mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
+mod stand_in_processing;
+mod stand_in_schedules;
+mod stand_in_tasks;
 mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
@@ -999,6 +1005,7 @@ impl RuntimeWorkRpcHandler {
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
+        self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
@@ -1168,6 +1175,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
     if method.starts_with("runtime.connections.")
         || method.starts_with("runtime.stand_in.telemetry.")
+        || method == "runtime.stand_in.processing.status"
     {
         return false;
     }

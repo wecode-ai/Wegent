@@ -150,6 +150,22 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
 }
 
 #[test]
+fn stand_in_project_coordinator_disables_native_global_memories() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(
+        json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator"}}),
+    )
+    .unwrap();
+    let config = build_codex_launch_config(&request).unwrap();
+    for flag in [
+        "memories.use_memories=false",
+        "memories.generate_memories=false",
+    ] {
+        assert!(config.config_overrides.contains(&flag.to_owned()));
+    }
+}
+
+#[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(

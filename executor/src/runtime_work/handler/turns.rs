@@ -380,6 +380,19 @@ impl RuntimeWorkRpcHandler {
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
+        if turn.request.extra.contains_key("standInSchedule") {
+            let scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            if queue_only
+                || scheduler.active_tasks >= scheduler.max_concurrent_tasks
+                || scheduler.active_task_ids.contains(&local_task_id)
+                || !scheduler.queued_turns.is_empty()
+            {
+                return Err(AppIpcError::new("runtime_schedule_capacity", "Scheduled work cannot enter a delayed queue; retry when execution capacity is available"));
+            }
+        }
         let journaled_goal = self.turn_runs_active_goal(&turn);
         if journaled_goal {
             self.active_goal_turns
@@ -1086,6 +1099,12 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        if let Err(error) =
+            self.validate_stand_in_schedule_start(&turn.request, &turn.local_task_id)
+        {
+            self.reject_stand_in_schedule_turn(&turn.request, &turn.local_task_id, error);
+            return;
+        }
         if let Some(payload) = turn.send_payload.as_ref() {
             let thread_id = turn
                 .resume_thread_id
@@ -1330,6 +1349,9 @@ impl RuntimeWorkRpcHandler {
             });
             let result = async {
                 stand_in_context?;
+                handler
+                    .validate_project_coordinator_request(&request)
+                    .await?;
                 crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
                 handler
                     .codex_app_server

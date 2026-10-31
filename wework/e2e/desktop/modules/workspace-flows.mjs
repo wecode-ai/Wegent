@@ -2398,12 +2398,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   assert.ok(fourthTaskTestId, 'The fourth task tab identity was not observable')
   const fourthTaskId = fourthTaskTestId.slice('workspace-tab-'.length)
   const fourthTaskContent = `[data-testid="workspace-tab-content-${fourthTaskId}"]`
-  await control.command('waitFor', `${fourthTaskContent} [data-testid="automation-button"]`, {
+  await control.command('waitFor', `${fourthTaskContent} [data-testid="plugins-button"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${fourthTaskContent} [data-testid="automation-button"]`)
-  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+  await control.command('click', `${fourthTaskContent} [data-testid="plugins-button"]`)
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
