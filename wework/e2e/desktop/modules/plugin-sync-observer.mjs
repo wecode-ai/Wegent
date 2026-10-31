@@ -101,3 +101,29 @@ export function observePluginSyncTransport(proxy, { holdCapability = () => false
   assert.equal(proxy.websockets.size, 0, 'Configure the observer before opening its connection')
   return observation
 }
+
+// A later full sync may supersede a setup delta before the polling read. Require
+// an exact successful transport ACK for the generation actually on disk.
+export function acknowledgedPluginGeneration(observation, plugin, installedId, baseline) {
+  const request = observation.capabilities.find(
+    value =>
+      value.at >= baseline.at &&
+      value.pluginSync?.generation === plugin?.plugin_sync_generation &&
+      value.pluginSync.generation >= baseline.pluginSync.generation &&
+      value.pluginIds.includes(String(installedId))
+  )
+  if (!request) return null
+  return (
+    observation.acknowledgements.find(
+      value =>
+        value.at >= request.at &&
+        value.id === request.id &&
+        value.namespace === request.namespace &&
+        value.success === true &&
+        value.pluginIds.includes(String(installedId)) &&
+        value.pluginSync?.version === request.pluginSync.version &&
+        value.pluginSync?.generation === request.pluginSync.generation &&
+        value.pluginSync?.complete === request.pluginSync.complete
+    ) ?? null
+  )
+}

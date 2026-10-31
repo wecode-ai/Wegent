@@ -91,6 +91,19 @@ async function waitForActiveTaskIdle(control) {
     if (pauseButtonCount === 0) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  // Preserve the product state at the failing prerequisite, before teardown.
+  // Backend completion alone cannot explain a still-running renderer projection.
+  try {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const execution = {
+      task: snapshot.workbench?.currentRuntimeTask ?? null,
+      lifecycle: snapshot.workbench?.activeLifecycle ?? null,
+    }
+    if (control.matrixState) control.matrixState.executionDiagnostics = execution
+    console.error('Active task idle prerequisite failed', execution)
+  } catch {
+    console.error('Active task idle diagnostics could not be collected')
+  }
   throw new Error('The active task did not become idle before sending the next prompt')
 }
 

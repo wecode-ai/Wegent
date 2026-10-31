@@ -14,6 +14,7 @@ import {
   waitForTestIdByText,
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+import { verifyPluginDetailCacheRace } from './plugin-detail-cache-race.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PREFIX = 'cloud-project-chat-agent'
@@ -318,7 +319,7 @@ export async function verifyPluginDetailResilience({
     )
   }
 
-  async function healthyLogo(item, entry, requestedAfter = null) {
+  async function healthyLogo(item, entry, restored = false) {
     await openDetail(item)
     await control.command('waitFor', testId(`plugin-skill-open-${item.qualifiedSkill}`))
     const selector = `${testId('plugin-detail-logo')} img`
@@ -352,8 +353,16 @@ export async function verifyPluginDetailResilience({
       'The displayed image request does not address the verified original package image'
     )
     item.renderedLogoPath = imagePath
-    if (requestedAfter !== null) {
-      await expectImageRequest(imagePath, requestedAfter, 200, entry, 'restoredImageRequests')
+    if (restored) {
+      // Restoring identical bytes restores the original URL. Chromium may reuse
+      // its decoded image without emitting another ResourceTiming entry.
+      entry.restoredImageRequests = await imageRequests(imagePath)
+      assert.ok(
+        entry.restoredImageRequests.some(
+          request => request.initiatorType === 'img' && request.responseStatus === 200
+        ),
+        'The restored original image has no successful real request'
+      )
     }
     assert.ok((await readFile(join(item.pluginPath, 'assets/logo.svg'))).equals(SVG))
     const path = await realpath(join(item.pluginPath, 'assets/logo.svg'))
@@ -650,6 +659,10 @@ export async function verifyPluginDetailResilience({
       assert.ok(entry.originalManifestRestored)
     })
 
+    await phase('old-detail-preserves-new-disabled-inventory', entry =>
+      verifyPluginDetailCacheRace({ control, item: broken, openDetail, backToList, entry })
+    )
+
     const logoBaseline = await phase('healthy-logos-before-fault', async entry => {
       await healthyLogo(healthy, entry)
       await healthyLogo(broken, entry)
@@ -677,7 +690,6 @@ export async function verifyPluginDetailResilience({
       await imageRequests(missingImageRequestPath)
       await imageRequests(broken.renderedLogoPath)
       let logoFailure
-      let logoRestoredAt
       const logoFault = JSON.parse(broken.manifestBytes)
       logoFault.interface.logo = `./assets/${broken.missingLogoName}`
       activeFault = await replaceOwnedManifest(
@@ -729,7 +741,6 @@ export async function verifyPluginDetailResilience({
       } finally {
         await activeFault.restore()
         activeFault = null
-        logoRestoredAt = Date.now()
       }
       await refreshLocalCodexCatalog('logo-restored-before-detail')
       await phase('single-relative-logo-recovery', async entry => {
@@ -749,7 +760,7 @@ export async function verifyPluginDetailResilience({
         }
         await refreshUiLogoCatalog('logo-restored', entry)
         await healthyDetail(broken, entry)
-        await healthyLogo(broken, entry, logoRestoredAt)
+        await healthyLogo(broken, entry, true)
         entry.originalManifestRestored = (await readFile(broken.manifestPath)).equals(
           broken.manifestBytes
         )
@@ -798,7 +809,7 @@ export async function verifyPluginDetailResilience({
     report.failures = failures.map(error => String(error?.message ?? error))
     report.passed =
       report.preconditions.completed &&
-      report.phases.length === 6 &&
+      report.phases.length === 7 &&
       report.blocked.length === 0 &&
       failures.length === 0
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)

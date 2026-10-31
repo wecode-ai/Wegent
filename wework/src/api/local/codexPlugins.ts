@@ -2478,8 +2478,28 @@ function pluginNameFromInstalledPlugin(plugin: InstalledPlugin): string {
   return typeof plugin.metadata.name === 'string' ? plugin.metadata.name.trim() : ''
 }
 
-function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
-  if (!cachedState) return
+function pluginDetailCacheScope() {
+  return {
+    deviceId: getKnownLocalExecutorDeviceId()?.trim() ?? '',
+    inventoryGeneration: cachedStateGeneration,
+    catalogGeneration: cachedCatalogGeneration,
+  }
+}
+
+function rememberInstalledPluginDetail(
+  detailed: InstalledPlugin,
+  scope: ReturnType<typeof pluginDetailCacheScope>,
+  componentStates?: InstalledPlugin['spec']['componentStates']
+): void {
+  if (
+    !cachedState ||
+    !scope.deviceId ||
+    scope.deviceId !== getKnownLocalExecutorDeviceId()?.trim() ||
+    scope.deviceId !== cachedState.deviceId ||
+    scope.inventoryGeneration !== cachedStateGeneration ||
+    scope.catalogGeneration !== cachedCatalogGeneration
+  )
+    return
   const detailedId = String(installedPluginId(detailed) ?? '')
   const detailedKey = detailed.spec.source.pluginKey.trim().toLowerCase()
   const detailedMarketplace =
@@ -2512,7 +2532,20 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
       plugin.spec.source.pluginKey.trim().toLowerCase() === detailedKey
     if (!sameId && !sameKey) return plugin
     changed = true
-    return detailed
+    // Detail expands components and their configuration, never membership or routing.
+    return {
+      ...plugin,
+      spec: {
+        ...plugin.spec,
+        components: detailed.spec.components,
+        interface: detailed.spec.interface ?? plugin.spec.interface,
+        description: detailed.spec.description || plugin.spec.description,
+        componentStates: componentStates ?? {
+          ...plugin.spec.componentStates,
+          ...detailed.spec.componentStates,
+        },
+      },
+    }
   }
   const installedPlugins = cachedState.installedPlugins.map(withDetail)
   const marketplaceItems = cachedState.marketplaceItems.map(item => {
@@ -2561,6 +2594,7 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
  * connectors). Does not call `plugin/list` / full marketplace `readState`.
  */
 async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<InstalledPlugin> {
+  const scope = pluginDetailCacheScope()
   const marketplace = marketplaceEntryFromInstalledPlugin(plugin)
   const pluginName = pluginNameFromInstalledPlugin(plugin)
   const payload =
@@ -2622,7 +2656,7 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
   }
   // Write connector/localAuth stubs back into the durable peek so the next send
   // can skip plugin/read (v1 durable cache always emptied components).
-  rememberInstalledPluginDetail(detailed)
+  rememberInstalledPluginDetail(detailed, scope)
   return detailed
 }
 
@@ -3118,6 +3152,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       ) {
         throw new Error('Local plugin marketplace path is unavailable')
       }
+      const scope = pluginDetailCacheScope()
       const detail = await readPluginDetail(marketplaceMeta, normalizedPluginName)
       const detailed = toInstalledPlugin(
         {
@@ -3129,7 +3164,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         detail.summary,
         detail
       )
-      rememberInstalledPluginDetail(detailed)
+      rememberInstalledPluginDetail(detailed, scope)
       return detailed
     },
     async listInstalledPlugins(options) {
@@ -3457,7 +3492,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           },
         },
       }
-      rememberInstalledPluginDetail(updated)
+      rememberInstalledPluginDetail(updated, pluginDetailCacheScope(), updated.spec.componentStates)
       return updated
     },
     async uninstallInstalledPlugin(id) {
