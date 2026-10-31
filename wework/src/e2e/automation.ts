@@ -547,6 +547,8 @@ async function seedDesktopE2ECloudConnection(runtimeConfig: DesktopE2ERuntimeCon
     user,
     connectedAt: new Date().toISOString(),
   }
+  // The provider restores this runtime home's native preferences after bootstrap.
+  await updateAppPreferences({ cloudConnection: connection })
   saveStoredCloudConnection(connection)
   return connection
 }
@@ -2415,8 +2417,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       setDesktopE2ECloudSessionToken(command.value ?? '')
       const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
       if (!connection) throw new Error('Cloud session switching requires a backend URL')
-      // The provider restores native preferences after the renderer bootstrap.
-      await updateAppPreferences({ cloudConnection: connection })
       return ''
     }
     case 'getLocalStorageItem':

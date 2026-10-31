@@ -73,18 +73,71 @@ describe('desktop E2E account session reuse', () => {
   test('resolves the selected account through the normal backend identity request', async () => {
     const fetch = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ id: 2, user_name: 'recipient' }), { status: 200 }))
+      .mockResolvedValueOnce(Response.json({ id: 2, user_name: 'recipient' }))
+      .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
     vi.stubGlobal('fetch', fetch)
     setDesktopE2ECloudSessionToken('recipient-token')
 
     await seedDesktopE2ERuntime()
 
-    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledTimes(2)
     expect(fetch).toHaveBeenCalledWith(
       'https://cloud.example/api/users/me',
       expect.objectContaining({ headers: { Authorization: 'Bearer recipient-token' } })
     )
     expect(JSON.parse(window.localStorage.getItem('wework.cloudConnection')!).user.id).toBe(2)
+  })
+
+  test('seeds a process-selected account before the provider restores another runtime home', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__!.cloudToken = 'recipient-token'
+    let preferences = {
+      cloudConnection: {
+        backendUrl: 'https://cloud.example',
+        apiBaseUrl: 'https://cloud.example/api',
+        socketBaseUrl: 'https://cloud.example',
+        socketPath: '/socket.io',
+        user: { id: 1, user_name: 'owner' },
+        connectedAt: new Date().toISOString(),
+      },
+    }
+    let nativeReads = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/users/me')) {
+        expect(options?.headers).toEqual({ Authorization: 'Bearer recipient-token' })
+        return Response.json({ id: 3, user_name: 'recipient' })
+      }
+      if (url === '/wework/electron-host/v1/invoke') {
+        const request = JSON.parse(String(options?.body))
+        if (request.capability === 'preferences.update')
+          preferences = { ...preferences, ...request.params.patch }
+        if (request.capability === 'preferences.get') nativeReads += 1
+        return Response.json({ ok: true, result: preferences })
+      }
+      return Response.json({ web_url: 'https://cloud.example' })
+    })
+
+    await seedDesktopE2ERuntime()
+    render(createElement(CloudConnectionProvider, null, createElement(CloudIdentity)))
+
+    await waitFor(() => expect(nativeReads).toBeGreaterThan(0))
+    expect(preferences.cloudConnection.user.id).toBe(3)
+    expect(preferences.cloudConnection).not.toHaveProperty('token')
+    await waitFor(() => expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('3'))
+    expect(JSON.parse(window.localStorage.getItem('wework.cloudConnection')!).user.id).toBe(3)
+  })
+
+  test('propagates a native preference write failure before exposing the seeded identity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ id: 3, user_name: 'recipient' }))
+        .mockRejectedValueOnce(new Error('Native preferences unavailable'))
+    )
+
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('Native preferences unavailable')
+    expect(window.localStorage.getItem('wework.cloudConnection')).toBeNull()
   })
 
   test('propagates rejected account credentials instead of seeding another identity', async () => {
@@ -151,12 +204,16 @@ describe('desktop E2E account session reuse', () => {
       expect(preferences.cloudConnection).not.toHaveProperty('token')
       await loadDesktopE2ERuntimeConfig()
       await seedDesktopE2ERuntime()
-      const view = render(createElement(CloudConnectionProvider, null, createElement(CloudIdentity)))
+      const view = render(
+        createElement(CloudConnectionProvider, null, createElement(CloudIdentity))
+      )
       await waitFor(() => expect(nativeReads).toBeGreaterThan(0))
       await waitFor(() =>
         expect(screen.getByTestId('cloud-user-id')).toHaveTextContent(String(user.id))
       )
-      expect(JSON.parse(window.localStorage.getItem('wework.cloudConnection')!).user.id).toBe(user.id)
+      expect(JSON.parse(window.localStorage.getItem('wework.cloudConnection')!).user.id).toBe(
+        user.id
+      )
       view.unmount()
     }
   })
