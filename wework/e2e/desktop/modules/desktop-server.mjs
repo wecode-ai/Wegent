@@ -314,7 +314,14 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'decodeImage',
   'getAttribute',
+  'getBundledPluginUpdates',
+  'getComposerPluginInventoryDiagnostics',
+  'getConversationDiagnosticsSnapshot',
   'getElementCount',
+  'getLocalExecutorStatus',
+  'getLocalStorageItem',
+  'getLocationOrigin',
+  'getPluginSyncDiagnostics',
   'getTerminalText',
   'getText',
   'metrics',
@@ -1239,6 +1246,7 @@ class DesktopE2EServer {
     const result = new Promise((resolvePromise, reject) => {
       this.commandResults.set(id, {
         clientId,
+        action,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2136,10 +2144,14 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
-      this.controlCommandAvailableAt.set(
-        result.clientId,
-        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
-      )
+      // Observations may check readiness during an input cooldown, but must
+      // neither extend nor shorten the interval between state-changing actions.
+      if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        this.controlCommandAvailableAt.set(
+          result.clientId,
+          Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+        )
+      }
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
