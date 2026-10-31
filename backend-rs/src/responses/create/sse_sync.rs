@@ -79,7 +79,11 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
 const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
 /// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The chat-shell request timeout (`httpx`'s 300-second default).
+/// The chat-shell per-read timeout (`httpx`'s 300-second default).
+///
+/// This is an inactivity window, not a total request deadline. A streaming
+/// response may legitimately run longer than this as long as chunks keep
+/// arriving.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 /// `_SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS`: the bounded tail read after a
 /// delivered terminal event.
@@ -332,19 +336,10 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
     let payload = dispatch::assemble(request, true, false);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
-    let http_request = client
-        .post(&url)
-        .map_err(|_| Failure::persisted("Connection error.".to_string()))?
-        .header("content-type", "application/json")
-        .header("accept", dispatch::OPENAI_ACCEPT)
-        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-        .header("X-Request-ID", request_id);
-    // The Source client identity (`AsyncOpenAI`) on the streaming path; the
-    // executor-manager dispatch applies the same shared set.
-    let mut response = dispatch::apply_openai_client_headers(http_request)
-        .json(&body)
-        .timeout(STREAM_TIMEOUT)
-        .send()
+    let http_request = stream_request(&client, &url, &body, request_id)
+        .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
+    let mut response = client
+        .execute(http_request)
         .await
         .map_err(|_| Failure::persisted("Connection error.".to_string()))?;
 
@@ -380,7 +375,8 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                 continue;
             }
         };
-        let chunk = chunk.map_err(|error| Failure::persisted(error.to_string()))?;
+        let chunk = chunk
+            .map_err(|error| Failure::persisted(stream_transport_error(&error, STREAM_TIMEOUT)))?;
         let Some(chunk) = chunk else { break };
         for event in frames.push(&chunk) {
             event_count += 1;
@@ -442,6 +438,28 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     })
 }
 
+/// Build the Chat Shell SSE request without a total request deadline.
+///
+/// `read_timeout` on the client bounds inactivity between chunks. A request
+/// deadline would also cap healthy streams that keep producing events.
+pub(super) fn stream_request(
+    client: &HttpClient,
+    url: &str,
+    body: &Value,
+    request_id: &str,
+) -> brz_http::Result<brz_http::Request> {
+    let request = client
+        .post(url)?
+        .header("content-type", "application/json")
+        .header("accept", dispatch::OPENAI_ACCEPT)
+        .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
+        .header("X-Request-ID", request_id)
+        .json(body);
+    // The Source client identity (`AsyncOpenAI`) on the streaming path; the
+    // executor-manager dispatch applies the same shared set.
+    dispatch::apply_openai_client_headers(request).build()
+}
+
 /// `_drain_terminal_stream`: finish the HTTP response framing after a
 /// delivered terminal event by reading the remaining body for up to one
 /// second. Read errors are ignored because the terminal state is already
@@ -449,6 +467,19 @@ async fn open_and_consume<M: Mysql, R: Redis>(
 pub(super) async fn drain_terminal_stream(response: &mut brz_http::Response) {
     let drain = async { while let Ok(Some(_)) = response.chunk().await {} };
     let _ = tokio::time::timeout(TERMINAL_DRAIN_TIMEOUT, drain).await;
+}
+
+/// Render a stream transport failure without hiding an inactivity timeout
+/// behind reqwest's generic body-decode message.
+pub(super) fn stream_transport_error(error: &brz_http::Error, read_timeout: Duration) -> String {
+    if error.is_timeout() {
+        format!(
+            "Chat Shell SSE stream read timed out after {}s without data",
+            read_timeout.as_secs()
+        )
+    } else {
+        error.to_string()
+    }
 }
 
 /// `_drain_terminal_stream` driven alongside the still-live cancel poll.
