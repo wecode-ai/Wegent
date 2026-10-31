@@ -126,8 +126,11 @@ export function releaseUpgradePlan(catalogs, target, channel) {
 }
 
 /** The previous release must stay upgradeable even when the fixed baseline passes. */
-export async function verifyReleaseUpgradePlan(plan, verify) {
-  if (!plan) return null
+export async function verifyReleaseUpgradePlan(plan, verify, requiredSources = []) {
+  if (!plan) {
+    if (requiredSources.length) throw new Error('Required direct upgrades need published sources')
+    return null
+  }
   const baselineResult = plan.baseline ? await verify(plan.baseline) : null
   const previousResult =
     plan.baseline?.version === plan.previous.version ? baselineResult : await verify(plan.previous)
@@ -138,8 +141,17 @@ export async function verifyReleaseUpgradePlan(plan, verify) {
   const verified = baselineResult ? [{ source: plan.baseline, result: baselineResult }] : []
   if (!baselineResult || plan.baseline.version !== plan.previous.version)
     verified.push({ source: plan.previous, result: previousResult })
+  for (const source of requiredSources) {
+    if (verified.some(item => item.source.version === source.version)) continue
+    if (source.version === plan.baseline?.version && !baselineResult)
+      throw new Error(`Required direct upgrade from ${source.version} failed; publication blocked`)
+    const result = await verify(source)
+    if (!result)
+      throw new Error(`Required direct upgrade from ${source.version} failed; publication blocked`)
+    verified.push({ source, result })
+  }
   return {
-    minSourceVersion: baselineResult ? plan.baselineVersion : plan.previous.version,
+    minSourceVersion: verified.map(item => item.source.version).sort(compareVersions)[0],
     verified,
   }
 }

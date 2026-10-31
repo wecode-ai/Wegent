@@ -4,6 +4,41 @@ sidebar_position: 61
 
 # Desktop upgrades, rollback, and E2E maintenance
 
+## Repairs delivered with the update package
+
+Repairs run through the target package's `release-preparation-cli`, under the same integrity
+and signature checks as the host. Do not download and execute separate remote repair scripts.
+Each repair declares its supported sources, checks preconditions, supports repeated execution,
+records preparation stages, and blocks installation on failure.
+
+Delivered versions `0.6.2`, `0.6.3`, and `0.6.4-beta.1` read the default release store before
+the desktop user-data migration, using the wrong directory. Target preparation establishes
+directory handoffs to the same physical release store and profile. It verifies the source
+package, the executable identity of the parent update host, and live profile ownership. An interrupted activation is archived and cancelled only
+when its trial token matches and has no matching attempted, data-opened, healthy, or failed
+marker. It never restores snapshots or moves live user data. A compatible repair release must
+precede a data-schema upgrade from these clients.
+
+The new bootstrap passes the verified user-data directory internally when handing off to an
+affected source. Users need no environment settings. Conflicting paths or identities and
+already attempted activations cannot use this cancellation path. Clients unable to download,
+extract, or execute target preparation still need a full installer.
+
+Suite v7 runs `app-upgrade` through the normal default layout in an isolated Home, including
+rollback. After writers stop, it uses production snapshot, profile-retention, and activation code
+to establish an unstarted legacy activation. It checks source usability after restart, automatic
+target-owned repair, task preservation and continuation, and rollback. The test runner's initial app environment allows only OS session settings and test control/model services;
+product path, binary, identity, and update-source overrides are absent. Independently packaged
+fixtures embed their test identity/feed as package defaults and retain a source snapshot of the
+delivered `0.6.3` bootstrap. Never edit signed archives. Other checkpoints retain explicit
+user-data isolation and incompatible-snapshot coverage.
+
+`upgrade-policy.json` can declare `requiredDirectUpgrades[targetVersion]`. The repair release
+`0.6.4-beta.2` must verify exact-package upgrade and rollback directly from `0.6.2`, `0.6.3`, and
+`0.6.4-beta.1`. Deduplicate these with the baseline and previous release, fail publication if
+any required source fails, and never retry a failed source to obtain a pass. These requirements
+apply only to their declared target, and never authorize an edge without CI evidence.
+
 Prepare downloads, extraction, component composition, and plugin profiles while the current app remains usable. Offer restart only after the target environment is complete. Switch the host and matching components as one release; keep mutable application data separate.
 
 ## Backward-compatible manifests
@@ -108,11 +143,11 @@ assertion budget.
 
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
-| Fixed baseline X | Previous release | Publication decision |
-| --- | --- | --- |
-| Passes | Passes | Retain X and publish both verified edges |
-| Fails or is not a registered verification source | Passes | Raise the minimum to the previous release and publish only successful edges |
-| Any result | Fails | Block publication without advancing rolling manifests |
+| Fixed baseline X                                 | Previous release | Publication decision                                                        |
+| ------------------------------------------------ | ---------------- | --------------------------------------------------------------------------- |
+| Passes                                           | Passes           | Retain X and publish both verified edges                                    |
+| Fails or is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges |
+| Any result                                       | Fails            | Block publication without advancing rolling manifests                       |
 
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 

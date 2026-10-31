@@ -995,7 +995,17 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
         let was_busy = self.is_busy_local_task(&local_task_id);
-        if was_busy && !queue_if_busy {
+        // Native completion can precede isolated app-server/process cleanup.
+        // Admit one continuation through the existing serial scheduler while
+        // retaining the old execution's resources until cleanup finishes.
+        let completed_native_turn = existing_link.as_ref().is_some_and(|link| {
+            crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+                    && state.execution_outcome.as_deref() == Some("succeeded")
+            })
+        }) && self.is_active_local_task(&local_task_id)
+            && !self.is_queued_local_task(&local_task_id);
+        if was_busy && !queue_if_busy && !completed_native_turn {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1228,7 +1238,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_goal,
         };
-        if was_busy {
+        if was_busy && !completed_native_turn {
             self.queue_turn(turn).await?;
         } else {
             self.spawn_turn(turn).await?;

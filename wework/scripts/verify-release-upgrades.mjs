@@ -81,16 +81,26 @@ async function verifyChannel(catalogs, targetChannel) {
   }
   await saveReport()
   try {
-    const result = await verifyReleaseUpgradePlan(plan, async source => {
-      const edge = await verifySource(source, targetChannel)
-      report.attempts.push({
-        version: source.version,
-        sha256: source.sha256,
-        status: edge ? 'passed' : 'failed',
-      })
-      await saveReport()
-      return edge
-    })
+    const requiredSources = (policy.requiredDirectUpgrades?.[release.version] ?? []).map(version =>
+      upgradeSource(
+        targetChannel === 'stable' ? [catalogs.stable] : Object.values(catalogs),
+        version
+      )
+    )
+    const result = await verifyReleaseUpgradePlan(
+      plan,
+      async source => {
+        const edge = await verifySource(source, targetChannel)
+        report.attempts.push({
+          version: source.version,
+          sha256: source.sha256,
+          status: edge ? 'passed' : 'failed',
+        })
+        await saveReport()
+        return edge
+      },
+      requiredSources
+    )
     const minSourceVersion = result?.minSourceVersion ?? release.version
     const verified = mergeUpgradePolicy(
       catalogs[targetChannel] ?? null,

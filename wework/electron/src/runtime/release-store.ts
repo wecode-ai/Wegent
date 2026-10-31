@@ -152,6 +152,43 @@ export class ReleaseStore {
     return this.serial(() => this.rollbackRelease())
   }
 
+  async recoverUnstartedActivation(sourceId: string, prepare: () => Promise<void>): Promise<void> {
+    return this.serial(async () => {
+      const activation = await this.activation()
+      if (!activation) {
+        if ((await this.active())?.id !== sourceId) throw new Error('Recovery source changed')
+        await prepare()
+        return
+      }
+      const recovery = join(this.root, 'recovery')
+      const archived = await optionalText(join(recovery, `${activation.token}.json`))
+      const resuming = archived === JSON.stringify(activation)
+      const selected = (await this.active())?.id
+      const trial = await optionalText(join(this.root, 'trial'))
+      if (
+        activation.from !== sourceId ||
+        activation.rollbackRequested ||
+        (selected !== activation.to && !(resuming && selected === sourceId)) ||
+        (trial !== activation.token && !(resuming && trial === null)) ||
+        (
+          await Promise.all(
+            ['attempted', 'data-opened', 'healthy', 'failed'].map(name =>
+              optionalText(join(this.root, name))
+            )
+          )
+        ).includes(activation.token)
+      )
+        throw new Error('The pending release has started; supervised recovery is required')
+      await prepare()
+      await mkdir(recovery, { recursive: true, mode: 0o700 })
+      await atomicReleaseWrite(
+        join(recovery, `${activation.token}.json`),
+        JSON.stringify(activation)
+      )
+      await this.rollbackRelease()
+    })
+  }
+
   private async rollbackRelease(): Promise<DesktopRelease> {
     const activation = await this.activation()
     if (!activation) throw new Error('No release activation to roll back')

@@ -3708,7 +3708,15 @@ fn spawn_codex_app_server(
     }
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .map_err(|error| {
+            format!(
+                "failed to start codex app-server: {error}; binary={resolved_binary:?} \
+                 (file={}), home={:?} (directory={})",
+                Path::new(&resolved_binary).is_file(),
+                codex_home,
+                codex_home.is_dir(),
+            )
+        })
 }
 
 fn codex_app_server_command(
