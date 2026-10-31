@@ -130,8 +130,20 @@ export async function createDesktopScenario({
           `${target.kind} did not receive its actual setup delta`,
           workbenchReadyTimeoutMs
         )
-        assert.equal(requests.length, 1, `${target.kind} received duplicate setup deltas`)
-        const [request] = requests
+        // A concurrent full sync can supersede a delta and require a newer generation.
+        // Re-delivering the same generation remains a duplicate, not a retry.
+        const generations = requests.map(request => request.pluginSync.generation)
+        assert.equal(
+          new Set(generations).size,
+          requests.length,
+          `${target.kind} received duplicate setup deltas for the same generation`
+        )
+        assert.deepEqual(
+          generations,
+          [...generations].sort((left, right) => left - right),
+          `${target.kind} retried an older setup generation`
+        )
+        const request = requests.at(-1)
         const before = previous.find(row => row.device_id === target.persistedDeviceId)
         const settled = await until(
           async () => ({
