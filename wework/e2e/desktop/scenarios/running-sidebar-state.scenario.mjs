@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { verifySidebarHoverLifecycle } from '../modules/sidebar-hover.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -120,6 +121,8 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
       active = true
       try {
         await createSingleRootLocalProject(control, workspacePath, 'running-sidebar-state')
+        const project = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        await verifySidebarHoverLifecycle(control, project.workbench.currentProject.id, uiTimeoutMs)
         await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
         await selectE2EModel(control, undefined, undefined, WORKBENCH)
         await control.command('fill', COMPOSER, { value: FIRST })

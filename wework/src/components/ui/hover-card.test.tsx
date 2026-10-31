@@ -66,6 +66,41 @@ describe('HoverCard', () => {
     expect(screen.queryByTestId('focus-hover-card')).not.toBeInTheDocument()
   })
 
+  test.each([false, true])(
+    'closes a hover-only card after clicking its action (pointer moves outside: %s)',
+    async moveOutside => {
+      vi.useFakeTimers()
+      const onClick = vi.fn()
+      render(
+        <HoverCard
+          testId="action-hover-card"
+          interactive
+          content={<button onClick={onClick}>Pin project</button>}
+        >
+          <button>Project</button>
+        </HoverCard>
+      )
+
+      const anchor = screen.getByText('Project')
+      fireEvent.mouseEnter(anchor)
+      await act(async () => vi.advanceTimersByTime(450))
+      const card = screen.getByTestId('action-hover-card')
+      fireEvent.mouseLeave(anchor)
+      fireEvent.mouseEnter(card)
+      const action = screen.getByText('Pin project')
+      fireEvent.pointerDown(action)
+      act(() => action.focus())
+      fireEvent.click(action)
+      expect(onClick).toHaveBeenCalledOnce()
+      expect(action).toHaveFocus()
+
+      fireEvent.mouseLeave(card)
+      if (moveOutside) fireEvent.pointerMove(document.body)
+      await act(async () => vi.advanceTimersByTime(120))
+      expect(screen.queryByTestId('action-hover-card')).not.toBeInTheDocument()
+    }
+  )
+
   test('keeps an interactive card open while clicking portal content', () => {
     const onClick = vi.fn()
     render(
@@ -216,36 +251,39 @@ describe('HoverCard', () => {
     expect(screen.getByTestId('nested-portal-hover-card')).toBeInTheDocument()
   })
 
-  test('keeps an interactive card open while its input retains focus', async () => {
-    vi.useFakeTimers()
-    render(
-      <HoverCard
-        testId="focused-input-hover-card"
-        interactive
-        openOnFocus
-        content={<input data-testid="hover-card-input" aria-label="Reply" />}
-      >
-        <button type="button">Current task</button>
-      </HoverCard>
-    )
+  test.each([false, true])(
+    'keeps a focus-enabled card open while its input retains focus (pointer moves outside: %s)',
+    async moveOutside => {
+      vi.useFakeTimers()
+      render(
+        <HoverCard
+          testId="focused-input-hover-card"
+          interactive
+          openOnFocus
+          content={<input data-testid="hover-card-input" aria-label="Reply" />}
+        >
+          <button type="button">Current task</button>
+        </HoverCard>
+      )
 
-    fireEvent.focus(screen.getByText('Current task'))
-    const card = screen.getByTestId('focused-input-hover-card')
-    const input = screen.getByTestId('hover-card-input')
+      fireEvent.focus(screen.getByText('Current task'))
+      const card = screen.getByTestId('focused-input-hover-card')
+      const input = screen.getByTestId('hover-card-input')
 
-    fireEvent.focus(input)
-    fireEvent.mouseLeave(card)
-    fireEvent.pointerMove(document.body)
-    await act(async () => vi.advanceTimersByTime(240))
-    expect(screen.getByTestId('focused-input-hover-card')).toBeInTheDocument()
+      fireEvent.focus(input)
+      fireEvent.mouseLeave(card)
+      if (moveOutside) fireEvent.pointerMove(document.body)
+      await act(async () => vi.advanceTimersByTime(240))
+      expect(screen.getByTestId('focused-input-hover-card')).toBeInTheDocument()
 
-    fireEvent.blur(input, { relatedTarget: document.body })
-    await act(async () => {
-      await Promise.resolve()
-      vi.advanceTimersByTime(120)
-    })
-    expect(screen.queryByTestId('focused-input-hover-card')).not.toBeInTheDocument()
-  })
+      fireEvent.blur(input, { relatedTarget: document.body })
+      await act(async () => {
+        await Promise.resolve()
+        vi.advanceTimersByTime(120)
+      })
+      expect(screen.queryByTestId('focused-input-hover-card')).not.toBeInTheDocument()
+    }
+  )
 
   test('pins an interactive card after focusing its input and closes it explicitly', async () => {
     vi.useFakeTimers()

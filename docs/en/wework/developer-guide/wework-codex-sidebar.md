@@ -6,6 +6,12 @@ sidebar_position: 24
 
 The Wework desktop app follows the Codex App sidebar state model. Project and live task content comes from the Codex app-server, while sidebar metadata comes from `.codex-global-state.json` in the target device's `CODEX_HOME`. While a remote device is online, Wework also stores a local task-list summary for startup recovery after that device goes offline.
 
+## Hover detail lifetime
+
+Sidebar project and task details follow pointer hover. They close after the pointer leaves both the row and the popup, even if a popup button retains focus. `HoverCard.interactive` only enables actions inside the popup; callers that need focus-driven visibility must explicitly enable `openOnFocus`. Project pinning is independent of popup visibility.
+
+The desktop `running-sidebar-state` checkpoint covers entering project details from the row, pressing a popup button and releasing after moving outside, dismissal, reopening, and Escape dismissal. The scenario retains button focus and verifies that subsequent pointer movement cannot cancel dismissal.
+
 ## State ownership
 
 | Data                                       | Source of truth                                | Notes                                                                              |
