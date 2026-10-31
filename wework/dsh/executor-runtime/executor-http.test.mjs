@@ -2,27 +2,34 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { apply, handleExecutorEvents, handleExecutorRpc, handlePluginImage } from './index.js'
+import { createRequestSecurity } from '../electron-host/request-security.js'
+import { apply, handleExecutorEvents, handleExecutorRpc } from './index.js'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 
-test('serves a scoped plugin image as same-origin inert image bytes', async () => {
+test('serves a scoped plugin image as same-origin inert image bytes', async t => {
   const request = executorEventRequest()
   const path = '/device/plugins/healthy-plugin/assets/logo.svg'
   request.url = `/wework/executor/v1/plugin-image?path=${encodeURIComponent(path)}`
   request.headers = {
-    host: '127.0.0.1:1234',
-    origin: 'http://127.0.0.1:1234',
+    host: '127.0.0.1:3000',
+    cookie: 'session=authenticated',
+    origin: 'http://127.0.0.1:3000',
     'sec-fetch-site': 'same-origin',
   }
   const response = responseFixture()
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
-  await handlePluginImage(request, response, {
-    async request(method, params) {
-      assert.equal(method, 'executor.plugins.image.read')
-      assert.deepEqual(params, { path })
-      return { mimeType: 'image/svg+xml', bytesBase64: Buffer.from(svg).toString('base64') }
+  const image = await registeredHandler(
+    t,
+    {
+      async request(method, params) {
+        assert.equal(method, 'executor.plugins.image.read')
+        assert.deepEqual(params, { path })
+        return { mimeType: 'image/svg+xml', bytesBase64: Buffer.from(svg).toString('base64') }
+      },
     },
-  })
+    '/wework/executor/v1/plugin-image'
+  )
+  await image(request, response)
   assert.equal(response.status, 200)
   assert.equal(response.body, svg)
   assert.equal(response.headers['content-type'], 'image/svg+xml')
@@ -32,7 +39,7 @@ test('serves a scoped plugin image as same-origin inert image bytes', async () =
   assert.equal(response.headers['cross-origin-resource-policy'], 'same-origin')
 })
 
-test('rejects cross-origin and non-loopback image reads before calling the executor', async () => {
+test('rejects cross-origin and non-loopback image reads before calling the executor', async t => {
   for (const config of [
     { origin: 'https://other.example' },
     { remoteAddress: '192.0.2.10' },
@@ -41,22 +48,28 @@ test('rejects cross-origin and non-loopback image reads before calling the execu
     const request = executorEventRequest()
     request.url = '/wework/executor/v1/plugin-image?path=%2Fdevice%2Fplugins%2Flogo.svg'
     request.headers = {
-      host: '127.0.0.1:1234',
-      origin: config.origin ?? 'http://127.0.0.1:1234',
+      host: '127.0.0.1:3000',
+      cookie: 'session=authenticated',
+      origin: config.origin ?? 'http://127.0.0.1:3000',
       'sec-fetch-site': config.fetchSite ?? 'same-origin',
     }
     request.socket.remoteAddress = config.remoteAddress ?? '127.0.0.1'
     const response = responseFixture()
-    await handlePluginImage(request, response, {
-      request() {
-        throw new Error('Must not reach executor')
+    const image = await registeredHandler(
+      t,
+      {
+        request() {
+          throw new Error('Must not reach executor')
+        },
       },
-    })
+      '/wework/executor/v1/plugin-image'
+    )
+    await image(request, response)
     assert.equal(response.status, 403)
   }
 })
 
-test('missing, invalid, and oversized plugin images fail locally without leaking paths', async () => {
+test('missing, invalid, and oversized plugin images fail locally without leaking paths', async t => {
   for (const result of [
     null,
     { mimeType: 'text/html', bytesBase64: 'aGVsbG8=' },
@@ -65,12 +78,17 @@ test('missing, invalid, and oversized plugin images fail locally without leaking
     const request = executorEventRequest()
     request.url = '/wework/executor/v1/plugin-image?path=%2Fprivate%2Fplugin%2Flogo.svg'
     const response = responseFixture()
-    await handlePluginImage(request, response, {
-      request() {
-        if (!result) throw new Error('Sensitive local path and error')
-        return result
+    const image = await registeredHandler(
+      t,
+      {
+        request() {
+          if (!result) throw new Error('Sensitive local path and error')
+          return result
+        },
       },
-    })
+      '/wework/executor/v1/plugin-image'
+    )
+    await image(request, response)
     assert.equal(response.status, 404)
     assert.equal(response.body, '')
     assert.equal(response.headers['cache-control'], 'no-store')
@@ -148,7 +166,42 @@ test('describe remains unavailable until the bridge has a negotiated method tabl
   assert.equal(requests, 0)
 })
 
+test('describe rejects unauthenticated and rebinding requests before reading identity', async t => {
+  let reads = 0
+  const describe = await registeredDescribeHandler(t, {
+    describe: () => {
+      reads++
+      return { protocol_version: 1 }
+    },
+  })
+  for (const [headers, status] of [
+    [{ host: '127.0.0.1:3000' }, 401],
+    [
+      {
+        host: 'rebind.attacker.test:3000',
+        origin: 'http://rebind.attacker.test:3000',
+        cookie: 'session=authenticated',
+      },
+      403,
+    ],
+  ]) {
+    const request = executorEventRequest()
+    request.headers = headers
+    const response = responseFixture()
+
+    await describe(request, response)
+
+    assert.equal(response.status, status)
+    assert.equal(JSON.parse(response.body).ok, false)
+  }
+  assert.equal(reads, 0)
+})
+
 async function registeredDescribeHandler(t, client) {
+  return registeredHandler(t, client, '/wework/executor/v1')
+}
+
+async function registeredHandler(t, client, path) {
   t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
     start: async () => {},
     ...client,
@@ -156,6 +209,13 @@ async function registeredDescribeHandler(t, client) {
   const handlers = new Map()
   await apply({
     sessions: {},
+    weworkRequestSecurity: createRequestSecurity(
+      {
+        requestRejection: request =>
+          request.headers.cookie === 'session=authenticated' ? undefined : 401,
+      },
+      3000
+    ),
     webServer: {
       register: ({ path, handler }) => handlers.set(path, handler),
     },
@@ -163,7 +223,7 @@ async function registeredDescribeHandler(t, client) {
       if (label.startsWith('wework-executor-runtime: /')) callback()
     },
   })
-  return handlers.get('/wework/executor/v1')
+  return handlers.get(path)
 }
 
 test('preserves one request id across browser, DSH, and executor RPC', async () => {
@@ -404,7 +464,7 @@ function executorEventRequest(query = '') {
   const request = new EventEmitter()
   request.method = 'GET'
   request.url = `/wework/executor/v1/events${query}`
-  request.headers = {}
+  request.headers = { host: '127.0.0.1:3000', cookie: 'session=authenticated' }
   request.socket = { remoteAddress: '127.0.0.1' }
   return request
 }

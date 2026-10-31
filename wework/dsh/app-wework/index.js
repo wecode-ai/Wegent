@@ -6,7 +6,7 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'wework-app'
-export const inject = ['webServer']
+export const inject = ['webServer', 'weworkRequestSecurity']
 
 export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
@@ -56,18 +56,19 @@ export function apply(ctx) {
     () =>
       ctx.webServer.registerUpgrade({
         path: SOCKET_PROXY_PATH,
-        handler: (req, socket, head) => proxyWebSocket(req, socket, head, backendUrl),
+        handler: ctx.weworkRequestSecurity.wrapUpgrade((req, socket, head) =>
+          proxyWebSocket(req, socket, head, backendUrl)
+        ),
       }),
     `wework-app: ${SOCKET_PROXY_PATH} upgrade`
   )
 }
 
 function register(ctx, kind, path, handler) {
-  ctx.effect(() => ctx.webServer.register({ kind, path, handler }), `wework-app: ${path}`)
-}
-
-function singleHeader(value) {
-  return Array.isArray(value) ? value[0] : value
+  ctx.effect(
+    () => ctx.webServer.register({ kind, path, handler: ctx.weworkRequestSecurity.wrap(handler) }),
+    `wework-app: ${path}`
+  )
 }
 
 export async function serveWeworkApp(req, res) {
@@ -253,6 +254,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_MODEL_SERVER_URL || environment.VITE_WEWORK_E2E_MODEL_SERVER_URL,
     posthogHost: environment.WEWORK_E2E_POSTHOG_HOST || environment.VITE_WEWORK_POSTHOG_HOST,
     posthogKey: environment.WEWORK_E2E_POSTHOG_KEY || environment.VITE_WEWORK_POSTHOG_KEY,
+    telemetryIdentity: environment.WEWORK_E2E_TELEMETRY_IDENTITY,
     seedLocalModels: environmentBoolean(
       environment,
       'WEWORK_E2E_SEED_LOCAL_MODELS',

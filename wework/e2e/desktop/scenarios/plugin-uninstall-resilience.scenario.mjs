@@ -117,14 +117,53 @@ export async function createDesktopScenario({
     apiProxy.rule = () => null
   }
 
-  async function unknownResult(control) {
-    const item = await fixture('unknown-result')
-    const startIndex = apiProxy.requests.length
+  async function preflightTimeout(control) {
+    const item = await fixture('preflight-timeout')
     apiProxy.rule = request =>
-      (request.method === 'DELETE' && request.path === deletePath(item)) ||
-      (request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped)
+      request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped
         ? 'hold-request'
         : null
+    const started = await uninstallInUi(control, item)
+    // This deliberately held read must settle at the account-preflight deadline.
+    await control.command('waitFor', testId('plugin-operation-notice'), {
+      text: '暂时无法确认当前账号的插件安装状态',
+      timeoutMs: 15_000,
+    })
+    const elapsedMs = Date.now() - started
+    assert.ok(elapsedMs < 15_000, `Account preflight kept loading for ${elapsedMs}ms`)
+    assert.equal(deletes(item).length, 0, 'Unconfirmed account preflight issued a DELETE')
+    assert.ok(await accountPlugin(cloud, item.slug), 'Preflight failure removed membership')
+    await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
+      enabled: true,
+    })
+    await assertInventory(control, item.slug, true)
+    apiProxy.rule = () => null
+    await uninstallInUi(control, item)
+    await assertInstallButton(control, item)
+    assert.equal(deletes(item).length, 1, 'Explicit retry must issue exactly one DELETE')
+    await assertSurfaces(control, item, false)
+    evidence.push({ case: 'account-preflight-timeout-and-explicit-retry', elapsedMs })
+  }
+
+  async function unknownResult(control) {
+    await preflightTimeout(control)
+    const item = await fixture('unknown-result')
+    const startIndex = apiProxy.requests.length
+    let deleteStarted = false
+    apiProxy.rule = request => {
+      if (request.method === 'DELETE' && request.path === deletePath(item)) {
+        deleteStarted = true
+        return 'hold-request'
+      }
+      // Let account preflight succeed; this case faults the DELETE and its
+      // outcome-verification read, rather than preventing the DELETE entirely.
+      return deleteStarted &&
+        request.method === 'GET' &&
+        request.path === '/api/plugins/installed' &&
+        request.unscoped
+        ? 'hold-request'
+        : null
+    }
     const started = await uninstallInUi(control, item)
     await control.command('waitFor', testId('plugin-operation-notice'), {
       text: '暂时无法确认卸载结果',

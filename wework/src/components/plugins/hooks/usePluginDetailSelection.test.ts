@@ -220,14 +220,28 @@ describe('openMarketplacePluginDetailSelection', () => {
     expect(selected.marketplaceId).toBe(268900)
   })
 
-  test('still opens the local created package for the owner listing', () => {
+  test.each([
+    {
+      scenario: 'matching display names',
+      pluginKey: 'Dev Tools',
+      localDisplayName: 'Dev Tools',
+      listingName: 'dev-tools',
+    },
+    {
+      scenario: 'changed display name',
+      pluginKey: 'dev-tools',
+      localDisplayName: 'New Developer Tools',
+      listingName: 'Dev Tools',
+    },
+  ])('still opens the local created package for the owner listing ($scenario)', scenario => {
+    const { pluginKey, localDisplayName, listingName } = scenario
     const selected = {
       pluginId: null as string | number | null,
       marketplaceId: null as string | number | null,
     }
     const created: InstalledPluginItem = {
       id: 'local-dev-tools',
-      name: 'Dev Tools',
+      name: localDisplayName,
       description: '',
       enabled: true,
       origin: 'created',
@@ -244,9 +258,9 @@ describe('openMarketplacePluginDetailSelection', () => {
           labels: { id: 'local-dev-tools' },
         },
         spec: {
-          source: { type: 'local', providerKey: 'wework-personal', pluginKey: 'Dev Tools' },
+          source: { type: 'local', providerKey: 'wework-personal', pluginKey },
           origin: 'created',
-          displayName: 'Dev Tools',
+          displayName: localDisplayName,
           description: '',
           installState: 'installed',
           enabled: true,
@@ -262,7 +276,7 @@ describe('openMarketplacePluginDetailSelection', () => {
     const owned: PluginMarketplaceItem = {
       ...documentsItem(),
       id: 4,
-      name: 'dev-tools',
+      name: listingName,
       displayName: 'Dev Tools',
       accessRole: 'owner',
       visibility: 'personal',

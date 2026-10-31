@@ -28,6 +28,7 @@ const SAFE_DETAIL_KEYS = new Set([
   "scopeKey",
   "sourceValueLength",
   "transactionMs",
+  "trusted",
   "valueLength",
   "viewIsComposing",
   "canSend",
@@ -53,7 +54,9 @@ export type ComposerDiagnosticEventName =
   | "external-value-apply"
   | "input-frame"
   | "keyboard"
+  | "keyboard-text"
   | "keyboard-policy"
+  | "prediction-accepted"
   | "submit-policy"
   | "transaction"
   | "value-set";

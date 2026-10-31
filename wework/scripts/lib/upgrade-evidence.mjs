@@ -173,3 +173,62 @@ export function mergeUpgradePolicy(base, release, edges, target, sources = []) {
     edges: [...edgeMap.values()],
   })
 }
+
+/** macOS x64 adopts arm64 paths with explicit cross-architecture provenance. */
+export function mirrorMacosUpgradePolicy(armPolicy, x64Policy, release, otherPolicies = []) {
+  validateUpgradeCatalog(armPolicy)
+  const x64Policies = [x64Policy, ...otherPolicies].filter(Boolean)
+  for (const policy of x64Policies) {
+    validateUpgradeCatalog(policy)
+    if (policy.platform !== 'macos' || policy.arch !== 'x64')
+      throw new Error('Architecture equivalence requires macOS x64 source catalogs')
+  }
+  const armTarget = armPolicy.releases.find(item => item.version === release.version)
+  if (
+    armPolicy.platform !== 'macos' ||
+    armPolicy.arch !== 'arm64' ||
+    release.platform !== 'macos' ||
+    release.arch !== 'x64' ||
+    !armTarget ||
+    armTarget.fixture ||
+    armTarget.revoked ||
+    release.fixture ||
+    armTarget.sourceSha !== release.sourceSha
+  )
+    throw new Error('macOS architecture equivalence requires the same release revision')
+  const target = { channel: armPolicy.channel, platform: 'macos', arch: 'x64' }
+  const published = x64Policies.flatMap(policy => policy.releases)
+  if (published.some(item => item.version === release.version && item.sha256 !== release.sha256))
+    throw new Error('A published release package is immutable across channels')
+  const sources = []
+  const edges = armPolicy.edges
+    .filter(edge => edge.to === release.version)
+    .map(edge => {
+      const source = upgradeSource(x64Policies, edge.from)
+      if (
+        published.some(item => item.version === source.version && (item.revoked || item.fixture)) ||
+        source.sourceSha !== edge.fromSourceSha
+      )
+        throw new Error(`Missing matching macOS x64 source release: ${edge.from}`)
+      sources.push(source)
+      return {
+        ...edge,
+        fromSha256: source.sha256,
+        toSha256: release.sha256,
+        verification: {
+          kind: 'architecture-equivalence',
+          platform: 'macos',
+          arch: 'arm64',
+          fromSha256: edge.fromSha256,
+          toSha256: edge.toSha256,
+        },
+      }
+    })
+  return mergeUpgradePolicy(
+    x64Policy,
+    { ...release, minSourceVersion: armTarget.minSourceVersion, revoked: false },
+    edges,
+    target,
+    sources
+  )
+}

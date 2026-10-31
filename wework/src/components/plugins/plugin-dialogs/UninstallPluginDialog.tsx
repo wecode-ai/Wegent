@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { PluginUninstallScope } from '../pluginUninstall'
 
 interface UninstallPluginDialogProps {
   pluginName: string
+  scope?: PluginUninstallScope
   onCancel: () => void
   onConfirm: () => void
   confirmTestId?: string
@@ -10,6 +12,7 @@ interface UninstallPluginDialogProps {
 
 export function UninstallPluginDialog({
   pluginName,
+  scope = 'account',
   onCancel,
   onConfirm,
   confirmTestId = 'plugin-uninstall-confirm-button',
@@ -47,12 +50,12 @@ export function UninstallPluginDialog({
         </h2>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
           {t(
-            'workbench.plugins_uninstall_plugin_description',
-            '{{name}} 将从当前账号和本机卸载，并清除本机登录态与运行时安装记录；市场仍可重新安装。',
-            {
-              name: pluginName,
-              defaultValue: `${pluginName} 将从当前账号和本机卸载，并清除本机登录态与运行时安装记录；市场仍可重新安装。`,
-            }
+            scope === 'published-source'
+              ? 'workbench.plugins_uninstall_published_source_description'
+              : scope === 'local'
+                ? 'workbench.plugins_uninstall_local_description'
+                : 'workbench.plugins_uninstall_plugin_description',
+            { name: pluginName }
           )}
         </p>
         <div className="mt-5 flex justify-end gap-2">

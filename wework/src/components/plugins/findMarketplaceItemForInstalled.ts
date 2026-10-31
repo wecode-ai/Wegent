@@ -1,7 +1,7 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { storeDirMatchesPluginKey } from './installedPluginMerge'
+import { linkedCloudPluginId, storeDirMatchesPluginKey } from './installedPluginMerge'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 
 function normalizedMarketplaceId(value: string | null | undefined): string {
@@ -20,7 +20,8 @@ function installedPluginKey(plugin: InstalledPlugin): string {
  * Resolve the marketplace catalog row for an installed plugin so UI can reuse
  * package logos / detail already resolved for the market list.
  *
- * Match order: installedPluginId → cloud pluginId → pluginKey@marketplace.
+ * A known cloud plugin ID is authoritative; local-only rows use install ID,
+ * then pluginKey@marketplace. Missing cloud identities never fall back to names.
  */
 export function findMarketplaceItemForInstalledPlugin(
   plugin: InstalledPlugin,
@@ -28,6 +29,11 @@ export function findMarketplaceItemForInstalledPlugin(
   installedId?: string | number | null
 ): PluginMarketplaceItem | null {
   if (items.length === 0) return null
+
+  const cloudPluginId = plugin.spec.pluginId ?? linkedCloudPluginId(plugin)
+  if (typeof cloudPluginId === 'number') {
+    return items.find(item => String(item.id) === String(cloudPluginId)) ?? null
+  }
 
   if (installedId !== null && installedId !== undefined && String(installedId).trim()) {
     const id = String(installedId)
@@ -38,12 +44,6 @@ export function findMarketplaceItemForInstalledPlugin(
         String(item.installedPluginId) === id
     )
     if (byInstalledPluginId) return byInstalledPluginId
-  }
-
-  const cloudPluginId = plugin.spec.pluginId
-  if (typeof cloudPluginId === 'number') {
-    const byPluginId = items.find(item => String(item.id) === String(cloudPluginId))
-    if (byPluginId) return byPluginId
   }
 
   const key = installedPluginKey(plugin)

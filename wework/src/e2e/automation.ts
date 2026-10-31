@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
@@ -18,6 +19,7 @@ import {
 } from '@/lib/runtime-environment'
 import {
   normalizeCloudBackendUrl,
+  normalizeStoredCloudConnection,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
@@ -80,6 +82,8 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
+  setDesktopE2ECloudSessionToken,
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
   type DesktopE2ERuntimeConfig,
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
@@ -132,14 +136,6 @@ function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sour
         : []
     )
   )
-}
-
-interface DesktopControlResult {
-  id: string
-  clientId: string
-  ok: boolean
-  value?: string
-  error?: string
 }
 
 interface ElementMetricsSamplePoint {
@@ -557,11 +553,18 @@ function resolveDesktopE2EModelServerUrl(
 }
 
 async function seedDesktopE2ECloudConnection(
-  runtimeConfig: DesktopE2ERuntimeConfig
-): Promise<void> {
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  restoreNativeProfile = false
+) {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
-  if (!backendUrl) return
-  const config = normalizeCloudBackendUrl(backendUrl)
+  if (!backendUrl) return null
+  const nativeProfile = restoreNativeProfile
+    ? normalizeStoredCloudConnection((await getAppPreferences()).cloudConnection)
+    : null
+  const config = normalizeCloudBackendUrl(
+    nativeProfile?.backendUrl ?? backendUrl,
+    nativeProfile?.socketBaseUrlOverride ?? nativeProfile?.socketBaseUrl
+  )
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -569,12 +572,19 @@ async function seedDesktopE2ECloudConnection(
   })
   if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
   const user = await response.json()
-  saveStoredCloudConnection({
+  const connection = {
     ...config,
-    webUrl: config.backendUrl,
+    ...(nativeProfile?.socketBaseUrlOverride
+      ? { socketBaseUrlOverride: nativeProfile.socketBaseUrlOverride }
+      : {}),
+    webUrl: nativeProfile?.webUrl ?? config.backendUrl,
     user,
     connectedAt: new Date().toISOString(),
-  })
+  }
+  // The provider restores this runtime home's native preferences after bootstrap.
+  await updateAppPreferences({ cloudConnection: connection })
+  saveStoredCloudConnection(connection)
+  return connection
 }
 
 export async function seedDesktopE2ERuntime(): Promise<void> {
@@ -584,7 +594,7 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   if (modelServerUrl) {
     seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig)
+  await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
@@ -652,8 +662,6 @@ function desktopControlElementText(selector: string, visible = false): string {
 
 function desktopControlElementMetrics(selector: string): string {
   const elements = findDesktopControlElements(selector)
-  if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
-
   return JSON.stringify(
     elements.map(element => {
       const rect = element.getBoundingClientRect()
@@ -2439,6 +2447,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await flushDesktopLocalStoragePersistence()
       return JSON.stringify(config)
     }
+    case 'setCloudSessionToken': {
+      setDesktopE2ECloudSessionToken(command.value ?? '')
+      const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
+      if (!connection) throw new Error('Cloud session switching requires a backend URL')
+      window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
+      return ''
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -2450,6 +2465,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'removeLocalStorageItem':
       localStorage.removeItem(command.value ?? '')
       return ''
+    case 'getWebLocksSnapshot':
+      return JSON.stringify(await navigator.locks.query())
     case 'getLocationOrigin':
       return window.location.origin
     case 'restartCoreDsh':
@@ -2552,6 +2569,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
               contentTruncated: activeAssistantMessage.contentTruncated === true,
               displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              displayItems: activeAssistantMessage.runtimeDisplayItems?.map(item => ({
+                id: item.id,
+                type: item.type,
+                contentChars: item.type === 'assistant_text' ? item.content.length : 0,
+              })),
               maxNarrativeBlockChars: Math.max(
                 0,
                 ...narrativeBlocks.map(block => block.content.length)
@@ -3744,39 +3766,22 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
-      let result: DesktopControlResult
-      try {
-        const value = await executeDesktopControlCommand(command)
-        result = { id: command.id, clientId, ok: true, value }
-      } catch (error) {
-        result = {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
+      const completion = completeDesktopControlCommand(
+        command,
+        clientId,
+        executeDesktopControlCommand,
+        result => postDesktopControlResult(url, result)
+      )
+      if (command.action === 'fetchLocalRuntime') {
+        // Runtime RPCs may wait on each other; keep polling so the controller
+        // can issue the overlapping request while each result retains its ID.
+        void completion.catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
       }
-      try {
-        logRuntimeTaskCreateStage(
-          'desktop-control-executed',
-          { ...diagnostic, ok: result.ok },
-          'debug'
-        )
-        await postDesktopControlResult(url, result)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic, 'debug')
-      } catch (error) {
-        console.error(
-          '[Wework] Desktop E2E result acknowledgement failed:',
-          JSON.stringify({
-            commandId: command.id,
-            action: command.action,
-            actionSucceeded: result.ok,
-            actionError: result.error,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        )
-        throw error
-      }
+      const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')

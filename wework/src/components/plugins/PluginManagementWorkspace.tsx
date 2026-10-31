@@ -6,7 +6,7 @@ import {
   commitPluginInventoryInstallation,
 } from '@/features/plugins/pluginInventory'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -39,10 +39,16 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import {
   isCloudManagedInstalledPlugin,
+  isWegentManagedStorePlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
-import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
+import {
+  pluginUninstallScope,
+  pluginUninstallWarningDetails,
+  uninstallPluginIdentities,
+  type PluginUninstallScope,
+} from './pluginUninstall'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -94,6 +100,13 @@ function PluginManagementWorkspaceContent({
   onCreateWeworkPlugin,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
+  const mounted = useRef(false)
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const runtime = getRuntimeConfig()
   const resolvedCloudApiBaseUrl = cloudApiBaseUrl || runtime.apiBaseUrl
   const marketplaceCacheKeyValue = useMemo(
@@ -119,6 +132,7 @@ function PluginManagementWorkspaceContent({
   const [pendingUninstall, setPendingUninstall] = useState<{
     id: string | number
     name: string
+    scope: PluginUninstallScope
   } | null>(null)
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
@@ -300,7 +314,8 @@ function PluginManagementWorkspaceContent({
   }
 
   const requestUninstallPlugin = (id: string | number, name: string) => {
-    setPendingUninstall({ id, name })
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    setPendingUninstall({ id, name, scope: pluginUninstallScope(plugin?.raw ?? null) })
   }
 
   const confirmUninstallPlugin = () => {
@@ -312,6 +327,8 @@ function PluginManagementWorkspaceContent({
   }
 
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
+    const isCurrent = () => mounted.current
+    if (!isCurrent()) return
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) {
       setUninstallingPluginIds(previous => {
@@ -326,16 +343,18 @@ function PluginManagementWorkspaceContent({
       })
       return
     }
-    void logoutLocalConnectorsForPlugin(plugin.raw)
-      .catch(() => undefined)
-      .then(() =>
-        uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
-          uninstallCloud: (pluginId, deviceId) =>
-            cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
-          uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
-        })
-      )
+    void uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
+      readLocalInstalled: () =>
+        localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
+      readCloudInstalled: () => cloudPluginApi.readInstalledPluginsForUninstall(),
+      isCurrent,
+      logoutLocal: () => logoutLocalConnectorsForPlugin(plugin.raw),
+      uninstallCloud: (pluginId, deviceId) =>
+        cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+      uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
+    })
       .then(outcome => {
+        if (!isCurrent()) return
         const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
         removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
           installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
@@ -384,6 +403,7 @@ function PluginManagementWorkspaceContent({
         })
       })
       .catch((error: unknown) => {
+        if (!isCurrent()) return
         const rawErrorMessage = getErrorMessage(
           error,
           t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -400,6 +420,7 @@ function PluginManagementWorkspaceContent({
         track('operation_failed', { operation: 'plugin_uninstall' })
       })
       .finally(() => {
+        if (!isCurrent()) return
         setUninstallingPluginIds(previous => {
           const next = new Set(previous)
           next.delete(id)
@@ -421,10 +442,16 @@ function PluginManagementWorkspaceContent({
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
   const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
-    const slug = createdPluginSlug(plugin)
-    return marketplaceItems.find(
-      item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
+    const associated = findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (associated?.accessRole) return associated.accessRole === 'owner' ? associated : undefined
+    if (
+      isWegentManagedStorePlugin(plugin.raw) ||
+      linkedCloudPluginId(plugin.raw) !== null ||
+      plugin.raw.spec.pluginId != null
     )
+      return undefined
+    const slug = createdPluginSlug(plugin)
+    return marketplaceItems.find(item => item.accessRole === 'owner' && item.name === slug)
   }
 
   const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
@@ -449,7 +476,7 @@ function PluginManagementWorkspaceContent({
         plugin.raw.spec.source.pluginKey,
         createdPluginSlug(plugin),
         plugin.name,
-      ]) ?? (plugin.origin === 'created' ? plugin : null)
+      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
     if (packableCreated?.origin === 'created') {
       setSelectedPluginId(packableCreated.id)
       return
@@ -520,8 +547,10 @@ function PluginManagementWorkspaceContent({
   if (selectedPlugin) {
     const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
+    const associatedListing =
+      ownedMarketplace ?? findMarketplaceItemForInstalled(selectedPlugin, marketplaceItems) ?? null
     const packableCreated =
-      ownedMarketplace && !marketplaceItemOwnsLocalCreatedPackage(ownedMarketplace)
+      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
         ? null
         : (findPackableCreatedPlugin(installedPlugins, [
             selectedPlugin.raw.spec.source.pluginKey,
@@ -529,17 +558,16 @@ function PluginManagementWorkspaceContent({
             selectedPlugin.name,
             ownedMarketplace?.name,
             ownedMarketplace?.displayName,
-          ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null))
+          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace ?? null,
+      ownedListing: associatedListing,
     })
     const continueEditingKey = resolveContinueEditingPluginKey({
       packableCreated,
       currentPlugin: selectedPlugin,
       ownedListingName: ownedMarketplace?.name,
-      isPersonalOwner:
-        ownedMarketplace?.accessRole === 'owner' && ownedMarketplace.visibility === 'personal',
+      listing: associatedListing,
     })
     const submissionStatus =
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
@@ -569,8 +597,9 @@ function PluginManagementWorkspaceContent({
           }
           primaryActionDisabled={isUninstalling}
           showUninstall={!isUninstalling}
-          accessRole={ownedMarketplace?.accessRole}
-          pluginVisibility={ownedMarketplace?.visibility ?? null}
+          accessRole={associatedListing?.accessRole}
+          pluginVisibility={associatedListing?.visibility ?? null}
+          shareRecipient={associatedListing?.accessRole === 'recipient'}
           shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
           shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
           manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
@@ -594,6 +623,7 @@ function PluginManagementWorkspaceContent({
         {pendingUninstall && (
           <UninstallPluginDialog
             pluginName={pendingUninstall.name}
+            scope={pendingUninstall.scope}
             onCancel={() => setPendingUninstall(null)}
             onConfirm={confirmUninstallPlugin}
           />
@@ -738,10 +768,10 @@ function PluginManagementWorkspaceContent({
                           plugin.name,
                           ownedMarketplace?.name,
                           ownedMarketplace?.displayName,
-                        ]) ?? (plugin.origin === 'created' ? plugin : null))
+                        ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null))
                   const ownerActions = resolvePluginOwnerActions({
                     isLocalCreated: Boolean(packableCreated),
-                    ownedListing: ownedMarketplace ?? null,
+                    ownedListing: ownedMarketplace ?? listing,
                   })
                   return (
                     <div
@@ -809,6 +839,7 @@ function PluginManagementWorkspaceContent({
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}
+          scope={pendingUninstall.scope}
           onCancel={() => setPendingUninstall(null)}
           onConfirm={confirmUninstallPlugin}
         />

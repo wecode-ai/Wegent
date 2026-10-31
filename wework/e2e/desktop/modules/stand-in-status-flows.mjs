@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 
-export async function verifyLocalStandInStatuses(control, projectId, uiTimeoutMs, timeoutMs) {
-  const params = { projectId, userId: 9001, projectStore: 'local' }
+export async function verifyLocalStandInStatuses(
+  control,
+  projectId,
+  uiTimeoutMs,
+  timeoutMs,
+  userId
+) {
+  const params = { projectId, userId, projectStore: 'local' }
   const rpc = (method, values) => requestExecutor(control, method, values, uiTimeoutMs)
   let settings = await rpc('runtime.stand_in.get', params)
   const setEnabled = async enabled => {

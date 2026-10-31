@@ -15,16 +15,16 @@ export function createStandInFailureRegression() {
       response.end(JSON.stringify({ error: { message: FAILURE, type: 'invalid_request_error' } }))
       return true
     },
-    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs) {
+    async verify(control, projectId, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const issue = await rpc('todos.create', {
         project_id: projectId,
-        todo: { title: FAILURE, assignee_user_id: 9001 },
+        todo: { title: FAILURE, assignee_user_id: userId },
       })
       const address = await rpc('runtime.stand_in.run', {
         projectId,
         issueId: issue.id,
-        userId: 9001,
+        userId,
         projectStore: 'local',
       })
       const waitForStatus = async status => {

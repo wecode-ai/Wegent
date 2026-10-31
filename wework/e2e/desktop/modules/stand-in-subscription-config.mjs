@@ -87,7 +87,7 @@ export function createSubscriptionConfigRegression() {
       modelRequests += 1
       return true
     },
-    async verify(control, projectId, workspacePath, uiTimeoutMs, modelResponseTimeoutMs) {
+    async verify(control, projectId, workspacePath, uiTimeoutMs, modelResponseTimeoutMs, userId) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       for (const initiatedBy of ['user', 'stand_in', null]) {
         const label = initiatedBy ?? 'direct'
@@ -100,7 +100,7 @@ export function createSubscriptionConfigRegression() {
               type: 'issue_dispatch',
               dispatchRole: 'executor',
               initiatedBy,
-              userId: 9001,
+              userId,
               projectStore: 'local',
               cloudProjectId: projectId,
               loopItemId: issue.id,
@@ -125,7 +125,7 @@ export function createSubscriptionConfigRegression() {
           executionRequest: {
             task_id: taskId,
             subtask_id: `${taskId}-initial`,
-            user_id: 9001,
+            user_id: userId,
             prompt: taskId,
             new_session: true,
             bot: [{ shell_type: 'Codex', name: 'Subscription configuration regression' }],

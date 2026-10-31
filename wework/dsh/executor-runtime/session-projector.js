@@ -26,9 +26,19 @@ export class ExecutorSessionProjector {
     const event = stringField(envelope, 'event')
     if (!event) return
     const subtaskId = stringField(payload, 'subtaskId')
+    const data = recordField(payload, 'data')
+    const native = recordField(recordField(data, 'task'), 'executionState')
+
+    if (event === 'runtime.turn.updated') {
+      const turnId = stringField(data, 'turnId')
+      if (data.status === 'started' && turnId && native.turnId === turnId) {
+        this.openTurn(state, turnId)
+      }
+      return
+    }
 
     if (event === 'response.created' || event === 'response.in_progress') {
-      this.openTurn(state, subtaskId)
+      if (Object.keys(native).length === 0) this.openTurn(state, subtaskId)
       this.appendGeneratedUserMessage(state, payload)
       return
     }
@@ -63,13 +73,15 @@ export class ExecutorSessionProjector {
     }
 
     if (event === 'thread/tokenUsage/updated' || event === 'thread.tokenUsage.updated') {
+      if (state.open && subtaskId && state.subtaskId && subtaskId !== state.subtaskId) return
       const runtimeUsage = recordField(recordField(payload, 'data'), 'tokenUsage')
       const totalUsage = tokenUsage(recordField(runtimeUsage, 'total'))
       const lastUsage = tokenUsage(recordField(runtimeUsage, 'last'))
       const increment = usageIncrement(totalUsage, state.sourceUsage, lastUsage)
       if (!increment || !totalUsage) return
-      this.ensureOpenTurn(state, subtaskId)
       state.sourceUsage = totalUsage
+      // Resume replays historical usage before the next native start; it is no admission.
+      if (!state.open) return
       state.usage = addUsage(state.usage, increment)
       this.appendChunk(state, { type: 'usage', usage: state.usage })
       return

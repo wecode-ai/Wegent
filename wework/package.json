@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.6.4-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -150,6 +150,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",
+    "chokidar": "3.6.0",
     "dingtalk-workspace-cli": "1.0.58",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",

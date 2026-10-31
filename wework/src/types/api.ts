@@ -91,7 +91,7 @@ import type {
 } from '@wegent/chat-core/runtime-stream-types'
 export type {
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
+  RuntimeTurnUpdatedPayload,
   RuntimeSupervisorState,
   RuntimeTaskTitleUpdatedPayload,
   ChatChunkPayload,
@@ -106,7 +106,7 @@ export type {
   RuntimeSubagentActivityPayload,
   RuntimeSupervisorEventPayload,
   RuntimeGoalStatus,
-  RuntimeGoalContinuationStatus,
+  RuntimeTurnUpdateStatus,
   RuntimeSupervisorMode,
   RuntimeSupervisorStatus,
   ModelSelectionConfig,
@@ -1555,6 +1555,8 @@ export interface PluginMarketplaceItem {
   displayName: string
   description: string
   version?: string | null
+  /** Cloud release version when an owner card displays its editable local version. */
+  sharedVersion?: string | null
   author?: string | null
   visibility: 'personal' | 'workspace' | 'public'
   featured: boolean
@@ -1695,6 +1697,7 @@ export interface PluginSubmissionInitRequest {
   visibility?: 'personal' | 'workspace' | 'public'
   targets?: PluginAccessTarget[]
   allowCopy?: boolean
+  releaseNotes?: string | null
 }
 
 export interface PluginSubmissionInitResponse {

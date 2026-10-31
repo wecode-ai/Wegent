@@ -26,6 +26,13 @@ temporary runtime directories and uploads desktop E2E diagnostics retained for
 seven days. Use those logs to establish the root cause instead of hiding a
 failure through reruns or weaker E2E assertions.
 
+If `ERR_NETWORK_CHANGED` interrupts an entry script, stylesheet, or main document
+from the same Core DSH origin during initial loading, Electron reloads that page
+once before confirming completion. A repeated interruption enters the existing
+startup error path. The `startup-network-change` checkpoint interrupts one real
+script request through Chromium's protocol error API and verifies that the
+recovered workbench can continue opening a task.
+
 ## macOS app icons
 
 macOS bundles include both the existing `wework/resources/icons/icon.icns` and
@@ -89,6 +96,19 @@ WeWork_<version>_linux_x64.AppImage
 
 ## Automatic updates
 
+Clients with the release-slot updater prepare the complete target in a separate
+directory and retain the running installation, its selected component cache,
+and its runtime as the rollback baseline. They neither copy nor prepare the old
+host again, including thin hosts installed by historical component updates.
+After stopping all writers, installation retains the original plugin profile
+directory in the source slot before switching to the target profile. Target
+preparation and execution do not write to the source components or profile.
+The shared real-package upgrade, rollback, and recovery scenarios additionally
+check retained host paths, component directories, and profile identity for
+independently built regression packages.
+Compatible manual rollback switches directly to the retained release. Incompatible
+rollback still requires confirmation before restoring the pre-update snapshot.
+
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new
@@ -132,8 +152,12 @@ version. When those inputs are unchanged, the installer and online component
 reuse exactly the same signed bytes. A changed input is signed and verified
 again. Electron Builder skips those already processed managed resources so a
 new signing timestamp alone cannot change their component hashes. Published
-content SHA-256 values are computed from these final resources rather than
-extracting components from a newly re-signed installer.
+component archives must use resources inside the final delivered application,
+checking each content SHA-256, application version, and source revision against
+its bundled manifest. Never read the mutable `electron/resources` staging tree,
+which E2E fixture builds can overwrite, or re-sign the delivered application to
+extract components. Catalog generation checks the component descriptor against
+the target source revision again and blocks publication on an identity mismatch.
 
 Re-signing an existing Mach-O file must preserve the entitlements from its
 previous signature. Codex and `codex-code-mode-host` require `allow-jit` and
@@ -330,6 +354,15 @@ only an intermediate resource directory does not prove that the distribution
 is complete.
 
 ## Development hot reload
+
+Wait for Chokidar's `ready` before taking the input snapshot and starting the
+initial build. Creating a native watcher alone does not establish subscription
+readiness, so the first edit can lose its notification. Await all watcher
+closures during shutdown; failure diagnostics retain the edit, notification,
+and build timeline.
+Chokidar's Node backend throttles normalized `change` events, so preserve raw
+file notifications as well and deduplicate through the input snapshot. A rapid
+edit that fixes a compilation error must still trigger recovery.
 
 `pnpm --dir wework run dev:mac` continuously builds the original Wework
 application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher

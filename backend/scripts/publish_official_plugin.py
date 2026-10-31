@@ -19,6 +19,9 @@ from app.services.official_plugin_publisher import (  # noqa: E402
     official_plugin_publisher,
 )
 from app.services.plugin_marketplace_service import PublishedRelease  # noqa: E402
+from app.services.plugin_write_coordination import (  # noqa: E402
+    configure_plugin_session,
+)
 
 MYSQL_DEADLOCK_ERROR = 1213
 PUBLISH_ATTEMPTS = 3
@@ -42,6 +45,7 @@ def publish_release(
     for attempt in range(1, PUBLISH_ATTEMPTS + 1):
         try:
             with SessionLocal() as db:
+                configure_plugin_session(db)
                 return official_plugin_publisher.publish_package(
                     db,
                     built=built,

@@ -153,13 +153,11 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import {
-  applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeGoalSnapshot,
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
-  markRuntimeConversationAssistantStarted,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
@@ -2186,7 +2184,6 @@ export function WorkbenchProvider({
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
           onAssistantStart: (address, turnId) => {
             settleRuntimeConversationAcceptedMessage(address)
-            markRuntimeConversationAssistantStarted(address)
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -2226,10 +2223,6 @@ export function WorkbenchProvider({
           },
           onRuntimeSupervisorUpdated: (address, payload) => {
             updateLocalRuntimeTaskSupervisor(address, payload.supervisor)
-          },
-          onRuntimeGoalContinuation: (address, payload) => {
-            applyRuntimeConversationGoalContinuation(address, payload)
-            syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
         },
@@ -2706,6 +2699,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
       onModelSelectorOpenChange: handleModelSelectorOpenChange,
@@ -2791,6 +2785,7 @@ export function WorkbenchProvider({
       isOptionsLocked,
       listLocalSkills,
       listLocalApps,
+      modelSelection.isCatalogReady,
       modelSelection.isSelectionReady,
       modelSelection.selectedModelAvailable,
       handleModelSelectorOpenChange,

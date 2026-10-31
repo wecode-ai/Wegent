@@ -33,6 +33,13 @@ async function isolatedConsumer(name) {
   const consumer = join(root, name)
   const desktop = join(consumer, 'wework/e2e/desktop')
   await cp(join(wework, 'e2e/desktop'), desktop, { recursive: true })
+  const chatCore = join(consumer, 'packages/chat-core')
+  await mkdir(join(chatCore, 'src'), { recursive: true })
+  await cp(join(wework, '../packages/chat-core/package.json'), join(chatCore, 'package.json'))
+  await cp(
+    join(wework, '../packages/chat-core/src/runtime-user-message.js'),
+    join(chatCore, 'src/runtime-user-message.js')
+  )
   const client = join(consumer, '.ci-artifacts/e2e-client')
   await cp(bundle, client, { recursive: true })
   return {

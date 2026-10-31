@@ -1,3 +1,5 @@
+import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
@@ -46,6 +48,8 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
+import { RendererStartupLoader } from './host/renderer-startup-loader.js'
+import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -63,6 +67,8 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
+import { requestE2ERuntime } from './host/e2e-runtime-request.js'
+import { dshBrowserAuthenticationCookies } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -122,6 +128,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
   type DesktopComponentUpdateController,
+  type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
 import {
   prepareElectronNodeRuntime,
@@ -308,6 +315,8 @@ if (desktopDataPaths) {
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
+const mcpAppCleanups = new Set<() => Promise<void>>()
+let mcpAppRuntime: McpAppRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let lastMenuWindow: BrowserWindow | null = null
@@ -353,6 +362,7 @@ let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let desktopComponentsPromise: Promise<PreparedDesktopComponents> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -425,10 +435,15 @@ const pendingEmbeddedBrowserAttachments = new Map<
   >
 >()
 const rendererHealth = new RendererHealthService()
+const rendererStartupLoader = new RendererStartupLoader()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
+)
+const executorTransportDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'executor-transport.log'),
+  '[Wework] Executor transport diagnostic '
 )
 const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'smart-app-launch.log'),
@@ -475,6 +490,9 @@ app.on('web-contents-created', (_event, contents) => {
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
     })
+    void executorTransportDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write executor transport diagnostics', error)
+    })
     void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write Smart app diagnostics', error)
     })
@@ -508,6 +526,12 @@ const appUpdates = new AppUpdateService({
   currentVersion: app.getVersion(),
   executable: process.execPath,
   resources: process.resourcesPath,
+  componentDataDirectory:
+    process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
+  runningComponents: async () => {
+    if (runtimePhase === 'initializing') await startDesktopRuntime()
+    return (await runningDesktopComponents()).paths
+  },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
   dataSchema: packageMetadata.weworkDataSchema ?? 1,
@@ -784,20 +808,33 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
-  if (process.env.VITE_WEWORK_E2E === 'true') {
-    session.defaultSession.webRequest.onErrorOccurred(
-      { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
-      details => {
-        console.error('[desktop-e2e-network-error]', {
-          at: new Date().toISOString(),
-          path: new URL(details.url).pathname,
-          method: details.method,
-          error: details.error,
-          webContentsId: details.webContentsId,
-        })
+  session.defaultSession.webRequest.onErrorOccurred(
+    { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+    details => {
+      rendererStartupLoader.requestFailed(details)
+      const diagnostic = {
+        at: new Date().toISOString(),
+        path: new URL(details.url).pathname,
+        method: details.method,
+        error: details.error,
+        webContentsId: details.webContentsId,
       }
-    )
-  }
+      if (
+        diagnostic.path === '/wework/executor/v1/rpc' &&
+        typeof details.webContentsId === 'number'
+      ) {
+        void executorTransportDiagnosticsLog
+          .record(
+            details.webContentsId,
+            '[Wework] Executor transport diagnostic ' + JSON.stringify(diagnostic)
+          )
+          .catch(error => console.warn('[Wework] Failed to write network diagnostics', error))
+      }
+      if (process.env.VITE_WEWORK_E2E === 'true') {
+        console.error('[desktop-e2e-network-error]', diagnostic)
+      }
+    }
+  )
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const label =
       typeof details.webContentsId === 'number'
@@ -828,12 +865,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     registerDshWindowLabel(contents, 'main')
     primaryDshSecurityInstalled = true
   }
-  contents.once('did-finish-load', () => {
-    primaryDshLoaded = true
-    runtimeError = null
-    rendererHealth.ready()
-    logStartupStep('primary-renderer-load', 'completed')
-  })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
   contents.once('render-process-gone', (_event, details) => {
@@ -868,9 +899,29 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
-    await contents.loadURL(targetUrl.toString(), {
-      extraHeaders: 'X-Wework-Window-Label: main',
-    })
+    const disposeFault =
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
+        ? installStartupNetworkFault(contents.session, targetUrl.origin)
+        : undefined
+    try {
+      await rendererStartupLoader.load({
+        webContentsId: contents.id,
+        url: targetUrl.toString(),
+        load: () =>
+          contents.loadURL(targetUrl.toString(), {
+            extraHeaders: 'X-Wework-Window-Label: main',
+          }),
+        onRecovery: () =>
+          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+      })
+    } finally {
+      disposeFault?.()
+    }
+    primaryDshLoaded = true
+    runtimeError = null
+    rendererHealth.ready()
+    logStartupStep('primary-renderer-load', 'completed')
     const plugins = await desktopRuntime.listCoreDshPlugins()
     const pluginName = await detectCoreDshStartupPluginFailure(
       contents,
@@ -1633,6 +1684,16 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
 }
 
 function installIpc(): void {
+  if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    ipcMain.handle('e2e:runtime-request', (event, input) => {
+      if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Runtime verification requires a Wework main frame')
+      }
+      return requestE2ERuntime(process.env, input, url =>
+        dshBrowserAuthenticationCookies(session.defaultSession, url)
+      )
+    })
+  }
   ipcMain.handle('startup-recovery:retry', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-retry', 'started')
@@ -1747,6 +1808,20 @@ async function shutdown(): Promise<void> {
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
   await traceShutdownStep('log-retention', () => logRetention.stop())
+  await traceShutdownStep('mcp-apps', async () => {
+    try {
+      const results = await settleMcpAppCleanup(mcpAppCleanups)
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+      }
+    } catch (error) {
+      console.error('[Wework] MCP App shutdown cleanup timed out', { name: (error as Error).name })
+    }
+    mcpAppCleanups.clear()
+    mcpAppRuntime?.dispose()
+    mcpAppRuntime = null
+  })
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -2029,6 +2104,24 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
+          registerMcpAppCleanup: cleanup => {
+            mcpAppCleanups.add(cleanup)
+          },
+          requestMcpApp: payload => {
+            mcpAppRuntime ??= new McpAppRuntime(
+              request => {
+                if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+                return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
+              },
+              async apiBaseUrl => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+                return credential.accessToken
+              },
+              () => readMcpAppConnection(rendererStorage!)
+            )
+            return mcpAppRuntime.request(payload)
+          },
+          executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
@@ -2041,6 +2134,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
         },
         {
+          disconnectMcpAppSession: sessionId => mcpAppRuntime?.dispose(sessionId),
           captureTarget: windowLabel =>
             windowLabel === 'main'
               ? (mainWindow?.webContents ?? null)
@@ -2492,15 +2586,16 @@ function reportLogCleanup(result: LogCleanupResult): void {
   }
 }
 
-async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+function desktopComponentResourcesRoot(): string {
   const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
-  const componentResourcesRoot =
-    !packagedApplication && configuredComponentResourcesRoot
-      ? resolve(configuredComponentResourcesRoot)
-      : resourcesRoot
-  logStartupStep('desktop-components-prepare', 'started')
-  const preparedComponents = await prepareDesktopComponents({
+  return !packagedApplication && configuredComponentResourcesRoot
+    ? resolve(configuredComponentResourcesRoot)
+    : resourcesRoot
+}
+
+function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
+  desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
       validateExecutor: path =>
@@ -2509,12 +2604,22 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
         }),
       log: event => appUpdateLogger.info(event),
-      resourcesRoot: componentResourcesRoot,
+      resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
       currentAppVersion: app.getVersion(),
     },
+  }).catch(error => {
+    desktopComponentsPromise = null
+    throw error
   })
+  return desktopComponentsPromise
+}
+
+async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+  const componentResourcesRoot = desktopComponentResourcesRoot()
+  logStartupStep('desktop-components-prepare', 'started')
+  const preparedComponents = await runningDesktopComponents()
   logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths

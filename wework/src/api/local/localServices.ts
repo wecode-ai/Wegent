@@ -842,6 +842,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(taskRecord.executionState
+      ? { executionState: taskRecord.executionState as RuntimeTaskSummary['executionState'] }
+      : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
@@ -2725,7 +2728,10 @@ export function createRuntimeWorkApiFromIpc(
       try {
         const response = await request(
           'runtime.tasks.list',
-          requestOptions?.preferCached ? { preferCached: true } : {},
+          {
+            ...(requestOptions?.preferCached ? { preferCached: true } : {}),
+            ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+          },
           localDeviceId
         )
         if (identity) {

@@ -5,6 +5,12 @@ import type {
 import { getLocalTerminalSnapshot } from '@/lib/local-terminal'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import {
+  normalizeCloudBackendUrl,
+  readStoredCloudConnection,
+} from '@/features/cloud-connection/cloudConnectionStorage'
+import { applyLocalExecutorCloudConnection } from '@/features/cloud-connection/localExecutorCloudConnection'
+import { getDesktopE2ERuntimeConfig } from './runtime-config'
+import {
   localConnectorAuthHealth,
   localConnectorAuthLogout,
   localConnectorAuthStart,
@@ -174,15 +180,62 @@ async function localConnectorAuth(command: DesktopControlCommand): Promise<strin
   }
 }
 
+async function reconnectLocalExecutorCloud(): Promise<string> {
+  const config = getDesktopE2ERuntimeConfig()
+  const connection = readStoredCloudConnection()
+  if (!config.controlUrl || config.disabled || !config.cloudToken || !connection) {
+    throw new Error('Cloud reconnection requires an active desktop E2E account')
+  }
+  if (
+    !config.cloudBackendUrl ||
+    normalizeCloudBackendUrl(config.cloudBackendUrl).backendUrl !== connection.backendUrl
+  ) {
+    throw new Error('Cloud reconnection profile changed')
+  }
+  await applyLocalExecutorCloudConnection({
+    ...connection,
+    isConnected: true,
+    token: config.cloudToken,
+  })
+  const status = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+    'executor.backend.status'
+  )
+  return JSON.stringify({ configured: status.configured, connected: status.connected })
+}
+
 export async function executeVerificationControlCommand(
   command: DesktopControlCommand,
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'reconnectLocalExecutorCloud':
+      return { handled: true, value: await reconnectLocalExecutorCloud() }
+    case 'disconnectLocalExecutorCloud': {
+      await requestLocalExecutor('executor.backend.configure', {})
+      const status = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+        'executor.backend.status'
+      )
+      return {
+        handled: true,
+        value: JSON.stringify({ configured: status.configured, connected: status.connected }),
+      }
+    }
     case 'ensureLocalModelCatalogReady': {
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
+    }
+    case 'fetchLocalRuntime': {
+      const bridge = (
+        window as Window & {
+          weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
+        }
+      ).weworkElectronVerification
+      if (!bridge) throw new Error('Runtime verification bridge is unavailable')
+      return {
+        handled: true,
+        value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
+      }
     }
     case 'localConnectorAuth':
       return { handled: true, value: await localConnectorAuth(command) }

@@ -47,6 +47,15 @@ describe('humanizeMarketplaceInstallError', () => {
     expect(humanizeMarketplaceUninstallError('', t)).toBe('卸载失败，请稍后重试')
   })
 
+  test.each([
+    'PLUGIN_UNINSTALL_PREFLIGHT_FAILED',
+    'Managed plugin account install id is unavailable; refresh installed plugins and retry uninstall',
+  ])('explains installation identity preflight failures (%s)', message => {
+    expect(humanizeMarketplaceUninstallError(message, t)).toBe(
+      '暂时无法确认当前账号的插件安装状态，请刷新后重试。'
+    )
+  })
+
   test('strips the executor prefix from other failures', () => {
     expect(humanizeMarketplaceInstallError('codex_app_server_request_failed: boom', t)).toBe('boom')
   })

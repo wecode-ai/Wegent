@@ -1,17 +1,20 @@
 #!/bin/sh
 set -eu
 
-# Xvfb process creation does not prove that its display accepts connections.
-attempt=0
-while ! xprop -root >/dev/null 2>&1; do
-  if [ "$attempt" -ge 100 ]; then
-    echo "Xvfb did not accept connections on $DISPLAY" >&2
+echo "[desktop-e2e-window-manager] waiting for X display: display=${DISPLAY:-unset}" >&2
+display_attempt=0
+display_error=''
+while ! display_error=$(xprop -root 2>&1); do
+  display_attempt=$((display_attempt + 1))
+  if [ "$display_attempt" -ge 100 ]; then
+    echo "Xvfb display did not become reachable: display=${DISPLAY:-unset}" >&2
+    printf '%s\n' "$display_error" >&2
     exit 1
   fi
-  attempt=$((attempt + 1))
   sleep 0.05
 done
 
+echo "[desktop-e2e-window-manager] starting: display=$DISPLAY" >&2
 openbox >&2 &
 openbox_pid=$!
 trap 'kill "$openbox_pid" 2>/dev/null || true; wait "$openbox_pid" 2>/dev/null || true' EXIT

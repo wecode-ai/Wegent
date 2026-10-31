@@ -20959,6 +20959,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         status: 'paused',
       })
       runtimeRunning = false
+      streamHandlers.onChatError?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        type: 'cancelled',
+        error: 'Interrupted',
+      })
       return Promise.resolve({
         accepted: true,
         taskId: 'runtime-a',
@@ -21049,7 +21056,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('marks a pending turn stopped when cancellation wins the assistant-start race', async () => {
+  test('marks a pending turn stopped only after its native cancellation event', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
     let runtimeRunning = false
     const idleRuntimeWork = createRuntimeWork({
       projects: [
@@ -21140,6 +21152,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: { subscribe } as unknown as WorkbenchServices['chatStream'],
     })
 
     renderWorkbench(
@@ -21169,6 +21182,25 @@ describe('WorkbenchProvider runtime tasks', () => {
     cancellation.resolve({
       accepted: true,
       taskId: 'runtime-a',
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
+    )
+    expect(screen.queryByTestId('assistant-stopped-notice')).not.toBeInTheDocument()
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'native-cancelled-turn',
+        deviceId: 'device-1',
+        shellType: 'Codex',
+      })
+      streamHandlers.onChatError?.({
+        taskId: 'runtime-a',
+        subtaskId: 'native-cancelled-turn',
+        deviceId: 'device-1',
+        type: 'cancelled',
+        error: 'Interrupted',
+      })
     })
     await waitFor(() => expect(screen.getByTestId('assistant-stopped-notice')).toBeInTheDocument())
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('已停止')

@@ -8,6 +8,16 @@ sidebar_position: 61
 
 ## 清单兼容和升级路径
 
+正式发版先构建候选包并完成验证，再生成升级清单，最后创建版本 tag 和 Release。
+验证或清单生成失败时不会占用版本 tag。macOS arm64 和 Windows x64 独立运行
+实际发布包的升级与回退验证；macOS x64 复用 arm64 通过的版本路径和最低来源版本，
+不再在发版中运行升级与回退 E2E。x64 记录保留自身包哈希及下载地址，并通过
+`verification.kind=architecture-equivalence`、`arch=arm64` 和 arm64 来源/目标包哈希
+注明证据来源。来源和目标的源码提交必须分别与 arm64 相同；缺少匹配的历史 x64
+包记录时阻止发布，不把 arm64 包哈希当作 x64 包哈希。PR 的三平台机制回归保持独立运行。
+下文逐架构实际包验证规则在正式发版中适用于 macOS arm64 和 Windows x64；
+macOS x64 使用上述明确的架构等价规则。
+
 继续使用既有 Electron YAML 和 `components-<channel>-<platform>-<arch>.json`，不更换发现地址、不改变原字段含义。组件清单新增 `upgradePolicy`，其中每个目标版本声明 `minSourceVersion`，并记录明确的来源版本、目标版本、交付包哈希及升级和回退 E2E 证据。
 
 旧客户端忽略新字段，继续直升旧清单中声明的最新版。路径约束从客户端包含新实现开始生效；不将改造前的旧版本纳入新 E2E 矩阵，也不把旧渠道固定到桥接版。

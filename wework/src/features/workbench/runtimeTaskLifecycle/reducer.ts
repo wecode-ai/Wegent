@@ -7,12 +7,68 @@ import {
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
+function reduceNativeSnapshot(
+  state: RuntimeTaskLifecycleState,
+  event: Extract<RuntimeTaskLifecycleEvent, { type: 'executor_snapshot_received' }>
+): RuntimeTaskLifecycleState {
+  const execution = event.task.executionState
+  if (!execution) return state
+  const previous = state.task?.executionState
+  if (previous && BigInt(execution.revision) <= BigInt(previous.revision)) return state
+  return {
+    ...state,
+    address: mergeAddress(state.address, event.address),
+    task: event.task,
+    executionPhase: execution.phase,
+    turnPhase: execution.turnId
+      ? 'streaming'
+      : execution.phase === 'starting'
+        ? 'awaiting'
+        : 'idle',
+    activeTurnId: execution.turnId,
+    latestTurnId: execution.latestTurnId,
+    turnOutcome: execution.outcome,
+    goalStatus: event.task.goalStatus ?? null,
+    interactionStatus: event.task.interactionStatus ?? null,
+    hasAuthoritativeGoalStatus: true,
+    continuable: event.task.continuable !== false,
+    expectedExecutorRunning: null,
+  }
+}
+
 export function reduceRuntimeTaskLifecycle(
   state: RuntimeTaskLifecycleState,
   event: RuntimeTaskLifecycleEvent
 ): RuntimeTaskLifecycleState {
+  // Content and RPC completion describe a response, never the native thread's lifetime.
+  if (
+    state.task?.executionState &&
+    [
+      'executor_started',
+      'executor_settled',
+      'turn_started',
+      'turn_settled',
+      'turn_recovered',
+    ].includes(event.type)
+  ) {
+    return state
+  }
   switch (event.type) {
+    case 'executor_replaced':
+      return {
+        ...state,
+        task: state.task
+          ? { ...state.task, executionState: undefined, cachedProjection: true }
+          : null,
+        executionPhase: 'unknown',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: null,
+      }
     case 'executor_snapshot_received': {
+      if (event.task.executionState || state.task?.executionState) {
+        return reduceNativeSnapshot(state, event)
+      }
       const goalExecutionActive = isRuntimeGoalExecutionActive(event.task)
       const snapshotRunning =
         event.task.running === true || goalExecutionActive
@@ -315,6 +371,9 @@ export function reduceRuntimeTaskLifecycle(
             }
 
     case 'goal_status_received': {
+      if (state.task?.executionState) {
+        return { ...state, goalStatus: event.goalStatus, hasAuthoritativeGoalStatus: true }
+      }
       const goalJustSettled =
         state.goalStatus === 'active' &&
         event.goalStatus !== null &&

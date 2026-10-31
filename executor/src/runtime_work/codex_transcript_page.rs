@@ -372,7 +372,15 @@ fn navigation_turn(
                 && codex_phase_is_final(codex_phase_name(item).as_deref())
         })
         .and_then(extract_text)
-        .unwrap_or_else(|| preview("agentmessage"));
+        .or_else(|| {
+            let response = preview("agentmessage");
+            (!response.is_empty()).then_some(response)
+        })
+        .or_else(|| {
+            turn.get("error")
+                .and_then(|error| string_field(error, "message"))
+        })
+        .unwrap_or_default();
     CodexTranscriptNavigationTurn {
         turn_id,
         cursor,
@@ -767,6 +775,23 @@ mod tests {
         let entry = super::navigation_turn(&turn, "turn-1".into(), Some("cursor".into()));
         assert_eq!(entry.prompt_preview, "Fix navigation");
         assert_eq!(entry.response_preview, "Navigation fixed");
+        assert_eq!(entry.cursor.as_deref(), Some("cursor"));
+    }
+
+    #[test]
+    fn navigation_previews_itemless_turn_failure() {
+        let turn = json!({
+            "items": [],
+            "status": "failed",
+            "error": {"message": "Request failed before producing items"},
+        });
+        let entry = super::navigation_turn(&turn, "failed-turn".into(), Some("cursor".into()));
+        assert_eq!(entry.user_message_id, None);
+        assert_eq!(entry.prompt_preview, "");
+        assert_eq!(
+            entry.response_preview,
+            "Request failed before producing items"
+        );
         assert_eq!(entry.cursor.as_deref(), Some("cursor"));
     }
 

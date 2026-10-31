@@ -25,6 +25,7 @@ pub mod components;
 pub mod db;
 mod handler;
 pub mod models;
+mod ownership;
 pub(crate) mod query;
 pub mod service;
 

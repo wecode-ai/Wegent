@@ -358,6 +358,7 @@ def test_historical_duplicate_alias_bindings_resolve_the_newest_session(manual_s
 
 @pytest.mark.asyncio
 async def test_alias_transcript_rpc_uses_the_bound_owner_and_exact_task(manual_session):
+    """Preserve the bound session identity while requesting device protocol v2."""
     from app.services.runtime_work_service import get_runtime_transcript
 
     s = manual_session
@@ -383,6 +384,7 @@ async def test_alias_transcript_rpc_uses_the_bound_owner_and_exact_task(manual_s
         payload={
             "deviceId": record_route_id(s.device),
             "taskId": s.root.runtime_task_id,
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
         allow_app_device_task_reading=True,

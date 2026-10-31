@@ -46,6 +46,9 @@ mod local_history_tests;
 #[path = "mcp_elicitation_tests.rs"]
 mod mcp_elicitation_tests;
 
+#[path = "async_question_tests.rs"]
+mod async_question_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
@@ -1172,6 +1175,23 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
     handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
 }
 
+fn finish_test_native_turn(handler: &RuntimeWorkRpcHandler, task_id: &str, thread_id: &str) {
+    for method in ["turn/started", "turn/completed"] {
+        let status = if method == "turn/started" {
+            "inProgress"
+        } else {
+            "completed"
+        };
+        handler.apply_native_lifecycle(
+            task_id,
+            &ExecutionRequest::default(),
+            &json!({"method": method, "params": {"threadId": thread_id,
+                "turn": {"id": "test-native-turn", "status": status}}})
+            .into(),
+        );
+    }
+}
+
 fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
@@ -1186,6 +1206,77 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
         .queued_turns
         .clear();
     (handler, root)
+}
+
+fn next_content_event(
+    receiver: &mut broadcast::Receiver<Value>,
+) -> Result<Value, broadcast::error::TryRecvError> {
+    loop {
+        let event = receiver.try_recv()?;
+        if event["event"] != "runtime.turn.updated" {
+            return Ok(event);
+        }
+        assert!(event["payload"]["data"]["task"]["executionState"]["revision"].is_string());
+        assert_eq!(
+            event["payload"]["data"]["task"]["taskId"],
+            event["payload"]["taskId"]
+        );
+    }
+}
+
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;
+
+impl RuntimeWorkRpcHandler {
+    // Test the same route/publication/hook handoff used by the two real subscriptions.
+    async fn deliver_native_notification_for_execution(
+        &self,
+        task_id: &str,
+        execution_id: u64,
+        request: &ExecutionRequest,
+        active: Option<ActiveCodexTurn>,
+        message: impl Into<CodexNotification>,
+    ) {
+        let mut message = message.into();
+        if let Some(turn) = &active {
+            self.record_active_codex_turn(
+                task_id,
+                execution_id,
+                turn.thread_id.clone(),
+                turn.turn_id.clone(),
+            );
+            if codex_notification_turn_id(&message).is_none() {
+                message["params"]["turnId"] = json!(turn.turn_id);
+            }
+        }
+        if let Some(thread) = active
+            .as_ref()
+            .map(|turn| turn.thread_id.clone())
+            .or_else(|| codex_notification_thread_id(&message))
+            .or_else(|| {
+                self.local_task_link(task_id)
+                    .and_then(|link| link.thread_id)
+            })
+        {
+            if codex_notification_thread_id(&message).is_none() {
+                message["params"]["threadId"] = json!(thread);
+            }
+            if !self.thread_event_route_exists(&thread) {
+                self.record_local_task_thread(task_id, &thread);
+                if !self.thread_event_route_exists(&thread) {
+                    self.register_thread_event_route(
+                        &thread,
+                        task_id.into(),
+                        request.clone(),
+                        true,
+                    );
+                }
+            }
+        }
+        self.route_codex_notification(message.clone());
+        self.observe_execution_codex_notification(task_id, execution_id, request, active, message)
+            .await;
+    }
 }
 
 #[path = "background_terminal_tests.rs"]
@@ -1795,7 +1886,7 @@ async fn running_codex_transcript_reads_native_order_with_provisional_live_outpu
             }
         }),
     );
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-live");
     handler.record_active_codex_transcript_item(
         "task-1",
@@ -2387,7 +2478,7 @@ fn forked_task_inherits_project_routing_metadata() {
 }
 
 #[test]
-fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
+fn finishing_a_goal_request_updates_metadata_without_settling_native_admission() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -2405,17 +2496,22 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
-    assert!(!task.running);
+    assert_eq!(task.status, "running");
+    assert!(task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
-    assert!(task.completed_at.is_some());
+    assert!(task.completed_at.is_none());
+    assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(
+        task.execution_state.unwrap().phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+    );
 
     let _ = fs::remove_file(index_path);
 }
 
 #[test]
-fn turn_result_persists_observed_goal_status_before_settling_task() {
+fn turn_result_persists_goal_status_before_native_execution_settles() {
     let index_path = temp_runtime_work_index_path("finish-observed-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -2452,6 +2548,9 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
         }),
     );
 
+    assert!(handler.local_task_link("task-1").unwrap().running);
+    assert!(!handler.is_active_local_task("task-1"));
+    finish_test_native_turn(&handler, "task-1", "thread-1");
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
@@ -2499,6 +2598,10 @@ fn stale_execution_cannot_finish_its_replacement() {
         Some("current-thread".to_owned()),
         "done",
     );
+
+    assert!(handler.local_task_link("task-1").unwrap().running);
+    assert!(!handler.is_active_local_task("task-1"));
+    finish_test_native_turn(&handler, "task-1", "current-thread");
 
     let task = handler
         .local_task_link("task-1")
@@ -3256,7 +3359,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
             crate::agents::CodexResponseValueOrigin::Empty,
         ),
     ] {
-        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let (event_tx, mut event_rx) = broadcast::channel(8);
         let index_path = temp_runtime_work_index_path(&format!("completed-turn-id-{case}"));
         let mut handler =
             RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -3273,6 +3376,28 @@ fn completed_responses_use_the_active_codex_turn_id() {
             "Task".to_owned(),
         ));
         let execution_id = start_test_execution(&handler, &local_task_id);
+        if let ExecutionOutcome::Completed { content } = &outcome {
+            handler.store.update_task(&local_task_id, |link| {
+                link.thread_id = Some(format!("thread-{case}"));
+            });
+            handler.register_thread_event_route(
+                &format!("thread-{case}"),
+                local_task_id.clone(),
+                request.clone(),
+                true,
+            );
+            handler.route_codex_notification(json!({"method": "turn/started", "params": {
+                "threadId": format!("thread-{case}"), "turn": {"id": "turn-1", "status": "inProgress"}
+            }}));
+            handler.route_codex_notification(json!({"method": "turn/completed", "params": {
+                "threadId": format!("thread-{case}"), "turn": {"id": "turn-1", "status": "completed",
+                    "startedAt": 1780000000i64, "completedAt": 1780000018i64, "durationMs": 18250,
+                    "items": [{"type": "agentMessage", "id": response_item_id,
+                        "phase": if case == "completed" { "final_answer" } else { "commentary" },
+                        "text": content}]
+                }
+            }}));
+        }
         handler.handle_turn_result(
             &local_task_id,
             execution_id,
@@ -3295,9 +3420,15 @@ fn completed_responses_use_the_active_codex_turn_id() {
             }),
         );
 
-        let event = event_rx
-            .try_recv()
+        let mut completed = std::iter::from_fn(|| event_rx.try_recv().ok())
+            .filter(|event| event["event"] == "response.completed");
+        let event = completed
+            .next()
             .expect("completed response should be emitted");
+        assert!(
+            completed.next().is_none(),
+            "RPC must not repeat the native result"
+        );
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
@@ -5554,7 +5685,7 @@ fn pending_notifications_do_not_cross_thread_route_generations() {
 }
 
 #[test]
-fn active_parent_registers_child_route_before_skipping_its_own_notification() {
+fn native_router_publishes_parent_and_registers_child_route() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-spawned-child-thread-route");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -5618,7 +5749,19 @@ fn active_parent_registers_child_route_before_skipping_its_own_notification() {
     }));
 
     assert!(handler.thread_event_route_exists("thread-child"));
-    assert!(event_rx.try_recv().is_err());
+    let parent = event_rx
+        .try_recv()
+        .expect("parent activity must be published by the thread router");
+    assert_eq!(parent["event"], "response.subagent.activity");
+    assert_eq!(parent["payload"]["subtaskId"], "turn-root");
+    let spawned = event_rx
+        .try_recv()
+        .expect("the parent spawn must create its agent block");
+    assert_eq!(spawned["event"], "response.block.created");
+    assert_eq!(
+        spawned["payload"]["data"]["block"]["id"],
+        "subagent-thread-child"
+    );
 
     handler.route_codex_notification(json!({
         "method": "item/started",
@@ -5714,6 +5857,53 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
         .iter()
         .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visibility() {
+    let (handler, root) = isolated_runtime_work_handler("pending-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({"electron-saved-workspace-roots": ["/tmp/visible-project"]})
+            .as_object()
+            .unwrap(),
+    );
+    for (id, pending) in [("hidden-pending", true), ("hidden-idle", false)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.to_owned(),
+            runtime: "claude".to_owned(),
+            workspace_path: "/tmp/hidden-project".to_owned(),
+            title: id.to_owned(),
+            interaction_status: pending.then(|| "awaitingUserReply".to_owned()),
+            ..RuntimeTaskLink::default()
+        });
+    }
+    let visible = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    assert!(!visible.to_string().contains("hidden-pending"));
+    let pending = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true, "pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let tasks = pending["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["taskId"], "hidden-pending");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -6097,7 +6287,7 @@ fn task_list_keeps_the_persisted_workspace_when_provider_cwd_changes() {
 }
 
 #[test]
-fn active_local_task_routes_only_notifications_from_other_turns_globally() {
+fn native_router_publishes_current_and_historical_turns_by_their_own_identity() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-local-task-route");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -6145,7 +6335,12 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
         }
     }));
 
-    assert!(event_rx.try_recv().is_err());
+    let current = event_rx
+        .try_recv()
+        .expect("the active turn must be published by the thread router");
+    assert_eq!(current["event"], "response.block.created");
+    assert_eq!(current["payload"]["subtaskId"], "turn-current");
+    assert_eq!(current["payload"]["data"]["block"]["content"], "Hi");
 
     handler.route_codex_notification(json!({
         "method": "item/agentMessage/delta",
@@ -6257,14 +6452,12 @@ async fn assert_queued_notification_routing(
         "thread-1".to_owned(),
         "turn-continuation".to_owned(),
     );
-    let mut execution_mapper = CodexNotificationEventMapper::default();
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             Some(active_turn),
-            &mut execution_mapper,
             message.clone(),
         )
         .await;
@@ -6305,20 +6498,15 @@ async fn assert_queued_notification_routing(
         }
     }));
     handler.route_codex_notification(continuation_message.clone());
-    assert!(
-        event_rx.try_recv().is_err(),
-        "the global router must leave the active turn to the execution mapper"
-    );
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("continuation turn should remain active");
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             Some(active_turn),
-            &mut execution_mapper,
             continuation_message,
         )
         .await;
@@ -6399,14 +6587,12 @@ async fn execution_mapper_persists_request_user_input_without_settling_execution
         }
     });
 
-    let mut event_mapper = CodexNotificationEventMapper::default();
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             Some(active_turn),
-            &mut event_mapper,
             message,
         )
         .await;
@@ -6455,10 +6641,8 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
     let execution_id = start_test_execution(&handler, local_task_id);
     handler.begin_active_codex_transcript(local_task_id, "thread-1", "turn-1");
     assert!(handler.request_active_turn_stop(local_task_id));
-
-    let mut execution_mapper = CodexNotificationEventMapper::default();
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
@@ -6467,7 +6651,6 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
                 thread_id: "thread-1".to_owned(),
                 turn_id: "turn-1".to_owned(),
             }),
-            &mut execution_mapper,
             json!({
                 "method": "item/completed",
                 "params": {
@@ -6518,12 +6701,11 @@ async fn async_question_state_survives_completion_and_clears_on_next_send() {
         ..ExecutionRequest::default()
     };
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             None,
-            &mut CodexNotificationEventMapper::default(),
             json!({
                 "method": "item/completed",
                 "params": {"item": {
@@ -6615,15 +6797,13 @@ async fn execution_mapper_keeps_same_turn_subagent_text_out_of_root_conversation
         thread_id: "thread-root".to_owned(),
         turn_id: "turn-1".to_owned(),
     };
-    let mut execution_mapper = CodexNotificationEventMapper::default();
 
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             Some(active_turn),
-            &mut execution_mapper,
             json!({
                 "method": "item/agentMessage/delta",
                 "params": {
@@ -6674,20 +6854,20 @@ async fn execution_mapper_persists_historical_completion_without_remapping_it() 
     handler.upsert_local_task(link);
     let execution_id = start_test_execution(&handler, local_task_id);
     handler.begin_active_codex_transcript(local_task_id, "thread-1", "turn-continuation");
+    handler.route_codex_notification(json!({"method":"turn/started", "params":{"threadId":"thread-1", "turn":{"id":"turn-continuation"}}}));
+    assert!(next_content_event(&mut event_rx).is_err());
     let active_turn = ActiveCodexTurn {
         execution_id,
         thread_id: "thread-1".to_owned(),
         turn_id: "turn-continuation".to_owned(),
     };
-    let mut execution_mapper = CodexNotificationEventMapper::default();
 
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             local_task_id,
             execution_id,
             &request,
             Some(active_turn),
-            &mut execution_mapper,
             json!({
                 "method": "turn/completed",
                 "params": {
@@ -6730,7 +6910,7 @@ async fn execution_mapper_persists_historical_completion_without_remapping_it() 
 }
 
 #[test]
-fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
+fn context_compaction_notifications_use_the_native_turn_identity() {
     let (event_tx, mut event_rx) = broadcast::channel(4);
     let index_path = temp_runtime_work_index_path("context-compaction-route");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -6766,10 +6946,7 @@ fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
         .try_recv()
         .expect("compaction event should be emitted");
     assert_eq!(event["event"], "response.block.created");
-    assert_eq!(
-        event["payload"]["subtaskId"],
-        "runtime-task-1-context-compact"
-    );
+    assert_eq!(event["payload"]["subtaskId"], "compact-turn-1");
     assert_eq!(
         event["payload"]["data"]["block"]["tool_name"],
         "context_compaction"
@@ -6787,7 +6964,7 @@ fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
         }
     }));
     assert!(
-        event_rx.try_recv().is_err(),
+        next_content_event(&mut event_rx).is_err(),
         "turn completion must not duplicate an emitted compaction block"
     );
 
@@ -7088,7 +7265,7 @@ fn context_compaction_cache_preserves_started_and_completed_outcomes() {
             if completed { "done" } else { "pending" }
         );
 
-        handler.persist_and_clear_active_codex_transcript("task-1", "interrupted");
+        handler.persist_and_clear_active_codex_transcript("task-1", "interrupted", None);
         let link = handler.local_task_link("task-1").unwrap();
         let persisted = completed_transcript_messages(&link);
         assert_eq!(persisted[0]["status"], "cancelled");

@@ -233,9 +233,10 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const hasNativePositions =
-    localItems.some((item) => item.position !== undefined) ||
-    snapshotItems.some((item) => item.position !== undefined);
+  snapshotItems = removeEquivalentAssistantTextItems(
+    snapshotItems,
+    localItems.filter((item) => item.position !== undefined),
+  );
   const snapshotUserIds = new Map(
     snapshotItems.flatMap((item) =>
       item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
@@ -246,9 +247,10 @@ export function mergeRuntimeConversationItems(
       item.type === "user_message" ? [[item.message.id, item] as const] : [],
     ),
   );
-  const reconciledLocalItems = hasNativePositions
-    ? localItems
-    : removeEquivalentAssistantTextItems(localItems, snapshotItems);
+  const reconciledLocalItems = removeEquivalentAssistantTextItems(
+    localItems,
+    snapshotItems,
+  );
   const canonicalLocalItems = reconciledLocalItems.filter(
     (item) =>
       item.type !== "user_message" ||
@@ -366,8 +368,17 @@ export function removeEquivalentAssistantTextItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[],
 ): RuntimeConversationItem[] {
+  const localById = new Map(localItems.map((item) => [item.id, item]));
   const candidateGroups = new Map<string, AssistantTextCandidateGroup>();
   snapshotItems.forEach((item, index) => {
+    // Exact provisional identities receive their native positions before text alias matching.
+    if (
+      item.position !== undefined &&
+      localById.has(item.id) &&
+      localById.get(item.id)?.position === undefined
+    ) {
+      return;
+    }
     const content = assistantTextRepresentationContent(item);
     if (content === undefined) return;
     const group =
@@ -576,6 +587,8 @@ export function isEquivalentAssistantTextRepresentation(
   snapshot: RuntimeConversationItem,
 ): boolean {
   if (local.id === snapshot.id) return false;
+  // Native positions identify distinct output; only provisional items can be aliases.
+  if (local.position !== undefined) return false;
   if (local.type === "assistant_text" && snapshot.type === "assistant_text") {
     return local.content === snapshot.content;
   }

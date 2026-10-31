@@ -1,6 +1,78 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
-import { refreshPluginInventory } from '../e2e/desktop/modules/plugin-inventory-state.mjs'
+import {
+  refreshPluginInventory,
+  waitForBundledPluginMarketplace,
+} from '../e2e/desktop/modules/plugin-inventory-state.mjs'
+
+test('waits for marketplace initialization after the executor is already ready', async () => {
+  vi.useFakeTimers()
+  try {
+    let marketplace = null
+    const control = {
+      command: vi.fn(async () => JSON.stringify({ marketplace })),
+    }
+    let finished = false
+    const waiting = waitForBundledPluginMarketplace(control, 1000).then(result => {
+      finished = true
+      return result
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    assert.equal(finished, false, 'Executor readiness must not imply marketplace readiness')
+
+    marketplace = {}
+    await vi.advanceTimersByTimeAsync(100)
+    assert.equal(finished, false, 'An inventory without a path is not initialized')
+
+    marketplace = { path: '/isolated-runtime/capabilities/bundled-marketplaces/wework-personal' }
+    await vi.advanceTimersByTimeAsync(100)
+    assert.deepEqual(await waiting, marketplace)
+    assert.equal(finished, true)
+    for (const args of control.command.mock.calls)
+      assert.deepEqual(args, ['getBundledPluginUpdates', 'body'])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('returns an initialized marketplace without an extra polling delay', async () => {
+  vi.useFakeTimers()
+  try {
+    const marketplace = { path: '/initialized-marketplace' }
+    const control = { command: async () => JSON.stringify({ marketplace }) }
+    assert.deepEqual(await waitForBundledPluginMarketplace(control), marketplace)
+    assert.equal(vi.getTimerCount(), 0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('fails at the supplied readiness deadline if the marketplace never initializes', async () => {
+  vi.useFakeTimers()
+  try {
+    const control = { command: async () => JSON.stringify({ marketplace: null }) }
+    let timedOut = false
+    const rejected = assert
+      .rejects(waitForBundledPluginMarketplace(control, 200), /marketplace did not initialize/)
+      .then(() => {
+        timedOut = true
+      })
+    await vi.advanceTimersByTimeAsync(199)
+    assert.equal(timedOut, false)
+    await vi.advanceTimersByTimeAsync(1)
+    await rejected
+    assert.equal(timedOut, true)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('propagates marketplace diagnostic failures without retrying the command', async () => {
+  const failure = new Error('Desktop control disconnected')
+  const control = { command: vi.fn().mockRejectedValue(failure) }
+  await assert.rejects(waitForBundledPluginMarketplace(control), error => error === failure)
+  assert.equal(control.command.mock.calls.length, 1)
+})
 
 const REFRESH = '[data-testid="plugins-refresh-button"]'
 

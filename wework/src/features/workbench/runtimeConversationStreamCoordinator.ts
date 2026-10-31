@@ -106,8 +106,7 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
     onRuntimeGoalCleared: (...args) => activeHandlers(coordinator)?.onRuntimeGoalCleared?.(...args),
     onRuntimeSupervisorUpdated: (...args) =>
       activeHandlers(coordinator)?.onRuntimeSupervisorUpdated?.(...args),
-    onRuntimeGoalContinuation: (...args) =>
-      activeHandlers(coordinator)?.onRuntimeGoalContinuation?.(...args),
+    onRuntimeTurnUpdated: (...args) => activeHandlers(coordinator)?.onRuntimeTurnUpdated?.(...args),
     onRuntimePlanUpdated: (...args) => activeHandlers(coordinator)?.onRuntimePlanUpdated?.(...args),
     onRuntimeTransportReplaced: (...args) =>
       activeHandlers(coordinator)?.onRuntimeTransportReplaced?.(...args),

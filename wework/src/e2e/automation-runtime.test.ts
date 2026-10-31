@@ -119,6 +119,102 @@ describe('Electron desktop E2E automation', () => {
       )
     }
   )
+  test('reports metric cardinality across missing, mounted, and duplicate DOM surfaces', async () => {
+    const surface = document.createElement('section')
+    surface.dataset.testid = 'layout-cardinality-surface'
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 100))
+    const duplicate = surface.cloneNode() as HTMLElement
+    const results: Array<{ ok: boolean; value?: string; error?: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls === 2) document.body.append(surface)
+        if (polls === 3) document.body.append(duplicate)
+        if (polls > 3) return Promise.resolve(new Response(null, { status: 410 }))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: String(polls),
+              action: 'getElementMetrics',
+              selector: '[data-testid="layout-cardinality-surface"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    try {
+      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      expect(results.map(result => result.ok)).toEqual([true, true, true])
+      expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
+      expect(JSON.parse(results[1].value!)[0].width).toBe(200)
+    } finally {
+      surface.remove()
+      duplicate.remove()
+    }
+  })
+
+  test.each([false, true])(
+    'allows an authenticated RPC to overlap later commands and reports its failure: %s',
+    async failHeldRequest => {
+      let resolveHeld!: (value: unknown) => void
+      let rejectHeld!: (error: Error) => void
+      const held = new Promise((resolve, reject) => {
+        resolveHeld = resolve
+        rejectHeld = reject
+      })
+      const requestRuntime = vi.fn(async (input: { url: string }) => {
+        if (input.url.endsWith('/held')) return held
+        if (failHeldRequest) rejectHeld(new Error('Held RPC failed'))
+        else resolveHeld({ status: 200, body: 'held result' })
+        return { status: 200, body: 'overlapping result' }
+      })
+      const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+      verificationWindow.weworkElectronVerification = { requestRuntime }
+      const command = (id: string): DesktopControlCommand => ({
+        id,
+        action: 'fetchLocalRuntime',
+        selector: 'body',
+        value: JSON.stringify({ url: `http://127.0.0.1:3000/wework/${id}` }),
+      })
+      const commands: DesktopControlCommand[] = [
+        command('held'),
+        { id: 'origin', action: 'getLocationOrigin', selector: 'body' },
+        command('overlapping'),
+      ]
+      const results: Array<{ id: string; ok: boolean; value?: string; error?: string }> = []
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          const next = commands.shift()
+          return next
+            ? Promise.resolve(new Response(JSON.stringify(next)))
+            : new Promise<Response>(() => {})
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      try {
+        await vi.waitFor(() => expect(results).toHaveLength(3))
+        expect(requestRuntime).toHaveBeenCalledTimes(2)
+        expect(results[0]).toMatchObject({ id: 'origin', ok: true, value: window.location.origin })
+        expect(results.find(result => result.id === 'overlapping')).toMatchObject({
+          ok: true,
+          value: JSON.stringify({ status: 200, body: 'overlapping result' }),
+        })
+        expect(results.find(result => result.id === 'held')).toMatchObject(
+          failHeldRequest
+            ? { ok: false, error: 'Held RPC failed' }
+            : { ok: true, value: JSON.stringify({ status: 200, body: 'held result' }) }
+        )
+      } finally {
+        delete verificationWindow.weworkElectronVerification
+      }
+    }
+  )
+
   test('registers before polling and stops when the server retires the client', async () => {
     let register!: (response: Response) => void
     const registration = new Promise<Response>(resolve => {
@@ -592,7 +688,10 @@ describe('Electron desktop E2E automation', () => {
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {
-    const fetch = vi.fn().mockRejectedValue(new Error('identity unavailable'))
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
+      .mockRejectedValueOnce(new Error('identity unavailable'))
     vi.stubGlobal('fetch', fetch)
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       cloudBackendUrl: 'https://cloud.example.com',
@@ -602,12 +701,18 @@ describe('Electron desktop E2E automation', () => {
 
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
 
-    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledTimes(2)
     expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
   })
 
   test('treats non-successful cloud identity responses as failures', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
+        .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+    )
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       cloudBackendUrl: 'https://cloud.example.com',
       modelServerUrl: 'http://127.0.0.1:43111',

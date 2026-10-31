@@ -167,6 +167,9 @@ jobs:
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 
+      - name: Test Wework release gates
+        run: node --test .github/scripts/wework-release-workflow.test.mjs
+
       - name: Test E2E resource cleanup
         run: node --test .github/scripts/test-e2e-resource-reuse.mjs
 

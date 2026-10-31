@@ -58,6 +58,7 @@ export async function pathExists(path) {
 
 export async function openPlugin(control, fixture) {
   await control.command('click', testId('plugins-button'))
+  await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-all'))
   await control.command('fill', testId('plugins-search-input'), { value: fixture.slug })

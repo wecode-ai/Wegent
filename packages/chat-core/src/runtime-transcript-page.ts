@@ -56,10 +56,7 @@ export function projectRuntimePaneTranscript(
     turns.length === 0 &&
     messages.every((message) => message.role === "user")
   ) {
-    turns = seedRuntimeConversationTurns(messages, []).map((turn) => ({
-      ...turn,
-      status: "done",
-    }));
+    turns = seedRuntimeConversationTurns(messages, []);
   }
   return {
     supersededTurnIds: transcript.supersededTurnIds ?? [],
