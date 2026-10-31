@@ -125,8 +125,11 @@ async function releaseRequestHold(control, timeoutMs) {
   assert.fail(`The held executor request never completed: ${JSON.stringify(latest)}`)
 }
 
-async function recordElicitationFailure(control, scope, resultDir) {
+async function recordElicitationFailure(control, scope, resultDir, transportCaptureId) {
   try {
+    const transport = JSON.parse(
+      await control.command('readRuntimeTransportGate', 'body', { value: transportCaptureId })
+    )
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const task = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
     const address = task && { deviceId: task.deviceId, taskId: task.taskId }
@@ -147,7 +150,7 @@ async function recordElicitationFailure(control, scope, resultDir) {
     await writeFile(
       join(resultDir, 'runtime-input-answer-native-failure.json'),
       JSON.stringify(
-        { scope, address, native, messages, transitions: snapshot.paneTransitions },
+        { scope, address, transport, native, messages, transitions: snapshot.paneTransitions },
         null,
         2
       )
@@ -158,6 +161,17 @@ async function recordElicitationFailure(control, scope, resultDir) {
 }
 
 async function openElicitation(control, scope, composer, timeoutMs, resultDir) {
+  // Observe the original form event without holding or changing its delivery.
+  const transportCaptureId = `elicitation-form-${Date.now()}`
+  await control.command('armRuntimeTransportGate', 'body', {
+    value: JSON.stringify({
+      id: transportCaptureId,
+      kind: 'event',
+      name: 'response.block.created',
+      hold: false,
+      where: [{ path: '**.interactionKind', equals: 'mcp_form' }],
+    }),
+  })
   await control.command('fill', composer, { value: PROMPT })
   await control.command('press', composer, { key: 'Enter' })
   const deadline = Date.now() + Math.max(timeoutMs, 90_000)
@@ -197,7 +211,7 @@ async function openElicitation(control, scope, composer, timeoutMs, resultDir) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  await recordElicitationFailure(control, scope, resultDir)
+  await recordElicitationFailure(control, scope, resultDir, transportCaptureId)
   assert.fail(`Timed out waiting for the elicitation form in ${scope}`)
 }
 
