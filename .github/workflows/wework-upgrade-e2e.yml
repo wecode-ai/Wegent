@@ -15,6 +15,13 @@ on:
           - macos-15
           - macos-15-intel
           - windows-latest
+      checkpoint:
+        description: "Run the complete upgrade suite or diagnose the default-user upgrade"
+        type: choice
+        default: all
+        options:
+          - all
+          - app-upgrade
 
 permissions:
   contents: read
@@ -55,7 +62,14 @@ jobs:
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
       - name: Verify real packaged upgrade, snapshot restore, and failed activation recovery
-        run: pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full,startup-network-change
+        env:
+          UPGRADE_CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'all' }}
+        run: |
+          if [[ "$UPGRADE_CHECKPOINT" == "app-upgrade" ]]; then
+            pnpm --filter wework e2e:desktop -- --segment app-upgrade
+          else
+            pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full,startup-network-change
+          fi
       - name: Retain reproducible diagnostics and results
         if: always()
         uses: actions/upload-artifact@v4
