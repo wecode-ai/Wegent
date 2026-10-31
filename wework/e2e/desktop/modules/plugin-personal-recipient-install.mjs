@@ -3,8 +3,17 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { writeCodexConfig } from './desktop-build-flows.mjs'
-import { refreshPluginInventory } from './plugin-inventory-state.mjs'
-import { accountPlugin, materializedPlugin, testId, until } from './plugin-regression-fixture.mjs'
+import {
+  refreshPluginInventory,
+  waitForBundledPluginMarketplace,
+} from './plugin-inventory-state.mjs'
+import {
+  accountPlugin,
+  materializedPlugin,
+  pathExists,
+  testId,
+  until,
+} from './plugin-regression-fixture.mjs'
 import {
   disconnectPersonalPluginRuntime,
   restorePersonalPluginRuntime,
@@ -184,9 +193,13 @@ export async function verifyPersonalRecipientManagedInstall({
   const recipientRoot = join(resultDir, 'personal-recipient-device')
   const recipientExecutorHome = join(recipientRoot, 'executor-home')
   const recipientCodexHome = join(recipientExecutorHome, 'codex')
-  const recipientUserData = join(recipientRoot, 'electron-user-data')
   await writeCodexConfig(recipientCodexHome, control.url, '[features]\nplugins = true\n')
   const ownerRuntime = await readyExecutor(control)
+  const ownerMarketplace = await waitForBundledPluginMarketplace(
+    control,
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.ok(ownerMarketplace?.path, 'The owner personal marketplace is unavailable')
   const recipientCloud = { backendUrl: cloudEnvironment.backendUrl, authToken: recipientToken }
   let phase = 'owner-runtime-ready'
   const setPhase = value => {
@@ -195,20 +208,36 @@ export async function verifyPersonalRecipientManagedInstall({
   }
   try {
     setPhase('restart-recipient')
+    // Reuse the initialized Electron/Core profile and stable device. Only plugin
+    // storage is isolated so the recipient cannot adopt the author's source.
     await restartDesktopApp({
       appEnvironmentOverrides: {
         WEGENT_EXECUTOR_HOME: recipientExecutorHome,
         WEGENT_CODEX_HOME: recipientCodexHome,
         CODEX_HOME: recipientCodexHome,
-        WEWORK_USER_DATA_DIR: recipientUserData,
+        WEWORK_USER_DATA_DIR: userDataDirectory,
         WEWORK_E2E_CLOUD_TOKEN: recipientToken,
       },
-      expectNewDeviceIdentity: true,
     })
     await control.command('clickIfPresent', testId('telemetry-consent-decline'))
     setPhase('wait-recipient-runtime')
     const recipientRuntime = await readyExecutor(control)
-    assert.notEqual(recipientRuntime.deviceId, ownerRuntime.deviceId)
+    assert.equal(recipientRuntime.deviceId, ownerRuntime.deviceId)
+    const recipientMarketplace = await waitForBundledPluginMarketplace(
+      control,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    assert.ok(recipientMarketplace?.path, 'The recipient personal marketplace is unavailable')
+    assert.notEqual(
+      recipientMarketplace.path,
+      ownerMarketplace.path,
+      'The recipient runtime reused the author source directory'
+    )
+    assert.equal(
+      await pathExists(join(recipientMarketplace.path, 'plugins', plugin.name)),
+      false,
+      'The recipient managed-install fixture already contains author source'
+    )
     setPhase('open-shared-plugin')
     const { installedId, managed, disconnectedInstallBlocked } = await installSharedPlugin({
       control,
@@ -238,7 +267,10 @@ export async function verifyPersonalRecipientManagedInstall({
         WEWORK_USER_DATA_DIR: userDataDirectory,
         WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken,
       },
-      expectNewDeviceIdentity: true,
     })
+    const restored = await readyExecutor(control)
+    assert.equal(restored.deviceId, ownerRuntime.deviceId)
+    const marketplace = await waitForBundledPluginMarketplace(control, WORKBENCH_READY_TIMEOUT_MS)
+    assert.equal(marketplace?.path, ownerMarketplace.path, 'The author runtime was not restored')
   }
 }

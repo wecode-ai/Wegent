@@ -85,7 +85,15 @@ export async function verifyPersonalPluginVersionSubmission({
   userDataDirectory,
 }) {
   const flowStartedAt = Date.now()
-  const runtimeCost = { processRestarts: [], accountSwitches: [] }
+  const runtimeCost = { processRestarts: [], accountSwitches: [], phases: [] }
+  let phaseStartedAt = flowStartedAt
+  const recordPhase = phase => {
+    const completedAt = Date.now()
+    const cost = { phase, durationMs: completedAt - phaseStartedAt }
+    runtimeCost.phases.push(cost)
+    console.log(`[personal-plugin-phase-cost] ${JSON.stringify(cost)}`)
+    phaseStartedAt = completedAt
+  }
   const restartDesktopApp = async options => {
     const startedAt = Date.now()
     await restartDesktopProcess(options)
@@ -95,6 +103,7 @@ export async function verifyPersonalPluginVersionSubmission({
     })
     runtimeCost.processRestarts.push({
       deviceSwitch: options?.expectNewDeviceIdentity === true,
+      runtimeHomeSwitch: Boolean(options?.appEnvironmentOverrides?.WEGENT_EXECUTOR_HOME),
       durationMs: Date.now() - startedAt,
     })
   }
@@ -208,6 +217,7 @@ export async function verifyPersonalPluginVersionSubmission({
   })
   assert.ok(login.access_token, 'The real recipient login did not return an access token')
   const recipientCloud = { backendUrl: cloudEnvironment.backendUrl, authToken: login.access_token }
+  recordPhase('version-submission')
   const managedRecipient = await verifyPersonalRecipientManagedInstall({
     cloudEnvironment,
     control,
@@ -218,6 +228,7 @@ export async function verifyPersonalPluginVersionSubmission({
     codexHome,
     userDataDirectory,
   })
+  recordPhase('recipient-managed-install')
   const authorLifecycle = await verifyAuthorSourceUninstall({
     control,
     cloudEnvironment,
@@ -230,6 +241,7 @@ export async function verifyPersonalPluginVersionSubmission({
     prepareSource: version => importPersonalSource(control, root, version, true),
   })
   after = authorLifecycle.plugin
+  recordPhase('author-source-uninstall-reinstall')
   const ownerAccount = await prepareAuthorAccountInstall({
     control,
     cloudEnvironment,
@@ -237,6 +249,7 @@ export async function verifyPersonalPluginVersionSubmission({
     executorHome,
     source: authorLifecycle.source,
   })
+  recordPhase('author-account-install')
   let crossAccountUninstall
   try {
     // Keep the real local source on disk: cloud recipient authority must override it.
@@ -320,6 +333,7 @@ export async function verifyPersonalPluginVersionSubmission({
   } finally {
     runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, cloudEnvironment))
   }
+  recordPhase('recipient-cross-account')
   await verifyAuthorAccountUninstall({
     control,
     cloudEnvironment,
@@ -330,6 +344,7 @@ export async function verifyPersonalPluginVersionSubmission({
     executorHome,
     access: accessBefore,
   })
+  recordPhase('author-account-uninstall')
   const ownerContract = await verifyOwnerApiContract({
     control,
     cloudEnvironment,
@@ -360,7 +375,16 @@ export async function verifyPersonalPluginVersionSubmission({
     request,
     recipientToken: login.access_token,
   })
-  assert.equal(runtimeCost.processRestarts.length, 3, 'Personal publication added a process restart')
+  recordPhase('http-contracts')
+  assert.equal(
+    runtimeCost.processRestarts.length,
+    3,
+    'Personal publication added a process restart'
+  )
+  assert.ok(
+    runtimeCost.processRestarts.every(restart => !restart.deviceSwitch),
+    'Personal publication must reuse the initialized Electron device'
+  )
   assert.equal(runtimeCost.accountSwitches.length, 2)
   const accountCommands = control.commandHistory.filter(
     command => command.action === 'setCloudSessionToken'

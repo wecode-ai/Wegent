@@ -7,6 +7,15 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 
+export async function waitForBundledPluginMarketplace(control, timeoutMs = 10_000) {
+  return until(
+    async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')).marketplace,
+    marketplace => typeof marketplace?.path === 'string' && Boolean(marketplace.path.trim()),
+    'The bundled plugin marketplace did not initialize',
+    timeoutMs
+  )
+}
+
 export async function refreshPluginInventory(control, timeoutMs = 10_000) {
   const refresh = testId('plugins-refresh-button')
   await control.command('waitFor', `${refresh}:not(:disabled)`, { timeoutMs })
