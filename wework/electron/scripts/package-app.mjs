@@ -4,6 +4,8 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'yaml'
+import ts from 'typescript'
+import { UPGRADE_FIXTURE_UPDATE_BASE_URL } from '../../e2e/desktop/upgrade-suite.mjs'
 
 import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
 import { prepareSharedElectronZip } from '../../scripts/lib/electron-zip-cache.mjs'
@@ -35,6 +37,12 @@ const output = fixtureVersion
     )
   : join(electronRoot, 'release')
 const fixtureDataSchema = Number(process.env.WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA || 1)
+const fixtureApplicationId = process.env.WEWORK_UPGRADE_FIXTURE_APP_ID?.trim()
+if (
+  fixtureVersion &&
+  !/^io\.wecode\.wework\.upgrade-fixture\.[a-z0-9-]+$/.test(fixtureApplicationId || '')
+)
+  throw new Error('Upgrade fixtures require an isolated application identity')
 if (fixtureVersion && !/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(fixtureVersion))
   throw new Error('Invalid upgrade fixture version')
 if (!Number.isSafeInteger(fixtureDataSchema) || fixtureDataSchema < 1)
@@ -73,6 +81,18 @@ await Promise.all(
   )
 )
 await cp(join(electronRoot, 'dist'), join(staging, 'dist'), { recursive: true })
+if (fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP === '1') {
+  const legacy = await readFile(
+    join(electronRoot, '../e2e/desktop/fixtures/legacy-release-bootstrap.ts'),
+    'utf8'
+  )
+  await writeFile(
+    join(staging, 'dist/bootstrap.js'),
+    ts.transpileModule(legacy, {
+      compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
+    }).outputText
+  )
+}
 await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
@@ -86,6 +106,8 @@ await writeFile(
       ...builderConfig.extraMetadata,
       ...(fixtureVersion
         ? {
+            weworkAppId: fixtureApplicationId,
+            weworkUpdateBaseUrl: UPGRADE_FIXTURE_UPDATE_BASE_URL,
             weworkDataSchema: fixtureDataSchema,
             weworkReadableDataSchemas: Array.from(
               { length: fixtureDataSchema },

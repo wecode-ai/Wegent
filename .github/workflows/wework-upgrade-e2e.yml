@@ -48,10 +48,10 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - name: Verify policy and transaction tests
         run: |
-          node --test wework/scripts/build-launcher.test.mjs wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/component-update-scenario.test.mjs
+          node --test wework/e2e/desktop/upgrade-user-environment.test.mjs wework/e2e/desktop/checkpoints.test.mjs wework/scripts/build-launcher.test.mjs wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/component-update-scenario.test.mjs
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --filter wework prepare:electron
-          pnpm --dir wework/electron test src/host/app-update-service.test.ts src/host/preferences-store.test.ts src/host/renderer-storage-store.test.ts src/runtime/core-dsh-runtime.test.ts src/runtime/release-store.test.ts src/runtime/release-snapshot.test.ts src/runtime/release-profile.test.ts src/runtime/release-preparation.test.ts scripts/physical-release-files.test.mjs
+          pnpm --dir wework/electron test src/bootstrap.test.ts src/runtime/release-parent-process.test.ts src/runtime/release-layout-recovery.test.ts src/host/app-update-service.test.ts src/host/preferences-store.test.ts src/host/renderer-storage-store.test.ts src/runtime/core-dsh-runtime.test.ts src/runtime/release-store.test.ts src/runtime/release-snapshot.test.ts src/runtime/release-profile.test.ts src/runtime/release-preparation.test.ts scripts/physical-release-files.test.mjs
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
       - name: Verify real packaged upgrade, snapshot restore, and failed activation recovery

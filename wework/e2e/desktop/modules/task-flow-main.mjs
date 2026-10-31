@@ -68,6 +68,7 @@ import {
 import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
 
 import { DesktopE2EServer } from './desktop-server.mjs'
+import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -1096,15 +1097,26 @@ async function main() {
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
-  const executorHome = join(resultDir, 'executor-home')
-  const codexHome = join(executorHome, 'codex')
+  const usesDefaultUserData =
+    DESKTOP_SEGMENT === 'app-upgrade' &&
+    JSON.parse(await readFile(process.env.WEWORK_E2E_UPGRADE_PAIR, 'utf8')).kind === 'regression'
+  const executorHome = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default')
+    : join(resultDir, 'executor-home')
+  const codexHome = usesDefaultUserData
+    ? join(homePath, '.wework/codex')
+    : join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
-  const electronUserDataDirectory = join(resultDir, 'electron-user-data')
+  // Cover the production path resolver in the existing upgrade flow. Other
+  // checkpoints retain explicit userData isolation, including rollback coverage.
+  const electronUserDataDirectory = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default/user-data')
+    : join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -1455,6 +1467,12 @@ async function main() {
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareUserDataLaunch?.()
+    if (usesDefaultUserData) {
+      const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
+      for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
+      Object.assign(appEnvironment, cleanEnvironment)
+    }
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(process.platform === 'win32'
@@ -1516,7 +1534,8 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
-      const previousUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const previousUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const desktopDeviceIdPath = join(previousUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
       assert.match(
@@ -1539,7 +1558,8 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      const nextUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const nextUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
       assert.match(
