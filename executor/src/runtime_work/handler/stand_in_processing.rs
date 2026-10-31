@@ -113,11 +113,15 @@ impl RuntimeWorkRpcHandler {
         let current_settings = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
-        if force && current_settings["processing"]["mode"] != "silent" {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Save silent processing settings first",
-            ));
+        if current_settings["primary"]["enabled"] == false {
+            return if force {
+                Err(AppIpcError::new(
+                    "bad_request",
+                    "The primary stand-in is paused",
+                ))
+            } else {
+                Ok(())
+            };
         }
         let result = self
             .process_stand_in_user_on(store, user, &current_settings, force)
@@ -127,13 +131,8 @@ impl RuntimeWorkRpcHandler {
                 .stand_in_processing_state(user)
                 .map_err(settings_error)?;
             state["error"] = json!({"code":error.code,"message":error.message});
-            state["nextCheckAt"] = json!((chrono::Utc::now()
-                + chrono::Duration::minutes(
-                    current_settings["processing"]["intervalMinutes"]
-                        .as_i64()
-                        .unwrap_or(5)
-                ))
-            .to_rfc3339());
+            state["nextCheckAt"] =
+                json!((chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339());
             store
                 .save_stand_in_processing_state(user, &state)
                 .map_err(settings_error)?;
@@ -148,9 +147,6 @@ impl RuntimeWorkRpcHandler {
         settings: &Value,
         force: bool,
     ) -> Result<(), AppIpcError> {
-        if settings["processing"]["mode"] != "silent" {
-            return self.drain_immediate_intake(store, user, settings).await;
-        }
         self.execute_coordinator_actions(store, user, settings)
             .await?;
         let id = task_id(user);
@@ -179,7 +175,7 @@ impl RuntimeWorkRpcHandler {
                     .filter_map(|id| id.as_str().map(str::to_owned))
             })
             .collect();
-        let events: Vec<Value> = store
+        let pending: Vec<Value> = store
             .stand_in_events(user)
             .map_err(settings_error)?
             .into_iter()
@@ -191,11 +187,67 @@ impl RuntimeWorkRpcHandler {
             })
             .take(100)
             .collect();
-        let interval = chrono::Duration::minutes(
-            settings["processing"]["intervalMinutes"]
-                .as_i64()
-                .unwrap_or(5),
-        );
+        let mut events = Vec::new();
+        let identities = stand_in_identities(settings);
+        for mut event in pending {
+            let mut recipients = Vec::new();
+            for role in &identities {
+                if role["enabled"] != true || self.validate_intake_role(role, &event).is_err() {
+                    continue;
+                }
+                let validation = if event["kind"] == "assignment" {
+                    self.read_assignment_intake(store, user, role, &event)
+                        .await
+                        .map(|_| ())
+                } else if matches!(event["kind"].as_str(), Some("work_state" | "followup")) {
+                    match event["taskId"]
+                        .as_str()
+                        .and_then(|id| self.local_task_link(id))
+                    {
+                        Some(link) => self.validate_followup_role(store, user, role, &link).await,
+                        None => Err(AppIpcError::new(
+                            "source_removed",
+                            "The followed work no longer exists",
+                        )),
+                    }
+                } else {
+                    Ok(())
+                };
+                match validation {
+                    Ok(()) => {}
+                    Err(error)
+                        if matches!(
+                            error.code.as_str(),
+                            "source_removed"
+                                | "permission_denied"
+                                | "invalid_assignment"
+                                | "not_found"
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(error),
+                }
+                recipients.push(role["id"].clone());
+            }
+            let paused = recipients.is_empty()
+                && identities.iter().any(|role| {
+                    role["enabled"] == false && self.validate_intake_role(role, &event).is_ok()
+                });
+            event["roleIds"] = json!(recipients);
+            if recipients.is_empty() {
+                if paused {
+                    continue;
+                }
+                event["status"] = json!("cancelled");
+                store
+                    .save_stand_in_event(user, &event)
+                    .map_err(settings_error)?;
+            } else {
+                events.push(event);
+            }
+        }
+        let interval = chrono::Duration::minutes(5);
         let next = state["nextCheckAt"]
             .as_str()
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
@@ -325,72 +377,6 @@ impl RuntimeWorkRpcHandler {
         state["observed"] = json!(observed);
         if !state["observedSince"].is_i64() {
             state["observedSince"] = json!(chrono::Utc::now().timestamp_millis());
-        }
-        Ok(())
-    }
-
-    async fn drain_immediate_intake(
-        &self,
-        store: &LocalTaskStore,
-        user: i64,
-        settings: &Value,
-    ) -> Result<(), AppIpcError> {
-        for mut action in store
-            .stand_in_actions(user)
-            .map_err(settings_error)?
-            .into_iter()
-            .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
-        {
-            action["status"] = json!("cancelled");
-            store
-                .save_stand_in_action(user, &action)
-                .map_err(settings_error)?;
-        }
-        for mut event in store
-            .stand_in_events(user)
-            .map_err(settings_error)?
-            .into_iter()
-            .filter(|event| {
-                event["status"] == "pending"
-                    && matches!(event["kind"].as_str(), Some("connection" | "assignment"))
-            })
-        {
-            let identities = stand_in_identities(settings);
-            let roles: Vec<&Value> = identities
-                .iter()
-                .filter(|role| {
-                    role["enabled"] == true
-                        && event["roleIds"]
-                            .as_array()
-                            .is_some_and(|ids| ids.contains(&role["id"]))
-                })
-                .collect();
-            if roles.is_empty() {
-                continue;
-            }
-            let mut failure = None;
-            for role in roles {
-                if let Err(error) = self
-                    .dispatch_intake_events(
-                        store,
-                        user,
-                        role,
-                        std::slice::from_ref(&event),
-                        None,
-                        None,
-                    )
-                    .await
-                {
-                    failure.get_or_insert(json!({"code":error.code,"message":error.message}));
-                }
-            }
-            event["error"] = failure.clone().unwrap_or(Value::Null);
-            if failure.is_none() {
-                event["status"] = json!("handled");
-            }
-            store
-                .save_stand_in_event(user, &event)
-                .map_err(settings_error)?;
         }
         Ok(())
     }
@@ -626,6 +612,20 @@ impl RuntimeWorkRpcHandler {
                 "Work role cannot receive this event",
             ));
         }
+        if event["kind"] == "assignment" {
+            let project = event["projectId"].as_str().unwrap_or_default();
+            let storage = event["projectStore"].as_str().unwrap_or_default();
+            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
+                || crate::task_runtime::personal_stand_in::project_policy(role, project, storage)
+                    ["automatic"]
+                    != true
+            {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Project is no longer automatic or connected",
+                ));
+            }
+        }
         if event["kind"] == "connection"
             && !stand_in_connection(role, &event["source"])
                 .is_some_and(|source| source["policy"]["automatic"] == true)
@@ -789,7 +789,6 @@ impl RuntimeWorkRpcHandler {
             let event = &events[0];
             let project = required(event, "projectId")?;
             let kind = required(event, "projectStore")?;
-            let id = required(event, "issueId")?;
             let config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
             if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
@@ -800,55 +799,16 @@ impl RuntimeWorkRpcHandler {
                     "Project source is no longer automatic or connected",
                 ));
             }
+            let (issue, binding) = self
+                .read_assignment_intake(store, user, role, event)
+                .await?;
             if kind == "cloud" {
-                self.verify_stand_in_user(&json!({"userId":user})).await?;
-                let issue = self
-                    .stand_in_http(reqwest::Method::GET, &format!("/v1/loop-items/{id}"), None)
-                    .await?;
-                if issue["human_task_binding"]["assignmentId"] != event["assignmentId"] {
-                    return Err(AppIpcError::new("invalid_assignment", "Assignment changed"));
-                }
                 self.start_cloud_stand_in_with_roles(&[config], &issue)
                     .await?;
             } else {
-                let issue = store.get_task(project, id).map_err(settings_error)?;
-                let history = issue.metadata["assignment_history"]
-                    .as_array()
-                    .ok_or_else(|| {
-                        AppIpcError::new("invalid_assignment", "Missing assignment history")
-                    })?;
-                let assignment = history
-                    .last()
-                    .ok_or_else(|| AppIpcError::new("invalid_assignment", "Missing assignment"))?;
-                let binding = json!({"humanAssignmentId":format!("{id}-{}",history.len())});
-                let assignee_id = user.to_string();
-                if issue.assignee_user_id != Some(user)
-                    || binding["humanAssignmentId"] != event["assignmentId"]
-                    || assignment["to_type"] != "user"
-                    || assignment["to_id"].as_str() != Some(assignee_id.as_str())
-                    || !super::stand_in::assignment_after_enable(
-                        &json!({"created_at":assignment["at"]}),
-                        &config,
-                    )
-                {
-                    return Err(AppIpcError::new("invalid_assignment", "Assignment changed"));
-                }
-                let mut value = serde_json::to_value(issue).unwrap();
-                value["tags"] = value["metadata"]["tags"].clone();
-                if super::personal_stand_in::matching_personal_roles(
-                    std::slice::from_ref(&config),
-                    &value,
-                )
-                .is_empty()
-                {
-                    return Err(AppIpcError::new(
-                        "permission_denied",
-                        "Issue no longer matches role",
-                    ));
-                }
-                let id = self.stand_in_task_id(&config, &binding);
-                if self.local_task_link(&id).is_none() {
-                    self.start_local_stand_in(&config, &value, &binding).await?;
+                let task_id = self.stand_in_task_id(&config, &binding);
+                if self.local_task_link(&task_id).is_none() {
+                    self.start_local_stand_in(&config, &issue, &binding).await?;
                 }
             }
             return Ok(json!({"success":true}));

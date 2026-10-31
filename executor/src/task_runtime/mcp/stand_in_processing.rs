@@ -131,6 +131,7 @@ mod tests {
             device: "mac".into(),
             role: None,
             work: None,
+            project: None,
             ask_before_act: false,
             coordinator_batch: Some("batch".into()),
         };

@@ -35,6 +35,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn update_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation = automation_from_payload(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{}", automation.id));
+        let _guard = gate.lock().await;
         let automation = self
             .automation_store
             .update(automation)
@@ -45,6 +47,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn delete_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation_id = automation_id(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{automation_id}"));
+        let _guard = gate.lock().await;
         let deleted = self
             .automation_store
             .delete(&automation_id)
@@ -57,6 +61,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn toggle_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation_id = automation_id(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{automation_id}"));
+        let _guard = gate.lock().await;
         let enabled = bool_field(&payload, "enabled")
             .ok_or_else(|| AppIpcError::new("bad_request", "enabled is required"))?;
         let automation = self
@@ -136,6 +142,37 @@ impl RuntimeWorkRpcHandler {
         automation: Automation,
         run: crate::runtime_work::automations::AutomationRun,
     ) {
+        let owner = &automation.task_request["standInOwner"];
+        let gate = self.task_send_gate(&format!("stand-in-processing:{}", owner["userId"]));
+        let _stand_in_guard = if owner.is_object() {
+            Some(gate.lock().await)
+        } else {
+            None
+        };
+        let operation_gate =
+            self.task_send_gate(&format!("automation-operation:{}", automation.id));
+        let _operation_guard = operation_gate.lock().await;
+        if owner.is_object()
+            && !self
+                .automation_store
+                .get(&automation.id)
+                .is_some_and(|current| {
+                    (current.enabled
+                        || run.trigger == "manual"
+                        || matches!(
+                            current.schedule,
+                            crate::runtime_work::automations::AutomationSchedule::OneTime { .. }
+                        ))
+                        && current.version == automation.version
+                })
+        {
+            let _ = self.automation_store.mark_failed(
+                &run.id,
+                "The arrangement was changed or cancelled before execution".into(),
+            );
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
         let mut payload = match automation.conversation_mode {
             ConversationMode::Independent => automation.task_payload.clone(),
             ConversationMode::ContinueThread => automation
@@ -158,7 +195,21 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| format!("automation-{}", automation.id)),
         };
         set_payload_string(&mut payload, "message", &automation.prompt);
+        if owner.is_object() {
+            payload = match self.prepare_stand_in_schedule(&automation, payload).await {
+                Ok(payload) => payload,
+                Err(error) => {
+                    let _ = self
+                        .automation_store
+                        .mark_needs_attention(&run.id, error.message);
+                    self.emit_automation_runs_changed(&automation.id, &run.id);
+                    return;
+                }
+            };
+            payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"userId":owner["userId"],"roleId":owner["roleId"],"runId":run.id,"manual":run.trigger == "manual","claimedOneTime":run.trigger != "manual" && matches!(automation.schedule,crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread),"settingsVersion":LocalTaskStore::open(self.task_store_path.as_ref()).and_then(|store|store.personal_stand_in(owner["userId"].as_i64().unwrap_or_default(),&self.device_id)).ok().map(|settings|settings["version"].clone())});
+        }
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
+        let _ = self.automation_store.mark_running(&run.id, task_id.clone());
 
         let result = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await,
@@ -179,9 +230,13 @@ impl RuntimeWorkRpcHandler {
                 self.emit_automation_runs_changed(&automation.id, &run.id);
             }
             Err(error) => {
-                let _ = self
-                    .automation_store
-                    .mark_failed(&run.id, error.message.clone());
+                let _ = if owner.is_object() {
+                    self.automation_store
+                        .mark_needs_attention(&run.id, error.message.clone())
+                } else {
+                    self.automation_store
+                        .mark_failed(&run.id, error.message.clone())
+                };
                 self.emit_automation_runs_changed(&automation.id, &run.id);
             }
         }
@@ -217,7 +272,7 @@ impl RuntimeWorkRpcHandler {
         }));
     }
 
-    fn emit_automation_runs_changed(&self, automation_id: &str, run_id: &str) {
+    pub(super) fn emit_automation_runs_changed(&self, automation_id: &str, run_id: &str) {
         let Some(sender) = &self.event_tx else {
             return;
         };

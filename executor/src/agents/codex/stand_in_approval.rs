@@ -107,6 +107,19 @@ pub(super) fn stand_in_mcp_approval_overrides(
             ));
         }
     }
+    // Schedule changes execute directly rather than producing a profile proposal.
+    // Keep their native mutation confirmation even in an identity conversation.
+    if request
+        .extra
+        .get("origin")
+        .is_some_and(|origin| origin["type"] == "stand_in_identity")
+    {
+        for tool in ["schedule_task", "cancel_schedule"] {
+            result.push(format!(
+                "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"writes\""
+            ));
+        }
+    }
     Ok(result)
 }
 

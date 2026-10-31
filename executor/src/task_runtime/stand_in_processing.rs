@@ -30,7 +30,7 @@ pub(super) fn update_processing_configuration(
     before: &Value,
     after: &Value,
 ) -> Result<(), TaskRuntimeError> {
-    if before["processing"] == after["processing"] {
+    if before["primary"] == after["primary"] && before["roles"] == after["roles"] {
         return Ok(());
     }
     let id = format!("stand-in-processing:{user}");
@@ -40,15 +40,7 @@ pub(super) fn update_processing_configuration(
     state["batchId"] = Value::Null;
     state["snapshot"] = Value::Null;
     state["error"] = Value::Null;
-    state["nextCheckAt"] = if after["processing"]["mode"] == "silent" {
-        json!((Utc::now()
-            + chrono::Duration::minutes(
-                after["processing"]["intervalMinutes"].as_i64().unwrap_or(5)
-            ))
-        .to_rfc3339())
-    } else {
-        Value::Null
-    };
+    state["nextCheckAt"] = json!((Utc::now() + chrono::Duration::minutes(5)).to_rfc3339());
     write(connection, STATE, &state)?;
     for mut action in rows(connection, ACTION, user)?
         .into_iter()
@@ -139,9 +131,9 @@ impl LocalTaskStore {
         arguments: Value,
     ) -> Result<Value, TaskRuntimeError> {
         let settings = self.personal_stand_in(user, device)?;
-        if settings["processing"]["mode"] != "silent" {
+        if settings["primary"]["enabled"] == false {
             return Err(TaskRuntimeError::Invalid(
-                "Silent processing is disabled".into(),
+                "The primary stand-in is paused".into(),
             ));
         }
         let state = self.stand_in_processing_state(user)?;
@@ -170,8 +162,8 @@ impl LocalTaskStore {
         let id = stand_in_record_key("stand-in-action", &json!([user, batch, kind, arguments]));
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if super::personal_stand_in::read_personal(&connection, user, device)?["processing"]["mode"]
-            != "silent"
+        if super::personal_stand_in::read_personal(&connection, user, device)?["primary"]["enabled"]
+            == false
             || get_item_from(&connection, &format!("stand-in-processing:{user}"), STATE)?
                 .map_or(true, |row| row.metadata["batchId"] != batch)
         {
@@ -230,7 +222,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn processing_changes_cancel_old_commands_and_revoke_old_batch_tools() {
+    fn connection_timing_changes_cancel_old_commands_and_revoke_old_batch_tools() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
@@ -248,7 +240,7 @@ mod tests {
                 json!({"eventIds":["event"]}),
             )
             .unwrap();
-        settings["processing"]["intervalMinutes"] = json!(15);
+        settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
         let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
         assert!(store.stand_in_processing_state(7).unwrap()["batchId"].is_null());
         assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "cancelled");
@@ -261,7 +253,7 @@ mod tests {
                 json!({"eventIds":["event"]})
             )
             .is_err());
-        settings["processing"]["intervalMinutes"] = json!(0);
+        settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(0);
         assert!(store.save_personal_stand_in(7, "mac", settings).is_err());
     }
 

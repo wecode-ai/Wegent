@@ -21,6 +21,7 @@ import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { AutomationsPage } from '@/features/automations/AutomationsPage'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
@@ -30,20 +31,29 @@ type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
+  initialWorkView = 'work',
   active = true,
   ...props
 }: SettingsProps & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
+  initialWorkView?: 'work' | 'scheduled'
   active?: boolean
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
-  const [roleId, setRoleId] = useState<string>()
-  const [chatting, setChatting] = useState(false)
+  const [roleId, setRoleId] = useState<string | undefined>(
+    props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+  )
+  const [chatting, setChatting] = useState(initialWorkView === 'scheduled')
+  const [workView, setWorkView] = useState<'work' | 'scheduled'>(initialWorkView)
   const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
-    initialPrimaryProfile ? 'primary' : null
+    initialPrimaryProfile || props.initialProfileId === '@primary'
+      ? 'primary'
+      : props.initialProfileId
+        ? 'role'
+        : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
   const [proposalError, setProposalError] = useState<string | null>(null)
@@ -116,7 +126,7 @@ export function StandInOverviewPage({
   const items = [...merged.values()]
     .filter(item => standInWorkRole(item) !== null)
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
-  const roleItems = items.filter(item => standInWorkRole(item) === (roleId ?? '@primary'))
+  const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
   const needsAttention = items.filter(
     item =>
       ['waiting', 'failed'].includes(standInState(item).status) ||
@@ -129,6 +139,7 @@ export function StandInOverviewPage({
   const enabled = role ? role.enabled : state.draft?.primary?.enabled !== false
   const chooseRole = (id?: string) => {
     setRoleId(id)
+    setWorkView('work')
     setChatting(false)
     setProfile(null)
   }
@@ -274,7 +285,7 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {saved?.processing?.mode === 'silent' && deviceId && !profile && (
+            {deviceId && !profile && (
               <StandInProcessingNotice
                 key={`${props.userId}:${deviceId}`}
                 api={api}
@@ -339,9 +350,7 @@ export function StandInOverviewPage({
                     key={item.key}
                     data-testid={`stand-in-attention-${item.task.taskId}`}
                     onClick={() => {
-                      const owner = standInWorkRole(item)
-                      setRoleId(owner === '@primary' ? undefined : (owner ?? undefined))
-                      setChatting(owner === '@primary')
+                      if (onOpenTask) void onOpenTask(item.address)
                     }}
                     className="min-h-8 rounded-md border border-border px-3 text-sm hover:bg-muted"
                   >
@@ -385,17 +394,47 @@ export function StandInOverviewPage({
                 onOpenTask={onOpenTask}
               />
             ) : (
-              <StandInWorkList
-                active={active && !conversation}
-                key={roleId ? `role:${roleId}` : 'primary'}
-                items={roleItems}
-                inbox={visibleInbox.filter(work => work.roleId === (roleId ?? '@primary'))}
-                api={api}
-                userId={props.userId}
-                deviceId={deviceId}
-                onRefresh={inbox.refresh}
-                onOpenTask={onOpenTask}
-              />
+              <div className="flex min-h-0 flex-1 flex-col">
+                <nav
+                  className="flex shrink-0 gap-2 border-b border-border px-5 py-2"
+                  aria-label={t('standIn.workspace.work_list')}
+                >
+                  {(['work', 'scheduled'] as const).map(value => (
+                    <button
+                      type="button"
+                      key={value}
+                      data-testid={`stand-in-work-view-${value}`}
+                      aria-pressed={workView === value}
+                      onClick={() => setWorkView(value)}
+                      className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${workView === value ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
+                    >
+                      {t(value === 'work' ? 'standIn.workspace.work_list' : 'workbench.automation')}
+                    </button>
+                  ))}
+                </nav>
+                {workView === 'scheduled' ? (
+                  <AutomationsPage
+                    key={roleId ?? '@primary'}
+                    embedded
+                    standInDeviceId={deviceId}
+                    standInOwner={{ userId: props.userId, roleId: roleId ?? '@primary' }}
+                  />
+                ) : (
+                  <StandInWorkList
+                    active={active && !conversation}
+                    key={roleId ? `role:${roleId}` : 'primary'}
+                    items={roleItems}
+                    inbox={
+                      roleId ? visibleInbox.filter(work => work.roleId === roleId) : visibleInbox
+                    }
+                    api={api}
+                    userId={props.userId}
+                    deviceId={deviceId}
+                    onRefresh={inbox.refresh}
+                    onOpenTask={onOpenTask}
+                  />
+                )}
+              </div>
             )}
           </>
         )}

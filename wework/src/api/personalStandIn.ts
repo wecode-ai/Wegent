@@ -8,6 +8,7 @@ export interface StandInProjectRef {
 export interface StandInHandlingPolicy {
   automatic: boolean
   askBeforeAct: boolean
+  immediate?: boolean
 }
 
 export interface StandInSourceConnection {
@@ -56,12 +57,6 @@ export interface PersonalStandInSettings {
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
-  processing?: StandInProcessingSettings
-}
-
-export interface StandInProcessingSettings {
-  mode: 'immediate' | 'silent'
-  intervalMinutes: number
 }
 
 export function standInPolicy(

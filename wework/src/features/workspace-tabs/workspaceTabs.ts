@@ -60,6 +60,7 @@ export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | nu
   if (
     pathname === '/' ||
     pathname === '/runtime-tasks' ||
+    pathname === '/stand-in' ||
     pathname === '/settings' ||
     pathname.startsWith('/settings/')
   ) {

@@ -70,41 +70,29 @@ function fixture() {
   }
 }
 
-it('saves device-wide processing only on explicit save and rejects invalid intervals', async () => {
+it('keeps existing identity and execution settings without a global processing switch', () => {
   const props = fixture()
-  const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} />)
-  expect(screen.getByTestId('stand-in-processing-mode')).toHaveValue('immediate')
-  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'silent')
-  const interval = screen.getByTestId('stand-in-processing-interval')
-  await user.clear(interval)
-  await user.type(interval, '0')
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  expect(screen.getByTestId('stand-in-primary-enabled')).toBeChecked()
+  expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-mode')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
   expect(props.onSave).not.toHaveBeenCalled()
-  await user.clear(interval)
-  await user.type(interval, '15')
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({ processing: { mode: 'silent', intervalMinutes: 15 } })
-  )
 })
 
-it('can save immediate mode after clearing a silent interval and retains its last valid value', async () => {
+it('does not save a changed receive switch when the user discards the draft', async () => {
   const props = fixture()
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} />)
-  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'silent')
-  const interval = screen.getByTestId('stand-in-processing-interval')
-  await user.clear(interval)
-  await user.type(interval, '15')
-  await user.clear(interval)
-  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
-  await user.selectOptions(screen.getByTestId('stand-in-processing-mode'), 'immediate')
-  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-primary-save'))
-  expect(props.onSave).toHaveBeenCalledWith(
-    expect.objectContaining({ processing: { mode: 'immediate', intervalMinutes: 15 } })
-  )
+  await user.click(screen.getByTestId('stand-in-primary-enabled'))
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-primary-discard'))
+  expect(props.onClose).toHaveBeenCalledOnce()
+  expect(props.onSave).not.toHaveBeenCalled()
 })
 
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {

@@ -2,14 +2,14 @@
 use super::*;
 use crate::task_runtime::mcp::{stand_in_tasks, StandInMcpIdentity};
 
-fn owns_task(link: &RuntimeTaskLink, user: i64) -> bool {
+pub(super) fn owns_task(link: &RuntimeTaskLink, user: i64) -> bool {
     link.runtime_handle["executionRequest"]["user_id"].as_i64() == Some(user)
         && link.runtime_handle["origin"]["type"] != "stand_in_coordinator"
         && link.runtime_handle["origin"]["type"] != "stand_in_identity"
         && !link.ephemeral
 }
 
-fn required<'a>(args: &'a Value, field: &str) -> Result<&'a str, AppIpcError> {
+pub(super) fn required<'a>(args: &'a Value, field: &str) -> Result<&'a str, AppIpcError> {
     args[field]
         .as_str()
         .filter(|value| !value.trim().is_empty() && value.len() <= 32000)
@@ -77,12 +77,23 @@ impl RuntimeWorkRpcHandler {
             let settings = store
                 .personal_stand_in(identity.user, &self.device_id)
                 .map_err(super::stand_in::settings_error)?;
-            if state["batchId"] != batch || settings["processing"]["mode"] != "silent" {
+            if state["batchId"] != batch || settings["primary"]["enabled"] == false {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Background batch was revoked",
                 ));
             }
+        }
+        if matches!(name, "list_schedules" | "schedule_task" | "cancel_schedule") {
+            if identity.coordinator_batch.is_some() {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Background batches cannot create independent recurring arrangements",
+                ));
+            }
+            return self
+                .stand_in_schedule_operation(&identity, name, &args)
+                .await;
         }
         if name == "list_tasks" {
             return Ok(json!({"items": self.local_task_links(false).into_iter()
@@ -144,7 +155,7 @@ impl RuntimeWorkRpcHandler {
         Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"queueIfBusy":true}))).await
     }
 
-    async fn validate_primary_task_followup(
+    pub(super) async fn validate_primary_task_followup(
         &self,
         user: i64,
         link: &RuntimeTaskLink,
@@ -244,6 +255,7 @@ mod operation_tests {
             device: "mac".into(),
             role: None,
             work: None,
+            project: None,
             ask_before_act: true,
             coordinator_batch: Some("batch".into()),
         };
@@ -298,6 +310,7 @@ mod operation_tests {
             device: "mac".into(),
             role: None,
             work: None,
+            project: None,
             ask_before_act: true,
             coordinator_batch: None,
         };

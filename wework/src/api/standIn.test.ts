@@ -255,3 +255,38 @@ it('preserves connection authorization metadata and retry policy', async () => {
   })
   expect(error.message).toBe('Authorize the account')
 })
+
+it('routes declared default-market dependencies through the platform installer instead of Codex plugin/list', async () => {
+  const dependency = {
+    alias: 'dingtalk',
+    status: 'missing',
+    version: '*',
+    source: { marketplaceId: 'wework', pluginId: 'dingtalk@wework' },
+  }
+  const request = vi.fn().mockResolvedValue({
+    items: [{ id: 'connection/dingtalk', dependencies: [dependency] }],
+  })
+  const listMarketplacePlugins = vi.fn(async () => ({
+    items: [
+      {
+        id: 42,
+        name: 'dingtalk',
+        sourceProvider: 'wegent',
+        visibility: 'public',
+        installed: false,
+        enabled: false,
+      },
+    ],
+  }))
+  const installMarketplacePlugin = vi.fn(async () => {
+    dependency.status = 'ready'
+    return {}
+  })
+  const api = createStandInExecutorApi(
+    request as never,
+    { listMarketplacePlugins, installMarketplacePlugin } as never
+  )
+  await api.installConnectionDependencies('selected-device', 'connection/dingtalk', ['dingtalk'])
+  expect(installMarketplacePlugin).toHaveBeenCalledWith(42, 'selected-device')
+  expect(request.mock.calls.every(call => call[0] === 'runtime.connections.catalog')).toBe(true)
+})

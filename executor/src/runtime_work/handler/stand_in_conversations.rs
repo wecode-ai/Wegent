@@ -81,59 +81,9 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
         config["handlingPolicy"] = json!({"automatic":false,"askBeforeAct":true});
-        if payload["options"]["modelOptions"].is_object() {
-            config["modelOptions"] = payload["options"]["modelOptions"].clone();
-        }
-        if let Some(model_id) = payload["options"]["modelId"].as_str() {
-            if matches!(
-                payload["options"]["modelType"].as_str(),
-                Some("public" | "user" | "group")
-            ) {
-                let namespace = payload["options"]["modelOptions"]["weworkCloudModelNamespace"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        AppIpcError::new("model_unavailable", "Cloud model namespace is required")
-                    })?;
-                let owner = payload["options"]["modelOptions"]["weworkCloudModelResourceUserId"]
-                    .as_str()
-                    .and_then(|id| id.parse::<u64>().ok())
-                    .ok_or_else(|| {
-                        AppIpcError::new("model_unavailable", "Cloud model owner is required")
-                    })?;
-                config["model"] = json!({"runtime":"codex","provider":"cloud_gateway","model_id":model_id,"source":"cloud","cloud_model":{"name":model_id,"type":payload["options"]["modelType"],"namespace":namespace,"resource_user_id":owner}});
-            } else {
-                let catalog = self.runner_catalog().await?;
-                let provider = payload["options"]["modelOptions"]["codexProviderId"].as_str();
-                let models = catalog["models"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|model| {
-                        model["runtime"] == "codex"
-                            && (model["local_model_id"] == model_id
-                                || model["model_id"] == model_id)
-                            && provider.map_or(true, |provider| model["provider"] == provider)
-                    })
-                    .collect::<Vec<_>>();
-                if models.len() != 1 {
-                    return Err(AppIpcError::new(
-                        "model_unavailable",
-                        "Select an available Codex model for this conversation",
-                    ));
-                }
-                config["model"] = models[0].clone();
-            }
-        }
+        config = self.conversation_model(config, &payload["options"]).await?;
         let mut prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":title,"message":message,"origin":origin,"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"]}),&config).await?;
-        if payload["options"]["modelType"] == "runtime" && payload["options"]["modelId"].is_string()
-        {
-            // Identity chats start from the desktop model selector, just like their follow-ups.
-            // Runner catalog identities alone intentionally use the direct provider path.
-            prepared["executionRequest"]["model_config"]["runtime_config"] =
-                json!({"codex":{"use_user_config":true,"configured":true}});
-            prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
-            prepared["modelSelection"] = json!({"modelName":payload["options"]["modelId"],"modelType":"runtime","options":payload["options"]["modelOptions"]});
-        }
+        apply_runtime_model_selection(&mut prepared, &payload["options"]);
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
@@ -154,5 +104,66 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(json!({"deviceId":self.device_id,"taskId":task_id}))
+    }
+    pub(super) async fn conversation_model(
+        &self,
+        mut config: Value,
+        options: &Value,
+    ) -> Result<Value, AppIpcError> {
+        if options["modelOptions"].is_object() {
+            config["modelOptions"] = options["modelOptions"].clone();
+        }
+        if let Some(model_id) = options["modelId"].as_str() {
+            if matches!(
+                options["modelType"].as_str(),
+                Some("public" | "user" | "group")
+            ) {
+                let namespace = options["modelOptions"]["weworkCloudModelNamespace"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        AppIpcError::new("model_unavailable", "Cloud model namespace is required")
+                    })?;
+                let owner = options["modelOptions"]["weworkCloudModelResourceUserId"]
+                    .as_str()
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        AppIpcError::new("model_unavailable", "Cloud model owner is required")
+                    })?;
+                config["model"] = json!({"runtime":"codex","provider":"cloud_gateway","model_id":model_id,"source":"cloud","cloud_model":{"name":model_id,"type":options["modelType"],"namespace":namespace,"resource_user_id":owner}});
+            } else {
+                let catalog = self.runner_catalog().await?;
+                let provider = options["modelOptions"]["codexProviderId"].as_str();
+                let models = catalog["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|model| {
+                        model["runtime"] == "codex"
+                            && (model["local_model_id"] == model_id
+                                || model["model_id"] == model_id)
+                            && provider.map_or(true, |provider| model["provider"] == provider)
+                    })
+                    .collect::<Vec<_>>();
+                if models.len() != 1 {
+                    return Err(AppIpcError::new(
+                        "model_unavailable",
+                        "Select an available Codex model for this conversation",
+                    ));
+                }
+                config["model"] = models[0].clone();
+            }
+        }
+        Ok(config)
+    }
+}
+
+pub(super) fn apply_runtime_model_selection(prepared: &mut Value, options: &Value) {
+    if options["modelType"] == "runtime" && options["modelId"].is_string() {
+        // Identity chats start from the desktop model selector, just like their follow-ups.
+        // Runner catalog identities alone intentionally use the direct provider path.
+        prepared["executionRequest"]["model_config"]["runtime_config"] =
+            json!({"codex":{"use_user_config":true,"configured":true}});
+        prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
+        prepared["modelSelection"] = json!({"modelName":options["modelId"],"modelType":"runtime","options":options["modelOptions"]});
     }
 }

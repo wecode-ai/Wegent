@@ -102,7 +102,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('waitFor', toggle)
-      assert.equal(await control.command('getAttribute', toggle, { value: 'aria-checked' }), 'false')
+      assert.equal(
+        await control.command('getAttribute', toggle, { value: 'aria-checked' }),
+        'false'
+      )
       await control.command('click', toggle)
       await waitForBoardValue(
         () => control.command('getAttribute', toggle, { value: 'aria-checked' }),
@@ -113,7 +116,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', '[data-testid="settings-back-button"]')
       await rpc('runtime.stand_in.telemetry.configure', { userId: USER, enabled: true })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', CHAT)
       await control.awaitTelemetryEvent('stand_in_opened')
       await selectE2EModel(control, undefined, undefined, CHAT)

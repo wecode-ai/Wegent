@@ -39,3 +39,11 @@ pub(super) fn tools() -> Vec<Value> {
         json!({"name":"continue_task","description":"Send a follow-up to a current-user Wework task, keeping its model, workspace and session. Cannot answer user input or approvals, restore archived tasks, or impersonate another user. Use a stable requestId for deduplication.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"},"taskId":{"type":"string"},"message":{"type":"string"}},"required":["requestId","taskId","message"]},"annotations":{"readOnlyHint":false,"openWorldHint":false}}),
     ]
 }
+
+pub(super) fn schedule_tools() -> Vec<Value> {
+    vec![
+        json!({"name":"list_schedules","description":"List scheduled work owned by the current stand-in, including next execution and enabled state. These are the same arrangements shown in the stand-in work list.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
+        json!({"name":"schedule_task","description":"Arrange future work using the current stand-in settings. Supply either a future RFC3339 at, or cron plus an IANA timezone for recurring work. Optional taskId continues an existing current-user task. Keep existing questions and approvals for the user. Requires native confirmation; no task starts before the scheduled time. Use a stable requestId for deduplication.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"},"title":{"type":"string"},"message":{"type":"string"},"at":{"type":"string"},"cron":{"type":"string"},"timezone":{"type":"string"},"taskId":{"type":"string"}},"required":["requestId","title","message"]},"annotations":{"readOnlyHint":false,"openWorldHint":false}}),
+        json!({"name":"cancel_schedule","description":"Cancel one exact arrangement from list_schedules. Existing work and run history are retained. Requires native confirmation.","inputSchema":{"type":"object","properties":{"scheduleId":{"type":"string"}},"required":["scheduleId"]},"annotations":{"readOnlyHint":false,"openWorldHint":false}}),
+    ]
+}

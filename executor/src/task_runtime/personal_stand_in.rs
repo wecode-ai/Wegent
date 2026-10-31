@@ -5,6 +5,7 @@ pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 
 pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
+    let immediate = value["processing"]["mode"] != "silent";
     for identity in value
         .get_mut("roles")
         .and_then(Value::as_array_mut)
@@ -12,11 +13,58 @@ pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntime
         .flatten()
     {
         changed |= migrate_identity_connections(identity)?;
+        changed |= migrate_connection_timing(identity, immediate);
     }
     if value["primary"].is_object() {
         changed |= migrate_identity_connections(&mut value["primary"])?;
+        changed |= migrate_connection_timing(&mut value["primary"], immediate);
     }
+    changed |= value
+        .as_object_mut()
+        .is_some_and(|fields| fields.remove("processing").is_some());
     Ok(changed)
+}
+
+fn migrate_connection_timing(identity: &mut Value, immediate: bool) -> bool {
+    fn set_timing(policy: &mut Value, immediate: bool) -> bool {
+        let Some(fields) = policy.as_object_mut() else {
+            return false;
+        };
+        if fields.contains_key("immediate") {
+            return false;
+        }
+        fields.insert("immediate".into(), json!(immediate));
+        true
+    }
+    let mut changed = false;
+    for connection in identity
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        changed |= set_timing(&mut connection["policy"], immediate);
+    }
+    if identity["collaboration"].is_object() {
+        if !identity["collaboration"]["policy"].is_object() {
+            identity["collaboration"]["policy"] = json!({"automatic":true,"askBeforeAct":false});
+            changed = true;
+        }
+        changed |= set_timing(&mut identity["collaboration"]["policy"], immediate);
+        for project in identity["collaboration"]
+            .get_mut("projectPolicies")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            changed |= set_timing(&mut project["policy"], immediate);
+        }
+    }
+    changed
+}
+
+pub fn immediate_policy(policy: &Value) -> bool {
+    policy["immediate"].as_bool().unwrap_or(true)
 }
 
 fn migrate_identity_connections(identity: &mut Value) -> Result<bool, TaskRuntimeError> {
@@ -224,7 +272,9 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
 }
 
 fn validate_policy(policy: &Value) -> bool {
-    policy["automatic"].is_boolean() && policy["askBeforeAct"].is_boolean()
+    policy["automatic"].is_boolean()
+        && policy["askBeforeAct"].is_boolean()
+        && policy.get("immediate").map_or(true, Value::is_boolean)
 }
 
 fn valid_collaboration(source: &Value) -> bool {
@@ -390,17 +440,6 @@ impl LocalTaskStore {
         mut value: Value,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_connections(&mut value)?;
-        if let Some(processing) = value.get("processing") {
-            if !matches!(processing["mode"].as_str(), Some("immediate" | "silent"))
-                || !processing["intervalMinutes"]
-                    .as_u64()
-                    .is_some_and(|minutes| (1..=1440).contains(&minutes))
-            {
-                return Err(TaskRuntimeError::Invalid(
-                    "Invalid stand-in processing schedule".into(),
-                ));
-            }
-        }
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("autoSelect");

@@ -52,6 +52,7 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
         memories: vi.fn(async () => []),
         inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
         proposal: vi.fn(async () => null),
+        processingStatus: vi.fn(async () => ({ pendingCount: 0, running: false, actions: [] })),
         personalSave,
         personalAgents,
       },
@@ -371,7 +372,6 @@ it('routes a pending background confirmation to its real Runtime task', async ()
   const settings = await api.personalGet(7, 'device')
   vi.mocked(api.personalGet).mockResolvedValue({
     ...settings,
-    processing: { mode: 'silent', intervalMinutes: 5 },
   })
   api.processingStatus = vi.fn().mockResolvedValue({
     pendingCount: 1,

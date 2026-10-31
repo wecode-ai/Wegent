@@ -5323,6 +5323,18 @@
     "im_target": "设置 IM 接收会话"
   },
   "standIn": {
+    "project_coordinator": {
+      "open": "负责人对话",
+      "title": "{{project}} · 负责人",
+      "private_context": "当前项目上下文 · 对话与记忆仅自己可见",
+      "group": "协作小组",
+      "choose_group": "选择项目中的协作小组",
+      "no_group": "当前项目还没有配置协作小组。",
+      "configure": "配置项目协作小组",
+      "human_leader": "这个小组由成员担任负责人，请在项目 Issue 中与负责人协作。",
+      "empty": "在这里与负责人讨论「{{project}}」的目标、交办和进展。具体工作保留在原 Issue 中。",
+      "prompt": "交办项目工作，或询问进展……"
+    },
     "model_label": "模型",
     "agent_label": "智能体",
     "device_label": "设备",
@@ -5511,6 +5523,11 @@
       "no_connections_found": "没有找到匹配的资源。",
       "connected": "已添加",
       "add": "添加",
+      "enable_connection_handling": "启用自动处理",
+      "connection_handling_disabled": "未启用自动处理",
+      "time_connection": "时间",
+      "process_immediately": "收到后立即处理",
+      "processing_background": "由分身安排处理",
       "connection_help": "只接收你选择的范围，保存后生效。默认在发送消息或修改内容前请你确认。",
       "dingtalk_connections": "已连接 {{count}} 个钉钉来源",
       "related_messages": "关联消息 · {{count}}",
@@ -5588,7 +5605,8 @@
       "connect_source": "连接{{name}}",
       "connection_status_plugin_disabled": "连接插件已停用",
       "connection_status_plugin_unavailable": "连接插件尚未就绪",
-      "connection_status_dependency_unavailable": "暂时无法读取依赖插件状态"
+      "connection_status_dependency_unavailable": "暂时无法读取依赖插件状态",
+      "schedule_inherits_settings": "到时沿用分身当前的设备、模型和工作目录设置。"
     },
     "memory": {
       "title": "记忆",
@@ -5636,6 +5654,10 @@
       "connector_auth_required": "此连接需要授权，请完成账号授权后重试。",
       "source_removed": "该来源已断开连接，请重新添加来源。",
       "connection_configuration_changed": "采集期间连接设置发生变化，请刷新后重试。",
+      "dependency_cloud_required": "此插件来自 Wework 默认市场。请先登录 Wework 云端账号，并将执行设备连接到该账号，再安装所需插件。",
+      "dependency_catalog_unavailable": "无法在默认市场中唯一确认所需插件。请刷新插件市场并检查插件来源及账号访问权限后重试。",
+      "dependency_conflict": "依赖插件的版本或启用状态不符合此连接的要求。请在插件管理中检查后重试。",
+      "dependency_not_ready": "插件安装尚未在执行设备上完成。请检查设备的插件同步状态，完成后刷新连接。",
       "dependency_missing": "来源所需插件尚未安装。请打开分身设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。",
       "connection_host_unavailable": "连接服务暂不可用，请稍后重试。",
       "connection_response_invalid": "连接返回的数据无效，请检查来源后重试。",
@@ -5645,7 +5667,8 @@
       "failed": "分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。",
       "device_offline": "执行设备离线，请连接设备后重试。",
       "stand_in_project_connections": "该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。",
-      "coordinator_failed": "后台统筹失败。请检查处理记录和模型配置后重试。"
+      "coordinator_failed": "后台统筹失败。请检查处理记录和模型配置后重试。",
+      "leader_not_ai": "该协作小组由人类负责人管理，请选择 AI 负责人或在项目中调整负责人。"
     },
     "processing": {
       "title": "自动事件处理",

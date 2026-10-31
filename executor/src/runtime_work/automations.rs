@@ -141,7 +141,7 @@ impl AutomationStore {
         Self::new(runtime_work_dir().join("automations.json"))
     }
 
-    fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         let state = shared_state(&path);
         Self { path, state }
     }
@@ -341,15 +341,27 @@ impl AutomationStore {
 
     pub fn mark_running(&self, run_id: &str, task_id: String) -> Result<(), String> {
         self.update_run(run_id, |run| {
-            run.status = AutomationRunStatus::Running;
             run.task_id = Some(task_id);
-            run.error = None;
+            if matches!(
+                run.status,
+                AutomationRunStatus::Pending | AutomationRunStatus::Running
+            ) {
+                run.status = AutomationRunStatus::Running;
+                run.error = None;
+            }
         })
     }
 
     pub fn mark_failed(&self, run_id: &str, error: String) -> Result<(), String> {
         self.update_run(run_id, |run| {
             run.status = AutomationRunStatus::Failed;
+            run.error = Some(error);
+        })
+    }
+
+    pub fn mark_needs_attention(&self, run_id: &str, error: String) -> Result<(), String> {
+        self.update_run(run_id, |run| {
+            run.status = AutomationRunStatus::NeedsAttention;
             run.error = Some(error);
         })
     }

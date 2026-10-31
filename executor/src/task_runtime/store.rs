@@ -20,6 +20,7 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+mod project_coordinator;
 mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};

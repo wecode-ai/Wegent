@@ -115,19 +115,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn role_proposals_cannot_change_global_processing_settings() {
+    fn role_proposals_cannot_change_primary_preferences() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let settings = store.personal_stand_in(7, "mac").unwrap();
         let previous = store.save_personal_stand_in(7, "mac", settings).unwrap();
         let mut settings = previous.clone();
-        settings["processing"] = json!({"mode":"silent","intervalMinutes":15});
+        settings["primary"] =
+            json!({"enabled":true,"prompt":"","preferences":"Changed primary preferences"});
         let error = store
             .propose_stand_in_settings(
                 7,
                 "mac",
                 Some("default"),
-                "Change interval",
+                "Change main preferences",
                 settings.clone(),
             )
             .unwrap_err();
@@ -138,7 +139,7 @@ mod tests {
             .is_null());
         assert_eq!(store.personal_stand_in(7, "mac").unwrap(), previous);
         assert!(store
-            .propose_stand_in_settings(7, "mac", None, "Change interval", settings)
+            .propose_stand_in_settings(7, "mac", None, "Change main preferences", settings)
             .is_ok());
     }
 }

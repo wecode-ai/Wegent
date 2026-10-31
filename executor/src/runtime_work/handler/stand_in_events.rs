@@ -23,7 +23,7 @@ impl RuntimeWorkRpcHandler {
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
         let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
-        let configs: Vec<Value> = project_configs
+        let mut configs: Vec<Value> = project_configs
             .iter()
             .filter(|config| {
                 config["enabled"] == true
@@ -64,10 +64,9 @@ impl RuntimeWorkRpcHandler {
         }
 
         let user = configs[0]["userId"].as_i64().unwrap_or_default();
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
-        if settings["processing"]["mode"] == "silent" {
+        if configs.iter().any(|config| {
+            !crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        }) {
             let assignments = self
                 .stand_in_http(
                     reqwest::Method::GET,
@@ -87,7 +86,9 @@ impl RuntimeWorkRpcHandler {
                 super::personal_stand_in::matching_personal_roles(&configs, &issue)
                     .iter()
                     .filter(|role| {
-                        super::stand_in::assignment_after_enable(active, role)
+                        !crate::task_runtime::personal_stand_in::immediate_policy(
+                            &role["handlingPolicy"],
+                        ) && super::stand_in::assignment_after_enable(active, role)
                             && self
                                 .local_task_link(
                                     &self.stand_in_task_id(role, &issue["human_task_binding"]),
@@ -96,12 +97,16 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|role| role["id"].clone())
                     .collect();
-            if roles.is_empty() {
-                return Ok(());
-            }
-            store.enqueue_stand_in_event(user, json!(["assignment","cloud",project,issue_id,assignment]),
+            if !roles.is_empty() {
+                store.enqueue_stand_in_event(user, json!(["assignment","cloud",project,issue_id,assignment]),
                 json!({"kind":"assignment","projectId":project,"projectStore":"cloud","issueId":issue_id,"assignmentId":assignment,"issue":issue,"roleIds":roles})
             ).map_err(settings_error)?;
+            }
+        }
+        configs.retain(|config| {
+            crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
+        });
+        if configs.is_empty() {
             return Ok(());
         }
         let result = self.start_cloud_stand_in_with_roles(&configs, &issue).await;
@@ -223,7 +228,7 @@ mod tests {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
-        settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+        settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         for _ in 0..2 {
             fixture

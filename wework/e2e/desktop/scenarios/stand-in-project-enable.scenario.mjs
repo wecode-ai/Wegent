@@ -122,7 +122,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: '未开启',
       })
       await control.command('click', '[data-testid="stand-in-cancel"]')
-      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-project-enable"]', {
         text: '项目启用分身',
       })

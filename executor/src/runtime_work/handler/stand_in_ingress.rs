@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_provider, stand_in_connection, stand_in_identities,
+    immediate_policy, source_provider, stand_in_connection, stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -97,9 +97,6 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?
             {
                 self.reconcile_connection_dispatch(&store, user, &mut work)?;
-                if settings["processing"]["mode"] == "silent" {
-                    continue;
-                }
                 if work["status"] != "pending" {
                     continue;
                 }
@@ -109,9 +106,9 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
-                if stand_in_connection(role, &work["source"])
-                    .is_some_and(|source| source["policy"]["automatic"] == true)
-                {
+                if stand_in_connection(role, &work["source"]).is_some_and(|source| {
+                    source["policy"]["automatic"] == true && immediate_policy(&source["policy"])
+                }) {
                     if let Err(error) = self
                         .dispatch_connection_work(
                             user,
@@ -191,9 +188,6 @@ impl RuntimeWorkRpcHandler {
         page: (Vec<Value>, Value),
     ) -> Result<Value, AppIpcError> {
         let (messages, next) = page;
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let mut failure = None;
         for message in messages {
             if !["id", "text", "at"]
@@ -206,12 +200,13 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             let at = message_time(&message["at"])?;
-            if settings["processing"]["mode"] == "silent" {
+            {
                 let eligible: Vec<Value> = roles
                     .iter()
                     .filter(|role| {
                         stand_in_connection(role, source).is_some_and(|connection| {
                             connection["policy"]["automatic"] == true
+                                && !immediate_policy(&connection["policy"])
                                 && connection["enabledAfter"]
                                     .as_str()
                                     .and_then(|time| {
@@ -231,8 +226,8 @@ impl RuntimeWorkRpcHandler {
             }
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
-                    !(settings["processing"]["mode"] == "silent"
-                        && connection["policy"]["automatic"] == true)
+                    !(connection["policy"]["automatic"] == true
+                        && !immediate_policy(&connection["policy"]))
                         && connection["enabledAfter"]
                             .as_str()
                             .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
@@ -22,6 +24,7 @@ const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
 export function createDesktopScenario({
   captureScreenshot,
   workspacePath,
+  executorHome,
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
@@ -150,7 +153,6 @@ export function createDesktopScenario({
           userId: USER,
           settings: {
             ...initial,
-            processing: { mode: 'immediate', intervalMinutes: 1 },
             primary: {
               enabled: true,
               prompt: '',
@@ -172,7 +174,7 @@ export function createDesktopScenario({
                   projects: [{ id: project.id, store: 'local' }],
                   excludedProjects: [],
                   tags: [],
-                  policy: { automatic: true, askBeforeAct: true },
+                  policy: { automatic: true, askBeforeAct: true, immediate: false },
                 },
               },
             ],
@@ -180,44 +182,31 @@ export function createDesktopScenario({
         })
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('click', `[data-testid="stand-in-overview-role-${ROLE}"]`)
         await control.command('click', '[data-testid="stand-in-settings-open"]')
-        await control.command('select', '[data-testid="stand-in-processing-mode"]', {
-          value: 'silent',
-        })
-        await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
-          value: '15',
-        })
-        await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
-          value: '',
-        })
-        await control.command('select', '[data-testid="stand-in-processing-mode"]', {
-          value: 'immediate',
-        })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
-          visible: false,
-        })
-        assert.deepEqual(
-          (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).processing,
-          { mode: 'immediate', intervalMinutes: 15 }
+        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await control.command(
+          'click',
+          `[data-testid="stand-in-connection-project-local-${project.id}"]`
         )
-        await control.command('click', '[data-testid="stand-in-settings-open"]')
-        await control.command('select', '[data-testid="stand-in-processing-mode"]', {
-          value: 'silent',
-        })
-        await control.command('fill', '[data-testid="stand-in-processing-interval"]', {
-          value: '1',
-        })
-        await captureScreenshot(control, 'silent-01-configure-interval.png')
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
-          visible: false,
-        })
+        const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
+        await control.command('waitFor', timing)
+        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'checkbox')
+        await control.command('click', timing)
+        await control.command('click', timing)
         assert.equal(
-          (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).processing.mode,
-          'silent'
+          await control.command('getElementCount', '[data-testid="stand-in-processing-mode"]'),
+          '0'
         )
+        await captureScreenshot(control, 'silent-01-connection-timing.png')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-save"]', { visible: false })
+        const configured = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+        assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
+        assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
+        assert.equal(configured.processing, undefined)
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
           todo: { title: MARKER, assignee_user_id: USER },
@@ -230,17 +219,27 @@ export function createDesktopScenario({
         assert.deepEqual(await rpc(control, 'todos.bindings', { task_id: issue.id }), [])
         assert.equal(coordinatorCalls, 0)
         assert.equal(workCalls, 0)
-        await control.command('click', '[data-testid="stand-in-settings-open"]')
-        await control.command('waitFor', '[data-testid="stand-in-processing-status"]', {
+        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
           text: '1',
         })
         await captureScreenshot(control, 'silent-02-intake-without-work.png')
         const scheduled = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
-        const dueAt = Date.parse(scheduled.nextCheckAt)
         assert.ok(
-          Number.isFinite(dueAt) && dueAt > Date.now(),
-          'Intake must wait until the persisted schedule is due'
+          Date.parse(scheduled.nextCheckAt) > Date.now() + 4 * 60000,
+          'The system owns the batch interval'
         )
+        // Advance only this isolated persisted deadline; the real scheduler still claims and executes it.
+        const dueAt = Date.now() + 1000
+        const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
+        try {
+          database
+            .prepare(
+              "UPDATE loop_items SET metadata=json_set(metadata,'$.nextCheckAt',?) WHERE id=? AND resource_type='stand_in_processing'"
+            )
+            .run(new Date(dueAt).toISOString(), `stand-in-processing:${USER}`)
+        } finally {
+          database.close()
+        }
         const bindings = await waitFor(
           () => rpc(control, 'todos.bindings', { task_id: issue.id }),
           rows => rows.length === 1,
@@ -258,7 +257,7 @@ export function createDesktopScenario({
           value => value.task?.status === 'done',
           modelResponseTimeoutMs
         )
-        await control.command('click', '[data-testid="stand-in-primary-cancel"]')
+        await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         const firstRow = await waitForTaskRowByText(control, MARKER)
         await control.command('click', `[data-testid="${firstRow}"]`)
@@ -297,17 +296,11 @@ export function createDesktopScenario({
         assert.ok(!JSON.stringify(listed).includes(`stand-in-coordinator-${USER}`))
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
-        await control.command('click', '[data-testid="stand-in-settings-open"]')
-        await control.command('waitFor', '[data-testid="stand-in-processing-mode"]')
-        assert.equal(
-          await control.command('getValue', '[data-testid="stand-in-processing-mode"]'),
-          'silent'
-        )
-        await control.command('waitFor', '[data-testid="stand-in-processing-history"]')
-        await control.command('click', '[data-testid="stand-in-processing-history"] summary')
-        await captureScreenshot(control, 'silent-05-processing-history.png')
-        await control.command('click', '[data-testid="stand-in-primary-cancel"]')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        const history = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
+        assert.ok(history.actions.some(action => action.status === 'succeeded'))
+        await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
         const ordinary = await rpc(control, 'runtime.tasks.create', {
           taskId: `ordinary-user-${process.pid}`,

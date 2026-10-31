@@ -6,9 +6,14 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
-    settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
+    settings["roles"][0]["enabled"] = json!(true);
+    settings["roles"][0]["connections"] = json!([{ "providerId":"@wegent/dsh-connection-dingtalk/dingtalk", "id":"group", "profile":"default", "kind":"group", "name":"Group", "policy":{"automatic":true,"askBeforeAct":true,"immediate":false} }]);
     let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     (handler, store, settings)
+}
+
+fn connection_event() -> Value {
+    json!({"kind":"connection","source":{"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","id":"group","profile":"default","kind":"group"},"message":{"id":"event","text":"Source message","at":chrono::Utc::now().to_rfc3339()},"roleIds":["default"]})
 }
 
 #[tokio::test]
@@ -35,11 +40,7 @@ async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
     assert!(idle["lastCheckAt"].is_null());
     assert!(handler.local_task_links(true).is_empty());
     let event = store
-        .enqueue_stand_in_event(
-            7,
-            json!(["test"]),
-            json!({"kind":"connection","roleIds":["default"]}),
-        )
+        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
         .unwrap();
     handler
         .process_stand_in_user(&store, 7, false)
@@ -69,11 +70,7 @@ async fn commands_recover_after_restart_and_deferred_events_wait_until_due() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, settings) = fixture(root.path());
     let event = store
-        .enqueue_stand_in_event(
-            7,
-            json!(["test"]),
-            json!({"kind":"connection","roleIds":["default"]}),
-        )
+        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
         .unwrap();
     store
         .save_stand_in_processing_state(7, &json!({"batchId":"batch"}))
@@ -187,11 +184,7 @@ async fn events_waiting_on_a_queued_followup_do_not_launch_another_coordinator()
     let (handler, store, _) = fixture(root.path());
     handler.upsert_local_task(RuntimeTaskLink {local_task_id:"work".into(),status:"active".into(),interaction_status:Some("waitingForUserInput".into()),runtime_handle:json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),..Default::default()});
     let event = store
-        .enqueue_stand_in_event(
-            7,
-            json!(["one"]),
-            json!({"kind":"connection","roleIds":["default"]}),
-        )
+        .enqueue_stand_in_event(7, json!(["one"]), connection_event())
         .unwrap();
     store
         .save_stand_in_processing_state(
@@ -241,34 +234,20 @@ fn coordinator_is_persistent_but_absent_from_normal_task_lists() {
 }
 
 #[tokio::test]
-async fn switching_to_immediate_preserves_disabled_intake_and_isolates_source_failures() {
+async fn disconnected_sources_are_cancelled_before_entering_a_new_snapshot() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
-    settings["processing"]["mode"] = json!("immediate");
-    let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
-    for id in ["one", "two"] {
-        store.enqueue_stand_in_event(7,json!([id]),json!({"kind":"connection","source":{"id":id},"message":{"id":id},"roleIds":["default"]})).unwrap();
-    }
-    handler
-        .process_stand_in_user(&store, 7, false)
-        .await
+    store
+        .enqueue_stand_in_event(7, json!(["removed-source"]), connection_event())
         .unwrap();
-    assert!(store
-        .stand_in_events(7)
-        .unwrap()
-        .iter()
-        .all(|event| event["status"] == "pending"));
-    settings["roles"][0]["enabled"] = json!(true);
+    settings["roles"][0]["connections"] = json!([]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     handler
-        .process_stand_in_user(&store, 7, false)
+        .process_stand_in_user(&store, 7, true)
         .await
         .unwrap();
-    assert!(store
-        .stand_in_events(7)
-        .unwrap()
-        .iter()
-        .all(|event| event["status"] == "pending" && event["error"]["code"] == "source_removed"));
+    assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "cancelled");
+    assert!(store.stand_in_processing_state(7).unwrap()["snapshot"].is_null());
     assert!(handler.local_task_links(true).is_empty());
 }
 
@@ -277,7 +256,7 @@ async fn settings_save_waits_for_dispatch_and_cancelled_commands_stay_cancelled(
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
     let event = store
-        .enqueue_stand_in_event(7, json!(["test"]), json!({"kind":"followup"}))
+        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
         .unwrap();
     store
         .save_stand_in_processing_state(7, &json!({"batchId":"batch"}))
@@ -293,7 +272,7 @@ async fn settings_save_waits_for_dispatch_and_cancelled_commands_stay_cancelled(
         .unwrap();
     let gate = handler.task_send_gate("stand-in-processing:7");
     let guard = gate.lock().await;
-    settings["processing"]["mode"] = json!("immediate");
+    settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
     let save = handler.personal_stand_in_settings(json!({"userId":7,"settings":settings}), true);
     tokio::pin!(save);
     assert!(tokio::time::timeout(Duration::from_millis(10), &mut save)
@@ -312,11 +291,11 @@ async fn settings_save_waits_for_dispatch_and_cancelled_commands_stay_cancelled(
 }
 
 #[tokio::test]
-async fn saving_after_failed_processing_clears_old_error_and_uses_new_interval() {
+async fn saving_after_failed_processing_clears_old_error_and_keeps_system_owned_interval() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
     store
-        .enqueue_stand_in_event(7, json!(["test"]), json!({"kind":"followup"}))
+        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
         .unwrap();
     assert_eq!(
         handler
@@ -331,7 +310,7 @@ async fn saving_after_failed_processing_clears_old_error_and_uses_new_interval()
         "model_unavailable"
     );
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
-    settings["processing"]["intervalMinutes"] = json!(15);
+    settings["roles"][0]["prompt"] = json!("Updated requirements");
     handler
         .personal_stand_in_settings(json!({"userId":7,"settings":settings}), true)
         .await
@@ -340,12 +319,12 @@ async fn saving_after_failed_processing_clears_old_error_and_uses_new_interval()
     assert!(state["error"].is_null());
     assert!(
         chrono::DateTime::parse_from_rfc3339(state["nextCheckAt"].as_str().unwrap()).unwrap()
-            > chrono::Utc::now() + chrono::Duration::minutes(14)
+            > chrono::Utc::now() + chrono::Duration::minutes(4)
     );
 }
 
 #[tokio::test]
-async fn manual_checks_wait_for_busy_processing_and_revalidate_saved_mode() {
+async fn manual_checks_wait_for_busy_processing_and_revalidate_paused_identity() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
     let gate = handler.task_send_gate("stand-in-processing:7");
@@ -359,12 +338,12 @@ async fn manual_checks_wait_for_busy_processing_and_revalidate_saved_mode() {
     assert!(tokio::time::timeout(Duration::from_millis(10), &mut check)
         .await
         .is_err());
-    settings["processing"]["mode"] = json!("immediate");
+    settings["primary"] = json!({"enabled":false,"prompt":"","preferences":""});
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     drop(guard);
     assert_eq!(check.await.unwrap_err().code, "bad_request");
     let state = store.stand_in_processing_state(7).unwrap();
     assert!(state["error"].is_null());
-    assert!(state["nextCheckAt"].is_null());
+    assert!(state["nextCheckAt"].is_string());
     assert!(handler.local_task_links(true).is_empty());
 }

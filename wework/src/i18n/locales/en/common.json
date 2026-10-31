@@ -5328,6 +5328,18 @@
     "im_target": "Choose IM notification conversation"
   },
   "standIn": {
+    "project_coordinator": {
+      "open": "Talk to lead",
+      "title": "{{project}} · Lead",
+      "private_context": "Project context · Your conversation and memories are private",
+      "group": "Collaboration group",
+      "choose_group": "Choose a group in this project",
+      "no_group": "This project has no collaboration group yet.",
+      "configure": "Configure project groups",
+      "human_leader": "This group has a human lead. Work with them in the project Issues.",
+      "empty": "Discuss goals, assignments, and progress for {{project}}. Concrete work stays in its original Issue.",
+      "prompt": "Delegate project work or ask about progress…"
+    },
     "model_label": "Model",
     "agent_label": "Agent",
     "device_label": "Device",
@@ -5516,6 +5528,11 @@
       "no_connections_found": "No matching resources found.",
       "connected": "Added",
       "add": "Add",
+      "enable_connection_handling": "Enable automatic handling",
+      "connection_handling_disabled": "Automatic handling is disabled",
+      "time_connection": "Time",
+      "process_immediately": "Handle immediately",
+      "processing_background": "Let the stand-in arrange handling",
       "connection_help": "Only selected sources are received after saving. New connections ask before sending or modifying content.",
       "dingtalk_connections": "{{count}} DingTalk sources connected",
       "related_messages": "Related messages · {{count}}",
@@ -5593,7 +5610,8 @@
       "connect_source": "Connect {{name}}",
       "connection_status_plugin_disabled": "Connection plugin is disabled",
       "connection_status_plugin_unavailable": "Connection plugin is not ready",
-      "connection_status_dependency_unavailable": "Dependency status is temporarily unavailable"
+      "connection_status_dependency_unavailable": "Dependency status is temporarily unavailable",
+      "schedule_inherits_settings": "Uses the stand-in’s current device, model, and workspace settings when due."
     },
     "memory": {
       "title": "Memory",
@@ -5641,6 +5659,10 @@
       "connector_auth_required": "This connection requires authorization. Authorize the account and try again.",
       "source_removed": "This source was disconnected. Connect it again.",
       "connection_configuration_changed": "Connection settings changed during collection. Refresh and try again.",
+      "dependency_cloud_required": "This plugin comes from the Wework default marketplace. Sign in to Wework and connect the execution device to that account before installing the required plugin.",
+      "dependency_catalog_unavailable": "The required plugin could not be uniquely identified in the default marketplace. Refresh the marketplace and check its source and your account access before trying again.",
+      "dependency_conflict": "The dependency version or enabled state does not meet this connection’s requirements. Check it in plugin management and try again.",
+      "dependency_not_ready": "Plugin installation has not completed on the execution device. Check its plugin sync status, then refresh the connection when installation completes.",
       "dependency_missing": "A required source plugin is not installed. Open Stand-in settings, select the source under Connections, and choose Install required plugins. Then reload the source.",
       "connection_host_unavailable": "The connection service is temporarily unavailable. Try again later.",
       "connection_response_invalid": "The connection returned invalid data. Check the source and try again.",
@@ -5650,7 +5672,8 @@
       "failed": "The stand-in action failed. Try again later. If it persists, check the execution device logs.",
       "device_offline": "The execution device is offline. Connect it and try again.",
       "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent.",
-      "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again."
+      "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again.",
+      "leader_not_ai": "This group has a human leader. Choose an AI-led group or update the project leader."
     },
     "processing": {
       "title": "Automatic event handling",

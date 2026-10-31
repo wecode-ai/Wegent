@@ -64,7 +64,8 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
       ],
     },
   })
-  await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
   await control.command('click', '[data-testid="stand-in-settings-open"]')
   const row = `[data-testid="stand-in-connection-project-local-${project.id}"]`
   await control.command('waitFor', row, { text: name })

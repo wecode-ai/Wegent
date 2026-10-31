@@ -156,7 +156,8 @@ export function StandInSettingsPage({
       active = false
     }
   }, [view, selectedResourceId, services, setError])
-  const dirty = Boolean(draft && saved && !dequal(draft, saved))
+  const [scheduleDirty, setScheduleDirty] = useState(false)
+  const dirty = Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty
   useEffect(() => {
     onSavingChange?.(saving)
   }, [saving, onSavingChange])
@@ -189,6 +190,10 @@ export function StandInSettingsPage({
   const close = () => {
     if (saving) return
     setRoleNameError(false)
+    if (scheduleDirty) {
+      setConfirmDiscard(true)
+      return
+    }
     if (view !== (initialProject ? 'project' : 'main')) {
       const entry = history.at(-1)
       const previous = entry?.draft ?? saved
@@ -704,6 +709,8 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
+                  scheduling={{ userId, roleId: role.id }}
+                  onScheduleDirtyChange={setScheduleDirty}
                   projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
@@ -834,7 +841,7 @@ export function StandInSettingsPage({
               <button
                 type="button"
                 data-testid="stand-in-save"
-                disabled={saving || (view === 'project' && !projectRoleId)}
+                disabled={saving || scheduleDirty || (view === 'project' && !projectRoleId)}
                 onClick={() => void save(view === 'project' && projectEnabled)}
                 className="min-h-9 rounded-md bg-text-primary px-4 font-medium text-background disabled:opacity-40"
               >

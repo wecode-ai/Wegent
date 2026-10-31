@@ -27,6 +27,7 @@ export function StandInProcessingNotice({
         ? getStandInErrorMessage(latest.error)
         : undefined
       : undefined)
+  if (!failure && !status?.running && !status?.pendingCount && !status?.awaitingUser) return null
   return (
     <div
       className="flex items-center gap-3 px-5 py-2 text-sm"

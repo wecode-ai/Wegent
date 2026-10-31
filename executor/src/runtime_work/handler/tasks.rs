@@ -984,6 +984,12 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
+        let payload = if let Some(link) = &existing_link {
+            self.refresh_project_coordinator_payload(payload, link)
+                .await?
+        } else {
+            payload
+        };
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
         if let Some(response) = request_user_input_response(&payload) {

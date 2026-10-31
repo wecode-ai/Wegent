@@ -441,16 +441,15 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let user = configs[0]["userId"].as_i64().unwrap_or_default();
-            let settings = store
-                .personal_stand_in(user, &self.device_id)
-                .map_err(settings_error)?;
-            if settings["processing"]["mode"] == "silent" {
+            {
                 let roles: Vec<Value> =
                     super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
                         .iter()
                         .filter(|role| {
                             let id = self.stand_in_task_id(role, &binding);
-                            self.local_task_link(&id).is_none()
+                            !crate::task_runtime::personal_stand_in::immediate_policy(
+                                &role["handlingPolicy"],
+                            ) && self.local_task_link(&id).is_none()
                                 && !bindings.iter().any(|row| row.task_id == id)
                         })
                         .map(|role| role["id"].clone())
@@ -460,10 +459,14 @@ impl RuntimeWorkRpcHandler {
                         json!({"kind":"assignment","projectId":project,"projectStore":"local","issueId":issue.id,"assignmentId":binding["humanAssignmentId"],"issue":issue_value,"roleIds":roles})
                     ).map_err(settings_error)?;
                 }
-                continue;
             }
             for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
+                if !crate::task_runtime::personal_stand_in::immediate_policy(
+                    &config["handlingPolicy"],
+                ) {
+                    continue;
+                }
                 let task_id = self.stand_in_task_id(config, &binding);
                 if self.stand_in_task_is_handled(
                     config,
@@ -841,7 +844,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn prepare_stand_in_execution(
         &self,
-        mut payload: Value,
+        payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = self.stand_in_agent(config).await?.or_else(|| {
@@ -851,6 +854,16 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         });
+        self.prepare_stand_in_execution_with_agent(payload, config, agent)
+            .await
+    }
+
+    pub(super) async fn prepare_stand_in_execution_with_agent(
+        &self,
+        mut payload: Value,
+        config: &Value,
+        agent: Option<Value>,
+    ) -> Result<Value, AppIpcError> {
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
