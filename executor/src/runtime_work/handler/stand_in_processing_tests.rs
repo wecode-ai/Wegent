@@ -17,6 +17,53 @@ fn connection_event() -> Value {
 }
 
 #[tokio::test]
+async fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    settings["primary"]["enabled"] = json!(true);
+    settings["primary"]["model"] = json!({"runtime":"codex"});
+    let source_event = connection_event();
+    let work = store
+        .ingest_stand_in_message(
+            7,
+            "default",
+            &source_event["source"],
+            &source_event["message"],
+            None,
+        )
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let link = RuntimeTaskLink {
+        local_task_id: work_id.to_owned(),
+        status: "active".into(),
+        thread_id: Some("00000000-0000-0000-0000-000000000001".into()),
+        runtime_handle: json!({"origin":{"type":"connection_work","initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    };
+    handler.upsert_local_task(link.clone());
+    handler
+        .validate_followup_role(&store, 7, &settings["roles"][0], &link)
+        .await
+        .unwrap();
+    let event = store
+        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
+        .unwrap();
+    assert!(handler
+        .transcript(json!({"taskId":work_id,"limit":3}))
+        .await
+        .is_err());
+    // Model preparation can fail in this fixture; snapshot construction must still finish.
+    let _ = handler
+        .process_stand_in_user_on(&store, 7, &settings, true)
+        .await;
+    let state = store.stand_in_processing_state(7).unwrap();
+    assert!(state["batchId"].is_string());
+    assert_eq!(state["snapshot"]["works"], json!([]));
+    assert_eq!(state["snapshot"]["events"][0]["id"], event["id"]);
+    assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
+}
+
+#[tokio::test]
 async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());

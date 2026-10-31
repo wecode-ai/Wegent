@@ -295,11 +295,9 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
-            let transcript = self
-                .transcript(
-                    json!({"taskId":link.local_task_id,"limit":3,"includeFullContent":false}),
-                )
-                .await?;
+            let Some(transcript) = self.stand_in_work_transcript(&link.local_task_id).await else {
+                continue;
+            };
             works.push(json!({"taskId":link.local_task_id,"title":link.title,"roleId":link.runtime_handle["origin"]["standInId"],"origin":link.runtime_handle["origin"],"status":link.status,"interactionStatus":link.interaction_status,"transcript":transcript}));
         }
         state["batchId"] = json!(batch);
@@ -334,6 +332,22 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(())
+    }
+
+    async fn stand_in_work_transcript(&self, task_id: &str) -> Option<Value> {
+        match self
+            .transcript(json!({"taskId":task_id,"limit":3,"includeFullContent":false}))
+            .await
+        {
+            Ok(transcript) => Some(transcript),
+            Err(error) => {
+                log_executor_event(
+                    "Stand-in work transcript unavailable",
+                    &[("task_id", task_id.to_owned()), ("code", error.code)],
+                );
+                None
+            }
+        }
     }
 
     fn coordinator_work(&self, user: i64) -> Vec<RuntimeTaskLink> {

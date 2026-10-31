@@ -1552,6 +1552,9 @@ classify_path() {
     wework/e2e/desktop/scenarios/stand-in-processing.scenario.mjs|wework/src/features/todo/StandInProcessing*|wework/src/features/todo/useStandInProcessingStatus*|executor/src/runtime_work/handler/stand_in_processing*|executor/src/task_runtime/stand_in_processing.rs|executor/src/task_runtime/mcp/stand_in_processing.rs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"
+      if [[ "$path" == executor/src/runtime_work/handler/stand_in_processing* ]]; then
+        select_collaboration_dispatch_checkpoints
+      fi
       return
       ;;
     wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs | \
