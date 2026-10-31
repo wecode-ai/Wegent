@@ -13,6 +13,7 @@ export function PersonalStandInWorkspace({
   user,
   devices,
   active,
+  contentRoute,
   onClose,
   onOpenTask,
 }: {
@@ -20,13 +21,15 @@ export function PersonalStandInWorkspace({
   user: User
   devices: DeviceInfo[]
   active: boolean
+  contentRoute: string
   onClose(): void
   onOpenTask(address: RuntimeTaskAddress): Promise<void> | void
 }) {
   const { t, i18n } = useTranslation('common')
-  const query = new URLSearchParams(window.location.search)
+  const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const profileId = query.get('profileId') ?? undefined
   const deviceId = query.get('deviceId') ?? undefined
+  const workView = query.get('view') === 'scheduled' ? 'scheduled' : 'work'
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -88,7 +91,7 @@ export function PersonalStandInWorkspace({
         key={`${profileId ?? 'primary'}:${deviceId ?? 'default'}`}
         initialProfileId={profileId}
         initialDeviceId={deviceId}
-        initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
+        initialWorkView={workView}
         api={api}
         projects={projects}
         services={services}

@@ -18,7 +18,7 @@ import { APPLICATION_MENU_ACTIONS } from './applicationMenuModel'
 /** Routes reachable from the Work menu; they reuse the workbench navigation. */
 export const APPLICATION_MENU_WORK_ROUTES: Record<string, string> = {
   [APPLICATION_MENU_ACTIONS.openPlugins]: '/plugins',
-  [APPLICATION_MENU_ACTIONS.openAutomations]: '/automations',
+  [APPLICATION_MENU_ACTIONS.openAutomations]: '/stand-in?view=scheduled',
   [APPLICATION_MENU_ACTIONS.openApplications]: '/sites',
 }
 

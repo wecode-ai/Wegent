@@ -264,6 +264,7 @@ export async function createDesktopScenario({
       assert.equal(saved.enabled, true)
       assert.ok(saved.executionDeviceId)
       assert.equal(saved.prompt, MARKER)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
       // The project header reloads after saving; the sidebar can already be visible.
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-enabled"]`)
@@ -385,6 +386,7 @@ export async function createDesktopScenario({
       await discardStandInDraft(control)
       // Personal settings close independently of the project board. Re-enter
       // the fixture project before using its project-scoped stand-in control.
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'click',
         `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`

@@ -1,3 +1,4 @@
+import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
@@ -63,6 +64,25 @@ export function StandInOverviewPage({
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   const automationRef = useRef<AutomationNavigationHandle>(null)
+  useEffect(() => {
+    if (!active) return
+    const onNavigate = (event: Event) => {
+      const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
+      if (!route) return
+      const [pathname, search] = route.split('?')
+      if (pathname !== '/stand-in' || new URLSearchParams(search).get('view') !== 'scheduled')
+        return
+      const openView = () => {
+        setWorkView('scheduled')
+        setChatting(!roleId)
+      }
+      // Preserve settings drafts and guard every request, including the same URL.
+      if (automationRef.current) automationRef.current.requestLeave(openView)
+      else openView()
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [active, roleId])
   const leaveSchedules = (action: () => void) => {
     if (automationRef.current) automationRef.current.requestLeave(action)
     else action()
@@ -455,6 +475,8 @@ export function StandInOverviewPage({
             <div
               className="fixed inset-0 z-modal bg-black/20 text-text-primary"
               data-testid="stand-in-profile-backdrop"
+              style={{ display: active ? undefined : 'none' }}
+              inert={!active}
               onMouseDown={event => {
                 pressedInPanel.current = event.target !== event.currentTarget
               }}
@@ -519,6 +541,7 @@ export function StandInOverviewPage({
                     {...props}
                     ref={panelRef}
                     initialProfileId={roleId}
+                    initialDeviceId={deviceId}
                     initialCreate={profile === 'create'}
                     onDeleted={() => {
                       setRoleId(undefined)
@@ -527,8 +550,10 @@ export function StandInOverviewPage({
                       setProfile(null)
                     }}
                     onCancel={() => setProfile(null)}
-                    onSaved={() => {
-                      reload()
+                    onSaved={value => {
+                      if (value.executionDeviceId && value.executionDeviceId !== deviceId)
+                        state.setDeviceId(value.executionDeviceId)
+                      else reload()
                       setProfile(null)
                     }}
                   />

@@ -294,7 +294,9 @@ export function DesktopWorkbenchLayout({
     ownedWorkspaceTab?.kind === 'board'
       ? ownedWorkspaceTab.contentRoute
       : `${currentPath}${window.location.search}`
-  const standInOpen = !routeWorkItemsOpen && currentPath === '/stand-in'
+  const standInContentRoute =
+    ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
+  const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
   const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
@@ -1125,6 +1127,7 @@ export function DesktopWorkbenchLayout({
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
           {standInOpen && (
             <PersonalStandInWorkspace
+              contentRoute={standInContentRoute}
               services={services}
               user={state.user ?? LOCAL_USER}
               devices={state.devices}

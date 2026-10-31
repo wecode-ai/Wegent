@@ -4,6 +4,7 @@ export async function openProjectStandIn(
   entry,
   { connect = false, requirements = true, onConnections } = {}
 ) {
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   // Returning from personal settings remounts the project page asynchronously.
   await control.command('clickWhenEnabled', entry)
   await control.command('waitFor', '[data-testid="stand-in-project-select"]')

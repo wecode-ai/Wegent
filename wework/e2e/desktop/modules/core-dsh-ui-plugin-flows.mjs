@@ -104,7 +104,7 @@ const UI_PLUGINS = [
     directory: 'wework-ui-automations',
     slot: 'wework.route',
     contributions: ['automations.root'],
-    navigation: { id: 'automations.navigation', testId: 'automation-button' },
+    navigation: null,
     route: '/automations',
     testId: 'create-automation-button',
   },
@@ -225,6 +225,12 @@ export async function verifyCoreDshUiPluginComposition({
       )
     )
     await assertInstalledFeatureVisible(control, plugin)
+    if (plugin.name === '@wegent/dsh-ui-automations') {
+      assert.equal(
+        (await readSlots(control))['wework.sidebar.navigation']?.includes('automations.navigation'),
+        false
+      )
+    }
     if (plugin.name === '@wegent/dsh-conversation-export') {
       await verifyConversationExportOutsideWorkspace(control, resultDir)
     }
@@ -600,6 +606,11 @@ async function setPluginEnabledAndRestart(control, origin, restartDesktopApp, pl
 
 async function dismissCodexHomeInitializer(control) {
   const selector = '[data-testid="codex-home-initializer-dialog"]'
+  // The migration status is asynchronous; an absent dialog before this gate
+  // does not mean initialization has completed after a desktop restart.
+  await control.command('waitFor', `${selector}, [data-testid="projects-create-button"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   if (Number(await control.command('getElementCount', selector)) === 0) return
   await control.command('click', '[data-testid="codex-home-initializer-create-button"]')
   await withTimeout(

@@ -14,7 +14,27 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import '@/i18n'
+import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { StandInOverviewPage } from './StandInOverviewPage'
+const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
+vi.mock('@/features/automations/AutomationsPage', async () => {
+  const { useImperativeHandle } = await import('react')
+  return {
+    AutomationsPage: ({ ref }: { ref: import('react').Ref<unknown> }) => {
+      useImperativeHandle(ref, () => ({ requestLeave: menuMocks.leave }))
+      return <div data-testid="scheduled-work-fixture" />
+    },
+  }
+})
+function requestScheduledWork() {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in?view=scheduled' },
+      })
+    )
+  })
+}
 vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
@@ -424,4 +444,35 @@ it('shows plugin installation guidance for a failed source and clears it after r
   await waitFor(() =>
     expect(screen.queryByText(/Example group · 来源所需插件尚未安装/)).not.toBeInTheDocument()
   )
+})
+
+it('keeps unsaved settings mounted when the menu requests scheduled work', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await user.click(await screen.findByTestId('stand-in-settings-open'))
+  const field = await screen.findByTestId('stand-in-preferences')
+  await user.type(field, '保留菜单切换前的草稿')
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-preferences')).toBe(field)
+  expect(field).toHaveValue('保留菜单切换前的草稿')
+  await user.click(screen.getByTestId('stand-in-profile-backdrop'))
+  expect(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).toBeInTheDocument()
+})
+
+it('handles repeated scheduled menu requests and guards each request after cancellation', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('stand-in-overview-role-default')
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByTestId('stand-in-work-view-work'))
+  requestScheduledWork()
+  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
+  menuMocks.leave.mockImplementationOnce(() => {})
+  requestScheduledWork()
+  const afterCancellation = menuMocks.leave.mock.calls.length
+  requestScheduledWork()
+  expect(menuMocks.leave).toHaveBeenCalledTimes(afterCancellation + 1)
 })
