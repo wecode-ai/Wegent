@@ -79,15 +79,15 @@ pnpm --filter wework ai:verify:electron:build
 ```
 
 该命令会准备 Electron、Codex、DWS 和 Executor sidecar，并在当前操作系统生成原生
-应用；Windows 产物为
-`wework/electron/release/WeWork-win32-x64/WeWork.exe`，不能用 Linux 或 macOS
-产物替代。
+应用；Windows 产物按架构写入 `wework/electron/release/WeWork-win32-<arch>/WeWork.exe`，
+不能用其他架构、Linux 或 macOS 产物替代。
 
-`.github/workflows/wework-e2e.yml` 会在 `windows-latest` 上构建该原生应用，并让
-Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回归会运行全部
-18 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
-分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
-Windows job 验证，其他平台的通过结果不能替代它。
+`.github/workflows/wework-e2e.yml` 在 `windows-latest` 构建 x64 应用，在
+`windows-11-arm` 构建 arm64 应用，并让 Windows Desktop Core E2E 复用 Linux 的同一份
+Core 分片矩阵。完整回归会运行全部 10 个 Core 分片；路径分类只选中部分 checkpoint 时，
+Linux、Windows x64 和 Windows arm64 仍运行完全相同的已选分片。Windows 路径、盘符、
+UNC 路径、命名管道和 `.exe` sidecar 行为必须由对应架构的 Windows job 验证，其他平台或
+架构的通过结果不能替代它。
 
 Windows CI 缓存 pnpm store，每次安装时重建依赖链接，不恢复 `node_modules`
 目录链接。E2E 使用随构建产物打包的 Socket.IO 客户端。远程设备 HOME 查询会将
@@ -101,13 +101,16 @@ Windows 工作区克隆会启用并保存 `core.longpaths=true`，确保 Git 模
 
 普通用户 CI 进程的 stdout/stderr 会实时转发，并独立保存到
 `.ci-artifacts/windows-standard-user/`，避免其他运行时文件被锁定时丢失进程日志。
-新桌面窗口的就绪握手使用已有的 180 秒启动预算；缺少就绪事件会明确失败并保存
-诊断，而不是一直等到整个 CI job 被终止。
+新桌面窗口的就绪握手通常使用 180 秒启动预算；Windows arm64 的打包冷启动 E2E 使用
+600 秒的有界 deadline。缺少就绪事件会明确失败并保存诊断，而不是一直等到整个 CI job
+被终止；这些 E2E 上限不代表产品启动性能目标。
 抽屉 E2E 分别通过 Electron 的媒体偏好控制验证正常动画与减少动态效果，结束后恢复
 系统偏好。固定环境面板场景会显式建立足够宽的窗口，避免误测窄窗口的浮动面板。
 
-正式安装器、代码签名和 Electron YAML 更新清单由
-`.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
+Windows x64 的正式安装器、代码签名和 Electron YAML 更新清单由
+`.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。Windows arm64 在
+`windows-11-arm` 上生成独立安装器与组件更新目录；首个 arm64 发布没有旧客户端，因此不生成
+Electron updater YAML 通道。
 
 ## 常见问题
 

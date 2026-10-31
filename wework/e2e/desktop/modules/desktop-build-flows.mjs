@@ -1,6 +1,9 @@
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { basename } from 'node:path'
+
+import { resolveDesktopPackageTargets } from '../../../scripts/lib/desktop-package-target.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -410,16 +413,11 @@ async function buildExecutor() {
 }
 
 function hostCodexTarget() {
-  const targetByPlatformAndArch = {
-    'darwin:arm64': 'aarch64-apple-darwin',
-    'darwin:x64': 'x86_64-apple-darwin',
-    'linux:arm64': 'aarch64-unknown-linux-gnu',
-    'linux:x64': 'x86_64-unknown-linux-gnu',
-    'win32:x64': 'x86_64-pc-windows-msvc',
-  }
-  const target = targetByPlatformAndArch[`${process.platform}:${process.arch}`]
-  assert.ok(target, `Unsupported Codex E2E host: ${process.platform}/${process.arch}`)
-  return target
+  return codexTargetFor(process.platform, process.arch)
+}
+
+export function codexTargetFor(platform, arch) {
+  return resolveDesktopPackageTargets({}, { platform, arch }).codexTarget
 }
 
 async function resolveDesktopCodexBinary() {
@@ -487,7 +485,10 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     const archivePath = join(packagedResources, runtime.assetName)
     const extracted = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extracted, { recursive: true })
-    await runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir })
+    // GNU tar treats a Windows drive letter in the archive operand as a remote host.
+    await runChecked('tar', ['-xzf', `./${basename(archivePath)}`, '-C', extracted], {
+      cwd: dirname(archivePath),
+    })
     const dshEntry = join(extracted, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     await readFile(dshEntry)
   }

@@ -89,16 +89,17 @@ pnpm --filter wework ai:verify:electron:build
 
 This command prepares Electron, Codex, DWS, and the Executor sidecar, then
 produces a native application for the current operating system. On Windows the
-result is `wework/electron/release/WeWork-win32-x64/WeWork.exe`; a Linux or
-macOS package is not an equivalent substitute.
+result is `wework/electron/release/WeWork-win32-<arch>/WeWork.exe`; another
+architecture, Linux, or macOS package is not an equivalent substitute.
 
-`.github/workflows/wework-e2e.yml` builds this native application on
-`windows-latest` and runs Windows Desktop Core E2E with the same Core shard
-matrix used by Linux. A complete regression runs all 18 Core shards. When path
-classification selects only specific checkpoints, both platforms still run the
-same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
-sidecar behavior must be verified by this Windows job and cannot be inferred
-from another platform passing.
+`.github/workflows/wework-e2e.yml` builds the x64 application on `windows-latest`
+and the arm64 application on `windows-11-arm`, then runs Windows Desktop Core E2E
+with the same Core shard matrix used by Linux. A complete regression runs all 10
+Core shards. When path classification selects only specific checkpoints, Linux,
+Windows x64, and Windows arm64 still run the same selected shards. Windows path,
+drive-letter, UNC, named-pipe, and `.exe` sidecar behavior must be verified by the
+corresponding Windows architecture job and cannot be inferred from another
+platform or architecture passing.
 
 Windows CI caches the pnpm store and rebuilds dependency links on every install
 instead of restoring archived `node_modules` links. E2E uses the Socket.IO client
@@ -114,16 +115,21 @@ whose SQLite cache was created by an administrator.
 
 Standard-user CI processes forward stdout/stderr live and keep separate logs in
 `.ci-artifacts/windows-standard-user/`, preserving process output when other
-runtime files remain locked. New desktop window readiness handshakes use the
-existing 180-second startup budget. Missing readiness events fail explicitly
-and save diagnostics instead of waiting for the entire CI job to be terminated.
+runtime files remain locked. New desktop window readiness handshakes normally use
+the 180-second startup budget; the Windows arm64 packaged cold-start E2E uses a
+bounded 600-second deadline. Missing readiness events fail explicitly and save
+diagnostics instead of waiting for the entire CI job to be terminated. These E2E
+limits are not product startup performance targets.
 Drawer E2E uses Electron media preferences to verify both normal animation and
 reduced motion, then restores the system preference. Docked environment panel
 scenarios explicitly establish a wide window rather than exercising the narrow
 window's floating popover.
 
-`.github/workflows/wework-app.yml` creates the signed installer and Electron
-YAML update manifest on `windows-latest`.
+`.github/workflows/wework-app.yml` creates the Windows x64 signed installer and
+Electron YAML update manifest on `windows-latest`. It creates the separate
+Windows arm64 installer and component update catalogs on `windows-11-arm`; the
+first arm64 release has no legacy clients and therefore no Electron updater YAML
+channel.
 
 ## Troubleshooting
 

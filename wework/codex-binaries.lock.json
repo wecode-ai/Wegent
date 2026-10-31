@@ -36,6 +36,13 @@
       "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.165.0-win32-x64.tgz",
       "integrity": "sha512-f5LMyugPSnAovnTnR1N+SNHSTfWZ+ym5A4H3zZHz/zhuMGMGZD8IxUdlSUlEbiENYyPXrJ8G3Jh+CLyzTfQB6Q==",
       "binaryPath": "vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+    },
+    "aarch64-pc-windows-msvc": {
+      "package": "@openai/codex",
+      "version": "0.165.0-win32-arm64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.165.0-win32-arm64.tgz",
+      "integrity": "sha512-6HLE44VQECPITRZN85NCV/w268Fw/083VKe+5ReOKO9wlL6Kyq1j1mLP2vZ3rmr0goG/HOykrJpZZT0aUD1ntg==",
+      "binaryPath": "vendor/aarch64-pc-windows-msvc/bin/codex.exe"
     }
   }
 }

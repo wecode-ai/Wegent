@@ -55,6 +55,7 @@ async function fixture() {
 test.each([
   ['macos', 'arm64', 'mac-arm64/WeWork.app/Contents/Resources'],
   ['macos', 'x64', 'mac/WeWork.app/Contents/Resources'],
+  ['windows', 'arm64', 'win-arm64-unpacked/resources'],
   ['windows', 'x64', 'win-unpacked/resources'],
   ['linux', 'arm64', 'linux-arm64-unpacked/resources'],
   ['linux', 'x64', 'linux-unpacked/resources'],
@@ -65,7 +66,7 @@ test.each([
 })
 
 test('rejects unsupported delivered packages', () => {
-  expect(() => deliveredPackagePaths('/installer', 'windows', 'arm64')).toThrow(
+  expect(() => deliveredPackagePaths('/installer', 'windows', 'ia32')).toThrow(
     'Unsupported delivered package'
   )
 })

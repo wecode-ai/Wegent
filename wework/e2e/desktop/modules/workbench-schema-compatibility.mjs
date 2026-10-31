@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 import { verifyWindowsComponentPublication } from './workbench-component-publication.mjs'
@@ -332,9 +332,9 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   delete environment.ELECTRON_RUN_AS_NODE
   // Packaged executables always launch their own app; use the matching Electron toolchain
   // to import the packaged modules with real Electron APIs available.
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const { stdout } = await promisify(execFile)(
-    require('electron'),
+    electronBinary,
     [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
     {
       env: environment,

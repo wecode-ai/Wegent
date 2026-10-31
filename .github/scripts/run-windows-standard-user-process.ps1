@@ -44,6 +44,20 @@ try {
     throw "Failed to grant the Windows E2E account access to the workspace"
   }
 
+  # pnpm installs these trees before the temporary standard user exists. Grant
+  # access recursively so workbench startup and local harness CLIs can read and
+  # execute their hardlinked package files.
+  foreach ($dependencyRoot in @(
+    (Join-Path $workspace ".github/claude-code-cli/node_modules"),
+    (Join-Path $workspace "wework/electron/node_modules")
+  )) {
+    if (-not (Test-Path -LiteralPath $dependencyRoot)) { continue }
+    & icacls.exe $dependencyRoot /grant "${env:COMPUTERNAME}\${userName}:(OI)(CI)M" /T /Q
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to grant the Windows E2E account access to $dependencyRoot"
+    }
+  }
+
   $profileBootstrap = Start-Process `
     -FilePath $env:ComSpec `
     -ArgumentList "/d", "/c", "exit", "0" `

@@ -2520,9 +2520,11 @@ wework_windows_desktop_core_build_job+="$wework_windows_build_action"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"inputs.arch"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"aarch64-pc-windows-msvc"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
@@ -2567,7 +2569,7 @@ if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name !=
   exit 1
 fi
 if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
-  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 4 ]]; then
   printf 'Wework E2E summary must check Windows Core only when explicitly scheduled\n' >&2
   exit 1
 fi
@@ -2579,13 +2581,13 @@ fi
 
 if [[ "$wework_desktop_cloud_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_job" == *"name: Set up Node workspace"* ]] ||
-  [[ "$(grep -Fc 'name: Prune transient Wework desktop E2E caches' "$wework_workflow")" -ne 5 ]]; then
+  [[ "$(grep -Fc 'name: Prune transient Wework desktop E2E caches' "$wework_workflow")" -ne 6 ]]; then
   printf 'Wework desktop shards must avoid workspace dependency restores and prune transient caches\n' >&2
   exit 1
 fi
 
 managed_components_exclusion='!wework/test-results/desktop-e2e/**/managed-components/**'
-if [[ "$(grep -Fc "$managed_components_exclusion" "$wework_workflow")" -ne 7 ]] ||
+if [[ "$(grep -Fc "$managed_components_exclusion" "$wework_workflow")" -ne 9 ]] ||
   [[ "$(grep -Fc "$managed_components_exclusion" \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must exclude materialized components\n' >&2
@@ -2593,14 +2595,14 @@ if [[ "$(grep -Fc "$managed_components_exclusion" "$wework_workflow")" -ne 7 ]] 
 fi
 
 test_archive_exclusion='!wework/test-results/desktop-e2e/**/*.zip'
-if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 7 ]] ||
+if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 9 ]] ||
   [[ "$(grep -Fc "$test_archive_exclusion" \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must exclude test archives\n' >&2
   exit 1
 fi
 
-if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 7 ]] ||
+if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 9 ]] ||
   [[ "$(grep -Fc 'compression-level: 6' \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must compress retained evidence\n' >&2
@@ -2614,7 +2616,7 @@ for generated_path_exclusion in \
   '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
   '!wework/test-results/desktop-e2e/**/node-runtime/**' \
   '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do
-  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 5 ]]; then
+  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 6 ]]; then
     printf 'Wework desktop diagnostics must exclude generated Electron runtime files\n' >&2
     exit 1
   fi

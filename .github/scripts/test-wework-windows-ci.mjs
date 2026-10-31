@@ -119,11 +119,21 @@ for (const job of [
 }
 for (const job of [
   "build-wework-desktop-windows-core-e2e",
+  "build-wework-desktop-windows-core-e2e-arm64",
   "wework-desktop-windows-core-e2e",
+  "wework-desktop-windows-core-e2e-arm64",
 ]) {
   const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
   assert.equal(block.match(/^    if: (.+)$/m)?.[1], gate, job);
 }
+const arm64Build = workflow
+  .split("  build-wework-desktop-windows-core-e2e-arm64:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+assert.match(
+  arm64Build,
+  /timeout-minutes: 120/,
+  "The arm64 build must allow for cold-cache dependency installation",
+);
 assert.ok(
   workflow.includes("RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ " + gate + " }}"),
 );
@@ -150,7 +160,9 @@ for (const [buildResult, shardResult, expected] of [
       CHANGES_RESULT: "success",
       RUN_WINDOWS_DESKTOP_CORE_E2E: "true",
       WINDOWS_DESKTOP_CORE_BUILD_RESULT: buildResult,
+      WINDOWS_DESKTOP_CORE_BUILD_ARM64_RESULT: buildResult,
       WINDOWS_DESKTOP_CORE_E2E_RESULT: shardResult,
+      WINDOWS_DESKTOP_CORE_E2E_ARM64_RESULT: shardResult,
     },
     encoding: "utf8",
   });

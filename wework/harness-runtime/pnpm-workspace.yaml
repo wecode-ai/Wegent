@@ -25,3 +25,6 @@ minimumReleaseAgeExclude:
   - '@aws-sdk/types@3.974.5'
   - '@aws-sdk/xml-builder@3.972.40'
   - 'jose@6.2.10'
+
+overrides:
+  sherpa-onnx-node: 2.0.1

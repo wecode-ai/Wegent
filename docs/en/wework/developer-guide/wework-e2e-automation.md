@@ -917,12 +917,13 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Linux and Windows Desktop Core E2E consume the same shard matrix produced by
-the classifier; a complete classification runs every declared Core shard on both
-platforms. The Windows job builds native `WeWork.exe`,
-`wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
-running checkpoints. A cross-platform package or a single Windows smoke test is
-not equivalent coverage.
+Linux, Windows x64, and Windows arm64 Desktop Core E2E consume the same shard
+matrix produced by the classifier; a complete classification runs every declared
+Core shard for each target. The Windows x64 job uses `windows-latest`, while the
+Windows arm64 job uses `windows-11-arm`; each builds native `WeWork.exe`,
+`wegent-executor.exe`, and `codex.exe` artifacts for its architecture before
+running checkpoints. A cross-platform or cross-architecture package, or a single
+Windows smoke test, is not equivalent coverage.
 
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit

@@ -7,7 +7,7 @@ import { componentReleaseScope, MANAGED_COMPONENT_IDS } from '../desktop-compone
 export function deliveredPackagePaths(installerRoot, platform, arch) {
   const directories = {
     macos: { arm64: 'mac-arm64', x64: 'mac' },
-    windows: { x64: 'win-unpacked' },
+    windows: { arm64: 'win-arm64-unpacked', x64: 'win-unpacked' },
     linux: { arm64: 'linux-arm64-unpacked', x64: 'linux-unpacked' },
   }
   const directory = directories[platform]?.[arch]

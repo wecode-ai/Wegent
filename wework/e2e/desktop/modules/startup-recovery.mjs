@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { appendFile, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { packagedResourcesRoot } from './workbench-schema-compatibility.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -27,12 +27,12 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
     require('electron').app.exit(1);
   });`
   )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const environment = { ...process.env }
   delete environment.ELECTRON_RUN_AS_NODE
   const args = [scriptPath, JSON.stringify(input), 'runtime', ...resolveElectronLaunchArguments()]
   try {
-    await promisify(execFile)(require('electron'), args, {
+    await promisify(execFile)(electronBinary, args, {
       env: environment,
       timeout: 60_000,
       maxBuffer: 1024 * 1024,

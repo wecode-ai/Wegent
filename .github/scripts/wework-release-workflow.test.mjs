@@ -51,6 +51,7 @@ test('all installers build while release upgrade E2E runs only on arm64 macOS an
       ['macos', 'arm64'],
       ['macos', 'x64'],
       ['windows', 'x64'],
+      ['windows', 'arm64'],
       ['linux', 'x64'],
     ]
   )
