@@ -27,6 +27,7 @@ from app.schemas.subscription import (
     SubscriptionTriggerType,
 )
 from app.services.subscription import subscription_service
+from app.services.subscription.helpers import preview_belongs_to_user
 
 logger = logging.getLogger(__name__)
 
@@ -746,6 +747,15 @@ def create_subscription(
             ensure_ascii=False,
         )
 
+    if not preview_belongs_to_user(preview_data, token_info.user_id):
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Not authorized to confirm this preview",
+            },
+            ensure_ascii=False,
+        )
+
     # Use preview configuration
     display_name = preview_data.get("display_name", display_name)
     description = preview_data.get("description", description)
@@ -774,8 +784,6 @@ def create_subscription(
             ensure_ascii=False,
         )
 
-    # Clear preview after using it
-    _clear_preview_data(preview_id)
     logger.info(f"[MCP:Subscription] Using preview {preview_id} to create subscription")
 
     # Generate unique subscription name
@@ -826,6 +834,8 @@ def create_subscription(
         result = subscription_service.create_subscription(
             db, subscription_in=subscription_data, user_id=token_info.user_id
         )
+        # Failed creation must leave the authorized preview available for retry.
+        _clear_preview_data(preview_id)
 
         # Format success response
         next_time_str = None

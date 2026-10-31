@@ -79,6 +79,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
     test_task_token: str,
     monkeypatch,
 ) -> None:
+    """Keep mounted MCP transports initialized and enforce tool authentication."""
     project = _create_project(test_db, test_user)
     tool_session_factory = sessionmaker(bind=test_db.get_bind())
     monkeypatch.setattr(wework_space, "SessionLocal", tool_session_factory)

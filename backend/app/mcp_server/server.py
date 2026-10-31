@@ -1113,6 +1113,7 @@ def _normalize_prefix(prefix: str) -> str:
 
 
 def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
+    """Apply a URL prefix and restrict only transports selected for Rust."""
     effective_spec = replace(spec, mount_path=f"{prefix}{spec.mount_path}")
     # Restrict only the migrated API mount; unprefixed aliases remain Python-owned.
     if effective_spec.mount_path == "/api/mcp/interactive-form-question":
