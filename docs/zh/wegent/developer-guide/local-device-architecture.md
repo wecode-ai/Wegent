@@ -96,6 +96,8 @@ Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 
 
 Wework 的 DSH 通道通过独立的本地 endpoint 连接订阅 executor 事件。事件序号、断线重放和历史丢失检测全部由 executor 负责：executor 为事件分配单调递增的 `sequence`，并维护同时受 4096 条事件和 8 MiB 限制的内存日志；客户端重连时携带最后已消费的序号，executor 原子地返回其后的日志快照并继续发送实时事件，避免快照与订阅之间的竞态。请求序号已经落后于日志窗口或超出当前最新序号时，executor 发送带 `event_history_lost` 原因的 `executor.event_lagged`，由 Wework 通过 transcript 重新收敛。
 
+桌面生命周期按任务地址记录已结束的回合 ID，来源包括终态事件、权威任务完成快照和 transcript 中的终态回合。设备别名合并时保留这些记录；重放的开始事件或运行中历史不能重新激活同一回合。新的回合 ID 仍按正常发送和 Goal 调度流程进入运行态。
+
 Electron 层不保存事件日志、不生成序号，也不实现重放或合并策略。它只把 executor 的专用事件 socket 桥接为 renderer 使用的 SSE；如果 `res.write()` 表示浏览器端产生 HTTP 背压，Electron 会关闭上游 socket 和当前 SSE，让 renderer 使用最后已消费的 executor 序号重新连接。这样锁屏、系统休眠或 renderer reload 不会让未消费事件在 Electron 中无界增长，也不会把流正确性绑定到 Electron 的调度状态。
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
@@ -222,7 +224,7 @@ Wework 发起压缩前先解析目标会话保存的模型选择，并用当前�
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
-助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
+助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若没有明确 final，缺少 phase 的末尾助手文本仅在根回合成功结束、且其后没有工具、推理、计划或压缩活动时成为最终结果，并携带 `valueOrigin=final`。明确的分析和进度文本保持 `process_fallback` 来源，钉钉等渠道不得将其作为最终答案发送。
 
 标准云端 executor 的回调链路也必须保留这一 item 身份：正文增量携带 `block_id`（provider item ID）和按 Unicode 码点计数的块内 `block_offset`，全局 `offset` 继续表示正文流的位置。Backend 缓冲只能合并同一块内连续的增量，Redis 按块内偏移原子追加未见过的后缀；同一 ID 的完成块原位更新已存储的文本。这样 phase 从 `final_answer` 变为 `commentary` 时，实时消息、运行中刷新和最终历史都只保留一份内容；不同 ID 的相同文本仍分别保留。
 

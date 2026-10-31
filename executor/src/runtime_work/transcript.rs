@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::codex_item::{
+    is_codex_context_compaction_item_type, is_codex_tool_output_item_type,
+    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type,
+    is_substantive_process_item_type,
+};
+
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -17,11 +23,9 @@ use crate::{
 
 use super::codex_user_input::async_question_render_payload;
 use super::util::{
-    bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
-    is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
-    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
-    normalize_workspace_path, now_ms, raw_string_field, raw_string_field_ref, reasoning_content,
-    string_field, timestamp_ms_field,
+    bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field, item_id,
+    item_type, normalize_workspace_path, now_ms, raw_string_field, raw_string_field_ref,
+    reasoning_content, string_field, timestamp_ms_field,
 };
 
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
@@ -1129,17 +1133,6 @@ fn is_agent_message(item: &Value) -> bool {
         item_type(item).as_str(),
         "agentmessage" | "agentmessageevent"
     )
-}
-
-fn is_substantive_process_item_type(item_type: &str) -> bool {
-    is_codex_tool_item_type(item_type)
-        || is_codex_tool_output_item_type(item_type)
-        || is_likely_codex_tool_item_type(item_type)
-        || matches!(
-            item_type,
-            "reasoning" | "plan" | "filechange" | "patchapplyend"
-        )
-        || is_codex_context_compaction_item_type(item_type)
 }
 
 fn collab_agent_ids(item: &Value) -> Vec<String> {

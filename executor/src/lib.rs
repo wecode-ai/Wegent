@@ -10,6 +10,7 @@ mod artifact_workspace;
 pub mod attachments;
 pub mod browser_mcp;
 pub mod callback;
+mod codex_item;
 mod codex_phase;
 pub mod computer_use_mcp;
 pub mod config;
