@@ -16,7 +16,12 @@ const CACHE_DIRECTORY_NAMES = new Set([
   'GrShaderCache',
   'ShaderCache',
 ])
-const RETAINED_TOP_LEVEL_DIRECTORIES = new Set(['electron-user-data', 'backend-rs-logs'])
+const RETAINED_TOP_LEVEL_DIRECTORIES = new Set([
+  'electron-user-data',
+  'backend-rs-logs',
+  'electron-logs',
+  'release-logs',
+])
 const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
 const TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN = /\.(?:tar(?:\.(?:gz|zst))?|tgz|zip)$/iu
 const REBUILDABLE_USER_DATA_DIRECTORY_NAMES = new Set(['managed-components', 'managed-runtimes'])
