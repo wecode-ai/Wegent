@@ -2,6 +2,10 @@ name: Build Windows Wework desktop E2E artifact
 description: Restore or build the exact Windows desktop package, with main-owned shared caches
 
 inputs:
+  arch:
+    description: Windows architecture to build (x64 or arm64)
+    required: false
+    default: x64
   save-cache:
     description: Whether the trusted main branch may populate shared caches
     required: false
@@ -25,7 +29,7 @@ runs:
       id: build-cache
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        path: wework/electron/release/WeWork-win32-x64
+        path: wework/electron/release/WeWork-win32-${{ inputs.arch }}
         key: ${{ steps.build-key.outputs.key }}
 
     - name: Set up Node workspace
@@ -62,7 +66,7 @@ runs:
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
-        key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
     - name: Build Windows Wework Electron E2E application
       if: steps.build-cache.outputs.cache-hit != 'true'
@@ -71,9 +75,11 @@ runs:
         CI: true
         WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
         WEWORK_EXECUTOR_PROFILE: debug
+        WEWORK_RELEASE_ARCH: ${{ inputs.arch }}
+        WEWORK_RELEASE_PLATFORM: windows
       run: |
         pnpm --filter wework ai:verify:electron:build
-        node wework/scripts/build-desktop-e2e-client.mjs wework/electron/release/WeWork-win32-x64/resources/e2e-client
+        node wework/scripts/build-desktop-e2e-client.mjs wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client
 
     - name: Build Rust Backend Windows E2E gateway
       if: steps.build-cache.outputs.cache-hit != 'true'
@@ -83,20 +89,24 @@ runs:
         $env:CARGO_TARGET_DIR = $backendRsTarget
         cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
         $backendRsBin = Join-Path $backendRsTarget "debug/wegent-backend-rs.exe"
-        $appBackendRsBin = "wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe"
+        $appBackendRsBin = "wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/bin/wegent-backend-rs.exe"
         Copy-Item -LiteralPath $backendRsBin -Destination $appBackendRsBin -Force
 
     - name: Verify complete Windows desktop package
       shell: bash
       run: |
-        test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
-        test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
-        test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
-        test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
-        test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
-        test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
-        test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
-        test -f wework/electron/release/WeWork-win32-x64/resources/components.json
+        codex_target=x86_64-pc-windows-msvc
+        if [[ "${{ inputs.arch }}" == "arm64" ]]; then
+          codex_target=aarch64-pc-windows-msvc
+        fi
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/WeWork.exe
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/bin/wegent-executor.exe
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/bin/wegent-backend-rs.exe
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/codex/vendor/${codex_target}/bin/codex.exe
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client/socket.io-client.cjs
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client/yaml.cjs
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/components.json
 
     - name: Save Windows build dependencies
       if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' && steps.dependencies.outputs.cache-hit != 'true'
@@ -121,5 +131,5 @@ runs:
       if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        path: wework/electron/release/WeWork-win32-x64
+        path: wework/electron/release/WeWork-win32-${{ inputs.arch }}
         key: ${{ steps.build-key.outputs.key }}

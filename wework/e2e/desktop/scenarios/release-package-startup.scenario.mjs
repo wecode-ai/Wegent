@@ -3,6 +3,8 @@ import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 
+import { legacyDshRuntimeIsPublished } from '../modules/dsh-runtime-cache.mjs'
+
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
 const NATIVE_CONSUMER = '@wework-e2e/native-dsh-consumer'
@@ -171,10 +173,18 @@ async function assertReleasePackageResources() {
   const legacy = catalog.downloadableRuntimes.find(
     runtime => runtime.role === 'workbench' && runtime.dshVersion === '0.1.0-rc.8'
   )
-  assert.ok(legacy, 'The packaged catalog must retain the legacy Smart app download descriptor')
-  await assert.rejects(lstat(join(resourcesRoot, 'harness-runtime', legacy.assetName)), {
-    code: 'ENOENT',
-  })
+  if (legacyDshRuntimeIsPublished()) {
+    assert.ok(legacy, 'The packaged catalog must retain the legacy Smart app download descriptor')
+    await assert.rejects(lstat(join(resourcesRoot, 'harness-runtime', legacy.assetName)), {
+      code: 'ENOENT',
+    })
+  } else {
+    assert.equal(
+      legacy,
+      undefined,
+      'The first Windows arm64 release must not advertise a nonexistent legacy runtime'
+    )
+  }
   assert.match(
     components.sourceSha,
     /^[0-9a-f]{40,64}$/i,

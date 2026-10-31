@@ -14,7 +14,10 @@ import {
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
+import {
+  legacyDshRuntimeIsPublished,
+  verifyDownloadedDshRuntimeCache,
+} from './dsh-runtime-cache.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from './smart-app-marketplace-identity.mjs'
 
@@ -467,11 +470,13 @@ export async function verifyHarnessLifecycle(
     timeoutMs: 30_000,
   })
   await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
-  assert.deepEqual(
-    await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
-    legacyRuntimeCache,
-    'Reopening an authenticated app must preserve the verified legacy runtime archive'
-  )
+  if (legacyDshRuntimeIsPublished()) {
+    assert.deepEqual(
+      await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
+      legacyRuntimeCache,
+      'Reopening an authenticated app must preserve the verified legacy runtime archive'
+    )
+  }
   const reopenedAppTabId = await control.command('getAttribute', appSurface, {
     value: 'data-workspace-tab-id',
   })

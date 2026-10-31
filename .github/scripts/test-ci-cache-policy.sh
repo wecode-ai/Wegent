@@ -304,7 +304,7 @@ fi
 
 wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
 if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
-  "$wework_e2e_workflow")" -ne 1 ]] ||
+  "$wework_e2e_workflow")" -ne 2 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
     "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"' \
@@ -610,7 +610,7 @@ fi
 
 if ! ruby -ryaml - "$wework_workflow" <<'RUBY'
 jobs = YAML.load_file(ARGV[0])['jobs']
-['wework-desktop-core-e2e', 'wework-desktop-windows-core-e2e'].each do |name|
+['wework-desktop-core-e2e', 'wework-desktop-windows-core-e2e', 'wework-desktop-windows-core-e2e-arm64'].each do |name|
   steps = jobs.fetch(name).fetch('steps')
   prepare = steps.index { |step| step['name'] == 'Install Electron for native startup and schema verification' }
   run = steps.index { |step| step['name'].match?(/Run (Windows )?Wework desktop Core shard E2E/) }
@@ -619,12 +619,17 @@ jobs = YAML.load_file(ARGV[0])['jobs']
   ['workbench-mode', 'native-window-startup'].each do |segment|
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
-  expected_commands = [
-    'pnpm --dir wework/electron install --frozen-lockfile',
-    %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
-  ]
   commands = step['run'].lines.map(&:strip).reject(&:empty?)
-  abort "#{name} must install and verify the locked Electron toolchain" unless commands == expected_commands
+  abort "#{name} must install the locked Electron toolchain" unless commands.first == 'pnpm --dir wework/electron install --frozen-lockfile'
+  if name.include?('windows')
+    resolved = step['run'].include?("const binary = require('electron');")
+    verified = resolved && step['run'].include?('fs.statSync(binary)')
+    exported = step['run'].include?('WEWORK_E2E_ELECTRON_BIN=') && step['run'].include?('process.env.GITHUB_ENV')
+    abort "#{name} must verify and export its native Electron binary" unless verified && exported
+  else
+    expected = %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
+    abort "#{name} must verify the locked Electron toolchain" unless commands == [commands.first, expected]
+  end
 end
 RUBY
 then

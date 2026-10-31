@@ -9,7 +9,10 @@ import {
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { readFile, access } from 'node:fs/promises'
-import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
+import {
+  legacyDshRuntimeIsPublished,
+  verifyDownloadedDshRuntimeCache,
+} from './dsh-runtime-cache.mjs'
 import { waitForEmbeddedBrowserVisibility } from './embedded-browser-visibility.mjs'
 
 export async function verifyHarnessDevelopment(
@@ -98,11 +101,13 @@ export async function verifyHarnessDevelopment(
     '0.2.0-rc.2',
     'A newly created Smart app must launch the current Workbench runtime'
   )
-  assert.deepEqual(
-    await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
-    legacyRuntimeCache,
-    'Launching another app must preserve the verified legacy archive cache'
-  )
+  if (legacyDshRuntimeIsPublished()) {
+    assert.deepEqual(
+      await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
+      legacyRuntimeCache,
+      'Launching another app must preserve the verified legacy archive cache'
+    )
+  }
   assert.equal(blankWorkbenchSnapshot.workbench?.currentProject, null)
   assert.equal(
     blankWorkbenchSnapshot.workbench?.standaloneWorkspacePath,

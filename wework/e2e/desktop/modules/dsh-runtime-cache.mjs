@@ -3,21 +3,35 @@ import { createHash } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+// The first native Windows arm64 release has no published 0.1.0-rc.8 arm64
+// runtime. There are no pre-existing arm64 clients that could request it.
+export function legacyDshRuntimeIsPublished(platform = process.platform, arch = process.arch) {
+  return !(platform === 'win32' && arch === 'arm64')
+}
+
 export async function verifyDefaultOnlyDshPackage(resourceRoot, runtimeRoot) {
   const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
   assert.deepEqual(
     [...new Set(catalog.runtimes.map(runtime => runtime.dshVersion))],
     ['0.2.0-rc.2']
   )
-  const legacy = catalog.downloadableRuntimes.find(runtime => runtime.dshVersion === '0.1.0-rc.8')
-  assert.ok(legacy, 'The package must retain the pinned legacy runtime download descriptor')
-  await assert.rejects(stat(join(resourceRoot, legacy.assetName)), { code: 'ENOENT' })
-  await assert.rejects(stat(join(runtimeRoot, legacy.sourceFingerprint)), { code: 'ENOENT' })
   assert.equal(
     (await readdir(runtimeRoot)).includes('archives'),
     false,
     'The scenario must start without downloaded runtime archives'
   )
+  const legacy = catalog.downloadableRuntimes.find(runtime => runtime.dshVersion === '0.1.0-rc.8')
+  if (!legacyDshRuntimeIsPublished()) {
+    assert.equal(
+      legacy,
+      undefined,
+      'The first Windows arm64 release must not advertise a nonexistent legacy runtime'
+    )
+    return
+  }
+  assert.ok(legacy, 'The package must retain the pinned legacy runtime download descriptor')
+  await assert.rejects(stat(join(resourceRoot, legacy.assetName)), { code: 'ENOENT' })
+  await assert.rejects(stat(join(runtimeRoot, legacy.sourceFingerprint)), { code: 'ENOENT' })
 }
 
 export async function verifyDownloadedDshRuntimeCache(runtimeRoot, version) {

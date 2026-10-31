@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -19,6 +19,11 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     await cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
       recursive: true,
     })
+    await mkdir(join(directory, 'wework/scripts/lib'), { recursive: true })
+    await cp(
+      join(weworkDir, 'scripts/lib/desktop-package-target.mjs'),
+      join(directory, 'wework/scripts/lib/desktop-package-target.mjs')
+    )
     // CI reads these runtime files from its checkout without installing workspace packages.
     for (const runtimePath of [
       'packages/chat-core/package.json',

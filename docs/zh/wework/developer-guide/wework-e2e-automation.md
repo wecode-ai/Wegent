@@ -769,10 +769,11 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
-Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵；完整分类会在
-两个平台分别运行分类器定义的全部 Core 分片。Windows job 使用 `windows-latest` 构建
-原生 `WeWork.exe`、`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，
-不能用跨平台构建产物或单个 Windows smoke test 替代。
+Linux、Windows x64 与 Windows arm64 Desktop Core E2E 共享分类器输出的同一份分片矩阵；
+完整分类会分别运行分类器定义的全部 Core 分片。Windows x64 job 使用 `windows-latest`，
+Windows arm64 job 使用 `windows-11-arm`，分别构建对应架构的原生 `WeWork.exe`、
+`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，不能用跨平台或跨架构构建产物、
+单个 Windows smoke test 替代。
 
 普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
 完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
