@@ -5636,6 +5636,7 @@
       "connector_auth_required": "此连接需要授权，请完成账号授权后重试。",
       "source_removed": "该来源已断开连接，请重新添加来源。",
       "connection_configuration_changed": "采集期间连接设置发生变化，请刷新后重试。",
+      "dependency_missing": "来源所需插件尚未安装。请打开分身设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。",
       "connection_host_unavailable": "连接服务暂不可用，请稍后重试。",
       "connection_response_invalid": "连接返回的数据无效，请检查来源后重试。",
       "stand_in_dispatch_unknown": "无法确认分身任务的启动结果，请先检查任务列表。",

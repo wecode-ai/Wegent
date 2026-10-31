@@ -389,3 +389,39 @@ it('routes a pending background confirmation to its real Runtime task', async ()
     runtime: 'codex',
   })
 })
+
+it('shows plugin installation guidance for a failed source and clears it after reloading', async () => {
+  const { props } = fixture()
+  const source = {
+    providerId: 'dingtalk',
+    id: 'group-1',
+    profile: 'default',
+    name: 'Example group',
+    kind: 'group',
+    policy: { automatic: false, askBeforeAct: true },
+  }
+  const inbox = vi.mocked(props.services.standInApi.inbox)
+  inbox.mockResolvedValue({
+    items: [],
+    sourceErrors: [
+      { source, error: { code: 'dependency_missing', message: 'Dependency dingtalk is missing' } },
+    ],
+  })
+  const retrySource = vi.fn(async () => {
+    inbox.mockResolvedValue({ items: [], sourceErrors: [] })
+  })
+  props.services.standInApi.retrySource = retrySource
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  const guidance = await screen.findByText(/Example group · 来源所需插件尚未安装/)
+  expect(guidance).toHaveTextContent('「连接」')
+  expect(guidance).toHaveTextContent('「安装所需插件」')
+  expect(guidance).toHaveTextContent('安装后重新加载')
+  expect(screen.queryByText('Dependency dingtalk is missing')).not.toBeInTheDocument()
+  expect(retrySource).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-source-retry-group-1'))
+  expect(retrySource).toHaveBeenCalledWith(7, 'device', source)
+  await waitFor(() =>
+    expect(screen.queryByText(/Example group · 来源所需插件尚未安装/)).not.toBeInTheDocument()
+  )
+})

@@ -5641,6 +5641,7 @@
       "connector_auth_required": "This connection requires authorization. Authorize the account and try again.",
       "source_removed": "This source was disconnected. Connect it again.",
       "connection_configuration_changed": "Connection settings changed during collection. Refresh and try again.",
+      "dependency_missing": "A required source plugin is not installed. Open Stand-in settings, select the source under Connections, and choose Install required plugins. Then reload the source.",
       "connection_host_unavailable": "The connection service is temporarily unavailable. Try again later.",
       "connection_response_invalid": "The connection returned invalid data. Check the source and try again.",
       "stand_in_dispatch_unknown": "The stand-in task’s start result is unknown. Check the task list first.",
