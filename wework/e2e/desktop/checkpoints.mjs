@@ -113,6 +113,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-periodic-reconcile',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
+  'plugin-personal-publication',
   'project-ai-settings',
   'model-routing',
   'fork-provider-preservation',

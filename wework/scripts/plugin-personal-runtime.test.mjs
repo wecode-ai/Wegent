@@ -1,13 +1,134 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
   restorePersonalPluginRuntime,
+  resetPersonalRecipientAccount,
   switchPersonalPluginAccount,
 } from '../e2e/desktop/modules/plugin-personal-uninstall-flow.mjs'
 
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+})
+
+async function recipientResetFixture(verify) {
+  const root = await mkdtemp(join(tmpdir(), 'personal-recipient-reset-'))
+  const sourcePath = join(root, 'source')
+  const registryPath = join(root, 'cloud-links.json')
+  const bytes = 'Author source must survive recipient fixture cleanup\n'
+  const registry = '{"cloudLinks":[]}'
+  const hash = value => createHash('sha256').update(value).digest('hex')
+  await mkdir(sourcePath)
+  await writeFile(join(sourcePath, 'README.md'), bytes)
+  await writeFile(registryPath, registry)
+  const plugin = { id: 7, name: 'personal-source', latestReleaseId: 8, version: '1.1.1' }
+  const recipient = { id: '42', pluginId: 7, releaseId: 6, enabled: true }
+  const access = { pluginId: 7, scope: 'restricted', targets: [{ entityId: '3' }], allowCopy: true }
+  const account = {
+    metadata: { labels: { id: recipient.id } },
+    spec: { ...recipient, source: { pluginKey: plugin.name } },
+  }
+  let member = account
+  const deletes = []
+  const fetch = vi.fn(async (url, options) => {
+    const token = options.headers.Authorization
+    if (options.method === 'DELETE') {
+      deletes.push({ url, token })
+      assert.equal(token, 'Bearer recipient-token')
+      assert.ok(url.endsWith('/plugins/installed/42'))
+      member = null
+      return new Response(null, { status: 204 })
+    }
+    if (url.endsWith('/plugins/installed'))
+      return Response.json({ items: token === 'Bearer owner-token' || !member ? [] : [member] })
+    if (url.endsWith('/access')) return Response.json(access)
+    assert.ok(url.endsWith('/plugins/marketplace/7'))
+    return Response.json(plugin)
+  })
+  vi.stubGlobal('fetch', fetch)
+  const input = {
+    cloudEnvironment: { backendUrl: 'https://cloud.example', authToken: 'owner-token' },
+    recipientCloud: { backendUrl: 'https://cloud.example', authToken: 'recipient-token' },
+    plugin,
+    recipient,
+    access,
+    source: {
+      sourcePath,
+      registryPath,
+      files: { 'README.md': hash(bytes) },
+      registryDigest: hash(registry),
+    },
+  }
+  try {
+    await verify({ input, fetch, deletes, sourcePath, bytes })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+test('resets only the checked recipient membership after the author lifecycle and preserves source', async () => {
+  await recipientResetFixture(async ({ input, deletes, sourcePath, bytes }) => {
+    assert.equal(await resetPersonalRecipientAccount(input), '42')
+    assert.deepEqual(deletes, [
+      { url: 'https://cloud.example/api/plugins/installed/42', token: 'Bearer recipient-token' },
+    ])
+    assert.equal(await readFile(join(sourcePath, 'README.md'), 'utf8'), bytes)
+  })
+})
+
+test('rejects a changed recipient identity before deleting any membership', async () => {
+  await recipientResetFixture(async ({ input, deletes }) => {
+    input.recipient.id = '43'
+    await assert.rejects(
+      resetPersonalRecipientAccount(input),
+      /changed another account installation/
+    )
+    assert.deepEqual(deletes, [])
+  })
+})
+
+test('propagates recipient cleanup failure without retrying the destructive request', async () => {
+  await recipientResetFixture(async ({ input, fetch }) => {
+    fetch.mockResolvedValueOnce(
+      Response.json({
+        items: [
+          {
+            metadata: { labels: { id: '42' } },
+            spec: {
+              pluginId: 7,
+              releaseId: 6,
+              enabled: true,
+              source: { pluginKey: input.plugin.name },
+            },
+          },
+        ],
+      })
+    )
+    fetch.mockResolvedValueOnce(new Response(null, { status: 500 }))
+    await assert.rejects(resetPersonalRecipientAccount(input), /DELETE.*HTTP 500/)
+    assert.equal(fetch.mock.calls.length, 2)
+    assert.deepEqual(
+      fetch.mock.calls.map(([, options]) => options.method),
+      ['GET', 'DELETE']
+    )
+  })
+})
+
+test('detects author source damage during recipient fixture cleanup', async () => {
+  await recipientResetFixture(async ({ input, fetch, sourcePath }) => {
+    const respond = fetch.getMockImplementation()
+    fetch.mockImplementation(async (url, options) => {
+      const response = await respond(url, options)
+      if (options.method === 'DELETE')
+        await writeFile(join(sourcePath, 'README.md'), 'Unexpected source replacement\n')
+      return response
+    })
+    await assert.rejects(resetPersonalRecipientAccount(input), /changed author source bytes/)
+  })
 })
 
 test('same-account recovery waits for both real connection surfaces without reloading', async () => {

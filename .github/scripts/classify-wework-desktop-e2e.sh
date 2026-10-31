@@ -212,6 +212,7 @@ cloud_segments=(
   plugin-background-sync-isolation
   plugin-periodic-reconcile
   plugin-workspace-publication
+  plugin-personal-publication
   plugin-toggle-persistence
 )
 # Balance measured checkpoint durations across four workers, longest first.
@@ -221,7 +222,7 @@ cloud_segments=(
 cloud_shards=(
   plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
   core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets
-  plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination
+  plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination,plugin-personal-publication
   model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
@@ -486,6 +487,7 @@ classify_wework_path() {
       wework/src/components/plugins/hooks/usePluginDetailSelection* | \
       wework/src/components/plugins/hooks/usePluginVersionSubmission*)
       select_target "cloud:plugin-workspace-publication"
+      select_target "cloud:plugin-personal-publication"
       ;;
   esac
 
@@ -502,10 +504,11 @@ classify_wework_path() {
       select_target "core:device-artifact-declaration"
       return
       ;;
-    wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
+    wework/e2e/desktop/scenarios/plugin-personal-publication.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
       wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
       wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
-      select_target "cloud:plugin-workspace-publication"
+      select_target "cloud:plugin-personal-publication"
       return
       ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)

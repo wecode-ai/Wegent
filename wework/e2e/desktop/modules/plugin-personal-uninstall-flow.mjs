@@ -65,7 +65,7 @@ async function snapshotPersonalSource(control, plugin) {
   }
 }
 
-async function assertPersonalSourceUnchanged(snapshot) {
+export async function assertPersonalSourceUnchanged(snapshot) {
   assert.deepEqual(
     await sourceFiles(snapshot.sourcePath),
     snapshot.files,
@@ -389,6 +389,30 @@ export async function prepareAuthorAccountInstall({
   await openPersonalPlugin(control, plugin, { expectSourceConflict: true })
   assert.equal(String(installed.plugin.metadata.labels.id), identity.id)
   return { identity, source }
+}
+
+export async function resetPersonalRecipientAccount({
+  cloudEnvironment,
+  recipientCloud,
+  plugin,
+  source,
+  recipient,
+  access,
+}) {
+  // The author lifecycle has finished checking this exact membership. Remove
+  // only the recipient's fixture so its final UI install starts without intent.
+  assert.ok(recipient?.id, 'The recipient fixture identity is required')
+  await assertAccountIdentity(recipientCloud, plugin, recipient)
+  await pluginApi(recipientCloud, `/plugins/installed/${recipient.id}`, 'DELETE')
+  assert.equal(
+    await accountPlugin(recipientCloud, plugin.name),
+    undefined,
+    'The managed-install fixture retained recipient membership'
+  )
+  await assertAccountIdentity(cloudEnvironment, plugin, null)
+  await assertPersonalSourceUnchanged(source)
+  await assertSharedRelease(cloudEnvironment, plugin, access)
+  return recipient.id
 }
 
 export async function verifyRecipientUninstallDoesNotRemoveOwner({

@@ -1759,14 +1759,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           codexHome,
           control,
           desktopScenario,
-          executorHome,
           executorLogPath,
           restartDesktopApp,
           setPhase: value => {
             phase = value
           },
           workspacePath,
-          userDataDirectory: electronUserDataDirectory,
         })
         await writeFile(
           join(resultDir, 'model-requests.json'),

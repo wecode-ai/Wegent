@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchJson, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
-import { accountPlugin, testId, until } from './plugin-regression-fixture.mjs'
+import { accountPlugin, pluginApi, testId, until } from './plugin-regression-fixture.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 import { verifyPersonalRecipientManagedInstall } from './plugin-personal-recipient-install.mjs'
 import {
   prepareAuthorAccountInstall,
+  assertPersonalSourceUnchanged,
+  disconnectPersonalPluginRuntime,
+  resetPersonalRecipientAccount,
   switchPersonalPluginAccount,
   verifyAuthorAccountUninstall,
   verifyAuthorSourceUninstall,
@@ -227,27 +230,16 @@ export async function verifyPersonalPluginVersionSubmission({
     executorHome,
   })
   recordPhase('author-account-install')
-  let managedRecipient
+  // Cross-account checks need real membership, but not a second Runtime yet.
+  await pluginApi(recipientCloud, `/plugins/marketplace/${after.id}/install`, 'POST')
+  const recipientAccount = await accountPlugin(recipientCloud, after.name)
+  assert.ok(recipientAccount, 'The cross-account fixture omitted recipient membership')
+  assert.equal(recipientAccount.spec.pluginId, Number(after.id))
+  assert.equal(recipientAccount.spec.releaseId, after.latestReleaseId)
+  recordPhase('recipient-account-fixture')
   let crossAccountUninstall
   try {
-    managedRecipient = await verifyPersonalRecipientManagedInstall({
-      cloudEnvironment,
-      control,
-      restartDesktopApp,
-      plugin: after,
-      recipientToken: login.access_token,
-      // Return to the retained source with the recipient still signed in. This
-      // shares the runtime-home restoration with the cross-account checks.
-      restoreToken: login.access_token,
-      executorHome,
-      codexHome,
-      userDataDirectory,
-    })
-    recordPhase('recipient-managed-install')
-    const connection = JSON.parse(
-      await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
-    )
-    assert.equal(connection.user.id, recipient.id, 'The source runtime restored the wrong account')
+    runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, recipientCloud))
     await control.command('navigate', 'body', { value: '/plugins' })
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('click', testId('plugins-distribution-tab-personal'))
@@ -357,6 +349,50 @@ export async function verifyPersonalPluginVersionSubmission({
   })
   after = authorLifecycle.plugin
   recordPhase('author-source-uninstall-reinstall')
+  const resetRecipientInstallId = await resetPersonalRecipientAccount({
+    cloudEnvironment,
+    recipientCloud,
+    plugin: after,
+    source: authorLifecycle.source,
+    recipient: authorLifecycle.recipient,
+    access: accessBefore,
+  })
+  recordPhase('recipient-account-reset')
+  // End on the clean recipient Runtime. The checkpoint owns teardown, so there
+  // is no return to the author Home and no third desktop process restart.
+  const managedRecipient = await verifyPersonalRecipientManagedInstall({
+    cloudEnvironment,
+    control,
+    restartDesktopApp,
+    plugin: after,
+    recipientToken: login.access_token,
+    recipientId: recipient.id,
+    userDataDirectory,
+  })
+  await assertPersonalSourceUnchanged(authorLifecycle.source)
+  assert.equal(await accountPlugin(cloudEnvironment, after.name), undefined)
+  assert.ok(managedRecipient.runtimeInstanceId, 'The recipient Runtime omitted its identity')
+  const recipientDevice = await until(
+    async () =>
+      (await pluginApi(recipientCloud, '/devices')).items?.find(
+        device =>
+          device.runtime_instance_id === managedRecipient.runtimeInstanceId &&
+          device.app_device_id === managedRecipient.deviceId &&
+          device.status === 'online'
+      ),
+    Boolean,
+    'The managed package has no online recipient Runtime registration'
+  )
+  await disconnectPersonalPluginRuntime(control, recipientCloud, after)
+  await until(
+    () => pluginApi(recipientCloud, '/devices'),
+    devices =>
+      devices.items?.some(
+        device => device.id === recipientDevice.id && device.status === 'offline'
+      ),
+    'The recipient device must be offline before revocation verification'
+  )
+  recordPhase('recipient-managed-install')
   const ownerContract = await verifyOwnerApiContract({
     control,
     cloudEnvironment,
@@ -390,17 +426,22 @@ export async function verifyPersonalPluginVersionSubmission({
   recordPhase('http-contracts')
   assert.equal(
     runtimeCost.processRestarts.length,
-    3,
+    2,
     'Personal publication added a process restart'
   )
   assert.ok(
     runtimeCost.processRestarts.every(restart => !restart.deviceSwitch),
     'Personal publication must reuse the initialized Electron device'
   )
-  assert.equal(runtimeCost.accountSwitches.length, 1)
+  assert.deepEqual(
+    runtimeCost.processRestarts.map(restart => restart.runtimeHomeSwitch),
+    [false, true],
+    'Author persistence must restart the same Home before the final recipient switch'
+  )
+  assert.equal(runtimeCost.accountSwitches.length, 2)
   const flowCommands = control.commandHistory.slice(commandStart)
   const accountCommands = flowCommands.filter(command => command.action === 'setCloudSessionToken')
-  assert.equal(accountCommands.length, 1)
+  assert.equal(accountCommands.length, 2)
   assert.ok(
     accountCommands.every(command => command.value === '[redacted]'),
     'Account-switch diagnostics exposed a backend token'
@@ -411,7 +452,7 @@ export async function verifyPersonalPluginVersionSubmission({
   const runtimeReconnects = flowCommands.filter(
     command => command.action === 'reconnectLocalExecutorCloud'
   ).length
-  assert.equal(rendererReloads, 1, 'Personal publication added a full renderer reload')
+  assert.equal(rendererReloads, 2, 'Personal publication added a full renderer reload')
   assert.equal(runtimeReconnects, 2)
   const inventoryRefreshes = flowCommands.filter(
     command =>
@@ -434,6 +475,7 @@ export async function verifyPersonalPluginVersionSubmission({
         after,
         access: accessBefore,
         managedRecipient,
+        resetRecipientInstallId,
         crossAccountUninstall,
         ownerContract,
         recipientAccess,

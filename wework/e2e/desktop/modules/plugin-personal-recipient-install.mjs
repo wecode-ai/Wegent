@@ -177,14 +177,11 @@ export async function verifyPersonalRecipientManagedInstall({
   restartDesktopApp,
   plugin,
   recipientToken,
-  restoreToken,
-  executorHome,
-  codexHome,
+  recipientId,
   userDataDirectory,
 }) {
-  assert.ok(executorHome && codexHome && userDataDirectory, 'Owner runtime paths are required')
+  assert.ok(userDataDirectory, 'The initialized Electron profile is required')
   assert.ok(control.url, 'The existing synthetic model server URL is required')
-  assert.ok(restoreToken, 'The account for the restored source runtime is required')
   const recipientRoot = join(resultDir, 'personal-recipient-device')
   const recipientExecutorHome = join(recipientRoot, 'executor-home')
   const recipientCodexHome = join(recipientExecutorHome, 'codex')
@@ -218,6 +215,10 @@ export async function verifyPersonalRecipientManagedInstall({
     setPhase('wait-recipient-runtime')
     const recipientRuntime = await readyExecutor(control)
     assert.equal(recipientRuntime.deviceId, ownerRuntime.deviceId)
+    const connection = JSON.parse(
+      await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+    )
+    assert.equal(connection.user.id, recipientId, 'The clean Runtime loaded the wrong account')
     const recipientMarketplace = await waitForBundledPluginMarketplace(
       control,
       WORKBENCH_READY_TIMEOUT_MS
@@ -247,25 +248,16 @@ export async function verifyPersonalRecipientManagedInstall({
     await assertRecipientActions(control, plugin)
     await captureVerificationScreenshot(control, 'personal-plugin-recipient-managed-install.png')
     setPhase('complete')
-    return { deviceId: recipientRuntime.deviceId, installedId, managed, disconnectedInstallBlocked }
+    return {
+      deviceId: recipientRuntime.deviceId,
+      runtimeInstanceId: recipientRuntime.runtimeInstanceId,
+      installedId,
+      managed,
+      disconnectedInstallBlocked,
+    }
   } catch (error) {
     console.log(`[personal-plugin-recipient] failed-phase=${phase}`)
     await captureRecipientFailure(control, phase)
     throw error
-  } finally {
-    setPhase('restore-owner')
-    await restartDesktopApp({
-      appEnvironmentOverrides: {
-        WEGENT_EXECUTOR_HOME: executorHome,
-        WEGENT_CODEX_HOME: codexHome,
-        CODEX_HOME: codexHome,
-        WEWORK_USER_DATA_DIR: userDataDirectory,
-        WEWORK_E2E_CLOUD_TOKEN: restoreToken,
-      },
-    })
-    const restored = await readyExecutor(control)
-    assert.equal(restored.deviceId, ownerRuntime.deviceId)
-    const marketplace = await waitForBundledPluginMarketplace(control, WORKBENCH_READY_TIMEOUT_MS)
-    assert.equal(marketplace?.path, ownerMarketplace.path, 'The author runtime was not restored')
   }
 }
