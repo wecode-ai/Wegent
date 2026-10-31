@@ -116,7 +116,7 @@ impl RuntimeWorkRpcHandler {
             .filter(|text| !text.trim().is_empty())
         else {
             return Ok(
-                json!({"taskId":task_id,"address":self.local_task_link(&task_id).map(|_|json!({"deviceId":self.device_id,"taskId":task_id}))}),
+                json!({"taskId":task_id,"address":self.local_task_link(&task_id).map(|_|self.identity_conversation_address(&task_id))}),
             );
         };
         let prepared = self
@@ -133,7 +133,7 @@ impl RuntimeWorkRpcHandler {
                 "Project conversation was not accepted",
             ));
         }
-        Ok(json!({"taskId":task_id,"address":{"deviceId":self.device_id,"taskId":task_id}}))
+        Ok(json!({"taskId":task_id,"address":self.identity_conversation_address(&task_id)}))
     }
 
     async fn prepare_project_coordinator_turn(

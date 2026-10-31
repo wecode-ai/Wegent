@@ -261,10 +261,11 @@ export function createDesktopScenario({
           value => value.task?.status === 'done',
           modelResponseTimeoutMs
         )
-        await control.command('click', '[data-testid="new-chat-button"]')
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-        const firstRow = await waitForTaskRowByText(control, MARKER)
-        await control.command('click', `[data-testid="${firstRow}"]`)
+        // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
+        const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
+        await control.command('waitFor', workCard)
+        await control.command('click', workCard)
+        await control.command('click', '[data-testid="stand-in-preview-open"]')
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: 'SILENT_WORK_DONE',
         })
@@ -306,6 +307,14 @@ export function createDesktopScenario({
         assert.ok(history.actions.some(action => action.status === 'succeeded'))
         await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
+        // Register its code workspace separately from the collaboration project's Issue storage.
+        await control.command('seedLocalProject', 'body', {
+          value: JSON.stringify({
+            projectKey: 'silent-ordinary-workspace',
+            name: '已有工作的代码项目',
+            path: workspacePath,
+          }),
+        })
         const ordinary = await rpc(control, 'runtime.tasks.create', {
           taskId: `ordinary-user-${process.pid}`,
           title: '用户已有的普通任务',

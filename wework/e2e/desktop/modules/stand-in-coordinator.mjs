@@ -164,6 +164,11 @@ export function createStandInCoordinatorVerification({
       await control.command('waitFor', '[data-testid="project-coordinator-chat"]')
       const chat = '[data-testid="project-coordinator-chat"]'
       await selectE2EModel(control, undefined, undefined, chat)
+      const selectedModelLabel = await control.command(
+        'getText',
+        `${chat} [data-testid="model-selector-button"]`
+      )
+      assert.ok(!selectedModelLabel.includes('选择模型'))
       await captureScreenshot(control, '26-project-private-chat.png')
       await control.command('fill', `${chat} [data-testid="chat-message-input"]`, {
         value: 'PROJECT_COORDINATOR_VERIFY',
@@ -172,6 +177,9 @@ export function createStandInCoordinatorVerification({
       await control.command('waitFor', chat, {
         text: 'PROJECT_COORDINATOR_VERIFIED',
         timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('waitFor', `${chat} [data-testid="model-selector-button"]`, {
+        text: selectedModelLabel,
       })
       await captureScreenshot(control, '27-project-reply.png')
       const firstTurn = await rpc('runtime.tasks.get', { taskId: first.taskId })
@@ -200,6 +208,9 @@ export function createStandInCoordinatorVerification({
         firstTurn.task.runtimeHandle.modelSelection.modelName,
         'Follow-up must preserve the selected model'
       )
+      await control.command('waitFor', `${chat} [data-testid="model-selector-button"]`, {
+        text: selectedModelLabel,
+      })
       await captureScreenshot(control, '27b-project-followup-same-thread.png')
 
       await control.command('click', '[data-testid="project-coordinator-memory"]')

@@ -103,8 +103,18 @@ impl RuntimeWorkRpcHandler {
                     .unwrap_or("Conversation was not accepted"),
             ));
         }
-        Ok(json!({"deviceId":self.device_id,"taskId":task_id}))
+        Ok(self.identity_conversation_address(&task_id))
     }
+    pub(super) fn identity_conversation_address(&self, task_id: &str) -> Value {
+        let mut address = json!({"deviceId":self.device_id,"taskId":task_id});
+        if let Some(link) = self.local_task_link(task_id) {
+            address["runtime"] = json!(link.runtime);
+            address["workspacePath"] = json!(link.workspace_path);
+            address["runtimeHandle"] = json!({"threadId":link.thread_id,"modelSelection":link.runtime_handle.get("modelSelection").or_else(||link.runtime_handle.get("model_selection"))});
+        }
+        address
+    }
+
     pub(super) async fn conversation_model(
         &self,
         mut config: Value,
@@ -173,6 +183,21 @@ pub(super) fn apply_runtime_model_selection(prepared: &mut Value, options: &Valu
 #[cfg(test)]
 mod model_selection_tests {
     use super::*;
+
+    #[test]
+    fn identity_conversation_addresses_keep_selection_without_execution_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+        let selection = json!({"modelName":"luna","modelType":"public","options":{}});
+        link.runtime_handle = json!({"modelSelection":selection,"executionRequest":{"model_config":{"api_key":"SYNTHETIC_SECRET"}}});
+        handler.store.upsert_task(link);
+        let address = handler.identity_conversation_address("chat");
+        assert_eq!(address["runtimeHandle"]["modelSelection"], selection);
+        assert!(!address.to_string().contains("SYNTHETIC_SECRET"));
+        assert!(address["runtimeHandle"]["executionRequest"].is_null());
+    }
 
     #[test]
     fn identity_chats_keep_cloud_model_selection_without_replacing_gateway_config() {
