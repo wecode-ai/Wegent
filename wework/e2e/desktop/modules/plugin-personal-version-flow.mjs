@@ -111,16 +111,15 @@ export async function verifyPersonalPluginVersionSubmission({
     const startedAt = Date.now()
     await restartDesktopProcess(options)
     const runtimeHomeSwitch = Boolean(options?.appEnvironmentOverrides?.WEGENT_EXECUTOR_HOME)
-    // The recipient needs the plugin workspace; shared persistence still waits
-    // for the original chat surface used by the existing lifecycle assertions.
-    if (runtimeHomeSwitch) await control.command('navigate', 'body', { value: '/plugins' })
-    await control.command(
-      'waitFor',
-      testId(runtimeHomeSwitch ? 'plugins-search-input' : 'new-chat-button'),
-      {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      }
-    )
+    // Controller readiness precedes the lazy workbench mount and startup route
+    // restoration. Use the mounted shell's navigation after it becomes ready.
+    await control.command('waitFor', testId('new-chat-button'), {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    if (runtimeHomeSwitch) {
+      await control.command('clickWhenEnabled', testId('plugins-button'))
+      await control.command('waitFor', testId('plugins-search-input'))
+    }
     runtimeCost.processRestarts.push({
       deviceSwitch: options?.expectNewDeviceIdentity === true,
       runtimeHomeSwitch,
