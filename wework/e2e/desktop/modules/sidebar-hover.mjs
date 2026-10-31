@@ -11,18 +11,17 @@ export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutM
   console.info('[sidebar-hover] project details visible; handing pointer from row to popup')
   await control.command('pointerLeave', row, { target: card })
   await control.command('waitFor', card, { stableMs: 240, timeoutMs: uiTimeoutMs })
-  console.info('[sidebar-hover] pointer handoff preserved popup; pressing popup action')
+  console.info('[sidebar-hover] pointer handoff preserved popup; focusing popup action')
 
-  // Pressing a button focuses it. Moving out before release does not activate
-  // project pinning, but must still end the popup's hover lifetime.
-  await control.command('pointerDownOnly', pin)
+  // Retain action focus without activating pinning or the native window.
+  // Native activation allows an unrelated window blur to hide the defect.
+  await control.command('press', pin, { key: 'Tab' })
   assert.equal(
     await control.command('getActiveElementTestId', 'body'),
     `project-hover-pin-${projectId}`
   )
-  console.info('[sidebar-hover] popup action retains focus after pointer down; moving outside')
+  console.info('[sidebar-hover] popup action retains focus; moving outside')
   await control.command('pointerLeave', card, { target: outside })
-  await control.command('pointerUp', pin)
   await control.command('waitFor', card, { visible: false, timeoutMs: uiTimeoutMs })
   console.info('[sidebar-hover] focused action did not retain the popup after pointer exit')
 
