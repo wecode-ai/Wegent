@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -65,7 +65,7 @@ export async function createDesktopScenario(options) {
   const pairFile = process.env.WEWORK_E2E_UPGRADE_PAIR
   assert.ok(pairFile, 'Upgrade checkpoints require an independently built source/target pair')
   const pair = JSON.parse(await readFile(pairFile, 'utf8'))
-  const usesDefaultUserData = checkpoint === 'app-upgrade' && pair.kind === 'regression'
+  const usesDefaultUserData = options.usesDefaultUserData === true
   let releaseFeedLock
   let legacyDataDirectory
   assert.equal(pair.schemaVersion, 1)
@@ -308,17 +308,12 @@ export async function createDesktopScenario(options) {
       if (usesDefaultUserData) {
         // Start from the real default application-data location. The shipped
         // migration, bootstrap and updater must agree on the resulting userData.
-        const applicationData =
-          process.platform === 'darwin'
-            ? join(homedir(), 'Library/Application Support')
-            : process.platform === 'win32'
-              ? process.env.APPDATA
-              : process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+        const applicationData = options.upgradeHome?.applicationData
         assert.ok(applicationData)
-        legacyDataDirectory = join(applicationData, pair.fixtureApplicationId)
-        await assert.rejects(stat(legacyDataDirectory), { code: 'ENOENT' })
-        await mkdir(applicationData, { recursive: true })
-        await rename(electronUserDataDirectory, legacyDataDirectory)
+        const legacyTarget = join(applicationData, pair.fixtureApplicationId)
+        await assert.rejects(stat(legacyTarget), { code: 'ENOENT' })
+        await rename(electronUserDataDirectory, legacyTarget)
+        legacyDataDirectory = legacyTarget
       }
     },
     async handleHttp(request, response, url) {
@@ -627,92 +622,111 @@ export async function createDesktopScenario(options) {
       passed = true
     },
     async cleanup() {
-      if (control) await control.command('quitApp', 'body').catch(() => undefined)
-      const fs = await import('node:fs/promises')
-      // Default-layout runs keep product log locations. Retain diagnostics before
-      // the shared result compactor removes the isolated Home and its databases.
-      if (usesDefaultUserData) {
-        for (const [name, directory] of [
-          ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
-          ['release-logs', join(electronUserDataDirectory, 'logs')],
-        ]) {
-          await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
-            if (error.code !== 'ENOENT') throw error
-          })
+      const errors = []
+      try {
+        if (control) await control.command('quitApp', 'body').catch(() => undefined)
+        const fs = await import('node:fs/promises')
+        // Default-layout runs keep product log locations. Retain diagnostics before
+        // the shared result compactor removes the isolated Home and its databases.
+        if (usesDefaultUserData) {
+          for (const [name, directory] of [
+            ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
+            ['release-logs', join(electronUserDataDirectory, 'logs')],
+          ]) {
+            await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
+              if (error.code !== 'ENOENT') throw error
+            })
+          }
+          const state = {}
+          for (const name of [
+            'active',
+            'bridge',
+            'trial',
+            'attempted',
+            'healthy',
+            'failed',
+            'activation.json',
+            'last-activation.json',
+          ]) {
+            state[name] = await readFile(join(root, name), 'utf8').catch(error => {
+              if (error.code !== 'ENOENT') throw error
+              return null
+            })
+          }
+          await writeFile(
+            join(resultDir, 'release-state-result.json'),
+            JSON.stringify(state, null, 2)
+          )
         }
-        const state = {}
-        for (const name of [
-          'active',
-          'bridge',
-          'trial',
-          'attempted',
-          'healthy',
-          'failed',
-          'activation.json',
-          'last-activation.json',
-        ]) {
-          state[name] = await readFile(join(root, name), 'utf8').catch(error => {
+        // A failed activation can leave the native recovery shell waiting for
+        // confirmation before it connects to the renderer control channel.
+        const recoveryPid = Number(
+          await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
+        )
+        if (recoveryPid && !passed) {
+          try {
+            process.kill(recoveryPid)
+          } catch (error) {
+            if (error.code !== 'ESRCH') throw error
+          }
+        }
+        const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
+        if (pid) {
+          const deadline = Date.now() + 10_000
+          let alive = true
+          while (alive && Date.now() < deadline) {
+            try {
+              process.kill(pid, 0)
+            } catch {
+              alive = false
+            }
+            if (alive) await new Promise(accept => setTimeout(accept, 100))
+          }
+          // Retain shutdown phases even when the successful release slot is removed.
+          await fs
+            .copyFile(
+              join(root, 'activation-diagnostics.log'),
+              join(resultDir, 'activation-diagnostics.log')
+            )
+            .catch(error => {
+              if (error.code !== 'ENOENT') throw error
+            })
+          assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
+        }
+        if (passed) await fs.rm(root, { recursive: true, force: true })
+        if (legacyDataDirectory) {
+          const legacy = await lstat(legacyDataDirectory).catch(error => {
             if (error.code !== 'ENOENT') throw error
             return null
           })
-        }
-        await writeFile(
-          join(resultDir, 'release-state-result.json'),
-          JSON.stringify(state, null, 2)
-        )
-      }
-      // A failed activation can leave the native recovery shell waiting for
-      // confirmation before it connects to the renderer control channel.
-      const recoveryPid = Number(
-        await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
-      )
-      if (recoveryPid && !passed) {
-        try {
-          process.kill(recoveryPid)
-        } catch (error) {
-          if (error.code !== 'ESRCH') throw error
-        }
-      }
-      const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
-      if (pid) {
-        const deadline = Date.now() + 10_000
-        let alive = true
-        while (alive && Date.now() < deadline) {
-          try {
-            process.kill(pid, 0)
-          } catch {
-            alive = false
+          if (legacy?.isSymbolicLink()) {
+            assert.equal(
+              await realpath(legacyDataDirectory),
+              await realpath(electronUserDataDirectory)
+            )
+            await rm(legacyDataDirectory)
+          } else if (legacy) {
+            // Preparation can fail before the application migrates its fixture.
+            await rename(legacyDataDirectory, electronUserDataDirectory)
           }
-          if (alive) await new Promise(accept => setTimeout(accept, 100))
         }
-        // Retain shutdown phases even when the successful release slot is removed.
-        await fs
-          .copyFile(
-            join(root, 'activation-diagnostics.log'),
-            join(resultDir, 'activation-diagnostics.log')
-          )
-          .catch(error => {
-            if (error.code !== 'ENOENT') throw error
-          })
-        assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
+      } catch (error) {
+        errors.push(error)
       }
-      if (passed) await fs.rm(root, { recursive: true, force: true })
-      if (legacyDataDirectory) {
-        const legacy = await lstat(legacyDataDirectory)
-        if (legacy.isSymbolicLink()) {
-          assert.equal(
-            await realpath(legacyDataDirectory),
-            await realpath(electronUserDataDirectory)
-          )
-          await rm(legacyDataDirectory)
-        } else {
-          // Preparation can fail before the application migrates its fixture.
-          await rename(legacyDataDirectory, electronUserDataDirectory)
-        }
+      try {
+        server.closeAllConnections()
+        await new Promise((accept, reject) =>
+          server.close(error => (error ? reject(error) : accept()))
+        )
+      } catch (error) {
+        errors.push(error)
       }
-      server.closeAllConnections()
-      await new Promise(accept => server.close(accept))
-      await releaseFeedLock?.()
+      try {
+        await releaseFeedLock?.()
+      } catch (error) {
+        errors.push(error)
+      }
+      if (errors.length) throw new AggregateError(errors, 'Upgrade fixture cleanup failed')
     },
   }
 }

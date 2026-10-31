@@ -69,6 +69,7 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -1096,10 +1097,15 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const homePath = join(resultDir, 'home')
   const usesDefaultUserData =
     DESKTOP_SEGMENT === 'app-upgrade' &&
     JSON.parse(await readFile(process.env.WEWORK_E2E_UPGRADE_PAIR, 'utf8')).kind === 'regression'
+  const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
+  if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
+  const upgradeHome = nativeApplicationData
+    ? await resolveUpgradeUserHome(resultDir, nativeApplicationData)
+    : null
+  const homePath = upgradeHome?.homePath ?? join(resultDir, 'home')
   const executorHome = usesDefaultUserData
     ? join(homePath, '.wegent/workbench/wework/default')
     : join(resultDir, 'executor-home')
@@ -1234,7 +1240,9 @@ async function main() {
       codexSqliteHome,
       executorHome,
       electronUserDataDirectory,
+      usesDefaultUserData,
       homePath,
+      upgradeHome,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -4739,6 +4747,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('default upgrade Home', async () => {
+      if (upgradeHome?.external && teardownFailures.length === 0) {
+        await rm(upgradeHome.homePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 100,
+        })
+      }
+    })
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
