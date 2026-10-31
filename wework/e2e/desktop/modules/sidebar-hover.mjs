@@ -15,7 +15,7 @@ export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutM
 
   // Retain action focus without activating pinning or the native window.
   // Native activation allows an unrelated window blur to hide the defect.
-  await control.command('press', pin, { key: 'Tab' })
+  await control.command('focus', pin)
   assert.equal(
     await control.command('getActiveElementTestId', 'body'),
     `project-hover-pin-${projectId}`

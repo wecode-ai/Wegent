@@ -14,6 +14,8 @@ The desktop `running-sidebar-state` checkpoint covers entering project details f
 
 Pointer transfers use the `target` option on `pointerLeave` to dispatch exit and entry events within one renderer turn, preventing control transport gaps from exceeding the actual dismissal delay. The production 120ms dismissal delay remains unchanged; longer waits and retries must not hide the defect.
 
+The shared `focus` control command establishes the focus prerequisite. In a background Electron window, DOM `focus()` updates `activeElement` without emitting `focusin`; the command also dispatches that event while the window is inactive, so React observes the focus transition without native window activation.
+
 ## State ownership
 
 | Data                                       | Source of truth                                | Notes                                                                              |
