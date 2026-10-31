@@ -130,6 +130,14 @@ async function recordElicitationFailure(control, scope, resultDir, transportCapt
     const transport = JSON.parse(
       await control.command('readRuntimeTransportGate', 'body', { value: transportCaptureId })
     )
+    const history = {}
+    for (const status of ['cancelled', 'interrupted']) {
+      history[status] = JSON.parse(
+        await control.command('readRuntimeTransportGate', 'body', {
+          value: `${transportCaptureId}-${status}`,
+        })
+      )
+    }
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const task = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
     const address = task && { deviceId: task.deviceId, taskId: task.taskId }
@@ -150,7 +158,15 @@ async function recordElicitationFailure(control, scope, resultDir, transportCapt
     await writeFile(
       join(resultDir, 'runtime-input-answer-native-failure.json'),
       JSON.stringify(
-        { scope, address, transport, native, messages, transitions: snapshot.paneTransitions },
+        {
+          scope,
+          address,
+          transport,
+          history,
+          native,
+          messages,
+          transitions: snapshot.paneTransitions,
+        },
         null,
         2
       )
@@ -172,6 +188,18 @@ async function openElicitation(control, scope, composer, timeoutMs, resultDir) {
       where: [{ path: '**.interactionKind', equals: 'mcp_form' }],
     }),
   })
+  // Retain the first terminal-looking history response before later reads replace it.
+  for (const status of ['cancelled', 'interrupted']) {
+    await control.command('armRuntimeTransportGate', 'body', {
+      value: JSON.stringify({
+        id: `${transportCaptureId}-${status}`,
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        hold: false,
+        where: [{ path: '**.status', equals: status }],
+      }),
+    })
+  }
   await control.command('fill', composer, { value: PROMPT })
   await control.command('press', composer, { key: 'Enter' })
   const deadline = Date.now() + Math.max(timeoutMs, 90_000)
