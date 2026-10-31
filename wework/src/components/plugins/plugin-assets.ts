@@ -1,5 +1,4 @@
 import { createPluginAssetResolver } from '@wegent/chat-core/plugin-assets'
-import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 export { pluginNameInitial } from '@wegent/chat-core/plugin-reference'
 export type { ResolvedPluginLogo } from '@wegent/chat-core/plugin-assets'
 export const {
@@ -12,4 +11,6 @@ export const {
   resolveInstalledPluginLogoUrl,
   resolvePluginLogo,
   resolvePreferredPluginLogo,
-} = createPluginAssetResolver(desktopFileUrl)
+} = createPluginAssetResolver(
+  path => `/wework/executor/v1/plugin-image?path=${encodeURIComponent(path)}`
+)

@@ -1134,8 +1134,16 @@ classify_wework_path() {
       select_target "core:collaboration-remote-agent-dispatch"
       return
       ;;
+    wework/e2e/desktop/modules/real-object-storage.mjs)
+      select_target "core:collaboration-issue-mcp-comments"
+      select_target "core:collaboration-delivery-editing"
+      select_target "cloud:plugin-write-coordination"
+      select_target "cloud:plugin-runtime-route-refresh"
+      select_target "cloud:plugin-background-sync-isolation"
+      select_target "cloud:plugin-periodic-reconcile"
+      return
+      ;;
     wework/e2e/desktop/modules/personal-issue-access.mjs | \
-      wework/e2e/desktop/modules/real-object-storage.mjs | \
       wework/e2e/desktop/scenarios/collaboration-issue-mcp-comments.scenario.mjs)
       select_target "core:collaboration-issue-mcp-comments"
       return
@@ -1688,6 +1696,24 @@ classify_path() {
       wework/src/components/plugins/PluginManagementWorkspace* | \
       wework/src/features/plugins/pluginInventory*)
       select_target "cloud:plugin-composer-long-list"
+      ;;
+    wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs | \
+      wework/e2e/desktop/modules/plugin-source-continuation.mjs | \
+      wework/e2e/desktop/modules/plugin-late-response-resilience.mjs | \
+      wework/e2e/desktop/modules/plugin-scope-boundaries.mjs | \
+      wework/e2e/desktop/modules/plugin-detail-resilience.mjs | \
+      wework/e2e/desktop/modules/plugin-partial-inventory-resilience.mjs)
+      select_target "cloud:plugin-uninstall-lost-response"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-install-update-resilience.mjs)
+      select_target "cloud:plugin-write-coordination"
+      return
+      ;;
+    wework/scripts/plugin-resilience-checkpoints.test.mjs)
+      select_target "cloud:plugin-uninstall-lost-response"
+      select_target "cloud:plugin-write-coordination"
+      return
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \

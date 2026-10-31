@@ -10,7 +10,7 @@ describe('mention task fixtures', () => {
     jest.useRealTimers()
   })
 
-  it('waits for every completion callback before advancing the timestamp second', async () => {
+  it('waits for every completion callback without adding a client-clock timestamp barrier', async () => {
     const completions = new Map<number, () => void>()
     const waitForTerminal = jest.fn(
       (id: number) =>
@@ -30,13 +30,11 @@ describe('mention task fixtures', () => {
 
     completions.get(531)!()
     await jest.advanceTimersByTimeAsync(0)
-    await jest.advanceTimersByTimeAsync(750)
-    expect(ready).toBe(false)
-    await jest.advanceTimersByTimeAsync(1)
     await result
 
     expect(ready).toBe(true)
-    expect(Date.now()).toBe(3001)
+    expect(Date.now()).toBe(2250)
+    expect(jest.getTimerCount()).toBe(0)
   })
 
   it('bounds status requests instead of polling every fixture concurrently', async () => {
@@ -60,7 +58,7 @@ describe('mention task fixtures', () => {
     await jest.advanceTimersByTimeAsync(0)
     expect(waitForTerminal).toHaveBeenCalledTimes(17)
     completions.splice(0).forEach(resolve => resolve())
-    await jest.advanceTimersByTimeAsync(1000)
+    await jest.advanceTimersByTimeAsync(0)
     await result
   })
 

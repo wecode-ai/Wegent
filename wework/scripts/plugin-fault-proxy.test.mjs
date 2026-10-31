@@ -3,9 +3,13 @@ import { once } from 'node:events'
 import { createServer, request } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { connect } from 'node:net'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'vitest'
 import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { verifyCatalogDiskGeneration } from '../e2e/desktop/modules/plugin-late-response-resilience.mjs'
 
 async function fixture(t) {
   const received = []
@@ -39,12 +43,22 @@ test(
   async t => {
     const { proxy, received } = await fixture(t)
     const response = await fetch(`${proxy.url}/api/plugins/installed?device_id=private`, {
-      headers: { Authorization: 'Bearer secret' },
+      headers: { Authorization: 'Bearer secret', 'X-Request-ID': 'private-logical-id' },
     })
     assert.equal(await response.text(), 'real-upstream-body')
     assert.equal(received.length, 1)
     assert.equal(proxy.requests[0].unscoped, false)
     assert.ok(!JSON.stringify(proxy.requests).includes('secret'))
+    assert.ok(!JSON.stringify(proxy.requests).includes('private'))
+    assert.match(proxy.requests[0].requestIdFingerprint, /^[a-f0-9]{64}$/)
+    await fetch(`${proxy.url}/api/plugins/installed`, {
+      headers: { 'X-Request-ID': 'private-logical-id' },
+    })
+    await fetch(`${proxy.url}/api/plugins/installed`, {
+      headers: { 'X-Request-ID': 'another-private-logical-id' },
+    })
+    assert.equal(proxy.requests[0].requestIdFingerprint, proxy.requests[1].requestIdFingerprint)
+    assert.notEqual(proxy.requests[0].requestIdFingerprint, proxy.requests[2].requestIdFingerprint)
     assert.ok(!JSON.stringify(proxy.requests).includes('private'))
   }
 )
@@ -101,6 +115,323 @@ test(
   }
 )
 
+test('paused request forwards its original body once after release', { timeout: 5000 }, async t => {
+  const { proxy, received, server } = await fixture(t)
+  server.removeAllListeners('request')
+  server.on('request', (request, response) => {
+    const chunks = []
+    request.on('data', chunk => chunks.push(chunk))
+    request.once('end', () => {
+      received.push({ method: request.method, body: Buffer.concat(chunks).toString() })
+      response.end(received.at(-1).body)
+    })
+  })
+  proxy.rule = () => 'pause-request'
+  const result = fetch(`${proxy.url}/repair`, {
+    method: 'POST',
+    body: 'original-real-repair',
+  }).then(response => response.text())
+  await until(() => proxy.requests[0]?.release, Boolean, 'Request was not paused')
+  assert.deepEqual(received, [])
+  assert.equal(proxy.requests[0].fault, 'pause-request')
+  assert.equal(proxy.requests[0].release(), true)
+  assert.equal(proxy.requests[0].release(), false)
+  assert.equal(await result, 'original-real-repair')
+  assert.deepEqual(received, [{ method: 'POST', body: 'original-real-repair' }])
+  assert.equal(proxy.requests[0].responseCompleted, true)
+  assert.equal(proxy.requests[0].cancel(), false)
+  assert.ok(!JSON.stringify(proxy.requests).includes('original-real-repair'))
+})
+
+test(
+  'stopping the proxy cancels a paused request instead of leaving it pending',
+  { timeout: 5000 },
+  async t => {
+    const { proxy } = await fixture(t)
+    proxy.rule = () => 'pause-request'
+    const pending = assert.rejects(fetch(`${proxy.url}/repair`, { method: 'POST' }))
+    await until(() => proxy.requests[0]?.cancel, Boolean, 'Request was not paused')
+    const [entry] = proxy.requests
+    await proxy.stop()
+    await pending
+    assert.equal(entry.cancelled, true)
+    assert.equal(entry.responseCompleted, undefined)
+    assert.equal(entry.release(), false)
+    // Repeated shutdown from the shared fixture cleanup must stay a no-op.
+    await proxy.stop()
+  }
+)
+
+test.for(['proxy-cancel', 'client-abort'])(
+  'cancelled paused request is never replayed after %s and subsequent requests proceed',
+  { timeout: 5000 },
+  async (kind, t) => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = () => 'pause-request'
+    const controller = new AbortController()
+    const result = assert.rejects(
+      fetch(`${proxy.url}/repair`, { method: 'POST', signal: controller.signal })
+    )
+    await until(() => proxy.requests[0]?.cancel, Boolean, 'Request was not paused')
+    if (kind === 'proxy-cancel') assert.equal(proxy.requests[0].cancel(), true)
+    else controller.abort()
+    await result
+    await until(() => proxy.requests[0].cancelled, Boolean, 'Paused request was not cancelled')
+    assert.equal(proxy.requests[0].release(), false)
+    assert.equal(proxy.requests[0].cancel(), false)
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/healthy`)).text(), 'real-upstream-body')
+    assert.deepEqual(received, [{ method: 'GET', url: '/healthy' }])
+  }
+)
+
+test.for([false, true])(
+  'catalog fault preserves the primary assertion with cleanup failure=%s',
+  async (cleanupFails, t) => {
+    const { proxy } = await fixture(t)
+    const home = await mkdtemp(join(tmpdir(), 'plugin-generation-cleanup-'))
+    t.onTestFinished(() => rm(home, { recursive: true, force: true }))
+    await mkdir(join(home, 'capabilities'))
+    const manifestPath = join(home, 'capabilities/manifest-v2.json')
+    const original = Buffer.from(
+      JSON.stringify({ version: 2, plugins: { tool: { installed_plugin_id: 72 } } })
+    )
+    await writeFile(manifestPath, original)
+    const assertionError = new Error('original concurrency assertion')
+    const cleanupError = new Error('catalog gate cleanup failure')
+    const report = { passed: false }
+    const previousRule = proxy.rule
+    const commands = []
+    const control = {
+      async command(name) {
+        commands.push(name)
+        if (name === 'waitFor') throw assertionError
+        if (name === 'resetRuntimeTransportGates') {
+          if (cleanupFails) throw cleanupError
+          return ''
+        }
+        assert.fail(`Unexpected command ${name}`)
+      },
+    }
+    await assert.rejects(
+      verifyCatalogDiskGeneration({
+        control,
+        executorHome: home,
+        item: { installedId: 72 },
+        apiProxy: proxy,
+        deviceId: 'device-a',
+        report,
+      }),
+      error => {
+        if (cleanupFails) {
+          assert.ok(error instanceof AggregateError)
+          assert.deepEqual(error.errors, [assertionError, cleanupError])
+          assert.equal(error.cause, assertionError)
+        } else assert.equal(error, assertionError)
+        return true
+      }
+    )
+    assert.equal(report.passed, false)
+    assert.match(report.assertionError, /original concurrency assertion/)
+    assert.equal(report.cleanupErrors.length, cleanupFails ? 1 : 0)
+    assert.deepEqual(commands, ['waitFor', 'resetRuntimeTransportGates'])
+    assert.equal(proxy.rule, previousRule)
+    assert.ok((await readFile(manifestPath)).equals(original))
+  }
+)
+
+test(
+  'cleanup can cancel a released pause while its real upstream response is pending',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received, server } = await fixture(t)
+    server.removeAllListeners('request')
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      request.resume()
+      if (request.url === '/healthy') response.end('healthy-after-cancel')
+    })
+    proxy.rule = () => 'pause-request'
+    const result = assert.rejects(fetch(`${proxy.url}/repair`, { method: 'POST' }))
+    await until(() => proxy.requests[0]?.release, Boolean, 'Request was not paused')
+    assert.equal(proxy.requests[0].release(), true)
+    await until(
+      () => received.length,
+      count => count === 1,
+      'Original request was not forwarded'
+    )
+    assert.equal(proxy.requests[0].cancel(), true)
+    await result
+    assert.equal(proxy.requests[0].release(), false)
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/healthy`)).text(), 'healthy-after-cancel')
+    assert.deepEqual(received, [
+      { method: 'POST', url: '/repair' },
+      { method: 'GET', url: '/healthy' },
+    ])
+  }
+)
+
+test.for(['completed', 'failed'])(
+  'catalog race observes its own %s result before resuming a real paused repair',
+  { timeout: 5000 },
+  async (phase, t) => {
+    const { proxy, received, server } = await fixture(t)
+    const home = await mkdtemp(join(tmpdir(), 'plugin-generation-ordering-'))
+    t.onTestFinished(() => rm(home, { recursive: true, force: true }))
+    await mkdir(join(home, 'capabilities'))
+    const manifestPath = join(home, 'capabilities/manifest-v2.json')
+    const original = Buffer.from(
+      JSON.stringify({ version: 2, plugins: { tool: { installed_plugin_id: 72 } } })
+    )
+    await writeFile(manifestPath, original)
+    const item = { installedId: 72, slug: 'tool' }
+    const source = pluginKeys => ({ status: 'fulfilled', pluginKeys })
+    let armed = false
+    let delivered = false
+    let diskRead = false
+    let recovered = false
+    let repairPending = false
+    let repairResult
+    let completionPolls = 0
+    let readyWaits = 0
+    const previousReads = [
+      { phase: 'started', time: 1, startedAt: 1 },
+      { phase: 'completed', time: 2, startedAt: 1 },
+    ]
+    const capture = () => ({ capturedAt: 50, deliveries: Number(delivered) })
+    const report = { passed: false }
+    const previousRule = proxy.rule
+    // The repair may reach the real server only after the fault is restored.
+    server.removeAllListeners('request')
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      request.resume()
+      readFile(manifestPath).then(bytes => {
+        response.statusCode = bytes.equals(original) ? 200 : 409
+        response.end('real-repair-result')
+      })
+    })
+    const control = {
+      async command(name, _selector, options) {
+        switch (name) {
+          case 'waitFor':
+            readyWaits += 1
+            assert.equal(repairPending, false, 'Refresh cannot become ready while repair is paused')
+            return ''
+          case 'getPluginSyncDiagnostics': {
+            assert.equal(options.value, 'device-a')
+            const reads = [...previousReads]
+            if (armed) reads.push({ phase: 'started', time: 10, startedAt: 10 })
+            // An older completed read must not satisfy the new catalog wait.
+            if (delivered && ++completionPolls > 1) reads.push({ phase, time: 60, startedAt: 10 })
+            return JSON.stringify({ inFlight: repairPending, localCatalogReads: reads })
+          }
+          case 'armRuntimeTransportGate': {
+            const rule = JSON.parse(options.value)
+            assert.deepEqual(rule.where, [
+              { path: 'params.method', equals: 'plugin/list' },
+              { path: 'params.params.marketplaceKinds.*', equals: 'local' },
+            ])
+            armed = true
+            return ''
+          }
+          case 'click': {
+            // The refresh's ordinary prerequisite must finish before repair faults are armed.
+            const prerequisite = await fetch(`${proxy.url}/api/plugins/installed/sync-device`, {
+              method: 'POST',
+            })
+            assert.equal(prerequisite.status, 200)
+            await prerequisite.text()
+            assert.equal(proxy.rule, previousRule)
+            return ''
+          }
+          case 'readRuntimeTransportGate':
+            return JSON.stringify(capture())
+          case 'releaseRuntimeTransportGate':
+            delivered = true
+            return ''
+          case 'resetRuntimeTransportGates':
+            delivered = true
+            return ''
+          case 'readLocalPluginDiskInventory': {
+            assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).plugins, {})
+            diskRead = true
+            repairPending = true
+            repairResult = fetch(`${proxy.url}/api/plugins/installed/sync-device`, {
+              method: 'POST',
+            }).then(async response => {
+              await response.text()
+              repairPending = false
+              return response.status
+            })
+            await until(() => proxy.requests.at(-1)?.release, Boolean, 'Repair was not paused')
+            return JSON.stringify({
+              partial: false,
+              sourceReads: { store: source([]), personal: source([]) },
+            })
+          }
+          case 'getComposerPluginInventoryDiagnostics': {
+            const complete = delivered && completionPolls > 1
+            if (delivered && !recovered) {
+              assert.ok(complete, 'Inventory assertions must wait for this catalog result')
+              assert.equal(repairPending, true)
+            }
+            const store = !diskRead || recovered ? ['tool'] : []
+            return JSON.stringify({
+              installedSourceReads: {
+                store: source(store),
+                codex: source(['tool']),
+                personal: source([]),
+              },
+              installedPlugins: [{ pluginKey: 'tool' }],
+              sharedInventory: {
+                mutationRevision: 2,
+                localInstalledSources: { store: complete && !recovered ? [] : ['cloud:72'] },
+                localInstalledSourceStatus: { store: 'fulfilled' },
+                installedPlugins: [{ inventoryId: 'cloud:72', pluginKey: 'tool' }],
+              },
+            })
+          }
+          case 'clickWhenEnabled':
+            assert.equal(repairPending, false)
+            assert.ok((await readFile(manifestPath)).equals(original))
+            recovered = true
+            return ''
+          default:
+            assert.fail(`Unexpected command ${name}`)
+        }
+      },
+    }
+    const run = verifyCatalogDiskGeneration({
+      control,
+      executorHome: home,
+      item,
+      apiProxy: proxy,
+      deviceId: 'device-a',
+      report,
+    })
+    if (phase === 'failed') await assert.rejects(run, /The held catalog failed after release/)
+    else await run
+    assert.equal(await repairResult, 200)
+    assert.equal(report.passed, phase === 'completed')
+    assert.equal(report.assertionsPassed === true, phase === 'completed')
+    assert.deepEqual(report.cleanupErrors, [])
+    assert.equal(report.catalogStartedAt, 10)
+    assert.deepEqual(
+      report.catalogDelivery.map(read => read.phase),
+      ['started', phase]
+    )
+    assert.equal(readyWaits, phase === 'completed' ? 2 : 1)
+    assert.equal(proxy.rule, previousRule)
+    assert.ok((await readFile(manifestPath)).equals(original))
+    assert.equal(received.length, 2, 'Prerequisite and restored repair each reach upstream once')
+    assert.equal(report.repairs.length, 1)
+    assert.equal(report.repairs[0].released, true)
+    assert.equal(report.repairs[0].responseCompleted, true)
+  }
+)
+
 test(
   'dropped POST response commits once and permits an explicit retry without retaining credentials',
   { timeout: 5000 },
@@ -133,31 +464,6 @@ test(
   }
 )
 
-test(
-  'releases the first real response after a later response without changing either body',
-  { timeout: 5000 },
-  async t => {
-    const { proxy, received } = await fixture(t)
-    proxy.rule = entry => (entry.path === '/first' ? 'hold-response' : null)
-    let completed = false
-    const first = fetch(`${proxy.url}/first`).then(async response => {
-      completed = true
-      return response.text()
-    })
-    await until(
-      () => proxy.requests[0]?.committedResponseHeld,
-      Boolean,
-      'First response was not held',
-      2000
-    )
-    assert.equal(await (await fetch(`${proxy.url}/second`)).text(), 'real-upstream-body')
-    assert.equal(completed, false)
-    await proxy.requests[0].release()
-    assert.equal(await first, 'real-upstream-body')
-    assert.equal(received.length, 2)
-  }
-)
-
 test('drops a real response after upstream completion', { timeout: 5000 }, async t => {
   const { proxy, received } = await fixture(t)
   proxy.rule = () => 'drop-response'
@@ -169,6 +475,82 @@ test('drops a real response after upstream completion', { timeout: 5000 }, async
   assert.equal(proxy.requests[0].committedResponseDropped, true)
   assert.equal(received.length, 1)
 })
+
+test(
+  'releases the first real response after a later response without changing either body',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received, server } = await fixture(t)
+    server.removeAllListeners('request')
+    let version = 'older-real-body'
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream' })
+      response.end(version)
+    })
+    proxy.rule = () => 'hold-response'
+    let settled = false
+    const older = fetch(`${proxy.url}/api/plugins/installed`).then(async response => {
+      settled = true
+      return { contentType: response.headers.get('content-type'), body: await response.text() }
+    })
+    await until(
+      () => proxy.requests[0]?.committedResponseHeld,
+      Boolean,
+      'Real response was not retained before release',
+      2000
+    )
+    assert.equal(settled, false)
+    assert.equal(proxy.requests[0].status, 200)
+    assert.notEqual(proxy.requests[0].responseCompleted, true)
+    const held = proxy.requests[0].readHeldResponse()
+    assert.equal(held.body.toString(), 'older-real-body')
+    assert.equal(held.headers['content-type'], 'application/octet-stream')
+    version = 'newer-real-body'
+    proxy.rule = () => null
+    assert.equal(await (await fetch(`${proxy.url}/api/plugins/installed`)).text(), version)
+    assert.equal(await proxy.requests[0].release(), true)
+    assert.deepEqual(await older, {
+      contentType: 'application/octet-stream',
+      body: 'older-real-body',
+    })
+    assert.equal(proxy.requests[0].released, true)
+    assert.equal(proxy.requests[0].responseCompleted, true)
+    assert.equal(received.length, 2, 'Releasing a reply must not replay an upstream request')
+    assert.equal(proxy.requests[0].readHeldResponse(), null)
+    assert.equal(await proxy.requests[0].release(), false)
+    assert.ok(!JSON.stringify(proxy.requests).includes('real-body'))
+  }
+)
+
+test(
+  'a canceled delayed reply is discarded without replaying the request',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = () => 'hold-response'
+    const controller = new AbortController()
+    const rejected = assert.rejects(
+      fetch(`${proxy.url}/api/plugins/installed`, { signal: controller.signal })
+    )
+    await until(
+      () => proxy.requests[0]?.committedResponseHeld,
+      Boolean,
+      'Real response was not retained',
+      2000
+    )
+    controller.abort()
+    await rejected
+    await until(
+      () => proxy.requests[0].readHeldResponse(),
+      value => value === null,
+      'Canceled response was retained',
+      2000
+    )
+    assert.equal(await proxy.requests[0].release(), false)
+    assert.equal(received.length, 1)
+  }
+)
 
 test(
   'device transport pause holds real upstream bytes and resumes them unchanged',

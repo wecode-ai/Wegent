@@ -64,7 +64,8 @@ import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pl
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
-import { isElectronRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 
 function tryPluginInChat(plugin: InstalledPlugin) {
@@ -87,7 +88,8 @@ export function PluginManagementWorkspace(props: PluginManagementWorkspaceProps)
     props.cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
     props.cloudToken
   )
-  return <PluginManagementWorkspaceContent key={cacheKey} {...props} />
+  const deviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
+  return <PluginManagementWorkspaceContent key={`${cacheKey}:${deviceId}`} {...props} />
 }
 
 function PluginManagementWorkspaceContent({
@@ -111,19 +113,20 @@ function PluginManagementWorkspaceContent({
     () => pluginMarketplaceCacheKey(resolvedCloudApiBaseUrl, cloudToken),
     [cloudToken, resolvedCloudApiBaseUrl]
   )
+  const knownDeviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
+  const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+  const initialCache = knownDeviceId && cached?.deviceId !== knownDeviceId ? null : cached
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    return (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.installedPlugins ?? []).map(
-      toInstalledPluginItem
-    )
+    return (initialCache?.installedPlugins ?? []).map(toInstalledPluginItem)
   })
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>(() => {
-    return getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []
+    return initialCache?.marketplaceItems ?? []
   })
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(() => {
-    return !hasLoadedPluginInventory(getPluginMarketplaceCache(marketplaceCacheKeyValue))
+    return !hasLoadedPluginInventory(initialCache)
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
-    () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId ?? ''
+    () => knownDeviceId || initialCache?.deviceId || ''
   )
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [pendingUninstall, setPendingUninstall] = useState<{
@@ -164,7 +167,12 @@ function PluginManagementWorkspaceContent({
 
   useEffect(() => {
     return subscribePluginMarketplaceCache(snapshot => {
-      if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
+      if (
+        !snapshot ||
+        snapshot.cacheKey !== marketplaceCacheKeyValue ||
+        (knownDeviceId && snapshot.deviceId !== knownDeviceId)
+      )
+        return
       setInstalledPlugins(previous =>
         sameInstalledPlugins(previous, snapshot.installedPlugins.map(toInstalledPluginItem))
           ? previous
@@ -178,7 +186,7 @@ function PluginManagementWorkspaceContent({
       if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
       if (hasLoadedPluginInventory(snapshot)) setIsLoadingPlugins(false)
     })
-  }, [marketplaceCacheKeyValue])
+  }, [marketplaceCacheKeyValue, knownDeviceId])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
     if (!showCoreDshTab) return
@@ -191,9 +199,11 @@ function PluginManagementWorkspaceContent({
     let current = true
     void refreshInstalledPluginInventory({
       cacheKey: marketplaceCacheKeyValue,
-      readLocal: () => localPluginApi.listInstalledPlugins({ requireComplete: true }),
+      deviceId: knownDeviceId,
+      readLocal: () => localPluginApi.listInstalledPlugins(),
       readCloud: deviceId => cloudPluginApi.listInstalledPlugins(deviceId),
-      isCurrent: () => current,
+      isCurrent: () =>
+        current && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId),
     })
       .catch(error => {
         if (!current) return
@@ -210,7 +220,7 @@ function PluginManagementWorkspaceContent({
     return () => {
       current = false
     }
-  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, t])
+  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, knownDeviceId, t])
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),

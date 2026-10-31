@@ -54,7 +54,7 @@ import {
 import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import {
   createLocalCodexPluginApi,
-  listLocalInstalledPluginsFromDisk,
+  readLocalInstalledInventoryFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
@@ -71,8 +71,8 @@ import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
-import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
+import { sameLocalPluginSources } from '@/features/plugins/pluginInventorySources'
 import {
   loadPluginInventory,
   selectComposerPluginApps,
@@ -89,7 +89,6 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type {
-  InstalledPlugin,
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -2436,13 +2435,13 @@ export function WorkbenchProvider({
         const cloudInstalled =
           !hasFreshInventory && cloudConnection.isConnected
             ? cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
-            : Promise.resolve([] as InstalledPlugin[])
+            : Promise.resolve(undefined)
         // Disk membership is cheap and can change outside this renderer (ZIP
         // import, CLI, restart). Presentation freshness never replaces this read.
         const snapshot = await loadPluginInventory({
           cacheKey,
           deviceId,
-          readLocalInstalledPlugins: listLocalInstalledPluginsFromDisk,
+          readLocalInstalledPlugins: readLocalInstalledInventoryFromDisk,
           listCloudInstalledPlugins: () => cloudInstalled,
           isCurrent,
           partial: true,
@@ -2488,15 +2487,15 @@ export function WorkbenchProvider({
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
                 const current = getPluginMarketplaceCache(cacheKey)
                 if (!current || current.deviceId !== deviceId) return
+                if (!sameLocalPluginSources(current, snapshot)) return
                 if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
-                writePluginInventory(cacheKey, deviceId, {
-                  installedPluginsFetchedAt: Date.now(),
-                  installedPlugins: mergeInstalledPlugins(
-                    cloud,
-                    local.items,
-                    deviceId,
-                    cloudConnection.isConnected
-                  ),
+                return loadPluginInventory({
+                  cacheKey,
+                  deviceId,
+                  readLocalInstalledPlugins: async () => local,
+                  listCloudInstalledPlugins: async () => cloud,
+                  isCurrent,
+                  cloudMembershipAuthoritative: cloudConnection.isConnected,
                 })
               })
               .catch(error => {

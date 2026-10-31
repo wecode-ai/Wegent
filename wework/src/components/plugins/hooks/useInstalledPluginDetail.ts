@@ -7,16 +7,17 @@ export function useInstalledPluginDetail(
   summary: InstalledPluginItem | null,
   read: (plugin: InstalledPlugin) => Promise<InstalledPlugin>,
   onError: (pluginId: string | number, error: unknown) => void,
-  revision = 0
+  revision = 0,
+  onSuccess?: (pluginId: string | number) => void
 ): InstalledPluginItem | null {
   const [detail, setDetail] = useState<{
     key: string
     components: InstalledPlugin['spec']['components']
   } | null>(null)
-  const refs = useRef({ summary, onError })
+  const refs = useRef({ summary, onError, onSuccess })
   useEffect(() => {
-    refs.current = { summary, onError }
-  }, [summary, onError])
+    refs.current = { summary, onError, onSuccess }
+  }, [summary, onError, onSuccess])
   const local = summary && (summary.origin === 'created' || !summary.raw.spec.pluginId)
   const key = local ? JSON.stringify([summary.id, summary.version, revision]) : null
   useEffect(() => {
@@ -25,7 +26,10 @@ export function useInstalledPluginDetail(
     let disposed = false
     void read(plugin.raw)
       .then(result => {
-        if (!disposed) setDetail({ key, components: result.spec.components })
+        if (!disposed) {
+          setDetail({ key, components: result.spec.components })
+          refs.current.onSuccess?.(plugin.id)
+        }
       })
       .catch(error => {
         if (!disposed) refs.current.onError(plugin.id, error)

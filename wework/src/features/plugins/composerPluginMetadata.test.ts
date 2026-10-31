@@ -110,7 +110,8 @@ describe('enrichComposerApps', () => {
         name: 'GitHub',
         pluginKey: 'github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
-        logoUrl: 'file:///Users/test/plugins/github/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fgithub%2Fassets%2Ficon.png',
         pluginDisplayNames: ['GitHub'],
         trialTemplates: expect.any(Array),
       }),
@@ -164,7 +165,8 @@ describe('enrichComposerApps', () => {
       expect.objectContaining({
         id: 'wegent:github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
-        logoUrl: 'file:///Users/test/plugins/github/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fgithub%2Fassets%2Ficon.png',
         pluginDisplayNames: ['GitHub', 'Wegent Cloud'],
         trialTemplates: expect.any(Array),
       }),
@@ -237,7 +239,8 @@ describe('appendInstalledPluginsAsComposerApps', () => {
         pluginKey: 'superpowers',
         source: 'installed-plugin',
         skillPath: 'plugin://superpowers@openai-official',
-        logoUrl: 'file:///tmp/plugins/superpowers/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2Ftmp%2Fplugins%2Fsuperpowers%2Fassets%2Ficon.png',
         trialTemplates: expect.any(Array),
       }),
     ])

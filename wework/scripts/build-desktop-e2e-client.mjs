@@ -2,27 +2,30 @@
 
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 
 const outputDirectory = process.argv[2]
 if (!outputDirectory) throw new Error('A desktop E2E client output directory is required')
 
-for (const [dependency, manifest, filename] of [
-  ['socket.io-client', '../../packages/chat-core/package.json', 'socket.io-client.cjs'],
-  ['yaml', '../electron/package.json', 'yaml.cjs'],
-]) {
-  const require = createRequire(resolve(import.meta.dirname, manifest))
+const require = createRequire(new URL('../../packages/chat-core/package.json', import.meta.url))
+const entries = [
+  ['socket.io-client', require.resolve('socket.io-client')],
+  ['yaml', createRequire(new URL('../electron/package.json', import.meta.url)).resolve('yaml')],
+  ['lz-string', fileURLToPath(new URL('./desktop-e2e-inventory-codec.mjs', import.meta.url))],
+]
+for (const [name, entry] of entries) {
   await build({
     configFile: false,
     publicDir: false,
     ssr: { noExternal: true },
     build: {
-      ssr: require.resolve(dependency),
+      ssr: entry,
       outDir: resolve(outputDirectory),
       emptyOutDir: false,
       minify: false,
       rollupOptions: {
-        output: { format: 'cjs', entryFileNames: filename },
+        output: { format: 'cjs', entryFileNames: `${name}.cjs` },
       },
     },
   })

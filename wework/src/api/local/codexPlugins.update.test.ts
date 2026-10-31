@@ -198,9 +198,13 @@ describe('local plugin component settings updates', () => {
     ).toHaveLength(1)
   })
 
-  test.each(['plugin/list', 'plugin/read'])(
-    'preserves the write failure when reconciliation fails at %s',
-    async failedMethod => {
+  test.each([
+    { failedMethods: ['plugin/list'], reconcilesSettings: true },
+    { failedMethods: ['plugin/read'], reconcilesSettings: false },
+    { failedMethods: ['plugin/list', 'plugin/read'], reconcilesSettings: false },
+  ])(
+    'preserves the write failure when $failedMethods fail during reconciliation',
+    async ({ failedMethods, reconcilesSettings }) => {
       const api = await installedApi(true)
       const writeError = new Error('Native skill configuration failed')
       const reconcileError = new Error('Plugin settings could not be refreshed')
@@ -208,7 +212,7 @@ describe('local plugin component settings updates', () => {
       const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       mocks.writeSkill.mockRejectedValue(writeError)
       mocks.request.mockImplementation((method, args) => {
-        if (args?.method === failedMethod) return Promise.reject(reconcileError)
+        if (failedMethods.includes(args?.method)) return Promise.reject(reconcileError)
         return request(method, args)
       })
 
@@ -217,14 +221,38 @@ describe('local plugin component settings updates', () => {
           api.updateInstalledPlugin(pluginId, { componentStates: { 'skill:feature': false } })
         ).rejects.toBe(writeError)
 
-        expect(warning).toHaveBeenCalledWith(
-          '[Wework] Failed to reconcile Codex plugin settings after a write failure',
-          { errorType: 'Error' }
-        )
-        expect(peekLocalCodexPluginsReadState()).toBeNull()
+        expect(
+          mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/installed')
+        ).toHaveLength(1)
+        expect(
+          mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/read')
+        ).toHaveLength(1)
+        if (reconcilesSettings) {
+          expect(warning).toHaveBeenCalledWith(
+            '[Wework] codex.app_server_request failed',
+            expect.objectContaining({ method: 'plugin/list', errorType: 'Error' })
+          )
+          expect(warning).not.toHaveBeenCalledWith(
+            '[Wework] Failed to reconcile Codex plugin settings after a write failure',
+            expect.anything()
+          )
+          const cached = peekLocalCodexPluginsReadState()
+          expect(cached?.partial).toBe(true)
+          expect(cached?.installedPlugins[0]?.spec.componentStates).toEqual({
+            'skill:feature': true,
+            'skill:unrelated': false,
+          })
+        } else {
+          expect(warning).toHaveBeenCalledWith(
+            '[Wework] Failed to reconcile Codex plugin settings after a write failure',
+            { errorType: 'Error' }
+          )
+          expect(peekLocalCodexPluginsReadState()).toBeNull()
+        }
 
         mocks.request.mockImplementation(request)
-        const state = await api.readState()
+        const state = await api.readState({ refresh: true })
+        expect(state.partial).not.toBe(true)
         const detail = await api.readInstalledPluginDetail(state.installedPlugins[0]!)
         expect(detail.spec.componentStates['skill:feature']).toBe(true)
       } finally {

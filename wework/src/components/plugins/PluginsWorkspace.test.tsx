@@ -7,6 +7,7 @@ import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/c
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
+  type LocalCodexPluginsState,
 } from '@/api/local/codexPlugins'
 import * as codexPlugins from '@/api/local/codexPlugins'
 import * as fileHash from '@/api/fileHash'
@@ -25,8 +26,14 @@ import {
   pluginMarketplaceCacheKey,
   getPluginMarketplaceCache,
   setPluginMarketplaceCache,
+  flushPluginMarketplaceCachePersist,
+  resetPluginMarketplaceCacheMemory,
   subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
+import {
+  inventoryIdentity,
+  type LocalPluginInventoryRead,
+} from '@/features/plugins/pluginInventorySources'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type {
   InstalledPluginListResponse,
@@ -38,6 +45,7 @@ import { PluginsWorkspace } from './PluginsWorkspace'
 import * as pluginUninstall from './pluginUninstall'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
+import * as marketplaceWorkspaceHelpers from './workspace/marketplaceWorkspaceHelpers'
 import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import {
   pluginInventoryReadIsCurrent,
@@ -1703,6 +1711,93 @@ function officialCodexPluginSummary(plugin: {
   }
 }
 
+function mockCrossDeviceCatalogLoad() {
+  window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+  mockSystemSkillsFetch()
+  mockCodexAppServerInvoke({
+    deviceId: 'current-device',
+    marketplaces: [
+      {
+        name: 'custom-local',
+        path: '/tmp/custom-local',
+        plugins: [
+          { ...defaultCodexPlugin, id: 'local-1', name: 'local-docs', displayName: 'Local Docs' },
+        ],
+      },
+    ],
+    installedPluginNames: ['local-docs'],
+  })
+  const gate = () => {
+    let release!: () => void
+    const promise = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+  const cloud = gate()
+  const membership = gate()
+  const membershipReturned = vi.fn()
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/plugins/marketplace' || path === '/api/plugins/installed') {
+      await cloud.promise
+    }
+    return originalFetch(input, init)
+  })
+  const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+  vi.mocked(requestLocalExecutor).mockImplementation(async (method, args) => {
+    if (
+      method === 'codex.app_server_request' &&
+      (args as { method?: string })?.method === 'plugin/installed'
+    ) {
+      await membership.promise
+      const result = await originalInvoke(method, args)
+      membershipReturned()
+      return result
+    }
+    return originalInvoke(method, args)
+  })
+  const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+  setPluginMarketplaceCache(
+    {
+      cacheKey,
+      marketplaceItems: [],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'old-device',
+      fetchedAt: Date.now(),
+    },
+    { mutation: true }
+  )
+  return { cacheKey, cloud, membership, membershipReturned }
+}
+
+function holdNextCloudPluginRead(source: 'marketplace' | 'installed') {
+  let release!: () => void
+  let reject!: (error: Error) => void
+  const gate = new Promise<void>((resolve, fail) => {
+    release = resolve
+    reject = fail
+  })
+  const ready = vi.fn()
+  const returned = vi.fn()
+  const read = vi.mocked(fetch).getMockImplementation()!
+  let held = false
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const response = await read(input, init)
+    if (!held && new URL(String(input), 'http://localhost').pathname === `/api/plugins/${source}`) {
+      held = true
+      ready()
+      await gate
+      returned()
+    }
+    return response
+  })
+  return { release, reject, ready, returned, read }
+}
+
 describe('PluginsWorkspace', () => {
   beforeEach(() => {
     delete window.__WEWORK_RUNTIME_CONFIG__
@@ -1754,6 +1849,760 @@ describe('PluginsWorkspace', () => {
     window.history.replaceState({}, '', '/')
     mockSystemSkillsFetch()
   })
+
+  test.each([
+    'cloud-catalog',
+    'cloud-installed',
+    'local-membership',
+    'store',
+    'personal',
+    'bad-catalog',
+    'bad-installed',
+  ])('keeps healthy plugin rows visible after a %s read fails', async source => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'custom-local',
+          path: '/tmp/custom-local',
+          plugins: [
+            { ...defaultCodexPlugin, id: 'local-1', name: 'local-docs', displayName: 'Local Docs' },
+          ],
+        },
+      ],
+      installedPluginNames: ['local-docs'],
+    })
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const catalog = path === '/api/plugins/marketplace'
+      const installed = path === '/api/plugins/installed'
+      if ((catalog && source === 'cloud-catalog') || (installed && source === 'cloud-installed'))
+        return Promise.reject(new Error('source unavailable'))
+      if ((catalog && source === 'bad-catalog') || (installed && source === 'bad-installed'))
+        return Promise.resolve(
+          new Response(JSON.stringify({ items: [null] }), {
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+      return originalFetch(input, init)
+    })
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation((method, args) => {
+      if (
+        (source === 'store' && method === 'executor.plugins.store.list') ||
+        (source === 'personal' && method === 'executor.plugins.personal.list') ||
+        (source === 'local-membership' &&
+          method === 'codex.app_server_request' &&
+          (args as { method?: string })?.method === 'plugin/installed')
+      )
+        return Promise.reject(new Error('source unavailable'))
+      return originalInvoke(method, args)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+    if (!['cloud-catalog', 'bad-catalog'].includes(source))
+      expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'error'
+    )
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+  })
+
+  test.each(['catalog', 'installed'] as const)(
+    'publishes cloud %s first without waiting for the other source or starting automatic writes',
+    async first => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        deviceAutoSyncSucceeds: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      let releaseCatalog!: () => void
+      let releaseInstalled!: () => void
+      const catalogGate = new Promise<void>(resolve => {
+        releaseCatalog = resolve
+      })
+      const installedGate = new Promise<void>(resolve => {
+        releaseInstalled = resolve
+      })
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const response = await originalFetch(input, init)
+        const path = new URL(String(input), 'http://localhost').pathname
+        if (path === '/api/plugins/marketplace') await catalogGate
+        if (path === '/api/plugins/installed') await installedGate
+        return response
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      if (first === 'catalog') releaseCatalog()
+      else releaseInstalled()
+      expect(
+        await screen.findByTestId(
+          first === 'catalog' ? 'plugin-marketplace-row-101' : 'plugins-installed-strip-item-101'
+        )
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByTestId(
+          first === 'catalog' ? 'plugins-installed-strip-item-101' : 'plugin-marketplace-row-101'
+        )
+      ).not.toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+      expect(
+        vi
+          .mocked(requestLocalExecutor)
+          .mock.calls.some(
+            ([method, args]) =>
+              method === 'codex.app_server_request' &&
+              (args as { method?: string })?.method === 'plugin/list'
+          )
+      ).toBe(false)
+
+      if (first === 'catalog') releaseInstalled()
+      else releaseCatalog()
+      expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+      expect(await screen.findByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+    }
+  )
+
+  test.each(['codex', 'store'] as const)(
+    'retains the failed %s source after restart while a successful empty source clears only its membership',
+    async failedSource => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({ marketplaceInstalled: true, marketplaceDeviceState: 'installed' })
+      const nativeMarket = {
+        name: 'native-market',
+        path: '/tmp/native-market',
+        plugins: [
+          {
+            ...defaultCodexPlugin,
+            id: 'native-docs',
+            name: 'native-docs',
+            displayName: 'Native Docs',
+          },
+        ],
+      }
+      mockCodexAppServerInvoke({
+        marketplaces: [nativeMarket],
+        installedPluginNames: ['native-docs'],
+        wegentStorePlugins: [
+          {
+            name: 'documents',
+            packageId: '101-wegent-documents-1.0.0',
+            installedPluginId: 101,
+            marketplace: 'wegent',
+            version: '1.0.0',
+            enabled: true,
+            pluginPath: '/tmp/store/101-wegent-documents-1.0.0',
+          },
+        ],
+      })
+      const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      const first = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toHaveLength(2)
+      )
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      const initial = getPluginMarketplaceCache(cacheKey)!
+      const native = initial.installedPlugins.find(
+        plugin => plugin.spec.source.pluginKey === 'native-docs'
+      )!
+      const stored = initial.installedPlugins.find(plugin => plugin.spec.pluginId === 101)!
+      expect(native).toBeDefined()
+      expect(stored.spec.sourcePayload?.localPresent).toBe(true)
+      first.unmount()
+      flushPluginMarketplaceCachePersist()
+      resetPluginMarketplaceCacheMemory()
+      clearLocalCodexPluginsReadStateCache()
+      mockCodexAppServerInvoke({ marketplaces: [nativeMarket], installedPluginNames: [] })
+      const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+      vi.mocked(requestLocalExecutor).mockImplementation((method, args) => {
+        if (
+          (failedSource === 'store' && method === 'executor.plugins.store.list') ||
+          (failedSource === 'codex' &&
+            method === 'codex.app_server_request' &&
+            (args as { method?: string })?.method === 'plugin/installed')
+        )
+          return Promise.reject(new Error(`${failedSource} unavailable after restart`))
+        return originalInvoke(method, args)
+      })
+
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'error'
+      )
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      const restored = getPluginMarketplaceCache(cacheKey)!
+      expect(
+        restored.installedPlugins.some(plugin => plugin.spec.source.pluginKey === 'native-docs')
+      ).toBe(failedSource === 'codex')
+      expect(
+        restored.installedPlugins.find(plugin => plugin.spec.pluginId === 101)?.spec.sourcePayload
+          ?.localPresent === true
+      ).toBe(failedSource === 'store')
+      expect(restored.localInstalledSources).toMatchObject({
+        codex: failedSource === 'codex' ? [inventoryIdentity(native)] : [],
+        store: failedSource === 'store' ? [inventoryIdentity(stored)] : [],
+      })
+      expect(restored.localInstalledSourceStatus).toMatchObject({
+        codex: failedSource === 'codex' ? 'rejected' : 'fulfilled',
+        store: failedSource === 'store' ? 'rejected' : 'fulfilled',
+      })
+      expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+    }
+  )
+
+  test.each(['membership', 'catalog'] as const)(
+    'does not restore a source owner from a late %s read after a source-only refresh',
+    async pending => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({ marketplaceInstalled: true, marketplaceDeviceState: 'installed' })
+      mockCodexAppServerInvoke()
+      const response = await fetch('/api/plugins/installed')
+      const { items } = (await response.json()) as InstalledPluginListResponse
+      const shared = {
+        ...items[0],
+        spec: { ...items[0].spec, sourcePayload: { localPresent: true } },
+      }
+      const identity = inventoryIdentity(shared)
+      const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      writePluginInventory(cacheKey, 'current-device', {
+        installedPlugins: [shared],
+        installedPluginsFetchedAt: 123,
+        localInstalledSources: { codex: [identity], store: [identity] },
+        localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+      })
+      let resolveMembership!: (read: LocalPluginInventoryRead) => void
+      const membership = new Promise<LocalPluginInventoryRead>(resolve => {
+        resolveMembership = resolve
+      })
+      const acceptedRead: LocalPluginInventoryRead = {
+        items: [shared],
+        deviceId: 'current-device',
+        sourceReads: {
+          codex: { status: 'fulfilled', items: [shared] },
+          store: { status: 'fulfilled', items: [shared] },
+        },
+      }
+      let resolveCatalog!: (state: LocalCodexPluginsState) => void
+      const catalog = new Promise<LocalCodexPluginsState>(resolve => {
+        resolveCatalog = resolve
+      })
+      const api = createLocalCodexPluginApi()
+      const listInstalledPlugins = vi.fn(() =>
+        pending === 'membership' ? membership : Promise.resolve(acceptedRead)
+      )
+      const readState = vi.fn(() => catalog)
+      const apiFactory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+        ...api,
+        listInstalledPlugins,
+        readState,
+      })
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+        await waitFor(() =>
+          expect(pending === 'membership' ? listInstalledPlugins : readState).toHaveBeenCalled()
+        )
+        const before = getPluginMarketplaceCache(cacheKey)!
+        act(() =>
+          writePluginInventory(cacheKey, 'current-device', {
+            localInstalledSources: { codex: [], store: [identity] },
+            localInstalledSourceStatus: { codex: 'fulfilled', store: 'rejected' },
+          })
+        )
+        const expected = getPluginMarketplaceCache(cacheKey)!
+        expect(expected.installedPlugins).toEqual(before.installedPlugins)
+        expect(expected.installedPluginsFetchedAt).toBe(before.installedPluginsFetchedAt)
+
+        await act(async () => {
+          if (pending === 'membership') {
+            resolveMembership(acceptedRead)
+            await membership
+          } else {
+            resolveCatalog({
+              installedPlugins: [shared],
+              sourceReads: acceptedRead.sourceReads,
+              marketplaceItems: [],
+              marketplaces: [],
+              selectedMarketplaceId: '',
+              marketplacePath: '',
+              installRegistryPath: '',
+              deviceId: 'current-device',
+            })
+            await catalog
+          }
+        })
+
+        expect(getPluginMarketplaceCache(cacheKey)).toBe(expected)
+        expect(getPluginMarketplaceCache(cacheKey)?.localInstalledSources?.codex).toEqual([])
+      } finally {
+        apiFactory.mockRestore()
+      }
+    }
+  )
+
+  test('revokes automatic write readiness when another consumer publishes a rejected source', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ marketplaceInstalled: true, marketplaceDeviceState: 'installed' })
+    mockCodexAppServerInvoke({
+      wegentStorePlugins: [
+        {
+          name: 'documents',
+          packageId: '101-wegent-documents-1.0.0',
+          installedPluginId: 101,
+          marketplace: 'wegent',
+          version: '1.0.0',
+          enabled: true,
+          pluginPath: '/tmp/store/101-wegent-documents-1.0.0',
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expectCodexAppServerRequest('plugin/list', { cwds: null }))
+    const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const before = getPluginMarketplaceCache(cacheKey)!
+    expect(before.localInstalledSourceStatus).toMatchObject({
+      codex: 'fulfilled',
+      store: 'fulfilled',
+    })
+    const stored = before.installedPlugins.find(plugin => plugin.spec.pluginId === 101)!
+    expect(stored.spec.sourcePayload?.localPresent).toBe(true)
+    act(() =>
+      writePluginInventory(cacheKey, 'current-device', {
+        localInstalledSourceStatus: { codex: 'fulfilled', store: 'rejected' },
+        marketplaceItems: before.marketplaceItems.map(item => ({
+          ...item,
+          version: '2.0.0',
+          latestReleaseId: 1002,
+          currentDeviceInstallation: item.currentDeviceInstallation
+            ? {
+                ...item.currentDeviceInstallation,
+                desiredReleaseId: 1002,
+                actualReleaseId: null,
+                state: 'pending' as const,
+              }
+            : null,
+        })),
+      })
+    )
+    expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual(before.installedPlugins)
+    await userEvent.type(screen.getByTestId('plugins-search-input'), 'Documents')
+
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+    expect(hasInFlightPluginDeviceSync('current-device')).toBe(false)
+  })
+
+  test('does not synchronize a device gap while cloud installed membership is still pending or failed', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ marketplaceInstalled: true, marketplaceDeviceState: 'pending' })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const held = holdNextCloudPluginRead('installed')
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('plugins-search-input'), 'Documents')
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+    expect(hasInFlightPluginDeviceSync('current-device')).toBe(false)
+
+    await act(async () => held.reject(new Error('Installed membership unavailable')))
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'error'
+    )
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([])
+  })
+
+  test('retains the independent cloud catalog after an installed failure and clears the error on refresh', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, args) => {
+      const result = await originalInvoke(method, args)
+      return method === 'executor.plugins.store.list'
+        ? { ...(result as Record<string, unknown>), supportsPluginReconciliation: true }
+        : result
+    })
+    const held = holdNextCloudPluginRead('installed')
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+
+    await act(async () => held.reject(new Error('Installed membership unavailable')))
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'error'
+    )
+    const refresh = screen.getByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).not.toBeDisabled())
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    await userEvent.click(refresh)
+
+    await waitFor(() => expect(refresh).not.toBeDisabled())
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('plugin-operation-notice')?.getAttribute('data-notice-kind')
+      ).not.toBe('error')
+    )
+  })
+
+  test.each(['account', 'device', 'mutation'] as const)(
+    'ignores a late cloud catalog after a newer %s',
+    async change => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({ marketplaceDisplayName: 'Old Scope Catalog' })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const held = holdNextCloudPluginRead('marketplace')
+      const { rerender } = render(
+        <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+      )
+      await waitFor(() => expect(held.ready).toHaveBeenCalled())
+      const token = change === 'account' ? 'other-account' : 'cloud-token'
+      const deviceId = change === 'device' ? 'new-device' : 'current-device'
+      const cacheKey = pluginMarketplaceCacheKey('/api', token)
+      if (change === 'mutation') {
+        const response = await held.read('/api/plugins/marketplace')
+        const { items } = (await response.json()) as { items: PluginMarketplaceItem[] }
+        act(() =>
+          writePluginInventory(
+            cacheKey,
+            deviceId,
+            {
+              marketplaceItems: items.map(item => ({ ...item, displayName: 'New Scope Catalog' })),
+            },
+            { mutation: true }
+          )
+        )
+      } else {
+        mockSystemSkillsFetch({
+          marketplaceDisplayName: 'New Scope Catalog',
+          cloudToken: token,
+          deviceId,
+        })
+        mockCodexAppServerInvoke({ deviceId })
+        rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken={token} />)
+      }
+      expect(await screen.findByText('New Scope Catalog')).toBeInTheDocument()
+      await act(async () => held.release())
+      await waitFor(() => expect(held.returned).toHaveBeenCalled())
+
+      expect(screen.queryByText('Old Scope Catalog')).not.toBeInTheDocument()
+      expect(screen.getByText('New Scope Catalog')).toBeInTheDocument()
+      expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([
+        expect.objectContaining({ displayName: 'New Scope Catalog' }),
+      ])
+    }
+  )
+
+  test.each([false, true])(
+    'keeps refresh available after every plugin source fails and recovers (warm cache: %s)',
+    async warm => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+      mockCodexAppServerInvoke({
+        marketplaces: [
+          {
+            name: 'custom-local',
+            path: '/tmp/custom-local',
+            plugins: [
+              {
+                ...defaultCodexPlugin,
+                id: 'local-1',
+                name: 'local-docs',
+                displayName: 'Local Docs',
+              },
+            ],
+          },
+        ],
+        installedPluginNames: ['local-docs'],
+      })
+      let unavailable = !warm
+      const recoveryEvents: string[] = []
+      const fetchHealthy = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation((input, init) => {
+        const url = new URL(String(input), 'http://localhost')
+        const path = url.pathname
+        if (
+          unavailable &&
+          (path === '/api/plugins/marketplace' || path === '/api/plugins/installed')
+        )
+          return Promise.reject(new Error('Cloud plugin sources unavailable'))
+        if (path === '/api/plugins/installed/sync-device' && url.searchParams.get('reconcile'))
+          recoveryEvents.push('reconcile')
+        return fetchHealthy(input, init)
+      })
+      const invokeHealthy = vi.mocked(requestLocalExecutor).getMockImplementation()!
+      vi.mocked(requestLocalExecutor).mockImplementation((method, args) => {
+        const appServerMethod = (args as { method?: string })?.method
+        if (
+          unavailable &&
+          ([
+            'executor.plugins.store.list',
+            'executor.plugins.personal.list',
+            'executor.codex_home.config.read',
+          ].includes(method) ||
+            (method === 'codex.app_server_request' &&
+              ['plugin/list', 'plugin/installed'].includes(appServerMethod ?? '')))
+        )
+          return Promise.reject(new Error('Local plugin sources unavailable'))
+        if (method === 'codex.app_server_request' && appServerMethod === 'plugin/list')
+          recoveryEvents.push('catalog')
+        if (method === 'executor.plugins.store.list')
+          return Promise.resolve(invokeHealthy(method, args)).then(inventory => ({
+            ...(inventory as Record<string, unknown>),
+            supportsPluginReconciliation: true,
+          }))
+        return invokeHealthy(method, args)
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      const refresh = screen.getByTestId('plugins-refresh-button')
+      if (warm) {
+        expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+        await waitFor(() => expect(refresh).not.toBeDisabled())
+        unavailable = true
+        await userEvent.click(refresh)
+      }
+
+      expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'error'
+      )
+      await waitFor(() => expect(refresh).not.toBeDisabled())
+      expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
+      if (warm) {
+        expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+        expect(screen.getByText('Local Docs')).toBeInTheDocument()
+      }
+
+      recoveryEvents.length = 0
+      unavailable = false
+      await userEvent.click(refresh)
+
+      expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+      expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+      await waitFor(() => expect(refresh).not.toBeDisabled())
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId('plugin-operation-notice')?.getAttribute('data-notice-kind'),
+          screen.queryByTestId('plugin-operation-notice')?.textContent
+        ).not.toBe('error')
+      )
+      expect(recoveryEvents.filter(event => event === 'reconcile')).toHaveLength(1)
+      expect(recoveryEvents.slice(recoveryEvents.indexOf('reconcile'))).toEqual([
+        'reconcile',
+        'catalog',
+      ])
+    }
+  )
+
+  test('retains a failed cloud catalog and clears only cloud rows after an empty successful refresh', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'custom-local',
+          path: '/tmp/custom-local',
+          plugins: [
+            { ...defaultCodexPlugin, id: 'local-1', name: 'local-docs', displayName: 'Local Docs' },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    let fail = true
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (new URL(String(input), 'http://localhost').pathname === '/api/plugins/marketplace')
+        return fail
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve(
+              new Response(JSON.stringify({ items: [] }), {
+                headers: { 'Content-Type': 'application/json' },
+              })
+            )
+      return originalFetch(input, init)
+    })
+    await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(screen.getByText('Local Docs')).toBeInTheDocument()
+    fail = false
+    await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugin-marketplace-row-101')).not.toBeInTheDocument()
+    )
+    expect(screen.getByText('Local Docs')).toBeInTheDocument()
+  })
+
+  test.each(['marketplace', 'installed'])(
+    'keeps healthy rows when the device-scoped cloud %s pass fails',
+    async endpoint => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceSourceProvider: 'wegent',
+        deviceAutoSyncSucceeds: false,
+      })
+      mockCodexAppServerInvoke({
+        marketplaces: [
+          {
+            name: 'custom-local',
+            path: '/tmp/custom-local',
+            plugins: [
+              {
+                ...defaultCodexPlugin,
+                id: 'local-1',
+                name: 'local-docs',
+                displayName: 'Local Docs',
+              },
+            ],
+          },
+        ],
+      })
+      localExecutorMocks.knownDeviceId = null
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      let scopedFailures = 0
+      vi.mocked(fetch).mockImplementation((input, init) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (
+          url.pathname === `/api/plugins/${endpoint}` &&
+          url.searchParams.get('device_id') === 'current-device'
+        ) {
+          scopedFailures += 1
+          return Promise.reject(new Error('device pass unavailable'))
+        }
+        return originalFetch(input, init)
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+      await waitFor(() => expect(scopedFailures).toBeGreaterThan(0))
+      expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+      expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'error'
+      )
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+      expect(marketplace.getReportDeviceCalls()).toBe(0)
+    }
+  )
+
+  test('a successful empty personal disk read removes only disk rows', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'custom-local',
+          path: '/tmp/custom-local',
+          plugins: [
+            { ...defaultCodexPlugin, id: 'local-1', name: 'local-docs', displayName: 'Local Docs' },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    const cached = getPluginMarketplaceCache('/api|cloud-token')!
+    act(() =>
+      setPluginMarketplaceCache({
+        ...cached,
+        marketplaceItems: [
+          ...cached.marketplaceItems,
+          {
+            ...cached.marketplaceItems[0],
+            id: 'personal-disk:old-personal',
+            name: 'old-personal',
+            displayName: 'Old Personal',
+            sourceProvider: 'codex',
+            sourceType: 'local',
+            visibility: 'personal',
+            latestReleaseId: null,
+            manifest: { marketplaceId: 'wework-personal' },
+            components: emptyPluginComponents,
+          },
+        ],
+      })
+    )
+    expect(await screen.findByText('Old Personal')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+    await waitFor(() => expect(screen.queryByText('Old Personal')).not.toBeInTheDocument())
+    expect(screen.getByText('Local Docs')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+  })
+
+  test('partial local membership blocks automatic sync and manual state repair', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceSourceProvider: 'wegent',
+      deviceAutoSyncSucceeds: false,
+    })
+    mockCodexAppServerInvoke()
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    vi.mocked(requestLocalExecutor).mockImplementation((method, args) =>
+      method === 'executor.plugins.store.list'
+        ? Promise.reject(new Error('store unavailable'))
+        : originalInvoke(method, args)
+    )
+    const reconcile = vi
+      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+      .mockResolvedValue(undefined)
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+      expect(marketplace.getReportDeviceCalls()).toBe(0)
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      expect(reconcile).not.toHaveBeenCalled()
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      reconcile.mockRestore()
+    }
+  })
+
+  test.each([null, undefined, 'plain failure'])(
+    'shows installation failure for non-object rejection %s',
+    async rejection => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke()
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation((input, init) =>
+        String(input).includes('/plugins/marketplace/101/install')
+          ? Promise.reject(rejection)
+          : originalFetch(input, init)
+      )
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await installPluginFromMarketCard('plugin-marketplace-install-101')
+      expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'error'
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-marketplace-install-101')).not.toBeDisabled()
+      )
+    }
+  )
 
   test('keeps the user on the plugin page when the current device is disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
@@ -2327,7 +3176,7 @@ describe('PluginsWorkspace', () => {
     expect(reveal).toHaveTextContent('查看 Plugin 5, Plugin 6，以及另外 14 个')
     expect(reveal.querySelector('img')).toHaveAttribute(
       'src',
-      'file:///Users/test/plugins/plugin-5/assets/logo.png'
+      '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2Fplugins%2Fplugin-5%2Fassets%2Flogo.png'
     )
 
     await userEvent.click(reveal)
@@ -2381,6 +3230,64 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.type(searchInput, 'cument')
     expect(await screen.findByText('Documents')).toBeInTheDocument()
+  })
+
+  test('search reveals a local plugin outside the category preview without rereading catalogs', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ marketplaceCount: 20 })
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'custom-local',
+          path: '/tmp/custom-local',
+          plugins: [
+            {
+              ...defaultCodexPlugin,
+              id: 'local-1',
+              name: 'local-docs',
+              displayName: 'Local Docs',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await screen.findByTestId('plugins-marketplace-tab-custom-local')
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(
+          pluginMarketplaceCacheKey('/api', 'cloud-token')
+        )?.marketplaceItems.some(item => item.name === 'local-docs')
+      ).toBe(true)
+    )
+    const localRow = 'plugin-marketplace-row-custom-local:local-1'
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(4)
+    expect(screen.queryByTestId(localRow)).not.toBeInTheDocument()
+    const cloudCatalogReads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace')).length
+    const localCatalogReads = () =>
+      vi
+        .mocked(requestLocalExecutor)
+        .mock.calls.filter(
+          ([method, args]) =>
+            method === 'codex.app_server_request' &&
+            (args as { method?: string })?.method === 'plugin/list'
+        ).length
+    const cloudReadsBeforeSearch = cloudCatalogReads()
+    const localReadsBeforeSearch = localCatalogReads()
+    expect(cloudReadsBeforeSearch).toBeGreaterThan(0)
+    expect(localReadsBeforeSearch).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByTestId('plugins-search-input'), {
+      target: { value: 'Local Docs' },
+    })
+
+    expect(await screen.findByTestId(localRow)).toHaveTextContent('Local Docs')
+    expect(cloudCatalogReads()).toBe(cloudReadsBeforeSearch)
+    expect(localCatalogReads()).toBe(localReadsBeforeSearch)
   })
 
   test('keeps the current catalog stable while the user is still typing', async () => {
@@ -2785,6 +3692,10 @@ describe('PluginsWorkspace', () => {
       if (command === 'executor.plugins.links.list') {
         return Promise.resolve([])
       }
+      if (command === 'executor.plugins.store.list')
+        return Promise.resolve({ storePath: '', plugins: [] })
+      if (command === 'executor.plugins.personal.list')
+        return Promise.resolve({ marketplacePath: '', plugins: [] })
       if (command !== 'codex.app_server_request') return Promise.resolve(undefined)
       const request = args as {
         method?: string
@@ -3610,6 +4521,7 @@ describe('PluginsWorkspace', () => {
       const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
       const marketplace = mockSystemSkillsFetch({ deviceId, deviceAutoSyncSucceeds: true })
       mockCodexAppServerInvoke({ deviceId })
+      localExecutorMocks.knownDeviceId = null
       setPluginMarketplaceCache({
         cacheKey,
         marketplaceItems: [],
@@ -4078,6 +4990,114 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+  })
+
+  test('recovers a failed manual update without leaving a stale catalog error', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke()
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const before = getPluginMarketplaceCache('/api|cloud-token')!.installedPlugins[0]
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    let updateRequests = 0
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
+        updateRequests += 1
+        if (updateRequests === 1) return Promise.reject(null)
+        const updated = {
+          ...before,
+          spec: { ...before.spec, releaseId: 1002, version: '1.1.0' },
+          status: {
+            ...before.status,
+            devices: before.status.devices.map(device => ({
+              ...device,
+              desiredReleaseId: 1002,
+              actualReleaseId: 1002,
+            })),
+          },
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify(updated), { headers: { 'Content-Type': 'application/json' } })
+        )
+      }
+      return originalFetch(input, init)
+    })
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    await userEvent.click(await screen.findByTestId('plugin-update-confirm-button'))
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent('Unknown error')
+    await waitFor(() => expect(screen.getByTestId('plugin-detail-toggle-101')).not.toBeDisabled())
+    expect(updateRequests).toBe(1)
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    await userEvent.click(await screen.findByTestId('plugin-update-confirm-button'))
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins[0]?.spec.releaseId
+      ).toBe(1002)
+    )
+    expect(updateRequests).toBe(2)
+    expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
+
+    // A later successful empty snapshot from another inventory reader must not
+    // expose an unrelated update failure after that operation has recovered.
+    const current = getPluginMarketplaceCache('/api|cloud-token')!
+    act(() => setPluginMarketplaceCache({ ...current, installedPlugins: [], marketplaceItems: [] }))
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unknown error')).not.toBeInTheDocument()
+  })
+
+  test('ignores repeated update actions while the connection check is pending', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke()
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    const confirm = await screen.findByTestId('plugin-update-confirm-button')
+    const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    let finishConnection!: (value: { configured: boolean; connected: boolean }) => void
+    const pendingConnection = new Promise(resolve => {
+      finishConnection = resolve
+    })
+    let connectionReads = 0
+    vi.mocked(requestLocalExecutor).mockImplementation((method, args) => {
+      if (method === 'executor.backend.status') {
+        connectionReads += 1
+        return pendingConnection
+      }
+      return originalInvoke(method, args)
+    })
+    await userEvent.click(confirm)
+    await waitFor(() => expect(connectionReads).toBe(1))
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    expect(connectionReads).toBe(1)
+    await act(async () => finishConnection({ configured: true, connected: true }))
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([input, init]) =>
+              String(input).includes('/plugins/installed/101') && init?.method === 'PUT'
+          )
+      ).toHaveLength(1)
+    )
+    expect(screen.queryByTestId('plugin-update-confirm-button')).not.toBeInTheDocument()
   })
 
   test('uses the current installation identity when membership arrives after catalog detail', async () => {
@@ -5384,6 +6404,17 @@ describe('PluginsWorkspace', () => {
       deviceId: 'current-device',
       marketplaces: [localMarketplace],
       installedPluginNames: ['documents'],
+      wegentStorePlugins: [
+        {
+          name: 'documents',
+          packageId: '101-wegent-documents-1.0.0',
+          installedPluginId: 101,
+          marketplace: 'wegent',
+          version: '1.0.0',
+          enabled: true,
+          pluginPath: '/Users/test/.wework/capabilities/store/plugins/101-wegent-documents-1.0.0',
+        },
+      ],
     })
     await createLocalCodexPluginApi().readState({
       mergeAllMarketplaces: true,
@@ -6675,6 +7706,7 @@ describe('PluginsWorkspace', () => {
         marketplaceAccessRole: 'owner',
       })
       mockCodexAppServerInvoke({ deviceId: 'current-device', installedPluginNames: [] })
+      if (outcome === 'delayed-inventory') localExecutorMocks.knownDeviceId = null
       const originalFetch = vi.mocked(fetch).getMockImplementation()!
       let armPreflight = false
       let preflightReads = 0
@@ -7035,6 +8067,106 @@ describe('PluginsWorkspace', () => {
     )
     expect(await screen.findByTestId('plugin-connection-manage-group:sites')).toBeInTheDocument()
     expectCodexAppServerRequest('plugin/read', { pluginName: 'documents' })
+  })
+
+  test('clears a personal detail read error after reopening successfully without remounting', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    let readFailed = false
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (
+        command === 'codex.app_server_request' &&
+        (args as { method?: string }).method === 'plugin/read' &&
+        !readFailed
+      ) {
+        readFailed = true
+        return Promise.reject(new Error('Personal detail source unavailable'))
+      }
+      return previous?.(command, args) as Promise<unknown>
+    })
+    render(<PluginsWorkspace />)
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Personal detail source unavailable'
+    )
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    await userEvent.click(
+      await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+    )
+    expect(await screen.findByText('Documents App')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
+    )
+  })
+
+  test('keeps a plugin operation error when its pending detail read succeeds', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const previous = vi.mocked(requestLocalExecutor).getMockImplementation()
+    let resolveRead!: (value: unknown) => void
+    vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+      if (
+        command === 'codex.app_server_request' &&
+        (args as { method?: string }).method === 'plugin/read'
+      ) {
+        return new Promise(resolve => {
+          resolveRead = resolve
+        })
+      }
+      return previous?.(command, args) as Promise<unknown>
+    })
+    const trial = vi.spyOn(marketplaceWorkspaceHelpers, 'tryPluginInChat').mockReturnValue(false)
+    try {
+      render(<PluginsWorkspace />)
+      await userEvent.click(
+        await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+      )
+      await waitFor(() => expect(resolveRead).toBeTypeOf('function'))
+      await userEvent.click(screen.getByTestId('plugin-detail-toggle-documents-local-id'))
+      expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+        '这个插件没有可试用的技能'
+      )
+      await act(async () =>
+        resolveRead({
+          plugin: codexPluginDetail('wework-personal', {
+            id: 'documents-local-id',
+            name: 'documents',
+            displayName: 'Documents',
+          }),
+        })
+      )
+      expect(await screen.findByText('Documents App')).toBeInTheDocument()
+      expect(screen.getByTestId('plugin-detail-action-error')).toHaveTextContent(
+        '这个插件没有可试用的技能'
+      )
+    } finally {
+      trial.mockRestore()
+    }
   })
 
   test.each([
@@ -10849,5 +11981,65 @@ describe('PluginsWorkspace', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
+  })
+
+  test.each(['cloud', 'membership'] as const)(
+    'finishes a cross-device catalog refresh when %s arrives first',
+    async firstSource => {
+      const reads = mockCrossDeviceCatalogLoad()
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      try {
+        reads[firstSource].release()
+        await waitFor(() =>
+          expect(getPluginMarketplaceCache(reads.cacheKey)?.deviceId).toBe('current-device')
+        )
+        reads[firstSource === 'cloud' ? 'membership' : 'cloud'].release()
+
+        expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+        expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(reads.cacheKey)?.marketplaceItems.some(
+              item => item.name === 'local-docs'
+            )
+          ).toBe(true)
+        )
+      } finally {
+        reads.cloud.release()
+        reads.membership.release()
+      }
+    }
+  )
+
+  test('does not overwrite a confirmed mutation during a cross-device catalog refresh', async () => {
+    const reads = mockCrossDeviceCatalogLoad()
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    try {
+      reads.cloud.release()
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(reads.cacheKey)?.deviceId).toBe('current-device')
+      )
+      const current = getPluginMarketplaceCache(reads.cacheKey)!
+      act(() => {
+        setPluginMarketplaceCache(
+          { ...current, marketplaceItems: [], installedPlugins: [] },
+          { mutation: true }
+        )
+      })
+      const mutationRevision = getPluginMarketplaceCache(reads.cacheKey)?.mutationRevision
+      await act(async () => {
+        reads.membership.release()
+        await reads.membership.promise
+      })
+      await waitFor(() => expect(reads.membershipReturned).toHaveBeenCalled())
+      const final = getPluginMarketplaceCache(reads.cacheKey)
+      expect(final?.mutationRevision).toBe(mutationRevision)
+      expect(final?.installedPlugins).toEqual([])
+      expect(final?.marketplaceItems).toEqual([])
+      expect(screen.queryByText('Local Docs')).not.toBeInTheDocument()
+    } finally {
+      reads.cloud.release()
+      reads.membership.release()
+    }
   })
 })

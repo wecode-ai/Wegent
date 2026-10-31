@@ -205,6 +205,100 @@ def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
         engine.dispose()
 
 
+def test_independent_issue_creation_does_not_lock_empty_assignment_ranges(
+    mysql_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ready = Barrier(2, timeout=10)
+    issues_ready = Barrier(2, timeout=10)
+    monkeypatch.setattr(
+        "app.core.async_utils.schedule_async_task", lambda *_a, **_k: None
+    )
+
+    def synchronize_issues(_db, _cursor, statement, _params, context, _many) -> None:
+        if (
+            statement.startswith("INSERT INTO loop_items")
+            and context.compiled_parameters[0].get("resource_type") == "task"
+        ):
+            issues_ready.wait()
+
+    def synchronize(_db, _cursor, statement, _params, context, _many) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
+        values = context.compiled_parameters[0]
+        metadata = values.get("metadata") or {}
+        if (
+            values.get("resource_type") == "comment"
+            and metadata.get("event_type") == "assignment"
+        ):
+            ready.wait()
+
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    sa.event.listen(engine, "after_cursor_execute", synchronize_issues)
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+            db.add(
+                Kind(
+                    id=11,
+                    kind="CollaborationWorkspace",
+                    name="space-11",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name="space-11",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+            db.commit()
+            project_ids = [
+                cloud_project_service.create(
+                    db, 1, CloudProjectCreate(name=f"Project {i}", workspace_id="11")
+                ).id
+                for i in range(2)
+            ]
+
+        def create_issue(project_id: str) -> str:
+            with Session(engine, autoflush=False) as db:
+                project = cloud_project_service.get(db, project_id, 1)
+                user = db.get(User, 1)
+                created = loop_item_provider_router.create(
+                    db,
+                    project,
+                    user,
+                    LoopItemCreate(title="Concurrent Issue", notify_assignee=False),
+                )
+                return created.internal_item.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create_issue, project_id) for project_id in project_ids
+            ]
+            issue_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            for issue_id in issue_ids:
+                assignments = issue_assignment_service.active_for_issue(db, issue_id)
+                assert [
+                    (event.member_type, event.member_id) for event in assignments
+                ] == [("human", "1")]
+                index = (
+                    db.query(LoopItemActiveAssignment)
+                    .filter_by(parent_id=issue_id)
+                    .all()
+                )
+                assert {row.loop_item_id for row in index} == {None, assignments[0].id}
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        sa.event.remove(engine, "after_cursor_execute", synchronize_issues)
+        engine.dispose()
+
+
 def test_independent_issues_initialize_assignments_without_gap_locks(
     mysql_url: str,
 ) -> None:

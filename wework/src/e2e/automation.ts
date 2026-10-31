@@ -38,6 +38,7 @@ import { decodeDesktopControlImage } from './desktop-control-image'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { hasInFlightPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
@@ -108,6 +109,7 @@ import {
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
@@ -117,6 +119,24 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
+  return Object.fromEntries(
+    Object.entries(sourceReads ?? {}).flatMap(([source, read]) =>
+      read
+        ? [
+            [
+              source,
+              {
+                status: read.status,
+                pluginKeys: read.items?.map(plugin => plugin.spec.source.pluginKey) ?? [],
+              },
+            ],
+          ]
+        : []
+    )
+  )
+}
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
@@ -3261,8 +3281,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
+      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3279,6 +3301,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             nextHopProtocol: timing.nextHopProtocol,
           }
         }),
+        ...(command.value
+          ? {
+              pluginDeviceSyncInFlight: hasInFlightPluginDeviceSync(command.value),
+              systemPressure: await invokeDesktopHost('maintenance.getSystemPressure'),
+            }
+          : {}),
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
@@ -3294,15 +3322,60 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getImageLoadState':
+      return JSON.stringify(
+        findDesktopControlElements(command.selector).map(element => {
+          if (!(element instanceof HTMLImageElement)) {
+            throw new Error('Image diagnostics require an image selector')
+          }
+          return {
+            complete: element.complete,
+            naturalWidth: element.naturalWidth,
+            naturalHeight: element.naturalHeight,
+            sourceProtocol: new URL(element.currentSrc || element.src, window.location.href)
+              .protocol,
+          }
+        })
+      )
+    case 'getPluginImageRequestTimings': {
+      const path = command.value
+      if (
+        !path ||
+        path.length > 32768 ||
+        !(path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\'))
+      ) {
+        throw new Error('Plugin image timing diagnostics require an absolute image path')
+      }
+      performance.setResourceTimingBufferSize(10_000)
+      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      return JSON.stringify(
+        completed
+          .filter(resource => {
+            const url = new URL(resource.name, window.location.href)
+            return (
+              url.origin === window.location.origin &&
+              url.pathname === '/wework/executor/v1/plugin-image' &&
+              url.searchParams.get('path') === path
+            )
+          })
+          .map(resource => ({
+            initiatorType: resource.initiatorType,
+            responseStatus:
+              (resource as PerformanceResourceTiming & { responseStatus?: number })
+                .responseStatus ?? null,
+            startedAt: performance.timeOrigin + resource.startTime,
+            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
+          }))
+      )
+    }
     case 'getComposerPluginInventoryDiagnostics': {
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
-      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
-      const installed =
-        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
-        peekLocalCodexPluginsReadState()
+      const { peekLocalInstalledPluginInventory } = await import('@/api/local/codexPlugins')
+      const installed = peekLocalInstalledPluginInventory()
       return JSON.stringify({
         sharedInventory: getPluginInventoryDiagnostics(),
+        installedSourceReads: pluginSourceReadDiagnostics(installed?.sourceReads),
         composerApps: getComposerApps().map(app => ({
           id: app.id,
           isAccessible: app.isAccessible,
@@ -3311,7 +3384,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           pluginKey: app.pluginKey ?? null,
           source: app.source,
         })),
-        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+        installedPlugins: (installed?.items ?? []).map(plugin => ({
           enabled: plugin.spec.enabled,
           installState: plugin.spec.installState,
           marketplace: plugin.spec.source.marketplace,
@@ -3329,6 +3402,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         refresh: true,
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
+    case 'readLocalPluginDiskInventory': {
+      const { readLocalInstalledInventoryFromDisk } = await import('@/api/local/codexPlugins')
+      const read = await readLocalInstalledInventoryFromDisk()
+      return JSON.stringify({
+        deviceId: read.deviceId,
+        partial: Boolean(read.partial),
+        sourceReads: pluginSourceReadDiagnostics(read.sourceReads),
+      })
     }
     case 'getPluginSyncDiagnostics': {
       const deviceId = command.value?.trim()

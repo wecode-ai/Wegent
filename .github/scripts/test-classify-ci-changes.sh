@@ -732,6 +732,44 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$uninstall_path"
 done
 
+for catalog_boundary_path in \
+  "wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs" \
+  "wework/e2e/desktop/modules/plugin-source-continuation.mjs" \
+  "wework/e2e/desktop/modules/plugin-late-response-resilience.mjs" \
+  "wework/e2e/desktop/modules/plugin-scope-boundaries.mjs" \
+  "wework/e2e/desktop/modules/plugin-detail-resilience.mjs" \
+  "wework/e2e/desktop/modules/plugin-partial-inventory-resilience.mjs"; do
+  assert_desktop_case "plugin read boundary reuses the uninstall cloud checkpoint: $catalog_boundary_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-lost-response"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$catalog_boundary_path"
+done
+
+assert_desktop_case "plugin install and update faults reuse the write-coordination cloud checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-install-update-resilience.mjs"
+
+assert_desktop_case "plugin resilience orchestration tests select both existing cloud hosts" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/scripts/plugin-resilience-checkpoints.test.mjs"
+
 assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
@@ -1857,8 +1895,17 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/personal-issue-access.mjs" \
-  "wework/e2e/desktop/modules/real-object-storage.mjs" \
   "wework/e2e/desktop/scenarios/collaboration-issue-mcp-comments.scenario.mjs"
+
+assert_desktop_case "shared real object storage selects plugin recovery and collaboration consumers" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"collaboration-issue-mcp-comments,collaboration-delivery-editing"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/real-object-storage.mjs"
 
 assert_desktop_case "dispatch Issue boundary regression is invoked by CI" \
   'wework_desktop_e2e=true
@@ -2424,6 +2471,9 @@ for (const [job, suite, budget] of [
   const shards = JSON.parse(outputs[`wework_desktop_${suite}_e2e_matrix`]).include
   const body = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0]
   const capacity = Number(body?.match(/max-parallel: (\d+)/)?.[1])
+  if (suite === 'cloud') {
+    assert.equal(shards.length, 8, `${job}: preserve the original eight shared shards`)
+  }
   assert.ok(shards.length <= budget, `${job}: avoid repeated per-shard setup overhead`)
   assert.ok(capacity >= shards.length, `${job}: all shards must fit in one scheduling wave`)
 }

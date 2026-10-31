@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict'
+import { settleMentionTasks } from './mention-task-fixtures'
+
+interface MentionTask {
+  task_id: number
+  task_title: string
+  task_status: string
+  updated_at?: string | null
+}
+
+export interface VisibleMentionTask {
+  taskId: number
+  title: string
+}
+
+interface ProjectMentionSetup {
+  taskIds: number[]
+  visibleTasks: VisibleMentionTask[]
+  waitForCompleted: (taskId: number) => Promise<void>
+  touchTask: (task: VisibleMentionTask) => Promise<void>
+  readProjectTasks: () => Promise<MentionTask[]>
+}
+
+function updatedSecond(value: string | null | undefined): number {
+  return Math.floor(Date.parse(value ?? '') / 1_000)
+}
+
+function assertCompleteFixtures(tasks: MentionTask[], taskIds: number[]): void {
+  assert.deepEqual(
+    tasks.map(task => task.task_id).sort((left, right) => left - right),
+    [...taskIds].sort((left, right) => left - right),
+    'Project mention fixtures must be present exactly once'
+  )
+  for (const task of tasks) {
+    assert.equal(task.task_status, 'COMPLETED', `Fixture task ${task.task_id} is not complete`)
+    assert.ok(
+      Number.isFinite(updatedSecond(task.updated_at)),
+      `Fixture task ${task.task_id} has no valid ordering timestamp`
+    )
+  }
+}
+
+/** Establish menu ordering after every real fixture turn has finished. */
+export async function prepareProjectMentionTasks({
+  taskIds,
+  visibleTasks,
+  waitForCompleted,
+  touchTask,
+  readProjectTasks,
+}: ProjectMentionSetup): Promise<void> {
+  await settleMentionTasks(taskIds, waitForCompleted)
+  // A full second advances both rounded and truncated MySQL timestamps regardless
+  // of clock phase or timezone. Add timer margin without repeating any writes.
+  await new Promise<void>(resolve => setTimeout(resolve, 1_100))
+  for (const task of visibleTasks) await touchTask(task)
+
+  const tasks = await readProjectTasks()
+  assertCompleteFixtures(tasks, taskIds)
+  const visibleIds = new Set(visibleTasks.map(task => task.taskId))
+  const newestFiller = Math.max(
+    ...tasks
+      .filter(task => !visibleIds.has(task.task_id))
+      .map(task => updatedSecond(task.updated_at))
+  )
+  for (const visible of visibleTasks) {
+    const task = tasks.find(task => task.task_id === visible.taskId)
+    assert.ok(task, `Mention target ${visible.taskId} is missing`)
+    assert.equal(task.task_title, visible.title, 'The mention fixture title changed')
+    assert.ok(
+      updatedSecond(task.updated_at) > newestFiller,
+      `Mention target ${visible.taskId} must sort ahead of every filler`
+    )
+  }
+}
