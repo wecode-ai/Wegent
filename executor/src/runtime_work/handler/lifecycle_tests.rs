@@ -66,6 +66,42 @@ fn admitted_turn_history_cannot_synthesize_interruption_before_native_start() {
 }
 
 #[test]
+fn started_history_uses_native_identity_before_content_cache_initialization() {
+    let (handler, root, request) = setup("native-started-history-interleaving");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    // A history reader can run after lifecycle persistence and before the
+    // notification delivery owner initializes its separate content cache.
+    handler.apply_native_lifecycle("task-1", &request, &notification("turn/started", "turn-1"));
+    assert!(handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .is_empty());
+    let mut thread = json!({"id": "thread-1", "timeline": true, "turns": [{
+        "id": "turn-1", "status": "interrupted", "items": []
+    }]});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    thread["turns"][0]["status"] = json!("interrupted");
+    thread["turns"][0]["timelineCompleted"] = json!(true);
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "interrupted");
+    handler.apply_native_lifecycle(
+        "task-1",
+        &request,
+        &notification("turn/completed", "turn-1"),
+    );
+    thread["turns"][0]["status"] = json!("completed");
+    thread["turns"][0]["timelineCompleted"] = json!(false);
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "completed");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn recovery_exit_settles_only_its_own_failed_turn() {
     for next_turn in [false, true] {
         let (handler, root, _) = setup("native-recovery-exit");
