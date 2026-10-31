@@ -202,9 +202,12 @@ describe('unified human response', () => {
     await act(async () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
-    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
+    const marker = Array.from({ length: localStorage.length }, (_, index) =>
+      localStorage.key(index)
+    ).find(key => key?.includes(':accepted:'))!
     expect(marker).toBeTruthy()
     localStorage.removeItem(marker)
+    expect(localStorage.getItem(marker)).toBeNull()
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {
       expect(await context!.respond(item, 'stale second answer')).toBe(false)
