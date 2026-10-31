@@ -115,6 +115,9 @@ have exceeded 75 minutes, so that platform has a 90-minute job budget; other pla
 
 For default-user upgrade diagnosis, also select `checkpoint=app-upgrade` to run that scenario
 through the shared runner. PRs and default manual runs execute the complete upgrade suite.
+Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
+captures stack locations once and resumes execution, without reading scopes, arguments, or
+source text. Monitoring stops when startup completes.
 Cleanup must retain `electron-logs` and `release-logs` so the target executor's original logs
 distinguish startup failure, health-check timeout, and rollback. Missing logs are not a basis
 for guessing changes to startup behavior.
