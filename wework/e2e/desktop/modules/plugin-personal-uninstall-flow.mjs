@@ -13,7 +13,7 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 import { resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
-import { captureVerificationScreenshot, reloadMainWindow } from './workspace-flows.mjs'
+import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -196,14 +196,17 @@ async function waitForPersonalPluginConnection(control, deviceId) {
 export async function switchPersonalPluginAccount(control, cloud) {
   const startedAt = Date.now()
   const user = await pluginApi(cloud, '/users/me')
+  assert.ok(
+    typeof user.user_name === 'string' && user.user_name.trim(),
+    'Cloud identity omitted its username'
+  )
   const before = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
   assert.ok(before.ready && before.deviceId, 'Account switching requires the existing device')
   const disconnected = JSON.parse(await control.command('disconnectLocalExecutorCloud', 'body'))
   assert.deepEqual(disconnected, { configured: false, connected: false })
   await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
-  await reloadMainWindow(control, 'The selected account did not reconnect to desktop control')
-  await control.command('waitFor', testId('new-chat-button'), {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  await control.command('waitFor', testId('desktop-sidebar-account'), {
+    text: user.user_name,
   })
   await waitForPersonalPluginConnection(control, before.deviceId)
   const connection = JSON.parse(

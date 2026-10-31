@@ -82,6 +82,7 @@ import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
   setDesktopE2ECloudSessionToken,
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
   type DesktopE2ERuntimeConfig,
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
@@ -2430,6 +2431,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       setDesktopE2ECloudSessionToken(command.value ?? '')
       const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
       if (!connection) throw new Error('Cloud session switching requires a backend URL')
+      window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
       return ''
     }
     case 'getLocalStorageItem':

@@ -254,11 +254,14 @@ test('same-account recovery propagates the connection failure without reloading 
   assert.equal(command.mock.calls.length, 1)
 })
 
-test('account switching reloads once, verifies the new identity and keeps the device', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 42 }) }))
+test('account switching verifies the mounted identity and keeps the device without reloading', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ id: 42, user_name: 'recipient-42' }) })
+  )
   const control = {
-    readyCount: 7,
-    awaitReadyAfter: vi.fn().mockResolvedValue(undefined),
     command: vi.fn(async action => {
       if (action === 'getLocalExecutorStatus')
         return JSON.stringify({ ready: true, deviceId: 'existing-device' })
@@ -270,7 +273,7 @@ test('account switching reloads once, verifies the new identity and keeps the de
           rendererConnected: true,
         })
       if (action === 'getLocalStorageItem') return JSON.stringify({ user: { id: 42 } })
-      assert.ok(['setCloudSessionToken', 'reloadMainWindow', 'waitFor'].includes(action))
+      assert.ok(['setCloudSessionToken', 'waitFor'].includes(action))
       return ''
     }),
   }
@@ -280,13 +283,15 @@ test('account switching reloads once, verifies the new identity and keeps the de
   })
   assert.equal(result.userId, 42)
   assert.equal(result.deviceId, 'existing-device')
-  assert.deepEqual(control.awaitReadyAfter.mock.calls, [[7]])
+  assert.deepEqual(
+    control.command.mock.calls.find(([action]) => action === 'waitFor'),
+    ['waitFor', '[data-testid="desktop-sidebar-account"]', { text: 'recipient-42' }]
+  )
   const actions = control.command.mock.calls.map(([action]) => action)
   assert.deepEqual(actions, [
     'getLocalExecutorStatus',
     'disconnectLocalExecutorCloud',
     'setCloudSessionToken',
-    'reloadMainWindow',
     'waitFor',
     'getPluginSyncDiagnostics',
     'getLocalStorageItem',

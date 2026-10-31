@@ -110,13 +110,20 @@ export async function verifyPersonalPluginVersionSubmission({
   const restartDesktopApp = async options => {
     const startedAt = Date.now()
     await restartDesktopProcess(options)
-    // The control connection precedes the asynchronous Core workbench mount.
-    await control.command('waitFor', testId('new-chat-button'), {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
+    const runtimeHomeSwitch = Boolean(options?.appEnvironmentOverrides?.WEGENT_EXECUTOR_HOME)
+    // The recipient needs the plugin workspace; shared persistence still waits
+    // for the original chat surface used by the existing lifecycle assertions.
+    if (runtimeHomeSwitch) await control.command('navigate', 'body', { value: '/plugins' })
+    await control.command(
+      'waitFor',
+      testId(runtimeHomeSwitch ? 'plugins-search-input' : 'new-chat-button'),
+      {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      }
+    )
     runtimeCost.processRestarts.push({
       deviceSwitch: options?.expectNewDeviceIdentity === true,
-      runtimeHomeSwitch: Boolean(options?.appEnvironmentOverrides?.WEGENT_EXECUTOR_HOME),
+      runtimeHomeSwitch,
       sharedLifecycle: sharingLifecycle,
       durationMs: Date.now() - startedAt,
     })
@@ -251,6 +258,7 @@ export async function verifyPersonalPluginVersionSubmission({
   try {
     runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, recipientCloud))
     await control.command('navigate', 'body', { value: '/plugins' })
+    await control.command('clickIfPresent', testId('plugin-detail-back-button'))
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('click', testId('plugins-distribution-tab-personal'))
     await control.command('fill', testId('plugins-search-input'), { value: slug })
@@ -479,7 +487,7 @@ export async function verifyPersonalPluginVersionSubmission({
   const runtimeReconnects = flowCommands.filter(
     command => command.action === 'reconnectLocalExecutorCloud'
   ).length
-  assert.equal(rendererReloads, 2, 'Personal publication added a full renderer reload')
+  assert.equal(rendererReloads, 0, 'Personal publication added a full renderer reload')
   assert.equal(runtimeReconnects, 2)
   const inventoryRefreshes = flowCommands.filter(
     command =>

@@ -18,6 +18,7 @@ export interface DesktopE2ERuntimeConfig {
 
 let runtimeConfig: DesktopE2ERuntimeConfig | null = null
 const CLOUD_SESSION_TOKEN_KEY = 'wework.e2e.cloudSessionToken'
+export const DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT = 'wework:e2e-cloud-session-changed'
 
 function injectedRuntimeConfig(): DesktopE2ERuntimeConfig {
   return runtimeConfig ?? window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ ?? {}

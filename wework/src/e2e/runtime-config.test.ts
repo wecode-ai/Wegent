@@ -1,5 +1,5 @@
-import { createElement } from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { createElement, useEffect } from 'react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -8,6 +8,7 @@ import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
   setDesktopE2ECloudSessionToken,
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
 } from './runtime-config'
 
 beforeEach(async () => {
@@ -35,6 +36,114 @@ function CloudIdentity() {
 }
 
 describe('desktop E2E account session reuse', () => {
+  test('switches the mounted provider in both directions and ignores the previous account refresh', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    let preferences: Record<string, unknown> = {}
+    let pendingCommand: string | null = null
+    const previousRefresh = Promise.withResolvers<Response>()
+    let holdOwnerRefresh = false
+    let ownerRefreshStarted = false
+    let mounts = 0
+    function MountedIdentity() {
+      useEffect(() => {
+        mounts += 1
+      }, [])
+      return createElement(CloudIdentity)
+    }
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        const token = pendingCommand
+        pendingCommand = null
+        return token
+          ? Response.json({ id: token, action: 'setCloudSessionToken', value: token })
+          : new Response(null, { status: 410 })
+      }
+      if (url === '/wework/electron-host/v1/invoke') {
+        const request = JSON.parse(String(options?.body))
+        if (request.capability === 'preferences.update') {
+          preferences = { ...preferences, ...request.params.patch }
+        }
+        return Response.json({ ok: true, result: preferences })
+      }
+      if (url.endsWith('/users/me')) {
+        const recipient =
+          (options?.headers as Record<string, string>).Authorization === 'Bearer recipient-token'
+        if (!recipient && holdOwnerRefresh) {
+          ownerRefreshStarted = true
+          return previousRefresh.promise
+        }
+        return Response.json({
+          id: recipient ? 2 : 1,
+          user_name: recipient ? 'recipient' : 'owner',
+        })
+      }
+      return Response.json({ web_url: 'https://cloud.example' })
+    })
+    await seedDesktopE2ERuntime()
+    const initialConnection = {
+      ...(preferences.cloudConnection as Record<string, unknown>),
+      credentialMode: 'legacy_access_token',
+      token: 'owner-token',
+    }
+    preferences.cloudConnection = initialConnection
+    window.localStorage.setItem('wework.cloudConnection', JSON.stringify(initialConnection))
+    holdOwnerRefresh = true
+    render(createElement(CloudConnectionProvider, null, createElement(MountedIdentity)))
+    await waitFor(() => expect(ownerRefreshStarted).toBe(true))
+    expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('1')
+
+    pendingCommand = 'recipient-token'
+    await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await waitFor(() => expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('2'))
+    await act(async () => {
+      previousRefresh.resolve(Response.json({ id: 1, user_name: 'owner' }))
+      await previousRefresh.promise
+    })
+    expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('2')
+
+    holdOwnerRefresh = false
+    pendingCommand = 'owner-token'
+    await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await waitFor(() => expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('1'))
+    expect(mounts).toBe(1)
+    expect((preferences.cloudConnection as { user: { id: number } }).user.id).toBe(1)
+  })
+
+  test.each([false, true])(
+    'ignores live session events outside an active controller (E2E=%s)',
+    async e2e => {
+      vi.stubEnv('VITE_WEWORK_E2E', String(e2e))
+      const connection = {
+        backendUrl: 'https://cloud.example',
+        apiBaseUrl: 'https://cloud.example/api',
+        socketBaseUrl: 'https://cloud.example',
+        socketPath: '/socket.io',
+        credentialMode: 'legacy_access_token',
+        token: 'owner-token',
+        user: { id: 1, user_name: 'owner' },
+        connectedAt: new Date().toISOString(),
+      }
+      window.localStorage.setItem('wework.cloudConnection', JSON.stringify(connection))
+      vi.stubGlobal('fetch', async (url: string) =>
+        url === '/wework/electron-host/v1/invoke'
+          ? Response.json({ ok: true, result: { cloudConnection: connection } })
+          : Response.json({ ...connection.user, web_url: connection.backendUrl })
+      )
+      render(createElement(CloudConnectionProvider, null, createElement(CloudIdentity)))
+      await waitFor(() => expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('1'))
+      setDesktopE2ECloudSessionToken('recipient-token')
+      window.localStorage.setItem(
+        'wework.cloudConnection',
+        JSON.stringify({ ...connection, user: { id: 2 } })
+      )
+      if (e2e) window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__!.disabled = true
+      await act(async () => {
+        window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
+      })
+      expect(screen.getByTestId('cloud-user-id')).toHaveTextContent('1')
+    }
+  )
+
   test('retains the selected account across renderer configuration reloads only', async () => {
     setDesktopE2ECloudSessionToken('recipient-token')
     await loadDesktopE2ERuntimeConfig()
