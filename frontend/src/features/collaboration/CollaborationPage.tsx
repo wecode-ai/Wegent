@@ -47,6 +47,7 @@ import { CollaborationContextSidebar } from '@/features/collaboration/Collaborat
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
+import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   collaborationLocationPath,
   collaborationRootViewForPath,
@@ -124,6 +125,7 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 export function CollaborationPage() {
   const theme = useDocumentTheme()
   const { user } = useUser()
+  const templateStore = useCollaborationTemplates()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -241,9 +243,15 @@ export function CollaborationPage() {
   const projectSettingsSection =
     projectView === 'manage' &&
     section &&
-    ['project', 'agents', 'members', 'groups', 'environments', 'automatic-processing'].includes(
-      section
-    )
+    [
+      'project',
+      'agents',
+      'members',
+      'groups',
+      'environments',
+      'automatic-processing',
+      'configuration-sharing',
+    ].includes(section)
       ? (section as ProjectSettingsSectionId)
       : null
   useEffect(() => {
@@ -285,6 +293,7 @@ export function CollaborationPage() {
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
+      templateStore: templateStore ?? undefined,
       ...(user
         ? {
             currentUser: {
@@ -355,6 +364,7 @@ export function CollaborationPage() {
       user,
       workspaceId,
       workspaceOwnerOptions,
+      templateStore,
     ]
   )
 

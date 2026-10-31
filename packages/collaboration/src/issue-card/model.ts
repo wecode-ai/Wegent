@@ -14,6 +14,8 @@ export interface CollaborationIssueCardItem {
   updated_at?: string | null
   tags?: readonly string[] | null
   is_unread?: boolean
+  assignee_group_id?: string | null
+  assignee_group_name?: string | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
   assignee_agent_name?: string | null
@@ -48,7 +50,7 @@ export interface CollaborationIssueCardLabels {
 }
 
 export interface CollaborationIssueCardModel {
-  assigneeKind: 'agent' | 'team' | 'user' | null
+  assigneeKind: 'agent' | 'team' | 'group' | 'user' | null
   assigneeName: string | null
   date: {
     value: string
@@ -68,6 +70,9 @@ export function resolveIssueCardAssignee(
   item: CollaborationIssueCardItem,
   agentNames?: Readonly<Record<string, string>>
 ): Pick<CollaborationIssueCardModel, 'assigneeKind' | 'assigneeName'> {
+  if (item.assignee_group_id) {
+    return { assigneeKind: 'group', assigneeName: item.assignee_group_name ?? null }
+  }
   if (item.assignee_name) {
     return { assigneeKind: 'user', assigneeName: item.assignee_name }
   }

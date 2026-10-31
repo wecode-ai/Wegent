@@ -1832,6 +1832,12 @@ export function PluginsWorkspace({
     : pluginMarketplaceState.isLoading || isMarketplaceRefreshing || isReconcilingPlugins
 
   const refreshMarketplace = () => {
+    console.debug('[Wework] Plugin refresh requested', {
+      officialCatalog: isOfficialCatalogView,
+      reconciling: isReconcilingPlugins,
+      tick: marketplaceRefreshTick,
+      deviceId: currentDeviceId,
+    })
     if (isOfficialCatalogView) {
       if (!openAiCatalog.loading) openAiCatalog.refresh()
       return
@@ -3820,6 +3826,18 @@ export function PluginsWorkspace({
       const manualRequest = manualReconciliationTickRef.current
       if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
         manualReconciliationTickRef.current = null
+        console.debug('[Wework] Plugin refresh catalog settled', {
+          tick: marketplaceRefreshTick,
+          requestedTick: manualRequest.tick,
+          sameAccount: manualRequest.accountKey === marketplaceCacheKeyValue,
+          currentScope: manualRequest.isCurrent(),
+          requestedDeviceId: manualRequest.deviceId,
+          currentDeviceId: currentDeviceIdRef.current,
+          resolvedDeviceId,
+          cloudReady: cloudResult.status === 'fulfilled',
+          installedReady: !installedReadFailed && installedResult.status === 'fulfilled',
+          membershipReady: membershipResult.status === 'fulfilled',
+        })
       }
       if (
         manualRequest &&

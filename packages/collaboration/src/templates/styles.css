@@ -1,0 +1,292 @@
+.collaboration-template-page {
+  padding: 24px;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-base);
+}
+
+.collaboration-template-page-heading,
+.collaboration-template-toolbar,
+.collaboration-template-actions,
+.collaboration-template-card-header,
+.collaboration-template-card footer,
+.collaboration-template-notice,
+.collaboration-template-dialog > header,
+.collaboration-template-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collaboration-template-page h2,
+.collaboration-template-dialog h2 {
+  margin: 0;
+  font-size: var(--text-heading-sm);
+  font-weight: 500;
+}
+
+.collaboration-template-page-heading p,
+.collaboration-template-card p,
+.collaboration-template-muted,
+.collaboration-template-dialog > header p,
+.collaboration-template-field small,
+.collaboration-template-roles p,
+.collaboration-template-preview details {
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-template-page-heading p,
+.collaboration-template-dialog > header p {
+  margin: 6px 0 0;
+}
+
+.collaboration-template-page button,
+.collaboration-template-dialog button,
+.collaboration-template-choice {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgb(var(--color-bg-muted));
+  color: inherit;
+  font: inherit;
+}
+
+.collaboration-template-page button:disabled,
+.collaboration-template-dialog button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.collaboration-template-page button:hover:not(:disabled),
+.collaboration-template-dialog button:hover:not(:disabled) {
+  background: rgb(var(--color-text-primary) / 0.06);
+}
+
+.collaboration-template-dialog .collaboration-primary-button {
+  background: rgb(var(--color-text-primary));
+  color: rgb(var(--color-bg-base));
+}
+.collaboration-template-dialog .collaboration-primary-button:hover:not(:disabled) {
+  background: rgb(var(--color-text-primary) / 0.8);
+}
+.collaboration-template-page svg,
+.collaboration-template-dialog svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.collaboration-template-actions {
+  gap: 8px;
+}
+.collaboration-template-toolbar {
+  margin: 24px 0 20px;
+}
+.collaboration-template-toolbar > div {
+  display: flex;
+  gap: 4px;
+}
+.collaboration-template-toolbar button[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px rgb(var(--color-border));
+}
+
+.collaboration-template-page input,
+.collaboration-template-field input,
+.collaboration-template-field textarea,
+.collaboration-template-field select {
+  min-width: 0;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: inherit;
+  background: rgb(var(--color-bg-base));
+  font: inherit;
+}
+
+.collaboration-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.collaboration-template-card {
+  padding: 20px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+}
+.collaboration-template-card h3 {
+  margin: 16px 0 8px;
+  font-weight: 500;
+}
+.collaboration-template-card > p {
+  min-height: 42px;
+  margin-bottom: 20px;
+}
+.collaboration-template-card-header span,
+.collaboration-template-card footer > span,
+.collaboration-template-meta {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+.collaboration-template-empty {
+  padding: 40px 0;
+  text-align: center;
+}
+.collaboration-template-notice {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgb(var(--color-bg-muted));
+}
+.collaboration-template-error {
+  color: rgb(var(--color-error));
+}
+
+.collaboration-template-dialog {
+  position: fixed;
+  width: min(920px, calc(100vw - 40px));
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 20px;
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-base);
+  box-shadow: 0 4px 20px rgb(0 0 0 / 0.1);
+}
+.collaboration-template-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.collaboration-template-dialog::backdrop {
+  background: rgb(0 0 0 / 0.24);
+}
+.collaboration-template-dialog > header {
+  align-items: flex-start;
+  padding: 22px 28px;
+  flex: none;
+}
+.collaboration-template-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 28px;
+  border-top: 1px solid rgb(var(--color-border));
+}
+.collaboration-template-dialog > footer {
+  padding: 16px 28px;
+  justify-content: flex-end;
+  flex: none;
+  border-top: 1px solid rgb(var(--color-border));
+}
+.collaboration-template-dialog .collaboration-template-page {
+  padding: 0;
+}
+.collaboration-template-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.collaboration-template-preview > p {
+  margin: 0 0 12px;
+}
+.collaboration-template-preview section {
+  margin-top: 24px;
+}
+.collaboration-template-preview h3,
+.collaboration-template-preview h4 {
+  font-size: inherit;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+.collaboration-template-roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+.collaboration-template-roles strong {
+  font-weight: 500;
+}
+.collaboration-template-roles p {
+  font-size: var(--text-sm);
+  margin: 4px 0 0;
+}
+.collaboration-template-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.collaboration-template-stages li {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgb(var(--color-bg-muted));
+  font-size: var(--text-sm);
+}
+.collaboration-template-preview details {
+  margin-top: 16px;
+  font-size: var(--text-sm);
+}
+.collaboration-template-preview summary {
+  cursor: pointer;
+}
+.collaboration-template-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.collaboration-template-binding {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr);
+  gap: 16px;
+  align-items: center;
+  margin: 12px 0;
+}
+.collaboration-template-binding p {
+  margin: 3px 0 0;
+  font-size: var(--text-sm);
+  color: rgb(var(--color-text-muted));
+}
+.collaboration-template-settings {
+  padding: 24px;
+  max-width: 800px;
+}
+.collaboration-template-settings section {
+  padding: 24px 0;
+  border-bottom: 1px solid rgb(var(--color-border));
+}
+.collaboration-template-settings p {
+  margin: 8px 0 16px;
+  color: rgb(var(--color-text-muted));
+}
+
+@media (max-width: 767px) {
+  .collaboration-template-page {
+    padding: 16px;
+  }
+  .collaboration-template-page-heading,
+  .collaboration-template-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .collaboration-template-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+  .collaboration-template-dialog > header,
+  .collaboration-template-dialog-body,
+  .collaboration-template-dialog > footer {
+    padding: 16px;
+  }
+  .collaboration-template-roles,
+  .collaboration-template-binding {
+    grid-template-columns: 1fr;
+  }
+  .collaboration-template-page button,
+  .collaboration-template-dialog button,
+  .collaboration-template-dialog input,
+  .collaboration-template-dialog select {
+    min-height: 44px;
+  }
+}

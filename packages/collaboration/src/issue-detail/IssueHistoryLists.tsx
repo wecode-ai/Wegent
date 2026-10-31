@@ -35,12 +35,13 @@ export function IssueAssignmentHistoryList({
     team: string;
     agent: string;
     group: string;
+    system?: string;
     unassigned: string;
     actions: Record<IssueAssignmentHistoryEntry["action"], string>;
   };
 }) {
   return entries.map((entry, index) => {
-    const byName = memberName(entry.by_user_id);
+    const byName = memberName(entry.by_user_id) ?? (entry.by_user_id === 0 ? labels.system : null);
     const isUnassign = entry.action === "unassign";
     const toName = isUnassign
       ? labels.unassigned

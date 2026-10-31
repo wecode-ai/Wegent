@@ -5,6 +5,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { createCollaborationTranslator } from "../i18n";
+import { GroupTemplateActions } from "../templates/GroupTemplateActions";
+import { GroupTemplateCreator } from "../templates/GroupTemplateCreator";
+import { useCollaborationTemplateStore } from "../templates/context";
+import { templateMessages } from "../templates/messages";
+import { applyTemplateGroups } from "../templates/apply";
 import { usePanelData, PanelFeedback } from "./usePanelData";
 import {
   GroupParticipantsEditor,
@@ -38,6 +43,10 @@ export function isCurrentDeviceCollaborationAgent(
 }
 
 export interface WorkspaceResourceCommands {
+  createTemplateGroups?(
+    document: import("../templates/types").CollaborationTemplate,
+    drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
+  ): Promise<CollaborationGroup[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(
     userId: number,
@@ -229,6 +238,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   loadParticipants,
   locale,
   currentUserId,
+  includeCurrentUserByDefault = true,
   commands,
   canManage: canManageOverride,
   initialCreateOpen = false,
@@ -250,6 +260,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   }>;
   locale: "zh-CN" | "en";
   currentUserId?: number;
+  includeCurrentUserByDefault?: boolean;
   commands: WorkspaceResourceCommands;
   canManage?: boolean;
   initialCreateOpen?: boolean;
@@ -261,6 +272,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   showGroupCollection?: boolean;
 }) {
   const messages = copy[locale];
+  const templateStore = useCollaborationTemplateStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [leader, setLeader] = useState("");
@@ -289,7 +301,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   );
 
   const [detailTab, setDetailTab] = useState<
-    "members" | "rules" | "environment"
+    "members" | "rules" | "environment" | "sharing"
   >("members");
   const [mentionOpen, setMentionOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -449,7 +461,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
   }, [formOpen, onCreateOpenChange]);
 
   useEffect(() => {
-    if (!formOpen || currentUserId == null) return;
+    if (!formOpen || !includeCurrentUserByDefault || currentUserId == null)
+      return;
     const currentMember = members.find(
       (member) => member.user_id === currentUserId,
     );
@@ -473,7 +486,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
     if (!leader) {
       setLeader(`human:${currentMember.user_id}`);
     }
-  }, [currentUserId, formOpen, leader, members]);
+  }, [currentUserId, formOpen, includeCurrentUserByDefault, leader, members]);
 
   useEffect(() => {
     if (!selectedGroup) return;
@@ -818,6 +831,14 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     ["members", messages.membersLabel],
                     ["rules", messages.groupRule],
                     ["environment", messages.environmentRequirements],
+                    ...(templateStore
+                      ? [
+                          [
+                            "sharing",
+                            templateMessages[locale].configuration,
+                          ] as const,
+                        ]
+                      : []),
                   ] as const
                 ).map(([tab, label]) => (
                   <button
@@ -834,6 +855,9 @@ export function WorkspaceCollaborationGroupsConfiguration({
                 ))}
               </div>
 
+              {detailTab === "sharing" && (
+                <GroupTemplateActions group={selectedGroup} locale={locale} />
+              )}
               {detailTab === "members" ? (
                 <section className="collaboration-group-detail-section collaboration-group-detail-tab-panel">
                   <div className="collaboration-group-section-heading">
@@ -1353,6 +1377,35 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   <div className="collaboration-group-create-main">
                     <div className="collaboration-group-create-content">
                       <section className="collaboration-group-create-panel">
+                        <GroupTemplateCreator
+                          locale={locale}
+                          candidates={candidates.map((candidate) => ({
+                            ...candidate,
+                            label: candidate.name,
+                            responsibility: "",
+                          }))}
+                          currentUserId={currentUserId}
+                          existingNames={groups.map((group) => group.name)}
+                          disabled={saving || participantsPending}
+                          onApply={async (drafts, document) => {
+                            const created = commands.createTemplateGroups
+                              ? await commands.createTemplateGroups(
+                                  document,
+                                  drafts,
+                                )
+                              : await applyTemplateGroups(
+                                  drafts,
+                                  (draft) =>
+                                    commands.createCollaborationGroup({
+                                      ...draft,
+                                      coordinationMode: "manager",
+                                    }),
+                                  templateMessages[locale].partial,
+                                );
+                            setFormOpen(false);
+                            setSelectedGroupId(created.at(-1)?.id ?? null);
+                          }}
+                        />
                         <div className="collaboration-group-field-grid collaboration-group-create-fields">
                           <label>
                             <span>{messages.groupName}</span>

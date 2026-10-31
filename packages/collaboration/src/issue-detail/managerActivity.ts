@@ -61,10 +61,8 @@ export function managerActivityPresentation(
       label: translate("activity.task_activity_manager_dispatched", undefined, {
         assignments: assignments
           .map(
-            ({ assigneeName, taskTitle, workflowStageId }) =>
-              `${taskTitle} → ${assigneeName}${
-                workflowStageId ? ` · ${workflowStageId}` : ""
-              }`,
+            ({ assigneeName, taskTitle }) =>
+              `${taskTitle} → ${assigneeName}`,
           )
           .join("；"),
       }),

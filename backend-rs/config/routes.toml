@@ -419,6 +419,15 @@ path = "/api/resource-library/listings"
 #path = "/api/resource-library/listings/:listing_id"
 [[routes]]
 methods = ["GET"]
+path = "/api/v1/collaboration-templates"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-templates/:template_id"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/collaboration-templates/:name"
+[[routes]]
+methods = ["GET"]
 path = "/api/resource-library/tags"
 [[routes]]
 methods = ["GET"]

@@ -14,17 +14,18 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 /// `RESOURCE_KIND_BY_TYPE`: capability-center resource type to CRD Kind.
-pub const RESOURCE_TYPE_KINDS: [(&str, &str); 5] = [
+pub const RESOURCE_TYPE_KINDS: [(&str, &str); 6] = [
     ("agent", "Team"),
     ("skill", "Skill"),
     ("model", "Model"),
     ("shell", "Shell"),
     ("retriever", "Retriever"),
+    ("template", "Template"),
 ];
 
 /// `list(RESOURCE_TYPE_BY_KIND)` iteration order, used when no
 /// `resource_type` filter is supplied.
-pub const ALL_KINDS: [&str; 5] = ["Team", "Skill", "Model", "Shell", "Retriever"];
+pub const ALL_KINDS: [&str; 6] = ["Team", "Skill", "Model", "Shell", "Retriever", "Template"];
 
 /// `RESOURCE_TYPE_BY_KIND[kind]`.
 #[must_use]
@@ -265,6 +266,7 @@ pub struct KindMetadata {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct KindSpec {
+    pub category: Option<JsonScalar>,
     #[serde(rename = "displayName")]
     pub display_name: Option<JsonScalar>,
     pub description: Option<JsonScalar>,

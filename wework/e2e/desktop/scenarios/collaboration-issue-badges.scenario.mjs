@@ -19,7 +19,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   return {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="settings-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('click', '[data-testid="settings-nav-git-hosting"]')
       const lookupSwitch = '[data-testid="change-request-status-switch"]'

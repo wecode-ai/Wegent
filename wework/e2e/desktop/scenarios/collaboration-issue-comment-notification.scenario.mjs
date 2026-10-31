@@ -473,6 +473,15 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       const activeSurface = '[data-workspace-tab-content][aria-hidden="false"]'
+      const closeIssue = async () => {
+        await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+        // The board remains covered until the drawer's exit animation commits.
+        await control.command(
+          'waitFor',
+          `${activeSurface} [data-testid="collaboration-issue-detail"]`,
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
+      }
       await control.command(
         'waitFor',
         `${activeSurface} [data-testid="collaboration-platform-root"]`,
@@ -492,7 +501,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
         uiTimeoutMs
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await closeIssue()
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
@@ -503,7 +512,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
         (await ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`)).is_unread,
         false
       )
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await closeIssue()
       await control.command('waitFor', unreadDot, { visible: false })
 
       const message = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-${Date.now()}`)
@@ -631,14 +640,7 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
 
       // Extend the scenario after its original navigation and notification checks.
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
-      await control.command(
-        'waitFor',
-        `${activeSurface} [data-testid="collaboration-issue-detail"]`,
-        {
-          visible: false,
-        }
-      )
+      await closeIssue()
       const boardMessage = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-board-${Date.now()}`)
       const boardNotification = await waitForApiValue(
         async () => {

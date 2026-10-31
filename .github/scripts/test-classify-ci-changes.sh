@@ -1418,7 +1418,7 @@ full_desktop_expected="${full_desktop_expected/native-window-startup,/native-win
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
 full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
+full_desktop_expected="${full_desktop_expected/runtime-input-answer-persistence/runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle}"
 
 for path in \
   executor/src/agents/codex.rs \
@@ -1704,6 +1704,14 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
+
+assert_desktop_case "template components retain group onboarding coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "packages/collaboration/src/templates/TemplateCreateSection.tsx"
 
 assert_desktop_case "collaboration human round scenario selects its core shard" \
   'wework_desktop_e2e=true

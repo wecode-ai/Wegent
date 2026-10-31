@@ -53,6 +53,7 @@ import { MyResources } from './components/MyResources'
 import { PublishedResources } from './components/PublishedResources'
 import type { ResourceCreateRequest } from './components/ResourceCreateButton'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
+import { CollaborationTemplateMarketplace } from './CollaborationTemplateMarketplace'
 import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
 import type { ManagedResourceType, ResourceNavigationType } from './types'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
@@ -62,7 +63,7 @@ import {
   type ResourceListState,
 } from '@/features/settings/components/SkillListWithScope'
 
-type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all'>
+type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all' | 'template'>
 
 const discoverTypes: ActiveResourceNavigationType[] = ['agent', 'skill', 'mcp']
 const mineTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
@@ -146,6 +147,15 @@ function TeamSkillResources({
 }
 
 export function ResourceLibraryPage() {
+  const searchParams = useSearchParams()
+  return searchParams.get('type') === 'template' ? (
+    <CollaborationTemplateMarketplace />
+  ) : (
+    <ResourceLibraryContent />
+  )
+}
+
+function ResourceLibraryContent() {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
   const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
@@ -407,6 +417,10 @@ export function ResourceLibraryPage() {
   }
 
   const handleTypeChange = (nextType: ResourceNavigationType | 'all') => {
+    if (nextType === 'template') {
+      replaceParams({ type: 'template', tab: null, keyword: null, source: null, group: null })
+      return
+    }
     if (nextType === 'all') return
     const nextSupportsInstalledSource = nextType === 'agent' || nextType === 'skill'
     const nextSupportsCreatedByMeSource = nextType === 'agent' || nextType === 'skill'

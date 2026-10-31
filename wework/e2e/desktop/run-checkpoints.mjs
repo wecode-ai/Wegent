@@ -150,6 +150,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-runtime-reconciliation.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
+  'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
@@ -214,6 +216,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',

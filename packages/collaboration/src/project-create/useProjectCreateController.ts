@@ -73,13 +73,18 @@ export function useProjectCreateController({
   labels,
   onCreated,
   resourceSetup,
+  initialTemplate,
 }: ProjectCreateDialogProps) {
   const initialLocation =
     targets.find((target) => target.location === defaultLocation)?.location ??
     targets[0]?.location ??
     "cloud";
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(
+    initialTemplate?.spec.resources.collaboration.project.name ?? "",
+  );
+  const [description, setDescription] = useState(
+    initialTemplate?.spec.resources.collaboration.project.description ?? "",
+  );
   const [location, setLocation] =
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
@@ -102,9 +107,23 @@ export function useProjectCreateController({
       ),
     );
   const executionEnvironmentSelectionChanged = useRef(false);
-  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
-    import("./types").ProjectCreateCollaborationGroupDraft | null
+  const [collaborationGroupDrafts, setCollaborationGroupDrafts] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft[]
+  >([]);
+  const [templatePending, setTemplatePending] = useState(
+    Boolean(initialTemplate?.spec.resources.collaboration.groups.length),
+  );
+  const [templateDocument, setTemplateDocument] = useState(
+    initialTemplate ?? null,
+  );
+  const collaborationGroupDraft = collaborationGroupDrafts[0] ?? null;
+  const setCollaborationGroupDraft = (
+    draft: import("./types").ProjectCreateCollaborationGroupDraft | null,
+  ) => setCollaborationGroupDrafts(draft ? [draft] : []);
+  const [createdProject, setCreatedProject] = useState<
+    import("../types").CollaborationProject | null
   >(null);
+  const createdProjectLocation = useRef(location);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -117,12 +136,15 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
-  const canSubmit = Boolean(
-    name.trim() &&
-    (!repositoryProvider || repositoryAddress.trim()) &&
-    (!isAITableProvider || aitableLink) &&
-    !saving,
-  );
+  const canSubmit =
+    Boolean(
+      createdProject ||
+      (name.trim() &&
+        !templatePending &&
+        (!repositoryProvider || repositoryAddress.trim()) &&
+        (!isAITableProvider || aitableLink) &&
+        !saving),
+    ) && !saving;
 
   useEffect(() => {
     if (executionEnvironmentSelectionChanged.current) return;
@@ -135,6 +157,10 @@ export function useProjectCreateController({
 
   async function submit() {
     if (!canSubmit) return;
+    if (createdProject) {
+      onCreated(createdProject, createdProjectLocation.current);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -178,12 +204,23 @@ export function useProjectCreateController({
           : {}),
       });
       if (resourceSetup) {
-        await resourceSetup.configure(project, {
-          memberUserIds,
-          agentResourceIds,
-          executionEnvironmentDeviceIds,
-          collaborationGroupDraft,
-        });
+        try {
+          await resourceSetup.configure(project, {
+            memberUserIds,
+            agentResourceIds,
+            executionEnvironmentDeviceIds,
+            collaborationGroupDrafts,
+            ...(templateDocument ? { template: templateDocument } : {}),
+          });
+        } catch (cause) {
+          createdProjectLocation.current = location;
+          setCreatedProject(project);
+          throw new Error(
+            labels.partialConfiguration +
+              projectCreateErrorMessage(cause, labels, host),
+            { cause },
+          );
+        }
       }
       host?.track?.("created");
       onCreated(project, location);
@@ -211,14 +248,17 @@ export function useProjectCreateController({
       repositoryProvider,
       isAITableProvider,
       saving,
+      createdProject,
       error,
       canSubmit,
       memberUserIds,
       agentResourceIds,
       executionEnvironmentDeviceIds,
       collaborationGroupDraft,
+      collaborationGroupDrafts,
     },
     commands: {
+      setTemplateDocument,
       setName,
       setDescription,
       setLocation,
@@ -236,6 +276,8 @@ export function useProjectCreateController({
         setExecutionEnvironmentDeviceIds(deviceIds);
       },
       setCollaborationGroupDraft,
+      setCollaborationGroupDrafts,
+      setTemplatePending,
       clearError: () => setError(null),
       submit,
     },
