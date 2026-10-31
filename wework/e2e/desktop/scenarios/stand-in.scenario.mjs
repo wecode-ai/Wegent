@@ -462,6 +462,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'waitFor',
         `${CONTENT} [data-testid="stand-in-project-${project.id}"]`,
@@ -716,6 +717,7 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
