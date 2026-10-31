@@ -46,6 +46,7 @@ export function IssueAssignmentHistoryDisclosure({
           entries={entries}
           memberName={memberName}
           labels={{
+            system: t('todo.status_history_system', '系统/机器人'),
             team: t('todo.assignment_chain_team', 'Wegent 智能体'),
             agent: t('todo.assignment_chain_agent', '机器人'),
             group: t('todo.assignment_chain_group', '协作小组'),

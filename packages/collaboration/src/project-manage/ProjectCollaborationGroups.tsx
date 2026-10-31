@@ -12,6 +12,8 @@ import type {
 } from "../types";
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
+import { applyProjectTemplate } from "../templates/projectConfiguration";
+import { templateMessages } from "../templates/messages";
 
 function ScopedProjectCollaborationGroups({
   api,
@@ -25,6 +27,7 @@ function ScopedProjectCollaborationGroups({
   location = "cloud",
   agentConfiguration,
   agentResourceContext,
+  onProjectChanged,
 }: {
   api: SharedWorkspaceApi;
   projectId: string;
@@ -34,6 +37,7 @@ function ScopedProjectCollaborationGroups({
   locale: "zh-CN" | "en";
   currentUserId?: number;
   canManage: boolean;
+  onProjectChanged?(project: import("../types").CollaborationProject): void;
   location?: "local" | "cloud";
   agentConfiguration?: ProjectAgentConfigurationHost;
   agentResourceContext?: {
@@ -261,6 +265,21 @@ function ScopedProjectCollaborationGroups({
         canManage={canManage}
         agentActions={agentActions}
         commands={{
+          async createTemplateGroups(document, drafts) {
+            requireActive();
+            const created = await applyProjectTemplate(
+              api,
+              projectId,
+              document,
+              drafts,
+              locale,
+              templateMessages[locale].partial,
+            );
+            await reload();
+            const latest = await api.projects.get(projectId);
+            if (active.current) onProjectChanged?.(latest);
+            return created;
+          },
           searchUsers: async () => [],
           addMember: async () => {
             throw new Error("Project collaboration groups cannot add members");

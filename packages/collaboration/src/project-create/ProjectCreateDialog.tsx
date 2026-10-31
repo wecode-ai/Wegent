@@ -930,6 +930,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               initialTemplate={props.initialTemplate}
               disabled={state.saving}
               onSelect={(document) => {
+                commands.setTemplateDocument(document);
                 setTemplateSelected(Boolean(document));
                 if (document) {
                   if (!state.name.trim())
@@ -1933,7 +1934,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
               disabled={!state.canSubmit}
             >
-              {state.saving ? labels.creating : labels.create}
+              {state.saving
+                ? labels.creating
+                : state.createdProject
+                  ? labels.openCreated
+                  : labels.create}
             </button>
           </footer>
         ) : null}

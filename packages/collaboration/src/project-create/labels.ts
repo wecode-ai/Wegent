@@ -118,6 +118,9 @@ export const projectCreateLabels: Record<
     create: "创建项目",
     creating: "正在创建…",
     unavailableLocation: "所选项目位置当前不可用",
+    partialConfiguration:
+      "项目已创建，部分配置未完成。请打开项目，在项目设置中检查：",
+    openCreated: "打开已创建项目",
     repositoryRequired: "请输入仓库地址",
     repositoryInvalid: "请输入完整仓库地址，或使用 owner/repository 格式",
     githubRepositoryInvalid: "GitHub 仓库地址应包含 owner/repository",
@@ -242,6 +245,9 @@ export const projectCreateLabels: Record<
     create: "Create project",
     creating: "Creating…",
     unavailableLocation: "The selected project location is unavailable",
+    partialConfiguration:
+      "The project was created, but some settings could not be applied. Open it and check project settings: ",
+    openCreated: "Open created project",
     repositoryRequired: "Enter a repository address",
     repositoryInvalid:
       "Enter a complete repository URL or use owner/repository",

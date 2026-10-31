@@ -6,6 +6,8 @@ import type { CollaborationGroup, CollaborationGroupMember, CollaborationProject
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate, TemplateRoleAssignments, TemplateGroup } from './types'
+import { isTagNameTooLong } from '../tagging'
+import { defaultBoardViewId } from '../project-board/projectBoardViews'
 
 const MAX_FILE_BYTES = 1024 * 1024
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/
@@ -52,11 +54,23 @@ function group(value: unknown, index: number): TemplateGroup {
     'executionRequirements',
   ])
   const roles = array(item.roles, `${path}.roles`, 50).map((value, index) => {
-    const role = object(value, `${path}.roles[${index}]`, ['key', 'name', 'responsibility'])
+    const role = object(value, `${path}.roles[${index}]`, [
+      'key',
+      'name',
+      'responsibility',
+      'defaultKind',
+    ])
+    if (
+      role.defaultKind !== undefined &&
+      role.defaultKind !== 'human' &&
+      role.defaultKind !== 'agent'
+    )
+      throw new Error(`${path}.role.defaultKind`)
     return {
       key: key(role.key, `${path}.role.key`),
       name: text(role.name, `${path}.role.name`, true, 200),
       responsibility: text(role.responsibility, `${path}.role.responsibility`, false),
+      ...(role.defaultKind ? { defaultKind: role.defaultKind as 'human' | 'agent' } : {}),
     }
   })
   if (!roles.length) throw new Error(`${path}.roles`)
@@ -130,7 +144,12 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
   if (spec.category !== 'collaboration') throw new Error('spec.category')
   const resources = object(spec.resources, 'resources', ['collaboration'])
   const collaboration = object(resources.collaboration, 'collaboration', ['project', 'groups'])
-  const project = object(collaboration.project, 'project', ['name', 'description'])
+  const project = object(collaboration.project, 'project', [
+    'name',
+    'description',
+    'taskAssignment',
+    'board',
+  ])
   const groups = array(collaboration.groups, 'groups', 10).map(group)
   unique(
     groups.map(group => group.key),
@@ -140,6 +159,43 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
     groups.map(group => group.name.trim()),
     'groups.name'
   )
+  const settings: Partial<CollaborationTemplate['spec']['resources']['collaboration']['project']> =
+    {}
+  if (project.taskAssignment !== undefined) {
+    const assignment = object(project.taskAssignment, 'project.taskAssignment', [
+      'enabled',
+      'groupKey',
+      'tags',
+      'priorities',
+    ])
+    if (typeof assignment.enabled !== 'boolean') throw new Error('project.taskAssignment.enabled')
+    const groupKey = key(assignment.groupKey, 'project.taskAssignment.groupKey')
+    if (!groups.some(group => group.key === groupKey))
+      throw new Error('project.taskAssignment.groupKey')
+    settings.taskAssignment = { enabled: assignment.enabled, groupKey }
+    for (const field of ['tags', 'priorities'] as const) {
+      if (assignment[field] !== undefined)
+        settings.taskAssignment[field] = array(
+          assignment[field],
+          `project.taskAssignment.${field}`,
+          100
+        ).map(value => text(value, `project.taskAssignment.${field}`, true, 100))
+    }
+  }
+  if (project.board !== undefined) {
+    const board = object(project.board, 'project.board', ['name', 'tags'])
+    const tags = array(board.tags, 'project.board.tags', 100).map(value => {
+      const tag = text(value, 'project.board.tag', true, 100).trim()
+      if (isTagNameTooLong(tag)) throw new Error('project.board.tag')
+      return tag
+    })
+    if (!tags.length) throw new Error('project.board.tags')
+    unique(tags, 'project.board.tags')
+    settings.board = {
+      name: text(board.name, 'project.board.name', true, 200),
+      tags,
+    }
+  }
   const document: CollaborationTemplate = {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'Template',
@@ -157,6 +213,7 @@ export function validateTemplate(value: unknown): CollaborationTemplate {
           project: {
             name: text(project.name, 'project.name', true, 200),
             description: text(project.description, 'project.description', false),
+            ...settings,
           },
           groups,
         },
@@ -231,7 +288,10 @@ export function bindTemplate(
 
 /** Only configuration enters an export; project tasks and live identities never do. */
 export function templateFromProject(
-  project: Pick<CollaborationProject, 'name' | 'description'>,
+  project: Pick<
+    CollaborationProject,
+    'name' | 'description' | 'board_views' | 'automatic_processing_rules'
+  >,
   groups: CollaborationGroup[],
   name: string,
   locale: CollaborationLocale = 'en'
@@ -267,6 +327,7 @@ export function templateFromProject(
               ? `协作成员 ${index}`
               : `Contributor ${index}`,
         responsibility: member.responsibility,
+        defaultKind: member.kind,
       })),
       stages: group.stages.map(stage => ({
         key: stage.id,
@@ -281,6 +342,26 @@ export function templateFromProject(
       },
     }
   })
+  const rules = project.automatic_processing_rules?.filter(
+    rule =>
+      rule.eventType === 'task.created' &&
+      rule.targetKind === 'collaboration_group' &&
+      groups.some(group => group.id === rule.targetId)
+  )
+  const rule = rules?.find(rule => rule.enabled) ?? rules?.[0]
+  const targetIndex = rule ? groups.findIndex(group => group.id === rule.targetId) : -1
+  const view = project.board_views?.views.find(
+    view => view.id === defaultBoardViewId(project.board_views)
+  )
+  const board =
+    view &&
+    view.columns.some(column => column.type === 'tag') &&
+    view.columns.every(column => column.type === 'tag' || column.type === 'unmatched')
+      ? {
+          name: view.name,
+          tags: view.columns.filter(column => column.type === 'tag').map(column => column.value),
+        }
+      : undefined
   return validateTemplate({
     apiVersion: 'agent.wecode.io/v1',
     kind: 'Template',
@@ -292,7 +373,25 @@ export function templateFromProject(
       version: '1.0.0',
       resources: {
         collaboration: {
-          project: { name: project.name, description: project.description },
+          project: {
+            name: project.name,
+            description: project.description,
+            ...(rule
+              ? {
+                  taskAssignment: {
+                    enabled: rule.enabled,
+                    groupKey: converted[targetIndex].key,
+                    ...(Array.isArray(rule.eventConfig?.tags)
+                      ? { tags: rule.eventConfig.tags }
+                      : {}),
+                    ...(Array.isArray(rule.eventConfig?.priorities)
+                      ? { priorities: rule.eventConfig.priorities }
+                      : {}),
+                  },
+                }
+              : {}),
+            ...(board ? { board } : {}),
+          },
           groups: converted,
         },
       },

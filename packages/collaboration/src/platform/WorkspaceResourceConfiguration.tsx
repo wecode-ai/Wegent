@@ -43,6 +43,10 @@ export function isCurrentDeviceCollaborationAgent(
 }
 
 export interface WorkspaceResourceCommands {
+  createTemplateGroups?(
+    document: import("../templates/types").CollaborationTemplate,
+    drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
+  ): Promise<CollaborationGroup[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(
     userId: number,
@@ -457,7 +461,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
   }, [formOpen, onCreateOpenChange]);
 
   useEffect(() => {
-    if (!formOpen || !includeCurrentUserByDefault || currentUserId == null) return;
+    if (!formOpen || !includeCurrentUserByDefault || currentUserId == null)
+      return;
     const currentMember = members.find(
       (member) => member.user_id === currentUserId,
     );
@@ -1382,16 +1387,21 @@ export function WorkspaceCollaborationGroupsConfiguration({
                           currentUserId={currentUserId}
                           existingNames={groups.map((group) => group.name)}
                           disabled={saving || participantsPending}
-                          onApply={async (drafts) => {
-                            const created = await applyTemplateGroups(
-                              drafts,
-                              (draft) =>
-                                commands.createCollaborationGroup({
-                                  ...draft,
-                                  coordinationMode: "manager",
-                                }),
-                              templateMessages[locale].partial,
-                            );
+                          onApply={async (drafts, document) => {
+                            const created = commands.createTemplateGroups
+                              ? await commands.createTemplateGroups(
+                                  document,
+                                  drafts,
+                                )
+                              : await applyTemplateGroups(
+                                  drafts,
+                                  (draft) =>
+                                    commands.createCollaborationGroup({
+                                      ...draft,
+                                      coordinationMode: "manager",
+                                    }),
+                                  templateMessages[locale].partial,
+                                );
                             setFormOpen(false);
                             setSelectedGroupId(created.at(-1)?.id ?? null);
                           }}

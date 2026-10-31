@@ -27,6 +27,10 @@ import {
 import { CollaborationTemplateContext } from "../templates/context";
 import { CollaborationTemplatePage } from "../templates/CollaborationTemplatePage";
 import type { CollaborationTemplate } from "../templates/types";
+import {
+  prepareTemplateProject,
+  configureTemplateProject,
+} from "../templates/projectConfiguration";
 import { useDeviceCatalog } from "./useDeviceCatalog";
 import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensureWorkspaceEnvironmentSharing";
 
@@ -3262,6 +3266,14 @@ function CollaborationPlatformAppContent({
                   generateCollaborationGroupDraft:
                     host.generateProjectCollaborationGroupDraft,
                   configure: async (project, selection) => {
+                    if (selection.template) {
+                      await prepareTemplateProject(
+                        api,
+                        project.id,
+                        selection.template,
+                        locale,
+                      );
+                    }
                     const existingMembers = await api.members.list(project.id);
                     const existingMemberIds = new Set(
                       existingMembers.map((member) => member.user_id),
@@ -3339,6 +3351,7 @@ function CollaborationPlatformAppContent({
                           })),
                       )),
                     ];
+                    const templateGroups: CollaborationGroup[] = [];
                     for (const rawGroupDraft of selection.collaborationGroupDrafts) {
                       const groupDraft =
                         normalizeCollaborationGroupDraftForPersistence(
@@ -3380,21 +3393,36 @@ function CollaborationPlatformAppContent({
                             : "The owner is not a current collaborator",
                         );
                       }
-                      await api.projects.createCollaborationGroup(project.id, {
-                        name: groupDraft.name,
-                        description: groupDraft.description,
-                        instructions: groupDraft.instructions,
-                        leader,
-                        members: groupDraft.members.map(mapParticipant),
-                        coordinationMode: "manager",
-                        stages: groupDraft.stages.map((stage) => ({
-                          ...stage,
-                          assignee: stage.assignee
-                            ? mapParticipant(stage.assignee)
-                            : null,
-                        })),
-                        executionRequirements: groupDraft.executionRequirements,
-                      });
+                      const createdGroup =
+                        await api.projects.createCollaborationGroup(
+                          project.id,
+                          {
+                            name: groupDraft.name,
+                            description: groupDraft.description,
+                            instructions: groupDraft.instructions,
+                            leader,
+                            members: groupDraft.members.map(mapParticipant),
+                            coordinationMode: "manager",
+                            stages: groupDraft.stages.map((stage) => ({
+                              ...stage,
+                              assignee: stage.assignee
+                                ? mapParticipant(stage.assignee)
+                                : null,
+                            })),
+                            executionRequirements:
+                              groupDraft.executionRequirements,
+                          },
+                        );
+                      templateGroups.push(createdGroup);
+                    }
+                    if (selection.template) {
+                      await configureTemplateProject(
+                        api,
+                        project.id,
+                        selection.template,
+                        templateGroups,
+                        locale,
+                      );
                     }
                   },
                 }

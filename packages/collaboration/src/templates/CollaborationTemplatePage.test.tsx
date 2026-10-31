@@ -9,6 +9,7 @@ import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
 import type { CollaborationTemplateRemote, TemplateRecord } from './types'
+import { TemplateBindings } from './TemplateBindings'
 
 let root: Root
 let container: HTMLDivElement
@@ -57,6 +58,38 @@ async function click(testId: string) {
   expect(target).not.toBeNull()
   await act(async () => target!.click())
 }
+
+it('selects an Agent coordinator instead of the current human for the builtin workflow', async () => {
+  const document = builtinCollaborationTemplates()[0].document
+  await act(async () =>
+    root.render(
+      <TemplateBindings
+        document={document}
+        locale="zh-CN"
+        currentUserId={7}
+        candidates={[
+          { kind: 'human', id: '7', label: '我', responsibility: '' },
+          {
+            kind: 'agent',
+            id: 'coordinator',
+            label: '负责人智能体',
+            responsibility: '',
+          },
+          {
+            kind: 'agent',
+            id: 'executor',
+            label: '执行智能体',
+            responsibility: '',
+          },
+        ]}
+        onChange={vi.fn()}
+      />
+    )
+  )
+  expect(
+    container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
+  ).toBe('agent:coordinator')
+})
 
 it('downloads the version shown in preview instead of using an older cached definition', async () => {
   const backend = remote()
@@ -180,7 +213,10 @@ it('uses a private template update advertised by account metadata instead of an 
     source: 'personal',
   }
   previous.document = structuredClone(previous.document)
-  previous.document.metadata = { name: 'private-workflow', namespace: 'default' }
+  previous.document.metadata = {
+    name: 'private-workflow',
+    namespace: 'default',
+  }
   const updated = structuredClone(previous)
   updated.document.spec.version = '2.0.0'
   vi.mocked(backend.get).mockResolvedValue(updated)

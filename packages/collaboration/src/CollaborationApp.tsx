@@ -1021,6 +1021,7 @@ export function CollaborationApp({
                               content: (
                                 <ProjectTemplateSettings
                                   key={project.id}
+                                  onChange={commands.replaceProject}
                                   api={api}
                                   project={project}
                                   locale={locale}
@@ -1073,6 +1074,7 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}
                             projectId={project.id}

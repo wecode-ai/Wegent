@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
-import { normalizeCollaborationGroupDraftForPersistence } from '../project-create/collaborationGroupDraft'
 import { useCollaborationTemplateStore } from './context'
 import { exportTemplate, templateFromProject } from './document'
 import { templateMessages } from './messages'
@@ -14,7 +13,7 @@ import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
-import { applyTemplateGroups } from './apply'
+import { applyProjectTemplate } from './projectConfiguration'
 
 export function ProjectTemplateSettings({
   api,
@@ -22,16 +21,19 @@ export function ProjectTemplateSettings({
   locale,
   currentUserId,
   canManage,
+  onChange,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
   locale: CollaborationLocale
   currentUserId?: number
   canManage: boolean
+  onChange?(project: CollaborationProject): void
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
   const [groups, setGroups] = useState<CollaborationGroup[]>([])
+  const [configurationProject, setConfigurationProject] = useState(project)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false)
@@ -43,10 +45,19 @@ export function ProjectTemplateSettings({
     const generation = ++scope.current
     setLoading(true)
     try {
-      const result = (await api.projects.listCollaborationGroups?.(project.id)) ?? []
+      const [result, latest, rules] = await Promise.all([
+        api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
+        api.projects.get(project.id),
+        api.automations?.list(project.id) ?? Promise.resolve([]),
+      ])
       if (scope.current === generation) {
         setGroups(result)
+        setConfigurationProject({
+          ...latest,
+          automatic_processing_rules: rules,
+        })
         setError(null)
+        return latest
       }
     } catch {
       if (scope.current === generation) setError(m.failed)
@@ -63,7 +74,7 @@ export function ProjectTemplateSettings({
   }, [reload])
   if (!store) return null
   const snapshot = () =>
-    templateFromProject(project, groups, `template-${crypto.randomUUID()}`, locale)
+    templateFromProject(configurationProject, groups, `template-${crypto.randomUUID()}`, locale)
   return (
     <section className="collaboration-template-settings" data-testid="project-template-settings">
       <h2>{m.configuration}</h2>
@@ -186,19 +197,10 @@ export function ProjectTemplateSettings({
             setSelected(null)
             void reload()
           }}
-          onApply={async drafts => {
-            await applyTemplateGroups(
-              drafts,
-              raw => {
-                const draft = normalizeCollaborationGroupDraftForPersistence(raw)
-                return api.projects.createCollaborationGroup!(project.id, {
-                  ...draft,
-                  coordinationMode: 'manager',
-                })
-              },
-              m.partial
-            )
-            await reload()
+          onApply={async (drafts, document) => {
+            await applyProjectTemplate(api, project.id, document, drafts, locale, m.partial)
+            const latest = await reload()
+            if (latest) onChange?.(latest)
           }}
         />
       )}

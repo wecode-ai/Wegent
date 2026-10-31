@@ -113,10 +113,17 @@ export function useProjectCreateController({
   const [templatePending, setTemplatePending] = useState(
     Boolean(initialTemplate?.spec.resources.collaboration.groups.length),
   );
+  const [templateDocument, setTemplateDocument] = useState(
+    initialTemplate ?? null,
+  );
   const collaborationGroupDraft = collaborationGroupDrafts[0] ?? null;
   const setCollaborationGroupDraft = (
     draft: import("./types").ProjectCreateCollaborationGroupDraft | null,
   ) => setCollaborationGroupDrafts(draft ? [draft] : []);
+  const [createdProject, setCreatedProject] = useState<
+    import("../types").CollaborationProject | null
+  >(null);
+  const createdProjectLocation = useRef(location);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -129,13 +136,15 @@ export function useProjectCreateController({
         : null,
     [aitableUrl, host, isAITableProvider],
   );
-  const canSubmit = Boolean(
-    name.trim() &&
-    !templatePending &&
-    (!repositoryProvider || repositoryAddress.trim()) &&
-    (!isAITableProvider || aitableLink) &&
-    !saving,
-  );
+  const canSubmit =
+    Boolean(
+      createdProject ||
+      (name.trim() &&
+        !templatePending &&
+        (!repositoryProvider || repositoryAddress.trim()) &&
+        (!isAITableProvider || aitableLink) &&
+        !saving),
+    ) && !saving;
 
   useEffect(() => {
     if (executionEnvironmentSelectionChanged.current) return;
@@ -148,6 +157,10 @@ export function useProjectCreateController({
 
   async function submit() {
     if (!canSubmit) return;
+    if (createdProject) {
+      onCreated(createdProject, createdProjectLocation.current);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -191,12 +204,23 @@ export function useProjectCreateController({
           : {}),
       });
       if (resourceSetup) {
-        await resourceSetup.configure(project, {
-          memberUserIds,
-          agentResourceIds,
-          executionEnvironmentDeviceIds,
-          collaborationGroupDrafts,
-        });
+        try {
+          await resourceSetup.configure(project, {
+            memberUserIds,
+            agentResourceIds,
+            executionEnvironmentDeviceIds,
+            collaborationGroupDrafts,
+            ...(templateDocument ? { template: templateDocument } : {}),
+          });
+        } catch (cause) {
+          createdProjectLocation.current = location;
+          setCreatedProject(project);
+          throw new Error(
+            labels.partialConfiguration +
+              projectCreateErrorMessage(cause, labels, host),
+            { cause },
+          );
+        }
       }
       host?.track?.("created");
       onCreated(project, location);
@@ -224,6 +248,7 @@ export function useProjectCreateController({
       repositoryProvider,
       isAITableProvider,
       saving,
+      createdProject,
       error,
       canSubmit,
       memberUserIds,
@@ -233,6 +258,7 @@ export function useProjectCreateController({
       collaborationGroupDrafts,
     },
     commands: {
+      setTemplateDocument,
       setName,
       setDescription,
       setLocation,

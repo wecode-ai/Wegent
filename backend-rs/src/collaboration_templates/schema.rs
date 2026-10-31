@@ -20,9 +20,20 @@ fn object<'a>(
     keys: &[&str],
     path: &str,
 ) -> Result<&'a Map<String, Value>, FastApiError> {
+    fields(value, keys, &[], path)
+}
+
+fn fields<'a>(
+    value: &'a Value,
+    required: &[&str],
+    optional: &[&str],
+    path: &str,
+) -> Result<&'a Map<String, Value>, FastApiError> {
     let result = value.as_object().ok_or_else(|| invalid(path))?;
-    if result.keys().any(|key| !keys.contains(&key.as_str()))
-        || keys.iter().any(|key| !result.contains_key(*key))
+    if result
+        .keys()
+        .any(|key| !required.contains(&key.as_str()) && !optional.contains(&key.as_str()))
+        || required.iter().any(|key| !result.contains_key(*key))
     {
         return Err(invalid(path));
     }
@@ -88,7 +99,18 @@ fn validate_group(value: &Value) -> Result<(String, String), FastApiError> {
     }
     let mut role_keys = HashSet::new();
     for role in roles {
-        object(role, &["key", "name", "responsibility"], "role")?;
+        fields(
+            role,
+            &["key", "name", "responsibility"],
+            &["defaultKind"],
+            "role",
+        )?;
+        if let Some(kind) = role.get("defaultKind")
+            && kind != "human"
+            && kind != "agent"
+        {
+            return Err(invalid("role.defaultKind"));
+        }
         if !role_keys.insert(identity(&role["key"], "role.key")?) {
             return Err(invalid("roles.key"));
         }
@@ -181,9 +203,10 @@ pub(super) fn validate(value: &Value) -> Result<(), FastApiError> {
     object(&spec["resources"], &["collaboration"], "resources")?;
     let collaboration = &spec["resources"]["collaboration"];
     object(collaboration, &["project", "groups"], "collaboration")?;
-    object(
+    fields(
         &collaboration["project"],
         &["name", "description"],
+        &["taskAssignment", "board"],
         "project",
     )?;
     text(&collaboration["project"]["name"], "project.name", true, 200)?;
@@ -199,6 +222,47 @@ pub(super) fn validate(value: &Value) -> Result<(), FastApiError> {
         let (key, name) = validate_group(group)?;
         if !keys.insert(key) || !names.insert(name) {
             return Err(invalid("groups"));
+        }
+    }
+    let project = &collaboration["project"];
+    if let Some(assignment) = project.get("taskAssignment") {
+        fields(
+            assignment,
+            &["enabled", "groupKey"],
+            &["tags", "priorities"],
+            "project.taskAssignment",
+        )?;
+        if !assignment["enabled"].is_boolean()
+            || !keys.contains(&identity(
+                &assignment["groupKey"],
+                "project.taskAssignment.groupKey",
+            )?)
+        {
+            return Err(invalid("project.taskAssignment"));
+        }
+    }
+    if let Some(assignment) = project.get("taskAssignment") {
+        for field in ["tags", "priorities"] {
+            if let Some(values) = assignment.get(field) {
+                for value in array(values, "project.taskAssignment.filters", 100)? {
+                    text(value, "project.taskAssignment.filter", true, 100)?;
+                }
+            }
+        }
+    }
+    if let Some(board) = project.get("board") {
+        object(board, &["name", "tags"], "project.board")?;
+        text(&board["name"], "project.board.name", true, 200)?;
+        let tags = array(&board["tags"], "project.board.tags", 100)?;
+        if tags.is_empty() {
+            return Err(invalid("project.board.tags"));
+        }
+        let mut unique = HashSet::new();
+        for tag in tags {
+            let tag = text(tag, "project.board.tag", true, 100)?.trim();
+            if tag.chars().count() > 32 || !unique.insert(tag) {
+                return Err(invalid("project.board.tags"));
+            }
         }
     }
     Ok(())
@@ -225,6 +289,26 @@ mod tests {
         {
             validate(&value).unwrap();
         }
+    }
+
+    #[test]
+    fn rejects_invalid_task_routes_role_defaults_and_stage_tags() {
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["project"]["taskAssignment"]["groupKey"] =
+            "foreign-group".into();
+        assert!(validate(&value).is_err());
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["groups"][0]["roles"][0]["defaultKind"] =
+            "service".into();
+        assert!(validate(&value).is_err());
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["project"]["board"]["tags"] =
+            serde_json::json!(["same", "same"]);
+        assert!(validate(&value).is_err());
+        let mut value = builtin();
+        value["spec"]["resources"]["collaboration"]["project"]["board"]["tags"] =
+            serde_json::json!(["x".repeat(33)]);
+        assert!(validate(&value).is_err());
     }
 
     #[test]

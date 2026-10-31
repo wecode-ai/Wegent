@@ -24,7 +24,10 @@ export function GroupTemplateCreator({
   currentUserId?: number
   existingNames: string[]
   disabled?: boolean
-  onApply(drafts: ProjectCreateCollaborationGroupDraft[]): Promise<void>
+  onApply(
+    drafts: ProjectCreateCollaborationGroupDraft[],
+    document: CollaborationTemplate
+  ): Promise<void>
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]

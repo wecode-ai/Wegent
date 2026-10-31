@@ -24,11 +24,11 @@ Wework 从“协作 → 模板”发现模板，Wegent 从能力商店的协作�
 
 新接口由 Rust 实现并登记在 `backend-rs/config/routes.toml`：
 
-| 方法与路径 | 用途 |
-| --- | --- |
-| `GET /api/v1/collaboration-templates` | 返回可用模板的元数据，不返回完整配置 |
-| `GET /api/v1/collaboration-templates/{id}` | 验证权限后读取可移植配置 |
-| `PUT /api/v1/collaboration-templates/{name}` | 保存当前用户默认命名空间中的模板 |
+| 方法与路径                                   | 用途                                 |
+| -------------------------------------------- | ------------------------------------ |
+| `GET /api/v1/collaboration-templates`        | 返回可用模板的元数据，不返回完整配置 |
+| `GET /api/v1/collaboration-templates/{id}`   | 验证权限后读取可移植配置             |
+| `PUT /api/v1/collaboration-templates/{name}` | 保存当前用户默认命名空间中的模板     |
 
 保存请求包含 `document` 与 `expectedRevision`。创建时 revision 为 `null`；修改需要当前
 revision 和新 `spec.version`，过期 revision 返回 409。相同文档重复保存返回同一 Kind。
@@ -40,6 +40,14 @@ revision 和新 `spec.version`，过期 revision 返回 409。相同文档重复
 文档格式为 `agent.wecode.io/v1` 的 `Template`，`spec.resources.collaboration`
 包含 `project` 和 `groups`。小组包含角色、负责人角色、工作阶段、交付物、验收条件和执行标签。
 角色使用逻辑 key；导入项目时由用户绑定成员或智能体。负责人不能兼任执行角色。
+角色可通过 `defaultKind` 指定默认类型；内置模板的负责人默认选择智能体。
+
+`project.taskAssignment` 保存 `enabled` 和逻辑 `groupKey`，导入后解析为新小组 ID，
+复用项目的任务创建自动处理规则。新建需求即可分配给小组，由负责人拆分和协调。
+已有项目存在启用的新任务规则时，导入前提示先处理冲突，不覆盖或重复启用规则。
+`project.board` 保存视图名称和阶段标签，导入时追加标签视图并设为默认，保留原视图及业务标签。
+负责人按实际进展更新阶段标签，最终提交人工验收；配置阶段列本身不会自动推进需求。
+项目保存和导出会带上这些配置，使用逻辑小组引用，不携带原项目的小组 ID。
 
 YAML 导入采用白名单，拒绝未知字段、重复键、别名、错误引用以及超过 1 MB 的配置。
 导出从当前项目或小组配置生成，不导出账号身份、任务、评论、执行历史或连接凭据。
@@ -64,4 +72,6 @@ YAML 导入采用白名单，拒绝未知字段、重复键、别名、错误引
 资源库引用安装。`collaboration-templates` 桌面 checkpoint 覆盖真实 Rust/Python/MySQL
 接口、权限、版本冲突、桌面创建、保存发布、项目追加导入和重载持久化；
 `frontend/e2e/tests/collaboration/templates.spec.ts` 覆盖能力商店与 YAML 导入。
-两者均接入既有 CI 运行器。证据截图保存在测试产物中，不提交仓库。
+`collaboration-template-lifecycle` checkpoint 以本需求验证模板导入、自动分派、六阶段委派、
+阶段标签看板和人工验收，执行真实桌面、Executor、MCP、存储和 shell，只有模型服务使用固定响应。
+上述覆盖均接入既有 CI 运行器。证据截图保存在测试产物中，不提交仓库。

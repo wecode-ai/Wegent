@@ -9,7 +9,7 @@ import type { CollaborationTemplate, TemplateRoleAssignments as Bindings } from 
 import { bindTemplate } from './document'
 import { templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
-import { PartialTemplateApplyError } from './apply'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 export interface TemplateParticipant extends CollaborationGroupMember {
   label: string
@@ -37,9 +37,13 @@ export function TemplateBindings({
   const [bindings, setBindings] = useState<Bindings>(() =>
     Object.fromEntries(
       document.spec.resources.collaboration.groups.map(group => {
-        const current = candidates.find(
-          candidate => candidate.kind === 'human' && candidate.id === String(currentUserId)
-        )
+        const kind = group.roles.find(role => role.key === group.leaderRole)?.defaultKind ?? 'agent'
+        const current =
+          (kind === 'human' &&
+            candidates.find(
+              candidate => candidate.kind === 'human' && candidate.id === String(currentUserId)
+            )) ||
+          candidates.find(candidate => candidate.kind === kind)
         return [group.key, current ? { [group.leaderRole]: current } : {}]
       })
     )
@@ -234,7 +238,7 @@ export function TemplateBindingsDialog({
                 onClose()
               } catch (error) {
                 setFailed(error instanceof PartialTemplateApplyError)
-                setError(error instanceof PartialTemplateApplyError ? error.message : m.failed)
+                setError(error instanceof TemplateConfigurationError ? error.message : m.failed)
               } finally {
                 setBusy(false)
               }

@@ -7,6 +7,7 @@ export interface TemplateRole {
   key: string
   name: string
   responsibility: string
+  defaultKind?: 'human' | 'agent'
 }
 
 export interface TemplateStage {
@@ -41,7 +42,17 @@ export interface CollaborationTemplate {
     version: string
     resources: {
       collaboration: {
-        project: { name: string; description: string }
+        project: {
+          name: string
+          description: string
+          taskAssignment?: {
+            enabled: boolean
+            groupKey: string
+            tags?: string[]
+            priorities?: string[]
+          }
+          board?: { name: string; tags: string[] }
+        }
         groups: TemplateGroup[]
       }
     }

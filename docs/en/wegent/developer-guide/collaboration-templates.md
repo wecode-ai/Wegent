@@ -29,10 +29,10 @@ again. Withdrawing publication preserves access for users who retain a reference
 
 New routes are Rust-owned and selected in `backend-rs/config/routes.toml`:
 
-| Method and path | Purpose |
-| --- | --- |
-| `GET /api/v1/collaboration-templates` | Available metadata, without full definitions |
-| `GET /api/v1/collaboration-templates/{id}` | Authorized portable definition |
+| Method and path                              | Purpose                                       |
+| -------------------------------------------- | --------------------------------------------- |
+| `GET /api/v1/collaboration-templates`        | Available metadata, without full definitions  |
+| `GET /api/v1/collaboration-templates/{id}`   | Authorized portable definition                |
 | `PUT /api/v1/collaboration-templates/{name}` | Save in the current owner's default namespace |
 
 Saves contain `document` and `expectedRevision`. Creation uses `null`; an update
@@ -82,3 +82,11 @@ save/publication, additive import, and reload persistence.
 `frontend/e2e/tests/collaboration/templates.spec.ts` covers marketplace discovery
 and YAML import. Both run through existing CI runners. Evidence screenshots are
 test artifacts and are never committed.
+
+## Execution defaults
+
+Roles may set `defaultKind`; built-in coordinators default to an agent and cannot also execute member roles. `project.taskAssignment` stores `enabled` and a logical `groupKey`. Import resolves it to the newly persisted group and creates an issue-created automation rule. An enabled existing issue-created rule blocks import before groups are added.
+
+`project.board` defines a view name and stage tags. Import appends a default tag view while preserving existing views and business tags. The coordinator updates stage tags as work progresses and submits the result for human acceptance; defining columns alone does not advance an issue. Project snapshots export these settings with portable group references instead of live group IDs.
+
+The CI-registered `collaboration-template-lifecycle` desktop checkpoint covers import, automatic group assignment, six workflow rounds, tag columns, shell deliverables and human acceptance. Electron, Executor, MCP and persistence are real; only the model service uses deterministic responses.

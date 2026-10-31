@@ -3,7 +3,8 @@
 
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 
-export class PartialTemplateApplyError extends Error {}
+export class TemplateConfigurationError extends Error {}
+export class PartialTemplateApplyError extends TemplateConfigurationError {}
 
 /** Stop at the first failure and distinguish an untouched project from partial work. */
 export async function applyTemplateGroups<T>(

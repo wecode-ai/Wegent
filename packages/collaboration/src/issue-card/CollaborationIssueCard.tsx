@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Clock3, Flag, UserRound } from 'lucide-react'
+import { Bot, Clock3, Flag, UserRound, UsersRound } from 'lucide-react'
 import {
   useRef,
   type ButtonHTMLAttributes,
@@ -202,7 +202,9 @@ function IssueCardMetadata({
               className="inline-flex min-w-0 max-w-full items-center gap-1.5"
             >
               <span className="sr-only">{labels.assignee}</span>
-              {model.assigneeKind === 'agent' || model.assigneeKind === 'team' ? (
+              {model.assigneeKind === 'group' ? (
+                <UsersRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              ) : model.assigneeKind === 'agent' || model.assigneeKind === 'team' ? (
                 <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               ) : (
                 <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

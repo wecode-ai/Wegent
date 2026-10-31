@@ -32,12 +32,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
   const fillRoles = async (control, count) => {
+    // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
+    const human = await control.command(
+      'getAttribute',
+      testId('template-role-main-role-0') + ' option[value^="human:"]',
+      { value: 'value' }
+    )
+    await control.command('select', testId('template-role-main-role-0'), { value: human })
     for (let index = 1; index < count; index++) {
       await control.command('select', testId(`template-role-main-role-${index}`), {
         by: 'label',
         value: '当前设备智能体',
       })
     }
+  }
+
+  const disableCreationRule = async control => {
+    await click(control, 'collaboration-project-settings-automatic-processing')
+    const enabled = scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="true"]')
+    await control.command('waitFor', enabled, { timeoutMs: uiTimeoutMs })
+    await control.command('clickWhenEnabled', enabled, { timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', enabled, { visible: false, timeoutMs: uiTimeoutMs })
+    await click(control, 'collaboration-project-settings-sharing')
   }
 
   return {
@@ -182,7 +198,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         consumerToken,
         404
       )
-      const revoked = await request('/api/v1/collaboration-templates', 'GET', undefined, consumerToken)
+      const revoked = await request(
+        '/api/v1/collaboration-templates',
+        'GET',
+        undefined,
+        consumerToken
+      )
       assert.ok(!revoked.items.some(item => item.id === source.id))
       const sharedDocument = structuredClone(document)
       sharedDocument.metadata.name = `consumer-workflow-${process.pid}`
@@ -200,7 +221,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           resource_type: 'template',
           source_id: accountTemplate.id,
           display_name: sharedDocument.spec.displayName,
-          version: '1.0.0',
+          version: sharedDocument.spec.version,
           status: 'published',
         },
         consumerToken
@@ -313,7 +334,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-template-dialog', '模板已发布')
       await capture(control, '07-published')
       await click(control, 'template-save-close')
-      await click(control, 'project-template-import')
+      await disableCreationRule(control)
+      await control.command('clickWhenEnabled', testId('project-template-import'), {
+        timeoutMs: uiTimeoutMs,
+      })
       await click(control, 'template-details-research-analysis')
       await click(control, 'template-use')
       await fillRoles(control, 3)
@@ -331,6 +355,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await capture(control, '10-persisted')
+      await disableCreationRule(control)
+      await click(control, 'collaboration-project-settings-groups')
       await click(control, 'collaboration-group-open-create')
       await click(control, 'group-template-create')
       await click(control, 'template-details-content-creation')

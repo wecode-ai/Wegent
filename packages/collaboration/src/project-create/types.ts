@@ -25,6 +25,7 @@ export interface ProjectCreateTarget {
 }
 
 export interface ProjectCreateResourceSelection {
+  template?: import("../templates/types").CollaborationTemplate;
   memberUserIds: number[];
   agentResourceIds: string[];
   executionEnvironmentDeviceIds: number[];
@@ -250,6 +251,8 @@ export interface ProjectCreateLabels {
   create: string;
   creating: string;
   unavailableLocation: string;
+  partialConfiguration: string;
+  openCreated: string;
   repositoryRequired: string;
   repositoryInvalid: string;
   githubRepositoryInvalid: string;
