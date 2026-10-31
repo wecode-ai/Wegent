@@ -327,6 +327,9 @@ methods = ["GET"]
 path = "/api/plugins/marketplace"
 [[routes]]
 methods = ["GET"]
+path = "/api/plugins/marketplace/:plugin_id/owner"
+[[routes]]
+methods = ["GET"]
 path = "/api/models/unified"
 [[routes]]
 methods = ["GET", "POST"]

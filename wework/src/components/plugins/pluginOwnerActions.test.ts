@@ -29,6 +29,21 @@ describe('resolvePluginOwnerActions', () => {
     })
   })
 
+  test('local catalog metadata does not hide first sharing, while a cloud release needs ownership', () => {
+    expect(
+      resolvePluginOwnerActions({
+        isLocalCreated: true,
+        ownedListing: { visibility: 'personal', latestReleaseId: null },
+      })
+    ).toEqual({ showShareAction: true, canManageAccess: false })
+    expect(
+      resolvePluginOwnerActions({
+        isLocalCreated: true,
+        ownedListing: { visibility: 'personal', latestReleaseId: 12 },
+      })
+    ).toEqual({ showShareAction: false, canManageAccess: false })
+  })
+
   test('personal owner can still manage sharing while the local package hydrates', () => {
     expect(
       resolvePluginOwnerActions({

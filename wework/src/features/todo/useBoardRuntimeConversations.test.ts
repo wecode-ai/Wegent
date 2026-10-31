@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
 import {
+  applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
@@ -238,6 +240,58 @@ describe('useBoardRuntimeConversations', () => {
     )
   })
 
+  it.each(['pending', 'streaming', 'done'] as const)(
+    'keeps a %s follow-up when an older full idle board preload returns',
+    async status => {
+      const completed = transcript('completed-reply')
+      completed.turns[0].position = 1
+      replaceRuntimeConversationSnapshot(address, completed.turns)
+      const preload = deferredTranscript()
+      const getRuntimeTranscript = vi.fn().mockReturnValue(preload.promise)
+      renderHook(() => useBoardRuntimeConversations(options(getRuntimeTranscript)))
+      expect(getRuntimeTranscript).toHaveBeenCalledOnce()
+
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: { id: 'follow-up', role: 'user', content: 'New question', status: 'done' },
+        })
+        if (status === 'pending') return
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          subtaskId: 'live-turn',
+          clientUserMessageId: 'follow-up',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'live-turn',
+          itemId: 'live-text',
+          content: 'Visible live reply',
+        })
+        if (status === 'done')
+          applyRuntimeConversationAction(address, {
+            type: 'assistant_done',
+            subtaskId: 'live-turn',
+          })
+      })
+      const expectedContent = [
+        'completed-reply',
+        'New question',
+        ...(status === 'pending' ? [] : ['Visible live reply']),
+      ]
+      expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual(
+        expectedContent
+      )
+
+      await act(async () => preload.resolve(completed))
+
+      expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual(
+        expectedContent
+      )
+      expect(getRuntimeConversationTurns(address).at(-1)?.status).toBe(status)
+    }
+  )
+
   it('preserves older turns when the preload transcript is bounded', async () => {
     replaceRuntimeConversationSnapshot(address, transcript('older-reply').turns)
     const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('newer-reply', false))
@@ -251,5 +305,16 @@ describe('useBoardRuntimeConversations', () => {
         expect.arrayContaining(['older-reply', 'newer-reply'])
       )
     })
+  })
+
+  it('does not resurrect obsolete turns after another viewer replaces the history', async () => {
+    replaceRuntimeConversationSnapshot(address, transcript('obsolete-reply').turns)
+    const preload = deferredTranscript()
+    renderHook(() => useBoardRuntimeConversations(options(vi.fn(() => preload.promise))))
+    act(() => replaceRuntimeConversationSnapshot(address, transcript('current-reply').turns))
+
+    await act(async () => preload.resolve(transcript('obsolete-reply')))
+
+    expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['current-reply'])
   })
 })

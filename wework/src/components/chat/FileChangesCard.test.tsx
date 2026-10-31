@@ -506,7 +506,7 @@ describe('FileChangesCard', () => {
 
     expect(screen.getAllByTestId('review-file-changes-button')[0]).toBeDisabled()
     expect(screen.getAllByTestId('revert-file-changes-button')[0]).toBeDisabled()
-    expect(screen.getByText('设备离线，无法审核或撤销')).toBeInTheDocument()
+    expect(screen.getByText('设备离线，无法审查或撤销')).toBeInTheDocument()
   })
 
   test('confirms before reverting active file changes', async () => {

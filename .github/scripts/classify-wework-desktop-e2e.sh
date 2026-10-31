@@ -23,6 +23,7 @@ core_segments=(
   collaboration-board-backlog
   collaboration-board-move-recovery
   collaboration-home-preload
+  board-transcript-followup
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -245,7 +246,7 @@ cloud_shards=(
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,native-lifecycle,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle
-  stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use,board-transcript-followup
   harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes
   claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,startup-network-change,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
@@ -474,8 +475,34 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/plugins/PluginDetailView* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/plugins/pluginOwnerActions.ts | \
+      wework/src/components/plugins/pluginOwnerLocalPackage.ts | \
+      wework/src/components/plugins/pluginUninstall.ts | \
+      wework/src/api/local/codexPlugins.ts | \
+      wework/src/features/plugins/pluginMarketplaceCache.ts | \
+      wework/src/components/plugins/findMarketplaceItemForInstalled.ts | \
+      wework/src/components/plugins/marketplaceCatalogMerge.ts | \
+      wework/src/components/plugins/plugin-dialogs/InstallPluginDialog.tsx | \
+      wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx | \
+      wework/src/components/plugins/PluginVersionSubmit* | \
+      wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginDetailSelection* | \
+      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
+      select_target "cloud:plugin-workspace-publication"
+      select_target "cloud:plugin-toggle-persistence"
+      ;;
+  esac
+
+  case "$path" in
     wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
       select_target "core:project-space-tool-discovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs | \
+      wework/src/features/todo/useBoardRuntimeConversations*)
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
@@ -484,6 +511,14 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-installation.scenario.mjs | \
+      wework/scripts/plugin-personal-runtime.test.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
+      select_target "cloud:plugin-toggle-persistence"
       return
       ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
@@ -1226,6 +1261,7 @@ classify_wework_path() {
     wework/src/features/workbench/runtimeConversationCache*)
       select_target "core:core-task-flow"
       select_target "core:conversation-state"
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/src/features/workbench/runtimePaneMessages* | \
@@ -1869,6 +1905,7 @@ classify_path() {
       select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
+      select_target "core:board-transcript-followup"
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
