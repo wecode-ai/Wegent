@@ -21,7 +21,10 @@ import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
-import { AutomationsPage } from '@/features/automations/AutomationsPage'
+import {
+  AutomationsPage,
+  type AutomationNavigationHandle,
+} from '@/features/automations/AutomationsPage'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
@@ -59,6 +62,11 @@ export function StandInOverviewPage({
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
+  const automationRef = useRef<AutomationNavigationHandle>(null)
+  const leaveSchedules = (action: () => void) => {
+    if (automationRef.current) automationRef.current.requestLeave(action)
+    else action()
+  }
   const pressedInPanel = useRef(false)
   const { saved, setDraft, reload } = state
   const deviceId = saved?.executionDeviceId
@@ -137,12 +145,13 @@ export function StandInOverviewPage({
   )
   const conversation = roleId ? chatting : !chatting
   const enabled = role ? role.enabled : state.draft?.primary?.enabled !== false
-  const chooseRole = (id?: string) => {
-    setRoleId(id)
-    setWorkView('work')
-    setChatting(false)
-    setProfile(null)
-  }
+  const chooseRole = (id?: string) =>
+    leaveSchedules(() => {
+      setRoleId(id)
+      setWorkView('work')
+      setChatting(false)
+      setProfile(null)
+    })
   return (
     <section
       className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
@@ -231,7 +240,7 @@ export function StandInOverviewPage({
             <button
               type="button"
               data-testid="stand-in-role-chat"
-              onClick={() => setChatting(value => !value)}
+              onClick={() => leaveSchedules(() => setChatting(value => !value))}
               className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
             >
               <MessageSquare className="h-4 w-4" />
@@ -405,7 +414,9 @@ export function StandInOverviewPage({
                       key={value}
                       data-testid={`stand-in-work-view-${value}`}
                       aria-pressed={workView === value}
-                      onClick={() => setWorkView(value)}
+                      onClick={() => {
+                        if (value !== workView) leaveSchedules(() => setWorkView(value))
+                      }}
                       className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${workView === value ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
                     >
                       {t(value === 'work' ? 'standIn.workspace.work_list' : 'workbench.automation')}
@@ -414,6 +425,7 @@ export function StandInOverviewPage({
                 </nav>
                 {workView === 'scheduled' ? (
                   <AutomationsPage
+                    ref={automationRef}
                     key={roleId ?? '@primary'}
                     embedded
                     standInDeviceId={deviceId}

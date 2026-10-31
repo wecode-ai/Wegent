@@ -52,7 +52,13 @@ export function createStandInCoordinatorVerification({
       response.end(
         createSse([
           responseCreated(id),
-          assistantMessage(project ? 'PROJECT_COORDINATOR_VERIFIED' : 'STAND_IN_SCHEDULE_VERIFIED'),
+          assistantMessage(
+            project
+              ? input.includes('PROJECT_COORDINATOR_VERIFY_SECOND')
+                ? 'PROJECT_COORDINATOR_FOLLOWUP_VERIFIED'
+                : 'PROJECT_COORDINATOR_VERIFIED'
+              : 'STAND_IN_SCHEDULE_VERIFIED'
+          ),
           responseCompleted(id),
         ])
       )
@@ -61,6 +67,12 @@ export function createStandInCoordinatorVerification({
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await control.command('click', '[data-testid="stand-in-primary-open"]')
+      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('click', '[data-testid="stand-in-primary-enabled"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
       await control.command('click', '[data-testid="stand-in-role-chat"]')
       await control.command('click', '[data-testid="stand-in-work-view-scheduled"]')
       await control.command('click', '[data-testid="create-automation-button"]')
@@ -73,17 +85,20 @@ export function createStandInCoordinatorVerification({
         '0'
       )
       await captureScreenshot(control, '23-schedule-inherits-stand-in.png')
+      await control.command('click', '[data-testid="stand-in-work-view-work"]')
+      await control.command('waitFor', '[data-testid="automation-discard"]')
+      await captureScreenshot(control, '23b-schedule-unsaved-navigation.png')
+      await control.command('click', '[data-testid="automation-keep-editing"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-prompt-input"]'),
+        'STAND_IN_SCHEDULE_VERIFY'
+      )
       await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
       const schedules = await rpc('runtime.automations.list', {})
       const schedule = schedules.items.find(row => row.name === SCHEDULE)
       assert.deepEqual(schedule.taskRequest.standInOwner, { userId: USER, roleId: '@primary' })
       assert.equal(schedule.taskPayload.executionRequest, undefined)
-      const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
-      await rpc('runtime.stand_in.personal.save', {
-        userId: USER,
-        settings: { ...settings, primary: { ...settings.primary, enabled: true } },
-      })
       await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')
       await control.command('waitFor', '[data-testid="automation-run-history"]', {
@@ -95,6 +110,7 @@ export function createStandInCoordinatorVerification({
       await captureScreenshot(control, '24-schedule-executed.png')
       await rpc('runtime.automations.delete', { automationId: schedule.id })
 
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       const projects = await rpc('projects.list', {})
       const project = projects.find(row => row.name === PROJECT)
@@ -158,6 +174,34 @@ export function createStandInCoordinatorVerification({
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, '27-project-reply.png')
+      const firstTurn = await rpc('runtime.tasks.get', { taskId: first.taskId })
+      assert.ok(
+        firstTurn.task.runtimeHandle.modelSelection?.modelName,
+        'The selected cloud or runtime model must persist'
+      )
+      const thread = firstTurn.task.runtimeHandle.threadId
+      assert.ok(thread)
+      await control.command('fill', `${chat} [data-testid="chat-message-input"]`, {
+        value: 'PROJECT_COORDINATOR_VERIFY_SECOND',
+      })
+      await control.command('clickWhenEnabled', `${chat} [data-testid="send-message-button"]`)
+      await control.command('waitFor', chat, {
+        text: 'PROJECT_COORDINATOR_FOLLOWUP_VERIFIED',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const secondTurn = await rpc('runtime.tasks.get', { taskId: first.taskId })
+      assert.equal(
+        secondTurn.task.runtimeHandle.threadId,
+        thread,
+        'Project follow-ups must keep the original thread'
+      )
+      assert.equal(
+        secondTurn.task.runtimeHandle.modelSelection.modelName,
+        firstTurn.task.runtimeHandle.modelSelection.modelName,
+        'Follow-up must preserve the selected model'
+      )
+      await captureScreenshot(control, '27b-project-followup-same-thread.png')
+
       await control.command('click', '[data-testid="project-coordinator-memory"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-panel"]', {
         text: 'PROJECT_A_MEMORY_ONLY',

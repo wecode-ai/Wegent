@@ -159,7 +159,7 @@ impl RuntimeWorkRpcHandler {
                 &payload["options"],
             )
             .await?;
-        let origin = json!({"type":"project_coordinator","userId":user,"deviceId":self.device_id,"cloudProjectId":payload["projectId"],"projectStore":payload["projectStore"],"groupId":payload["groupId"],"leaderId":context["group"]["leader"]["id"],"groupVersion":context["group"]["version"],"agentVersion":context["agent"]["version"]});
+        let origin = json!({"type":"project_coordinator","initiatedBy":"project_coordinator","userId":user,"deviceId":self.device_id,"cloudProjectId":payload["projectId"],"projectStore":payload["projectStore"],"groupId":payload["groupId"],"leaderId":context["group"]["leader"]["id"],"groupVersion":context["group"]["version"],"agentVersion":context["agent"]["version"]});
         let input = json!({"taskId":task_id,"title":context["project"]["name"],"message":message,"origin":origin,"cloudProjectId":payload["projectId"],"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"],"queueIfBusy":true});
         let mut prepared = self
             .prepare_stand_in_execution_with_agent(input, &config, Some(agent))

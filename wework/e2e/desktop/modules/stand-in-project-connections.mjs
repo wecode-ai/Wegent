@@ -33,6 +33,7 @@ export async function verifyRemoteStandInProjectScope(control, localProjectId, c
 export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const name = `连接名称回归-${process.pid}`
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await createLocalCollaborationProject(control, CONTENT, name)
   const projects = await rpc('projects.list', {})
   const project = projects.find(row => row.name === name)

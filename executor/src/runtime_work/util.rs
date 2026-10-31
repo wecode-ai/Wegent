@@ -1111,6 +1111,18 @@ mod tests {
     }
 
     #[test]
+    fn stand_in_project_coordinator_retains_host_refreshed_leader_versions() {
+        let old = json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator","userId":7,"cloudProjectId":"project","projectStore":"local","groupId":"group","leaderId":"old","agentVersion":1}});
+        let mut request = ExecutionRequest::default();
+        let mut current = old["origin"].clone();
+        current["leaderId"] = json!("new");
+        current["agentVersion"] = json!(2);
+        request.extra.insert("origin".into(), current.clone());
+        restore_origin(&mut request, &old);
+        assert_eq!(request.extra["origin"], current);
+    }
+
+    #[test]
     fn stand_in_confirmation_cannot_be_removed_or_rebound_by_a_follow_up() {
         let persisted = json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","userId":7,"standInId":"review","askBeforeAct":true}});
         let mut request = ExecutionRequest::default();

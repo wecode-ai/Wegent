@@ -25,7 +25,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         const provider = catalog.items.find(item => item.id === DINGTALK)
         assert.ok(provider, 'The real Wework plugin registry must expose the DingTalk provider')
         assert.deepEqual(provider.resourceKinds, ['group', 'direct'])
-        assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wegent')
+        assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wework')
         const source = {
           id: 'connection-migration-fixture',
           profile: 'connection-test-account',
@@ -52,7 +52,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         )
         assert.equal(saved.primary.dingtalk, undefined)
         assert.equal(saved.primary.connections[0].providerId, DINGTALK)
-        assert.deepEqual(saved.primary.connections[0].policy, source.policy)
+        assert.deepEqual(saved.primary.connections[0].policy, { ...source.policy, immediate: true })
         const loaded = await requestExecutor(
           control,
           'runtime.stand_in.personal.get',

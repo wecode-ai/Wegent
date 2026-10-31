@@ -158,12 +158,34 @@ impl RuntimeWorkRpcHandler {
 }
 
 pub(super) fn apply_runtime_model_selection(prepared: &mut Value, options: &Value) {
-    if options["modelType"] == "runtime" && options["modelId"].is_string() {
-        // Identity chats start from the desktop model selector, just like their follow-ups.
-        // Runner catalog identities alone intentionally use the direct provider path.
+    if !options["modelId"].is_string() {
+        return;
+    }
+    prepared["modelSelection"] = json!({"modelName":options["modelId"],"modelType":options["modelType"].as_str().unwrap_or("public"),"options":options["modelOptions"]});
+    if options["modelType"] == "runtime" {
+        // Runtime selectors use the current desktop catalog configuration.
         prepared["executionRequest"]["model_config"]["runtime_config"] =
             json!({"codex":{"use_user_config":true,"configured":true}});
         prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
-        prepared["modelSelection"] = json!({"modelName":options["modelId"],"modelType":"runtime","options":options["modelOptions"]});
+    }
+}
+
+#[cfg(test)]
+mod model_selection_tests {
+    use super::*;
+
+    #[test]
+    fn identity_chats_keep_cloud_model_selection_without_replacing_gateway_config() {
+        let config = json!({"model_id":"luna","model_provider":"cloud_gateway"});
+        let mut prepared = json!({"executionRequest":{"model_config":config}});
+        let options = json!({"modelId":"cloud-luna","modelType":"public","modelOptions":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"1"}});
+        apply_runtime_model_selection(&mut prepared, &options);
+        assert_eq!(prepared["modelSelection"]["modelName"], "cloud-luna");
+        assert_eq!(prepared["modelSelection"]["modelType"], "public");
+        assert_eq!(
+            prepared["modelSelection"]["options"],
+            options["modelOptions"]
+        );
+        assert_eq!(prepared["executionRequest"]["model_config"], config);
     }
 }

@@ -22,7 +22,7 @@ One personal document owns stand-in configurations and versions. Legacy project 
 
 ## Connection timing and background coordination
 
-Each connection exposes Handle immediately on receipt. Otherwise the system batches intake and checks every five minutes, without asking users to choose an interval or duplicate confirmation settings. New connections default to batching. Legacy global mode migrates only to connections lacking explicit timing, then is removed. Existing automatic and askBeforeAct policies remain intact; manual connections require an explicit Enable automatic handling action. Direct delegation remains immediate.
+Each connection exposes Handle immediately on receipt. Otherwise the system batches intake and checks every five minutes, without asking users to choose an interval or duplicate confirmation settings. New message sources default to batching; project connections retain their existing source policies. Legacy global mode migrates only to connections lacking explicit timing, then is removed. Existing automatic and askBeforeAct policies remain intact; manual connections require an explicit Enable automatic handling action. Direct delegation remains immediate.
 
 Events persist in the selected Executor’s SQLite without creating work or invoking a model. A separate persistent primary coordinator reads a fixed batch, eligible roles and existing work, then creates, continues, ignores, defers or follows up. Empty intake does not invoke a model. Recovery combines accumulated events instead of replaying missed ticks.
 

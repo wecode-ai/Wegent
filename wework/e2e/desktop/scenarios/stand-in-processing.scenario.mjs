@@ -202,6 +202,8 @@ export function createDesktopScenario({
         )
         await captureScreenshot(control, 'silent-01-connection-timing.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
         await control.command('waitFor', '[data-testid="stand-in-save"]', { visible: false })
         const configured = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
@@ -219,8 +221,10 @@ export function createDesktopScenario({
         assert.deepEqual(await rpc(control, 'todos.bindings', { task_id: issue.id }), [])
         assert.equal(coordinatorCalls, 0)
         assert.equal(workCalls, 0)
+        // The existing overview status refresh is every 15 seconds, longer than an ordinary UI step.
         await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
           text: '1',
+          timeoutMs: 20000,
         })
         await captureScreenshot(control, 'silent-02-intake-without-work.png')
         const scheduled = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
