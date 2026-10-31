@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
@@ -124,7 +125,39 @@ async function releaseRequestHold(control, timeoutMs) {
   assert.fail(`The held executor request never completed: ${JSON.stringify(latest)}`)
 }
 
-async function openElicitation(control, scope, composer, timeoutMs) {
+async function recordElicitationFailure(control, scope, resultDir) {
+  try {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const task = snapshot.pane?.currentRuntimeTask ?? snapshot.workbench?.currentRuntimeTask
+    const address = task && { deviceId: task.deviceId, taskId: task.taskId }
+    const native = task?.taskId
+      ? JSON.parse(
+          await control.command('getLocalRuntimeTranscript', 'body', {
+            value: JSON.stringify({ taskId: task.taskId, limit: 100 }),
+          })
+        )
+      : null
+    const messages = address
+      ? JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+      : []
+    await writeFile(
+      join(resultDir, 'runtime-input-answer-native-failure.json'),
+      JSON.stringify(
+        { scope, address, native, messages, transitions: snapshot.paneTransitions },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    console.error('[desktop-e2e] Elicitation failure diagnostics unavailable:', String(error))
+  }
+}
+
+async function openElicitation(control, scope, composer, timeoutMs, resultDir) {
   await control.command('fill', composer, { value: PROMPT })
   await control.command('press', composer, { key: 'Enter' })
   const deadline = Date.now() + Math.max(timeoutMs, 90_000)
@@ -164,6 +197,7 @@ async function openElicitation(control, scope, composer, timeoutMs) {
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
+  await recordElicitationFailure(control, scope, resultDir)
   assert.fail(`Timed out waiting for the elicitation form in ${scope}`)
 }
 
@@ -282,7 +316,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
 
       const mainGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -321,7 +355,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       })
       await control.command('waitFor', SIDE_CHAT, { visible: true, timeoutMs: taskTimeoutMs })
       await control.command('waitFor', SIDE_COMPOSER, { visible: true, timeoutMs: taskTimeoutMs })
-      await openElicitation(control, SIDE_CHAT, SIDE_COMPOSER, taskTimeoutMs)
+      await openElicitation(control, SIDE_CHAT, SIDE_COMPOSER, taskTimeoutMs, resultDir)
       await control.command('holdLocalExecutorRequests', 'body', {
         value: JSON.stringify({ method: 'runtime.tasks.list' }),
       })
@@ -349,7 +383,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const failureGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const failureTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -409,7 +443,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const rejectionGate = deferred()
       activeContinuationGate = rejectionGate
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const rejectionTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
@@ -460,7 +494,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const archiveGate = nextContinuationGate()
-      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs, resultDir)
       const archiveTask = await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
