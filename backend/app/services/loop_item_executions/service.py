@@ -2592,6 +2592,21 @@ class LoopItemExecutionService:
         if commit:
             db.refresh(execution)
             self._push_activity_after_commit(db, activity)
+        logger.info(
+            "[LoopItemExecution] Terminal transition execution=%s status=%s "
+            "expected_status=%s expected_version=%s reason=%s event_seq=%s "
+            "reconciled=%s device=%s task=%s committed=%s",
+            execution_id,
+            terminal_status,
+            expected_status,
+            expected_version,
+            termination_reason,
+            event_seq,
+            reconciled,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+            commit,
+        )
         return execution
 
     def publish_terminal_projection(
@@ -4375,12 +4390,24 @@ class LoopItemExecutionService:
         runtime_status: str,
         running: bool,
         turn_status: Optional[str] = None,
+        source: str = "device_scan",
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row
+        logger.info(
+            "[LoopItemExecution] Snapshot reconciliation source=%s execution=%s "
+            "status=%s version=%s runtime_status=%s running=%s turn_status=%s",
+            source,
+            execution_id,
+            row.status,
+            row.version,
+            runtime_status,
+            running,
+            turn_status,
+        )
         normalized = runtime_status.lower().strip()
         normalized_turn = (turn_status or "").lower().strip()
         if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:
