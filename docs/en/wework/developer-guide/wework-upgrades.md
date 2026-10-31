@@ -113,6 +113,12 @@ The upgrade workflow covers all three platforms by default; manual dispatches ca
 have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
 75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
 
+For default-user upgrade diagnosis, also select `checkpoint=app-upgrade` to run that scenario
+through the shared runner. PRs and default manual runs execute the complete upgrade suite.
+Cleanup must retain `electron-logs` and `release-logs` so the target executor's original logs
+distinguish startup failure, health-check timeout, and rollback. Missing logs are not a basis
+for guessing changes to startup behavior.
+
 ## Native launcher linker
 
 Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
