@@ -10,6 +10,8 @@ describe('resolveDesktopPackageTargets', () => {
     ['linux', 'x64', 'x86_64-unknown-linux-gnu'],
     ['windows', 'x64', 'x86_64-pc-windows-msvc'],
     ['win32', 'x64', 'x86_64-pc-windows-msvc'],
+    ['windows', 'arm64', 'aarch64-pc-windows-msvc'],
+    ['win32', 'arm64', 'aarch64-pc-windows-msvc'],
   ])('derives %s/%s package sidecars as %s', (platform, arch, target) => {
     expect(
       resolveDesktopPackageTargets({
@@ -70,10 +72,10 @@ describe('resolveDesktopPackageTargets', () => {
   test('rejects unsupported package targets', () => {
     expect(() =>
       resolveDesktopPackageTargets({
-        WEWORK_RELEASE_ARCH: 'arm64',
+        WEWORK_RELEASE_ARCH: 'ia32',
         WEWORK_RELEASE_PLATFORM: 'windows',
       })
-    ).toThrow('Unsupported Wework package target: win32-arm64')
+    ).toThrow('Unsupported Wework package target: win32-ia32')
   })
 
   test('uses target-specific executable names when the host platform differs', () => {
