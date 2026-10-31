@@ -374,36 +374,6 @@ function CollaborationPlatformNavigation({
                 <span>{messages.standIn}</span>
               </button>
             )}
-            {host.templateStore && host.templateNavigation && (
-              <button
-                type="button"
-                className={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "templates"
-                    ? "active"
-                    : undefined
-                }
-                aria-current={
-                  host.location.rootView === "templates" ? "page" : undefined
-                }
-                data-testid="collaboration-primary-templates"
-                onClick={() =>
-                  host.navigate({
-                    ...host.location,
-                    platformView: "spaces",
-                    rootView: "templates",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                <UsersRound aria-hidden="true" />
-                <span>{messages.templates}</span>
-              </button>
-            )}
             <button
               type="button"
               className={
@@ -495,6 +465,36 @@ function CollaborationPlatformNavigation({
               <Monitor aria-hidden="true" />
               <span>{messages.devices}</span>
             </button>
+            {host.templateStore && host.templateNavigation && (
+              <button
+                type="button"
+                className={
+                  !host.location.workspaceId &&
+                  host.location.rootView === "templates"
+                    ? "active"
+                    : undefined
+                }
+                aria-current={
+                  host.location.rootView === "templates" ? "page" : undefined
+                }
+                data-testid="collaboration-primary-templates"
+                onClick={() =>
+                  host.navigate({
+                    ...host.location,
+                    platformView: "spaces",
+                    rootView: "templates",
+                    workspaceId: null,
+                    workspaceView: "home",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  })
+                }
+              >
+                <UsersRound aria-hidden="true" />
+                <span>{messages.templates}</span>
+              </button>
+            )}
           </nav>
         </>
       ) : null}
