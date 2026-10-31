@@ -47,6 +47,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     }
   }
 
+  const applyBindings = async control => {
+    await control.command('clickWhenEnabled', testId('template-bindings-apply'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    // Group creation precedes routing and board persistence; wait for the whole operation.
+    await control.command('waitFor', testId('template-bindings-apply'), {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+  }
+
   const disableCreationRule = async control => {
     await click(control, 'collaboration-project-settings-automatic-processing')
     const enabled = scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="true"]')
@@ -342,9 +353,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'template-use')
       await fillRoles(control, 3)
       await capture(control, '08-import-bindings')
-      await control.command('clickWhenEnabled', testId('template-bindings-apply'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      await applyBindings(control)
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await wait(control, 'collaboration-project-groups-page', '产品全流程小组')
@@ -362,9 +371,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'template-details-content-creation')
       await click(control, 'template-use')
       await fillRoles(control, 3)
-      await control.command('clickWhenEnabled', testId('template-bindings-apply'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      await applyBindings(control)
       await wait(control, 'collaboration-group-detail-name')
       assert.equal(
         await control.command('getValue', testId('collaboration-group-detail-name')),
