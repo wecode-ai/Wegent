@@ -3,6 +3,7 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import type { ExecutorRuntimeClient } from '@/api/executorAccess'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import {
+  getRuntimeConversationTurns,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
@@ -82,6 +83,7 @@ export function useBoardRuntimeConversations({
       attemptedSignatures.current.set(key, signature)
       const sequence = (requestSequences.current.get(key) ?? 0) + 1
       requestSequences.current.set(key, sequence)
+      const turnsBeforeRead = getRuntimeConversationTurns(address)
       void getRuntimeTranscript({
         ...address,
         limit: 20,
@@ -93,6 +95,8 @@ export function useBoardRuntimeConversations({
           appliedSequences.current.set(key, sequence)
           const transcript = projectRuntimePaneTranscript(response)
           if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
+            // A board read must not retract progress published while it was pending.
+            if (getRuntimeConversationTurns(address) !== turnsBeforeRead) return
             replaceRuntimeConversationSnapshot(address, transcript.turns)
           } else {
             reconcileRuntimeConversationSnapshot(address, transcript.turns)
