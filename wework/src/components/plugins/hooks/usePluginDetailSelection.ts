@@ -5,7 +5,10 @@ import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { marketplaceItemMarketplaceId, marketplacePluginDistribution } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
-import { marketplaceItemOwnsLocalCreatedPackage } from '../pluginOwnerLocalPackage'
+import {
+  createdPluginSlugFromKey,
+  marketplaceItemOwnsLocalCreatedPackage,
+} from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 
 export function findMarketplaceItemForPluginReference(
@@ -134,6 +137,7 @@ export function openMarketplacePluginDetailSelection({
   const packableCreated = marketplaceItemOwnsLocalCreatedPackage(item)
     ? findPackableCreatedPlugin(installedPlugins, [
         item.name,
+        createdPluginSlugFromKey(item.name),
         item.displayName,
         installed?.raw.spec.source.pluginKey,
         installed?.name,

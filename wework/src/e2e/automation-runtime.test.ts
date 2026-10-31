@@ -609,7 +609,10 @@ describe('Electron desktop E2E automation', () => {
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {
-    const fetch = vi.fn().mockRejectedValue(new Error('identity unavailable'))
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
+      .mockRejectedValueOnce(new Error('identity unavailable'))
     vi.stubGlobal('fetch', fetch)
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       cloudBackendUrl: 'https://cloud.example.com',
@@ -619,12 +622,18 @@ describe('Electron desktop E2E automation', () => {
 
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
 
-    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledTimes(2)
     expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
   })
 
   test('treats non-successful cloud identity responses as failures', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ ok: true, result: {} }))
+        .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+    )
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       cloudBackendUrl: 'https://cloud.example.com',
       modelServerUrl: 'http://127.0.0.1:43111',

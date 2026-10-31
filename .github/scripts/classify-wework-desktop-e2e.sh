@@ -472,6 +472,27 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/plugins/PluginDetailView* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/plugins/pluginOwnerActions.ts | \
+      wework/src/components/plugins/pluginOwnerLocalPackage.ts | \
+      wework/src/components/plugins/pluginUninstall.ts | \
+      wework/src/api/local/codexPlugins.ts | \
+      wework/src/features/plugins/pluginMarketplaceCache.ts | \
+      wework/src/components/plugins/findMarketplaceItemForInstalled.ts | \
+      wework/src/components/plugins/marketplaceCatalogMerge.ts | \
+      wework/src/components/plugins/plugin-dialogs/InstallPluginDialog.tsx | \
+      wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx | \
+      wework/src/components/plugins/PluginVersionSubmit* | \
+      wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginDetailSelection* | \
+      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
+      select_target "cloud:plugin-workspace-publication"
+      select_target "cloud:plugin-toggle-persistence"
+      ;;
+  esac
+
+  case "$path" in
     wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
       select_target "core:project-space-tool-discovery"
       return
@@ -482,6 +503,14 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-installation.scenario.mjs | \
+      wework/scripts/plugin-personal-runtime.test.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
+      select_target "cloud:plugin-toggle-persistence"
       return
       ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)

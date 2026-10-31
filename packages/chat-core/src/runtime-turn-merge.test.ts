@@ -1,7 +1,65 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeConversationTurn } from './runtime-conversation'
 import type { RequestUserInputResponse } from './runtime'
-import { mergeRuntimeConversationTurns } from './runtime-conversation-turns'
+import {
+  mergeRuntimeConversationTurns,
+  projectRuntimeConversationTurns,
+} from './runtime-conversation-turns'
+
+describe('native assistant text identity reconciliation', () => {
+  const content = ':codex-file-citation{path="example-only.md"}'
+  function turn(id: string, position?: number): RuntimeConversationTurn {
+    return {
+      id: 'turn-1',
+      status: 'done',
+      items: [{ id, type: 'assistant_text', content, position }],
+    }
+  }
+
+  it('replaces provisional text with its positioned native identity in either arrival order', () => {
+    const native = turn('native-answer', 1)
+    const live = turn('live-answer')
+    for (const [local, snapshot] of [[live, native], [native, live]] as const) {
+      const merged = mergeRuntimeConversationTurns([local], [snapshot])
+      expect(merged[0].items).toEqual(native.items)
+      expect(projectRuntimeConversationTurns(merged)[0].content).toBe(content)
+    }
+  })
+
+  it('preserves equal text at distinct native positions', () => {
+    const first = turn('first-answer', 1)
+    const second = turn('second-answer', 2)
+    const merged = mergeRuntimeConversationTurns([first], [second])
+    expect(merged[0].items.map(item => item.id)).toEqual(['first-answer', 'second-answer'])
+    expect(projectRuntimeConversationTurns(merged)[0].content).toBe(`${content}\n\n${content}`)
+  })
+
+  it('preserves same-text provisional items outside a page with an exact identity boundary', () => {
+    const page = turn('boundary', 1)
+    const local = turn('before-page')
+    local.items.push(...turn('boundary').items, ...turn('after-page').items)
+    for (const [previous, incoming] of [[local, page], [page, local]] as const) {
+      const merged = mergeRuntimeConversationTurns([previous], [incoming])[0]
+      expect(merged.items.map(item => item.id)).toEqual(['before-page', 'boundary', 'after-page'])
+      expect(merged.items[1].position).toBe(1)
+    }
+  })
+
+  it('removes a late provisional alias of an already positioned native item', () => {
+    const native = turn('native-answer', 1)
+    const local = { ...native, items: [...native.items, ...turn('live-answer').items] }
+    const merged = mergeRuntimeConversationTurns([local], [native])
+    expect(merged[0].items).toEqual(native.items)
+    expect(projectRuntimeConversationTurns(merged)[0].content).toBe(content)
+  })
+
+  it('keeps unmatched live output alongside positioned history', () => {
+    const local = turn('live-answer')
+    local.items.push({ id: 'new-output', type: 'assistant_text', content: 'New output' })
+    const merged = mergeRuntimeConversationTurns([local], [turn('native-answer', 1)])
+    expect(merged[0].items.map(item => item.id)).toEqual(['native-answer', 'new-output'])
+  })
+})
 
 function question(requestId: string, response?: RequestUserInputResponse): RuntimeConversationTurn {
   return {

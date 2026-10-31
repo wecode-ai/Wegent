@@ -1,4 +1,5 @@
 import {
+  ArrowUpCircle,
   ArrowRight,
   BookOpenText,
   Boxes,
@@ -62,6 +63,12 @@ interface PluginDetailViewProps {
   shareActionLabel?: string
   shareActionDisabled?: boolean
   onShareAction?: () => void
+  versionSubmission?: {
+    currentVersion: string
+    nextVersion: string
+    busy: boolean
+    onSubmit: () => void
+  }
   publication?: PluginPublicationRequestItem | null
   publicationWithdrawing?: boolean
   onViewPublication?: () => void
@@ -475,6 +482,7 @@ export function PluginDetailView({
   shareActionLabel,
   shareActionDisabled = false,
   onShareAction,
+  versionSubmission,
   publication = null,
   publicationWithdrawing = false,
   onCreatePublicationRevision,
@@ -915,6 +923,35 @@ export function PluginDetailView({
             {primaryActionButton}
           </div>
         </header>
+
+        {versionSubmission && accessRole === 'owner' && pluginVisibility === 'personal' ? (
+          <div
+            data-testid="plugin-version-submit-notice"
+            className="mt-6 flex flex-wrap items-center gap-4 rounded-xl border border-border/30 bg-surface px-5 py-4"
+          >
+            <ArrowUpCircle aria-hidden="true" className="h-5 w-5 shrink-0 text-text-secondary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-medium">
+                {t('workbench.plugins_version_submit_pending')}
+              </p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t('workbench.plugins_version_submit_versions', {
+                  nextVersion: versionSubmission.nextVersion.replace(/^v/i, ''),
+                  currentVersion: versionSubmission.currentVersion.replace(/^v/i, ''),
+                })}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="min-h-11 md:min-h-8"
+              data-testid="plugin-version-submit-open"
+              disabled={versionSubmission.busy}
+              onClick={versionSubmission.onSubmit}
+            >
+              {t('workbench.plugins_version_submit_open')}
+            </Button>
+          </div>
+        ) : null}
 
         <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
           {description}

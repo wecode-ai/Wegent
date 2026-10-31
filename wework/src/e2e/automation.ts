@@ -19,6 +19,7 @@ import {
 } from '@/lib/runtime-environment'
 import {
   normalizeCloudBackendUrl,
+  normalizeStoredCloudConnection,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
@@ -80,6 +81,8 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
+  setDesktopE2ECloudSessionToken,
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
   type DesktopE2ERuntimeConfig,
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
@@ -530,11 +533,18 @@ function resolveDesktopE2EModelServerUrl(
 }
 
 async function seedDesktopE2ECloudConnection(
-  runtimeConfig: DesktopE2ERuntimeConfig
-): Promise<void> {
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  restoreNativeProfile = false
+) {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
-  if (!backendUrl) return
-  const config = normalizeCloudBackendUrl(backendUrl)
+  if (!backendUrl) return null
+  const nativeProfile = restoreNativeProfile
+    ? normalizeStoredCloudConnection((await getAppPreferences()).cloudConnection)
+    : null
+  const config = normalizeCloudBackendUrl(
+    nativeProfile?.backendUrl ?? backendUrl,
+    nativeProfile?.socketBaseUrlOverride ?? nativeProfile?.socketBaseUrl
+  )
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -542,12 +552,19 @@ async function seedDesktopE2ECloudConnection(
   })
   if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
   const user = await response.json()
-  saveStoredCloudConnection({
+  const connection = {
     ...config,
-    webUrl: config.backendUrl,
+    ...(nativeProfile?.socketBaseUrlOverride
+      ? { socketBaseUrlOverride: nativeProfile.socketBaseUrlOverride }
+      : {}),
+    webUrl: nativeProfile?.webUrl ?? config.backendUrl,
     user,
     connectedAt: new Date().toISOString(),
-  })
+  }
+  // The provider restores this runtime home's native preferences after bootstrap.
+  await updateAppPreferences({ cloudConnection: connection })
+  saveStoredCloudConnection(connection)
+  return connection
 }
 
 export async function seedDesktopE2ERuntime(): Promise<void> {
@@ -557,7 +574,7 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   if (modelServerUrl) {
     seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig)
+  await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
@@ -2409,6 +2426,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const config = saveLocalProxyUrl(command.value?.trim() ?? '')
       await flushDesktopLocalStoragePersistence()
       return JSON.stringify(config)
+    }
+    case 'setCloudSessionToken': {
+      setDesktopE2ECloudSessionToken(command.value ?? '')
+      const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
+      if (!connection) throw new Error('Cloud session switching requires a backend URL')
+      window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
+      return ''
     }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''

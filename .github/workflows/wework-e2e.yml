@@ -1375,20 +1375,11 @@ jobs:
 
           .github/scripts/build-macos-e2e-runtimes.sh \
             "$executor_runtime" \
-            "$backend_runtime" &
-          runtimes_pid=$!
+            "$backend_runtime"
+          # Package only after the runtime producers have completed successfully.
           WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime" \
-            WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS="900" \
             CARGO_BUILD_TARGET=aarch64-apple-darwin \
-            pnpm --filter wework ai:verify:electron:build &
-          wework_pid=$!
-
-          status=0
-          wait "$wework_pid" || status=$?
-          wait "$runtimes_pid" || status=$?
-          if [[ "$status" -ne 0 ]]; then
-            exit "$status"
-          fi
+            pnpm --filter wework ai:verify:electron:build
 
           test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
           test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"

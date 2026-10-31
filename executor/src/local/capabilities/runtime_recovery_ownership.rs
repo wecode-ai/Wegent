@@ -160,6 +160,22 @@ impl GlobalCapabilityStore {
                             == Some(link.as_path())
                 });
         }
+        // Publishing source does not transfer its ownership to an account install,
+        // even when the source still has exactly the published package's bytes.
+        match crate::local::plugin_import::personal_plugin_has_cloud_link(
+            &self.personal_marketplace_dir(),
+            &spec.name,
+        ) {
+            Ok(false) => (),
+            Ok(true) => return false,
+            Err(error) => {
+                crate::logging::log_executor_event(
+                    "personal plugin source preserved after cloud link read failure",
+                    &[("plugin_key", spec.key.clone()), ("error", error)],
+                );
+                return false;
+            }
+        }
         let Some(hash) = spec.checksum.as_deref() else {
             return false;
         };

@@ -2,6 +2,10 @@ import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import { collectPluginDeviceStatusReports } from '@/features/plugins/pluginDeviceAutoSync'
 import {
+  toInstalledPlugin,
+  toWegentStoreInstalledPlugin,
+} from '@wegent/chat-core/codex-installed-plugins'
+import {
   hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
@@ -668,4 +672,144 @@ test('managed personal package replaces its duplicate cloud installation row', (
     localPresent: true,
     cloudInstalledPluginId: '524804',
   })
+})
+
+function personalSyncedPackage() {
+  const membership = toInstalledPlugin(
+    { name: 'wework-personal', path: '/executor/personal', plugins: [] },
+    {
+      id: 'tianhe-direct@wework-personal',
+      name: 'tianhe-direct',
+      installed: true,
+      enabled: true,
+      localVersion: '1.0.0',
+      source: { source: 'local', path: './plugins/tianhe-direct' },
+    },
+    null,
+    key => key
+  )
+  const store = toWegentStoreInstalledPlugin(
+    {
+      packageId: '75-wework-personal-tianhe-direct-1.0.0',
+      name: 'tianhe-direct',
+      marketplace: 'wework-personal',
+      version: '1.0.0',
+      enabled: true,
+      pluginPath: '/executor/store/75-wework-personal-tianhe-direct-1.0.0',
+      cloudPluginId: 42,
+      installedPluginId: 75,
+    },
+    '/executor/store',
+    key => key
+  )
+  return { membership, store }
+}
+
+test('managed personal membership remains a market installation after Codex labels it created', () => {
+  const { membership, store } = personalSyncedPackage()
+  const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
+
+  expect(merged.spec.source).toEqual({ ...membership.spec.source, type: 'marketplace' })
+  expect(merged.spec.origin).toBe('market')
+  expect(merged.spec.sourcePayload).toMatchObject({
+    marketplacePath: '/executor/personal',
+    localId: 'tianhe-direct@wework-personal',
+    managedByWegent: true,
+    cloudPluginId: 42,
+    cloudInstalledPluginId: 75,
+  })
+  expect(mergeLocalInstalledWithStorePackages([merged], [store])).toEqual([merged])
+})
+
+test.each([null, 8])(
+  'keeps an independent author source linked to release %s editable',
+  cloudReleaseId => {
+    const { membership, store } = personalSyncedPackage()
+    membership.spec.sourcePayload = {
+      ...membership.spec.sourcePayload,
+      cloudPluginId: 42,
+      cloudReleaseId,
+    }
+
+    const merged = mergeLocalInstalledWithStorePackages([membership], [store])
+
+    expect(merged).toEqual([membership])
+    expect(merged[0].spec.origin).toBe('created')
+    expect(merged[0].spec.source.type).toBe('local')
+    expect(merged[0].spec.sourcePayload?.managedByWegent).not.toBe(true)
+  }
+)
+
+test('author cloud links cannot make an already managed package an editable source', () => {
+  const { membership, store } = personalSyncedPackage()
+  membership.spec.sourcePayload = {
+    ...membership.spec.sourcePayload,
+    cloudPluginId: 42,
+    cloudReleaseId: 8,
+    managedByWegent: true,
+  }
+
+  const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
+
+  expect(merged.spec.origin).toBe('market')
+  expect(merged.spec.source.type).toBe('marketplace')
+  expect(merged.spec.sourcePayload?.managedByWegent).toBe(true)
+})
+
+test('a cloud plugin id alone is not evidence of independently authored source', () => {
+  const { membership, store } = personalSyncedPackage()
+  membership.spec.sourcePayload = { ...membership.spec.sourcePayload, cloudPluginId: 42 }
+
+  const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
+
+  expect(merged.spec.origin).toBe('market')
+  expect(merged.spec.source.type).toBe('marketplace')
+  expect(merged.spec.sourcePayload?.managedByWegent).toBe(true)
+})
+
+test.each(['cloudPluginId', 'cloudInstalledPluginId'] as const)(
+  'does not fold same-name packages with conflicting %s',
+  identity => {
+    const { membership, store } = personalSyncedPackage()
+    membership.spec.sourcePayload = {
+      ...membership.spec.sourcePayload,
+      [identity]: 99,
+    }
+
+    const merged = mergeLocalInstalledWithStorePackages([membership], [store])
+
+    expect(merged).toEqual([membership, store])
+    expect(merged[0].spec.sourcePayload?.[identity]).toBe(99)
+  }
+)
+
+test.each(['cloudPluginId', 'cloudInstalledPluginId'] as const)(
+  'does not fold a known %s into a same-name store package without that identity',
+  identity => {
+    const { membership, store } = personalSyncedPackage()
+    membership.spec.sourcePayload = { ...membership.spec.sourcePayload, [identity]: 99 }
+    store.spec.sourcePayload = { ...store.spec.sourcePayload, [identity]: null }
+
+    expect(mergeLocalInstalledWithStorePackages([membership], [store])).toEqual([membership, store])
+  }
+)
+
+test('does not merge same-name packages with reused local ids across marketplaces', () => {
+  const local = localCodexPlugin({
+    id: 'tianhe-direct',
+    name: 'tianhe-direct',
+    marketplace: 'my-copy',
+  })
+  const store = localCodexPlugin({
+    id: 'tianhe-direct',
+    name: 'tianhe-direct',
+    marketplace: 'wework-personal',
+  })
+  store.spec.sourcePayload = {
+    ...store.spec.sourcePayload,
+    managedByWegent: true,
+    cloudPluginId: 42,
+  }
+
+  expect(mergeLocalInstalledWithStorePackages([local], [store])).toEqual([local, store])
 })

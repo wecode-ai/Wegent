@@ -1,6 +1,7 @@
 export interface PluginOwnerListingRef {
   accessRole?: 'catalog' | 'owner' | 'recipient' | null
   visibility?: 'personal' | 'workspace' | 'public' | null
+  latestReleaseId?: number | null
 }
 
 export interface PluginOwnerActionsInput {
@@ -19,7 +20,10 @@ export interface PluginOwnerActions {
  */
 export function resolvePluginOwnerActions(input: PluginOwnerActionsInput): PluginOwnerActions {
   const isOwner = input.ownedListing?.accessRole === 'owner'
-  const canPackageShare = input.isLocalCreated && input.ownedListing === null
+  const listing = input.ownedListing
+  const canPackageShare =
+    input.isLocalCreated &&
+    (listing === null || (!listing.accessRole && listing.latestReleaseId == null))
   const visibility = input.ownedListing?.visibility ?? null
 
   if (!isOwner) {
