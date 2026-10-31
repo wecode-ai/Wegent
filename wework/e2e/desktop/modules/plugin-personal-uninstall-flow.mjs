@@ -215,6 +215,22 @@ export async function switchPersonalPluginAccount(control, cloud) {
   return { userId: user.id, deviceId: after.deviceId, durationMs: Date.now() - startedAt }
 }
 
+export async function verifyPersonalSourcePersistence({
+  runLifecycle,
+  restartDesktopApp,
+  verifyUninstalled,
+}) {
+  let restarts = 0
+  await runLifecycle(async options => {
+    assert.equal(options, undefined, 'Shared persistence must retain the author Runtime Home')
+    await restartDesktopApp()
+    restarts += 1
+    await verifyUninstalled()
+  })
+  assert.equal(restarts, 2, 'The existing plugin lifecycle must execute both real restarts')
+  return restarts
+}
+
 export async function verifyAuthorSourceUninstall({
   control,
   cloudEnvironment,
@@ -222,7 +238,7 @@ export async function verifyAuthorSourceUninstall({
   plugin,
   access,
   codexHome,
-  restartDesktopApp,
+  verifyRestartPersistence,
   prepareSource,
   version,
 }) {
@@ -256,7 +272,14 @@ export async function verifyAuthorSourceUninstall({
     false,
     'Refresh reinstalled an explicitly removed author source'
   )
-  await restartDesktopApp()
+  await verifyRestartPersistence(async () => {
+    await assertPersonalSourceUnchanged(source)
+    assert.equal(
+      await pathExists(cache),
+      false,
+      'Restart reinstalled an explicitly removed author source'
+    )
+  })
   await assertPersonalSourceUnchanged(source)
   assert.equal(
     await pathExists(cache),

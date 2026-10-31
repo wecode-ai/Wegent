@@ -8,12 +8,96 @@ import {
   restorePersonalPluginRuntime,
   resetPersonalRecipientAccount,
   switchPersonalPluginAccount,
+  verifyPersonalSourcePersistence,
 } from '../e2e/desktop/modules/plugin-personal-uninstall-flow.mjs'
 
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+test('checks author source after each existing real restart without adding another restart', async () => {
+  const events = []
+  const restarts = await verifyPersonalSourcePersistence({
+    runLifecycle: async restart => {
+      events.push('disable')
+      await restart()
+      events.push('verify-disabled', 'enable')
+      await restart()
+      events.push('verify-enabled')
+    },
+    restartDesktopApp: async () => events.push('restart'),
+    verifyUninstalled: async () => events.push('verify-source'),
+  })
+  assert.equal(restarts, 2)
+  assert.deepEqual(events, [
+    'disable',
+    'restart',
+    'verify-source',
+    'verify-disabled',
+    'enable',
+    'restart',
+    'verify-source',
+    'verify-enabled',
+  ])
+})
+
+test.each([0, 1, 3])(
+  'rejects a shared lifecycle with %s restarts instead of both persistence boundaries',
+  async count => {
+    await assert.rejects(
+      verifyPersonalSourcePersistence({
+        runLifecycle: async restart => {
+          for (let index = 0; index < count; index += 1) await restart()
+        },
+        restartDesktopApp: async () => {},
+        verifyUninstalled: async () => {},
+      }),
+      /must execute both real restarts/
+    )
+  }
+)
+
+test('rejects a shared restart that would change the author Runtime Home', async () => {
+  const restartDesktopApp = vi.fn()
+  await assert.rejects(
+    verifyPersonalSourcePersistence({
+      runLifecycle: restart =>
+        restart({ appEnvironmentOverrides: { WEGENT_EXECUTOR_HOME: '/other' } }),
+      restartDesktopApp,
+      verifyUninstalled: async () => {},
+    }),
+    /must retain the author Runtime Home/
+  )
+  assert.equal(restartDesktopApp.mock.calls.length, 0)
+})
+
+test.each(['restart', 'source', 'lifecycle'])(
+  'propagates %s failure without proceeding or retrying',
+  async phase => {
+    const failure = new Error(`${phase} failed`)
+    const restartDesktopApp = vi.fn(async () => {
+      if (phase === 'restart') throw failure
+    })
+    const verifyUninstalled = vi.fn(async () => {
+      if (phase === 'source') throw failure
+    })
+    await assert.rejects(
+      verifyPersonalSourcePersistence({
+        runLifecycle: async restart => {
+          if (phase === 'lifecycle') throw failure
+          await restart()
+          await restart()
+        },
+        restartDesktopApp,
+        verifyUninstalled,
+      }),
+      error => error === failure
+    )
+    assert.equal(restartDesktopApp.mock.calls.length, phase === 'lifecycle' ? 0 : 1)
+    assert.equal(verifyUninstalled.mock.calls.length, phase === 'source' ? 1 : 0)
+  }
+)
 
 async function recipientResetFixture(verify) {
   const root = await mkdtemp(join(tmpdir(), 'personal-recipient-reset-'))

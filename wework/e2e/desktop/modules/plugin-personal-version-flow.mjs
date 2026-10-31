@@ -16,6 +16,7 @@ import {
   switchPersonalPluginAccount,
   verifyAuthorAccountUninstall,
   verifyAuthorSourceUninstall,
+  verifyPersonalSourcePersistence,
   verifyRecipientUninstallDoesNotRemoveOwner,
 } from './plugin-personal-uninstall-flow.mjs'
 
@@ -86,10 +87,18 @@ export async function verifyPersonalPluginVersionSubmission({
   executorHome,
   codexHome,
   userDataDirectory,
+  verifySharedLifecycle,
 }) {
+  assert.equal(
+    typeof verifySharedLifecycle,
+    'function',
+    'The existing plugin lifecycle is required'
+  )
   const flowStartedAt = Date.now()
   const commandStart = control.commandHistory.length
   const runtimeCost = { processRestarts: [], accountSwitches: [], phases: [] }
+  let sharedLifecycleDurationMs = 0
+  let sharingLifecycle = false
   let phaseStartedAt = flowStartedAt
   const recordPhase = phase => {
     const completedAt = Date.now()
@@ -108,6 +117,7 @@ export async function verifyPersonalPluginVersionSubmission({
     runtimeCost.processRestarts.push({
       deviceSwitch: options?.expectNewDeviceIdentity === true,
       runtimeHomeSwitch: Boolean(options?.appEnvironmentOverrides?.WEGENT_EXECUTOR_HOME),
+      sharedLifecycle: sharingLifecycle,
       durationMs: Date.now() - startedAt,
     })
   }
@@ -331,8 +341,8 @@ export async function verifyPersonalPluginVersionSubmission({
     access: accessBefore,
   })
   recordPhase('author-account-uninstall')
-  // Account uninstall establishes the no-membership precondition. Keep the
-  // separate real restart that proves an explicitly uninstalled source stays off.
+  // Verify the uninstalled source across the existing installation checkpoint's
+  // real restarts, while preserving that checkpoint's own fixtures and assertions.
   const authorLifecycle = await verifyAuthorSourceUninstall({
     control,
     cloudEnvironment,
@@ -340,15 +350,27 @@ export async function verifyPersonalPluginVersionSubmission({
     plugin: after,
     access: accessBefore,
     codexHome,
-    restartDesktopApp: () =>
-      restartDesktopApp({
-        appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken },
-      }),
+    verifyRestartPersistence: async verifyUninstalled => {
+      recordPhase('author-source-uninstall')
+      const startedAt = Date.now()
+      sharingLifecycle = true
+      try {
+        await verifyPersonalSourcePersistence({
+          runLifecycle: verifySharedLifecycle,
+          restartDesktopApp,
+          verifyUninstalled,
+        })
+      } finally {
+        sharingLifecycle = false
+      }
+      sharedLifecycleDurationMs = Date.now() - startedAt
+      recordPhase('shared-plugin-lifecycle')
+    },
     version: '1.1.1',
     prepareSource: version => importPersonalSource(control, root, version, true),
   })
   after = authorLifecycle.plugin
-  recordPhase('author-source-uninstall-reinstall')
+  recordPhase('author-source-reinstall')
   const resetRecipientInstallId = await resetPersonalRecipientAccount({
     cloudEnvironment,
     recipientCloud,
@@ -359,7 +381,7 @@ export async function verifyPersonalPluginVersionSubmission({
   })
   recordPhase('recipient-account-reset')
   // End on the clean recipient Runtime. The checkpoint owns teardown, so there
-  // is no return to the author Home and no third desktop process restart.
+  // is no return to the author Home or dedicated source-persistence restart.
   const managedRecipient = await verifyPersonalRecipientManagedInstall({
     cloudEnvironment,
     control,
@@ -426,7 +448,7 @@ export async function verifyPersonalPluginVersionSubmission({
   recordPhase('http-contracts')
   assert.equal(
     runtimeCost.processRestarts.length,
-    2,
+    3,
     'Personal publication added a process restart'
   )
   assert.ok(
@@ -435,8 +457,13 @@ export async function verifyPersonalPluginVersionSubmission({
   )
   assert.deepEqual(
     runtimeCost.processRestarts.map(restart => restart.runtimeHomeSwitch),
-    [false, true],
-    'Author persistence must restart the same Home before the final recipient switch'
+    [false, false, true],
+    'Both shared restarts must retain the author Home before the final recipient switch'
+  )
+  assert.deepEqual(
+    runtimeCost.processRestarts.map(restart => restart.sharedLifecycle),
+    [true, true, false],
+    'Personal publication must add only the final recipient Runtime restart'
   )
   assert.equal(runtimeCost.accountSwitches.length, 2)
   const flowCommands = control.commandHistory.slice(commandStart)
@@ -459,12 +486,14 @@ export async function verifyPersonalPluginVersionSubmission({
       ['click', 'clickWhenEnabled'].includes(command.action) &&
       command.selector === testId('plugins-refresh-button')
   ).length
+  const durationMs = Date.now() - flowStartedAt
   const cost = {
     ...runtimeCost,
     rendererReloads,
     runtimeReconnects,
     inventoryRefreshes,
-    durationMs: Date.now() - flowStartedAt,
+    durationMs,
+    sharedLifecycleDurationMs,
   }
   console.log(`[personal-plugin-cost] ${JSON.stringify(cost)}`)
   await writeFile(
