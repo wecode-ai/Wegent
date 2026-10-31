@@ -1,8 +1,42 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { assertSurfaces } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { assertSurfaces, openPlugin } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
 const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
+
+test.each(['home', 'marketplace', 'detail'])(
+  'opens the requested marketplace row from %s without retaining an earlier detail',
+  async initialPage => {
+    let page = initialPage
+    let filter
+    let search
+    const control = {
+      async command(action, selector, options) {
+        if (action === 'click' && selector === '[data-testid="plugins-button"]') {
+          // The sidebar keeps an already-mounted plugin detail selected.
+          if (page === 'home') page = 'marketplace'
+        } else if (
+          action === 'clickIfPresent' &&
+          selector === '[data-testid="plugin-detail-back-button"]'
+        ) {
+          if (page === 'detail') page = 'marketplace'
+        } else {
+          assert.equal(page, 'marketplace', 'Plugin search is absent while a detail is selected')
+          if (action === 'waitFor') assert.equal(selector, '[data-testid="plugins-search-input"]')
+          else if (action === 'click') filter = selector
+          else if (action === 'fill') search = options.value
+          else throw new Error(`Unexpected control command: ${action}`)
+        }
+      },
+    }
+
+    await openPlugin(control, plugin)
+
+    assert.equal(page, 'marketplace')
+    assert.equal(filter, '[data-testid="plugins-distribution-tab-all"]')
+    assert.equal(search, plugin.slug)
+  }
+)
 
 function controlFixture({ present, managerIds }) {
   const calls = []
@@ -27,7 +61,7 @@ function controlFixture({ present, managerIds }) {
         })
       }
       if (action === 'getText') return `${plugin.slug}-retained`
-      if (['click', 'waitFor', 'fill'].includes(action)) return ''
+      if (['click', 'clickIfPresent', 'waitFor', 'fill'].includes(action)) return ''
       throw new Error(`Unexpected control command: ${action}`)
     },
   }
