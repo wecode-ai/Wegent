@@ -12,6 +12,8 @@ Sidebar project and task details follow pointer hover. They close after the poin
 
 The desktop `running-sidebar-state` checkpoint covers entering project details from the row, pressing a popup button and releasing after moving outside, dismissal, reopening, and Escape dismissal. The scenario retains button focus and verifies that subsequent pointer movement cannot cancel dismissal.
 
+Pointer transfers use the `target` option on `pointerLeave` to dispatch exit and entry events within one renderer turn, preventing control transport gaps from exceeding the actual dismissal delay. The production 120ms dismissal delay remains unchanged; longer waits and retries must not hide the defect.
+
 ## State ownership
 
 | Data                                       | Source of truth                                | Notes                                                                              |

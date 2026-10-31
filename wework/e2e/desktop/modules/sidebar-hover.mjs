@@ -8,9 +8,10 @@ export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutM
 
   await control.command('hover', row)
   await control.command('waitFor', card, { timeoutMs: uiTimeoutMs })
-  await control.command('pointerLeave', row)
-  await control.command('hover', card)
+  console.info('[sidebar-hover] project details visible; handing pointer from row to popup')
+  await control.command('pointerLeave', row, { target: card })
   await control.command('waitFor', card, { stableMs: 240, timeoutMs: uiTimeoutMs })
+  console.info('[sidebar-hover] pointer handoff preserved popup; pressing popup action')
 
   // Pressing a button focuses it. Moving out before release does not activate
   // project pinning, but must still end the popup's hover lifetime.
@@ -20,8 +21,7 @@ export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutM
     `project-hover-pin-${projectId}`
   )
   console.info('[sidebar-hover] popup action retains focus after pointer down; moving outside')
-  await control.command('pointerLeave', card)
-  await control.command('pointerMove', outside)
+  await control.command('pointerLeave', card, { target: outside })
   await control.command('pointerUp', pin)
   await control.command('waitFor', card, { visible: false, timeoutMs: uiTimeoutMs })
   console.info('[sidebar-hover] focused action did not retain the popup after pointer exit')
@@ -33,7 +33,6 @@ export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutM
   await control.command('waitFor', card, { visible: false, timeoutMs: uiTimeoutMs })
   await control.command('hover', row)
   await control.command('waitFor', card, { timeoutMs: uiTimeoutMs })
-  await control.command('pointerLeave', row)
-  await control.command('pointerMove', outside)
+  await control.command('pointerLeave', row, { target: outside })
   await control.command('waitFor', card, { visible: false, timeoutMs: uiTimeoutMs })
 }

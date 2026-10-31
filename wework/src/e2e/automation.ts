@@ -1095,13 +1095,16 @@ function hoverDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-function leaveDesktopControlElement(selector: string): string {
+function leaveDesktopControlElement(selector: string, targetSelector?: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   const options = desktopControlEventOptions(element)
   for (const type of ['pointerout', 'pointerleave', 'mouseout', 'mouseleave']) {
     dispatchDesktopControlPointerEvent(element, type, options)
   }
+  // Keep a pointer handoff within one renderer turn. Control transport gaps
+  // can otherwise exceed the production hover dismissal delay.
+  if (targetSelector) hoverDesktopControlElement(targetSelector)
   return element.textContent?.trim() ?? ''
 }
 
@@ -3488,7 +3491,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':
-      return leaveDesktopControlElement(command.selector)
+      return leaveDesktopControlElement(command.selector, command.target)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
     case 'pointerClick':
