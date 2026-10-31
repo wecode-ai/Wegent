@@ -95,7 +95,15 @@ async function observeWindowsAppData({ name, environment, timeout }) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        '[Console]::Error.WriteLine("probe-entered"); [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::Error.WriteLine("encoding-ready"); [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData); [Console]::Error.WriteLine("query-finished")',
+        [
+          '[Console]::Error.WriteLine("probe-entered")',
+          '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+          '[Console]::Error.WriteLine("encoding-ready")',
+          '[Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)',
+          '[Console]::Error.WriteLine("query-finished")',
+          'if ([string]::IsNullOrWhiteSpace((Get-Process -Id $PID -ErrorAction Stop).Path)) { throw "Native process path is unavailable" }',
+          '[Console]::Error.WriteLine("process-query-finished")',
+        ].join('; '),
       ],
       { env: environment, timeout, maxBuffer: 4096, windowsHide: true }
     )
