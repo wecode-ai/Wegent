@@ -5,6 +5,7 @@ import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import {
   installScrollTestEnvironment,
+  allResizeCallbacks,
   messageText,
   mockRect,
   flushScheduledTimers,
@@ -869,5 +870,120 @@ describe('ScrollableMessageArea: navigation-layout', () => {
     expect(messageAnchorQueries).toHaveLength(1)
 
     querySelectorAllSpy.mockRestore()
+  })
+
+  test('keeps the navigation rail above a sticky composer overlay', () => {
+    const messages = [
+      {
+        id: 'composer-user-1',
+        role: 'user' as const,
+        content: '输入框覆盖层第一条需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'composer-assistant-1',
+        role: 'assistant' as const,
+        content: '输入框覆盖层第一条回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'composer-user-2',
+        role: 'user' as const,
+        content: '输入框覆盖层第二条需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const view = render(
+      <ScrollableMessageArea
+        messages={messages}
+        stickyFooter={<div data-testid="composer-footer">Composer</div>}
+      />
+    )
+    flushScheduledTimers()
+
+    const navigation = screen.getByTestId('message-turn-navigation')
+    const footer = screen.getByTestId('chat-message-scroll-area-sticky-footer')
+    expect(navigation.style.top).toBe('50%')
+    expect(navigation.style.maxHeight).toBe('calc(100% - 48px)')
+
+    Object.defineProperty(footer, 'offsetHeight', { value: 220, configurable: true })
+    act(() => {
+      for (const callback of [...allResizeCallbacks]) callback([], {} as ResizeObserver)
+    })
+    expect(navigation.style.top).toBe('calc(50% - 110px)')
+    expect(navigation.style.maxHeight).toBe('calc(100% - 268px)')
+
+    Object.defineProperty(footer, 'offsetHeight', { value: 320, configurable: true })
+    act(() => {
+      for (const callback of [...allResizeCallbacks]) callback([], {} as ResizeObserver)
+    })
+    expect(navigation.style.top).toBe('calc(50% - 160px)')
+    expect(navigation.style.maxHeight).toBe('calc(100% - 368px)')
+
+    view.rerender(<ScrollableMessageArea messages={messages} />)
+    expect(navigation.style.top).toBe('50%')
+    expect(navigation.style.maxHeight).toBe('calc(100% - 48px)')
+  })
+
+  test('clamps the hovered navigation preview inside the unobscured region', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = Array.from({ length: 12 }, (_, index) => ({
+      id: `preview-clamp-user-${index}`,
+      role: 'user' as const,
+      content: `预览夹取需求 ${index + 1}`,
+      status: 'done' as const,
+      createdAt: `2026-05-29T00:00:${String(index).padStart(2, '0')}.000Z`,
+    }))
+
+    render(
+      <div data-testid="navigation-parent">
+        <div ref={scrollRef}>
+          <div ref={contentRef}>
+            {messages.map(message => (
+              <div key={message.id} data-message-id={message.id}>
+                {message.content}
+              </div>
+            ))}
+          </div>
+        </div>
+        <MessageTurnNavigation
+          messages={messages}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+          bottomInsetPx={220}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 380, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', { value: 0, writable: true, configurable: true })
+    scroller.scrollTo = vi.fn()
+    mockRect(scroller, 0, 380)
+    mockRect(screen.getByTestId('navigation-parent'), 0, 380)
+    messages.forEach((message, index) => {
+      mockRect(
+        document.querySelector(`[data-message-id="${message.id}"]`)!,
+        80 + index * 140,
+        160 + index * 140
+      )
+    })
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const navigation = screen.getByTestId('message-turn-navigation')
+    mockRect(navigation, 0, 112)
+    const previews = screen.getAllByTestId('message-turn-navigation-preview')
+    mockRect(previews[previews.length - 1], 0, 120)
+
+    fireEvent.focus(screen.getAllByTestId('message-turn-navigation-marker')[11])
+
+    expect(previews[previews.length - 1]).toHaveStyle({ top: '96px' })
   })
 })
