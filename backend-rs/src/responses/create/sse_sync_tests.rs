@@ -553,6 +553,16 @@ async fn spawn_stream_server(frames: Vec<&'static str>) -> String {
 async fn spawn_stream_server_holding(
     frames: Vec<&'static str>,
 ) -> (String, tokio::sync::oneshot::Receiver<()>) {
+    spawn_stream_server_holding_after(frames, Duration::ZERO).await
+}
+
+/// [`spawn_stream_server_holding`] that withholds the frames for `delay`, so a
+/// caller can place the terminal — and therefore the bounded drain window —
+/// relative to the cancel poll interval instead of racing it.
+async fn spawn_stream_server_holding_after(
+    frames: Vec<&'static str>,
+    delay: Duration,
+) -> (String, tokio::sync::oneshot::Receiver<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (flushed, flushed_receiver) = tokio::sync::oneshot::channel();
@@ -562,6 +572,9 @@ async fn spawn_stream_server_holding(
         };
         if !read_http_request(&mut stream).await {
             return;
+        }
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
         }
         let _ = stream
             .write_all(
@@ -764,7 +777,15 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
 /// GETs through the drain.
 #[tokio::test]
 async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
-    let (url, frames_flushed) = spawn_stream_server_holding(vec![CREATED, DELTA, COMPLETED]).await;
+    // The cancel poll interval and the terminal drain window are both one
+    // second, so delivering the terminal immediately would leave the next poll
+    // GET on the drain's deadline. Deliver the terminal mid-interval so the
+    // drain brackets one poll with room on both sides.
+    let (url, frames_flushed) = spawn_stream_server_holding_after(
+        vec![CREATED, DELTA, COMPLETED],
+        Duration::from_millis(400),
+    )
+    .await;
     let redis = RecordingRedis::default();
     let mysql = RecordingMysql::default();
     let executor = executor_manager();

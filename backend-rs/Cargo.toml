@@ -71,6 +71,7 @@ libz-sys = "1.1"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 zstd = { version = "0.13.1", features = ["arrays"] }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
+jsonschema = { version = "0.60.2", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }

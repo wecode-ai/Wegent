@@ -19,10 +19,11 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import case, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db_errors import is_mysql_deadlock
 from app.models.plugin_marketplace import (
     EPOCH_TIME,
     Plugin,
@@ -1111,6 +1112,37 @@ class PluginPublicationService:
             "release": release_envelope,
         }
         request_sha256 = release_envelope_sha256(envelope)
+        # This method owns the publication transaction, so a MySQL deadlock must
+        # restart it from the idempotency claim; retrying deeper would drop the
+        # claimed binding and the locked publication source.
+        for attempt in range(3):
+            try:
+                return self._publish_enterprise_release_once(
+                    db,
+                    package=package,
+                    metadata=metadata,
+                    idempotency_key=idempotency_key,
+                    release_key_id=release_key_id,
+                    envelope=envelope,
+                    request_sha256=request_sha256,
+                )
+            except OperationalError as error:
+                if not is_mysql_deadlock(error) or attempt == 2:
+                    raise
+                db.rollback()
+        raise AssertionError("publish_enterprise_release retry loop exited")
+
+    def _publish_enterprise_release_once(
+        self,
+        db: Session,
+        *,
+        package: bytes,
+        metadata: PluginReleaseMetadata,
+        idempotency_key: str,
+        release_key_id: int,
+        envelope: dict[str, Any],
+        request_sha256: str,
+    ) -> PluginReleasePublishResponse:
         binding, cached_response = self._claim_release_idempotency(
             db,
             idempotency_key=idempotency_key,
@@ -1183,6 +1215,9 @@ class PluginPublicationService:
             db.commit()
         except Exception as exc:
             db.rollback()
+            if isinstance(exc, OperationalError) and is_mysql_deadlock(exc):
+                # The caller retries the whole transaction, including the claim.
+                raise
             self._persist_release_failure(
                 db,
                 idempotency_key=idempotency_key,

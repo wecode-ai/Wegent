@@ -98,6 +98,34 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
+const BACKEND_READY_TIMEOUT_MS = 30_000
+
+/**
+ * Wait for the gateway to reach the Python upstream before the checkpoint
+ * starts driving business requests.
+ *
+ * The gateway answers a plain-text `502` while the Python origin is
+ * unreachable. Retrying the business requests themselves would hide a real
+ * outage mid-checkpoint, so readiness is proven once with the Python-owned
+ * `/api/health` route and every later failure stays a test failure.
+ */
+async function waitForBackendFallback(baseUrl, timeoutMs = BACKEND_READY_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs
+  let lastStatus = 'no response'
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/api/health`)
+      await response.text()
+      if (response.ok) return
+      lastStatus = `HTTP ${response.status}`
+    } catch (error) {
+      lastStatus = String(error)
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.fail(`The gateway never reached its Python upstream: ${lastStatus}`)
+}
+
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
@@ -108,9 +136,8 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  assert.equal(
+  assert.ok(
     response.ok,
-    true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
   return text ? JSON.parse(text) : null
@@ -525,6 +552,7 @@ export async function createDesktopScenario({
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
+      await waitForBackendFallback(backendUrl)
       await request('/api/admin/setup-complete', { method: 'POST' })
     },
 

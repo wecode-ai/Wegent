@@ -38,7 +38,8 @@
     "cancel": "取消",
     "re_edit": "重新编辑",
     "re_edit_tooltip": "重新编辑",
-    "forward": "发送到协作"
+    "forward": "发送到协作",
+    "authorize_connector": "打开应用授权"
   },
   "edit": {
     "tooltip": "编辑消息",

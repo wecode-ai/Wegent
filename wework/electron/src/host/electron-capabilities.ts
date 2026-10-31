@@ -65,6 +65,12 @@ import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
+import {
+  closeConnectorAuthorizationWindow,
+  isConnectorAuthorizationWindowOpen,
+  isConnectorAuthorizationUrl,
+  openConnectorAuthorizationWindow,
+} from './connector-authorization-window.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
 import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
@@ -1141,7 +1147,9 @@ export function createElectronCapabilityRouter(
       desktopServices.openScheme(url.toString())
       return
     }
-    if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) {
+    // DingTalk mini-app links must reach the installed DingTalk client; the
+    // embedded browser renders those pages blank without its JSAPI bridge.
+    if (!['https:', 'http:', 'mailto:', 'dingtalk:'].includes(url.protocol)) {
       throw new HostCapabilityError(
         'invalid_external_url',
         `External URL protocol is not allowed: ${url.protocol}`
@@ -1152,6 +1160,36 @@ export function createElectronCapabilityRouter(
   router.register('shell.openPath', async params => {
     const error = await shell.openPath(stringParam(params, 'path'))
     if (error) throw new HostCapabilityError('open_path_failed', error)
+  })
+  // Administrator-published connectors authorize inside the app, so the user
+  // keeps their place in the workbench and the flow stays observable.
+  router.register('auth.openConnectorAuthorization', async params => {
+    const url = stringParam(params, 'url')
+    if (!isConnectorAuthorizationUrl(url)) {
+      throw new HostCapabilityError(
+        'invalid_authorization_url',
+        'Connector authorization must use https or a loopback http origin'
+      )
+    }
+    await openConnectorAuthorizationWindow({
+      url,
+      requestId: stringParam(params, 'requestId'),
+      parent: requiredWindow(window),
+      // The consent window can stay open far longer than one host request may
+      // live, so the close travels as a durable event instead of a long call.
+      onClosed: requestId =>
+        desktopServices.events.publish('connectorAuthorization.closed', { requestId }),
+    })
+  })
+  // The poll loop owns the terminal state, so it also owns closing the window;
+  // an early close is how a user cancels. Both are scoped to one attempt.
+  // The state read keeps cancellation working even if the close event is
+  // missed, so no caller depends on one durable delivery.
+  router.register('auth.getConnectorAuthorizationState', params => ({
+    open: isConnectorAuthorizationWindowOpen(stringParam(params, 'requestId')),
+  }))
+  router.register('auth.closeConnectorAuthorization', params => {
+    closeConnectorAuthorizationWindow(stringParam(params, 'requestId'))
   })
   router.register('shell.showItemInFolder', params =>
     shell.showItemInFolder(stringParam(params, 'path'))

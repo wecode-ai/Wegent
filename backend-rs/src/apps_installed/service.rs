@@ -21,12 +21,10 @@ use brz_json::{JsonProjection, OpaqueJson};
 use super::connection::{self, ConnectorConnection};
 use super::db::{self, KindRow, UserRow};
 use super::mcp::{self, UpstreamTool};
-use super::models::{
-    ConnectionResponse, InstalledApp, InstalledResponse, ToolSummary, connected_no_auth,
-};
+use super::models::{InstalledApp, InstalledResponse, ToolSummary, connected_no_auth};
 
 /// Runtime view of one connector app (`ConnectorApp` dataclass).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectorApp {
     #[allow(dead_code)]
     pub id: i64,
@@ -40,9 +38,14 @@ pub struct ConnectorApp {
     pub auth_type: String,
     pub transport: String,
     pub mcp_url: String,
+    pub tool_loading_mode: String,
     pub tool_allowlist: Vec<String>,
     /// `spec["providerHeadersEncrypted"]`; the administrator view decrypts it.
     pub provider_headers_encrypted: Option<String>,
+    /// `spec["oauthClientEncrypted"]`: the dynamically registered OAuth client
+    /// (`token_endpoint`, `client_id`, `resource`) an expired grant refreshes
+    /// against.
+    pub oauth_client_encrypted: Option<String>,
     pub forward_user_context_headers: bool,
     /// `list(spec.get("httpTools") or [])`; the administrator view echoes it.
     pub http_tools: Vec<OpaqueJson>,
@@ -86,6 +89,11 @@ struct AppSpec {
     )]
     mcp_url: String,
     #[serde(
+        rename = "toolLoadingMode",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
+    tool_loading_mode: String,
+    #[serde(
         rename = "toolAllowlist",
         deserialize_with = "brz_json::adapters::null_as_default"
     )]
@@ -94,6 +102,10 @@ struct AppSpec {
     #[serde(rename = "providerHeadersEncrypted")]
     #[json(presence, lenient)]
     provider_headers_encrypted: String,
+    /// `spec.get("oauthClientEncrypted")`: only a string is kept.
+    #[serde(rename = "oauthClientEncrypted")]
+    #[json(presence, lenient)]
+    oauth_client_encrypted: String,
     /// `bool(spec.get("forwardUserContextHeaders", False))`: only a JSON
     /// boolean is truthy here.
     #[serde(rename = "forwardUserContextHeaders")]
@@ -126,6 +138,7 @@ impl AppSpec {
 
 /// One tool discovered for a connector (`ConnectorRuntimeService.list_tools`
 /// output projection).
+#[derive(Debug)]
 struct ConnectorTool {
     connector_id: String,
     name: String,
@@ -171,8 +184,14 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
             spec.transport
         },
         mcp_url: spec.mcp_url,
+        tool_loading_mode: if matches!(spec.tool_loading_mode.as_str(), "lazy" | "skill") {
+            "lazy".to_string()
+        } else {
+            "static".to_string()
+        },
         tool_allowlist: spec.tool_allowlist,
         provider_headers_encrypted: spec.provider_headers_encrypted.into_value(),
+        oauth_client_encrypted: spec.oauth_client_encrypted.into_value(),
         forward_user_context_headers: spec
             .forward_user_context_headers
             .into_value()
@@ -197,25 +216,6 @@ pub(crate) fn list_visible_apps<'a>(
         .collect()
 }
 
-/// `user_response` connection view: `connector_connection_service.response`
-/// of the caller's stored connection, or the `auth_type == "none"` default
-/// that the source synthesizes without a lookup.
-pub(crate) async fn user_connection<M>(
-    mysql: &M,
-    app: &ConnectorApp,
-    user_id: i64,
-) -> MysqlResult<ConnectionResponse>
-where
-    M: Mysql,
-{
-    if app.auth_type == "none" {
-        return Ok(connected_no_auth());
-    }
-    let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
-    let connection = row.as_ref().map(ConnectorConnection::from_row);
-    Ok(connection::response(connection.as_ref()))
-}
-
 /// Whether the app is connected for the user (`_connected_apps`).
 ///
 /// `auth_type == "none"` apps are always connected; every other app requires
@@ -233,7 +233,9 @@ where
     }
     let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
     let connection = row.as_ref().map(ConnectorConnection::from_row);
-    Ok(connection::response(connection.as_ref()).status == "connected")
+    // `is_usable` keeps an expired grant visible while its refresh token can
+    // still renew it; discovery refreshes it before the upstream call.
+    Ok(connection::is_usable(connection.as_ref()))
 }
 
 /// `_connected_apps`: the visible apps whose connection view is `connected`.
@@ -280,6 +282,19 @@ impl std::fmt::Display for SessionError {
     }
 }
 
+impl SessionError {
+    /// Map one OAuth refresh failure onto the discovery contract: only a
+    /// database or crypto fault keeps its own kind, every provider answer
+    /// means the caller needs a new grant.
+    pub(crate) fn from_refresh(error: super::refresh::RefreshError) -> Self {
+        match error {
+            super::refresh::RefreshError::Database(error) => Self::Database(error),
+            super::refresh::RefreshError::Crypto(_) => Self::Crypto,
+            _ => Self::AuthorizationRequired,
+        }
+    }
+}
+
 /// `_server_config` session headers for the authenticated caller.
 ///
 /// The source starts from `_decrypt_json(app.provider_headers_encrypted)`,
@@ -299,20 +314,39 @@ where
         let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
             .await
             .map_err(SessionError::Database)?;
-        let connection = row.as_ref().map(ConnectorConnection::from_row);
-        // `_server_config` refreshes an expired connection before this check;
-        // refresh lives in the OAuth service and is not reachable from the
-        // recorded streamable-HTTP tool discovery.
-        if connection::response(connection.as_ref()).status != "connected" {
+        let mut connection = row.as_ref().map(ConnectorConnection::from_row);
+        // `_server_config` renews an expired grant before the upstream call.
+        if connection
+            .as_ref()
+            .is_some_and(|stored| connection::response(Some(stored)).status == "expired")
+        {
+            match super::refresh::refresh(mysql, app, user.users_id).await {
+                Ok(refreshed) => connection = Some(refreshed),
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "connector grant refresh failed"
+                    );
+                    return Err(SessionError::from_refresh(error));
+                }
+            }
+        }
+        let connection = connection.ok_or(SessionError::AuthorizationRequired)?;
+        if connection::response(Some(&connection)).status != "connected" {
             return Err(SessionError::AuthorizationRequired);
         }
         let access_token = connection
-            .as_ref()
-            .ok_or(SessionError::AuthorizationRequired)?
             .access_token()
             .map_err(|_| SessionError::Crypto)?;
         if access_token.is_empty() {
-            return Err(SessionError::AuthorizationRequired);
+            // A stored ciphertext the configured key cannot read is an
+            // environment fault, not a missing grant.
+            return Err(if connection.access_token_encrypted.is_empty() {
+                SessionError::AuthorizationRequired
+            } else {
+                SessionError::Crypto
+            });
         }
         insert_header(
             &mut headers,
@@ -385,9 +419,34 @@ where
     let mut tools = Vec::new();
     for app in connected_apps(mysql, apps, user).await? {
         if app.transport == "http" {
-            // HTTP-transport apps carry inline `httpTools` definitions; the
-            // recorded deployment exposes none, so the definition list is
-            // empty and contributes no tools.
+            // `_http_tools`: inline `httpTools` definitions, filtered by the
+            // administrator allowlist, so the catalog matches the public MCP
+            // entry for HTTP-transport apps.
+            match super::http_tools::definitions(app) {
+                Ok(definitions) => {
+                    for tool in definitions {
+                        if !app.tool_allowlist.is_empty()
+                            && !app.tool_allowlist.contains(&tool.name)
+                        {
+                            continue;
+                        }
+                        tools.push(ConnectorTool {
+                            connector_id: app.slug.clone(),
+                            name: format!("{}__{}", app.slug, tool.name),
+                            title: None,
+                            description: tool.description,
+                            raw_tool_name: tool.name,
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping invalid HTTP connector during tool discovery"
+                    );
+                }
+            }
             continue;
         }
         let headers = match session_headers(mysql, app, user).await {
@@ -404,7 +463,7 @@ where
             }
         };
         let upstream: Vec<UpstreamTool> =
-            match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
+            match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
                 Ok(tools) => tools,
                 Err(error) => {
                     tracing::warn!(
@@ -451,34 +510,72 @@ where
             title: tool.title.clone(),
             description: tool.description.clone(),
             raw_tool_name: Some(tool.raw_tool_name.clone()),
+            input_schema: None,
         });
     }
 
     // The projection loop re-lists visible apps (a second identical query in
-    // the source) and keeps apps whose connection view is "connected".
+    // the source) and keeps apps whose connection view is "connected" or
+    // "expired"; expired apps stay visible with their cached tool summaries
+    // so users can see the integration exists and re-authorize it.
     let visible = list_visible_apps(apps, user);
     let mut items = Vec::new();
     for app in visible {
-        let connection = user_connection(mysql, app, user.users_id).await?;
-        if connection.status != "connected" {
-            continue;
+        let stored = if app.auth_type == "none" {
+            None
+        } else {
+            db::find_connector_connection(mysql, &app.slug, user.users_id)
+                .await?
+                .as_ref()
+                .map(ConnectorConnection::from_row)
+        };
+        let live_tools = tools_by_app.get(app.slug.as_str()).map(Vec::as_slice);
+        if let Some(item) = installed_app_projection(app, stored.as_ref(), live_tools) {
+            items.push(item);
         }
-        let app_tools = tools_by_app.get(app.slug.as_str());
-        let callable = app_tools.is_some_and(|tools| !tools.is_empty());
-        items.push(InstalledApp {
-            id: app.slug.clone(),
-            slug: app.slug.clone(),
-            name: app.name.clone(),
-            description: app.description.clone(),
-            icon_url: app.icon_url.clone(),
-            runtime_name: callable.then(|| app.name.clone()),
-            enabled: app.enabled,
-            callable,
-            connection,
-            tool_summaries: app_tools.map(|tools| tools.to_vec()).unwrap_or_default(),
-        });
     }
     Ok(InstalledResponse { apps: items })
+}
+
+/// Project one visible app into its installed entry, or `None` when the
+/// caller has neither a `connected` nor an `expired` authorization.
+///
+/// Live discovery wins over the connection's cached tool summaries; the cache
+/// keeps expired apps inspectable until the user re-authorizes.
+fn installed_app_projection(
+    app: &ConnectorApp,
+    stored: Option<&ConnectorConnection>,
+    live_tools: Option<&[ToolSummary]>,
+) -> Option<InstalledApp> {
+    let connection = if app.auth_type == "none" {
+        connected_no_auth()
+    } else {
+        connection::response(stored)
+    };
+    let connected = connection.status == "connected";
+    if !(connected || connection.status == "expired") {
+        return None;
+    }
+    let mut app_tools = live_tools.map(<[_]>::to_vec).unwrap_or_default();
+    if app_tools.is_empty()
+        && let Some(stored) = stored
+    {
+        app_tools = stored.tool_summaries.clone();
+    }
+    let callable = connected && !app_tools.is_empty();
+    Some(InstalledApp {
+        id: app.slug.clone(),
+        slug: app.slug.clone(),
+        name: app.name.clone(),
+        description: app.description.clone(),
+        icon_url: app.icon_url.clone(),
+        runtime_name: (!app_tools.is_empty()).then(|| app.name.clone()),
+        enabled: app.enabled,
+        callable,
+        connection,
+        tool_loading_mode: app.tool_loading_mode.clone(),
+        tool_summaries: app_tools,
+    })
 }
 
 #[cfg(test)]
@@ -557,6 +654,7 @@ mod tests {
         assert_eq!(app.auth_type, "none");
         assert_eq!(app.transport, "streamable-http");
         assert_eq!(app.mcp_url, TEST_MCP_URL);
+        assert_eq!(app.tool_loading_mode, "static");
         assert_eq!(app.visibility, "all");
         assert!(app.enabled);
         assert_eq!(app.icon_url, None);
@@ -572,7 +670,33 @@ mod tests {
         assert_eq!(app.name, "bare");
         assert_eq!(app.description, "");
         assert_eq!(app.mcp_url, "");
+        assert_eq!(app.tool_loading_mode, "static");
         assert!(app.enabled);
+    }
+
+    #[test]
+    fn row_to_app_reads_lazy_loading_mode_and_legacy_values() {
+        let row = app_row(
+            1,
+            "lazy",
+            serde_json::json!({"toolLoadingMode": "lazy", "authType": "none"}),
+        );
+        let app = row_to_app(&row);
+        assert_eq!(app.tool_loading_mode, "lazy");
+
+        let legacy = app_row(
+            2,
+            "legacy",
+            serde_json::json!({"toolLoadingMode": "skill", "authType": "none"}),
+        );
+        assert_eq!(row_to_app(&legacy).tool_loading_mode, "lazy");
+
+        let legacy_static = app_row(
+            3,
+            "legacy-static",
+            serde_json::json!({"toolLoadingMode": "direct", "authType": "none"}),
+        );
+        assert_eq!(row_to_app(&legacy_static).tool_loading_mode, "static");
     }
 
     #[test]
@@ -600,29 +724,97 @@ mod tests {
         assert_eq!(slugs, vec!["on"]);
     }
 
-    #[tokio::test]
-    async fn user_connection_requires_no_auth_for_connected() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let none = app_row(1, "a", serde_json::json!({"authType": "none"}));
-        let oauth = app_row(2, "b", serde_json::json!({"authType": "oauth2"}));
+    #[test]
+    fn expired_connection_stays_visible_with_cached_tools() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+        let stored = ConnectorConnection {
+            status: "connected".to_string(),
+            external_account_name: None,
+            granted_scopes: Vec::new(),
+            // A past expiry turns the stored "connected" view into "expired".
+            expires_at: Some(chrono::NaiveDateTime::default()),
+            access_token_encrypted: String::new(),
+            refresh_token_encrypted: None,
+            token_type: "bearer".to_string(),
+            tool_summaries: vec![ToolSummary {
+                name: "dingtalk__list_bases".to_string(),
+                title: None,
+                description: String::new(),
+                raw_tool_name: Some("list_bases".to_string()),
+                input_schema: None,
+            }],
+            tools_discovered_at: None,
+            last_error: None,
+        };
+
+        let item = installed_app_projection(&app, Some(&stored), None).unwrap();
+
+        assert_eq!(item.connection.status, "expired");
+        assert!(!item.callable);
+        assert_eq!(item.connection.tool_count, 1);
+        assert_eq!(item.runtime_name.as_deref(), Some("dingtalk"));
+        assert_eq!(item.tool_summaries.len(), 1);
         assert_eq!(
-            user_connection(&mysql, &row_to_app(&none), 83)
-                .await
-                .unwrap()
-                .status,
-            "connected"
+            item.tool_summaries[0].raw_tool_name.as_deref(),
+            Some("list_bases")
         );
+    }
+
+    #[test]
+    fn live_tools_win_over_the_connection_cache() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+        let stored = ConnectorConnection {
+            status: "connected".to_string(),
+            external_account_name: None,
+            granted_scopes: Vec::new(),
+            expires_at: None,
+            access_token_encrypted: String::new(),
+            refresh_token_encrypted: None,
+            token_type: "bearer".to_string(),
+            tool_summaries: vec![ToolSummary {
+                name: "dingtalk__cached".to_string(),
+                title: None,
+                description: String::new(),
+                raw_tool_name: Some("cached".to_string()),
+                input_schema: None,
+            }],
+            tools_discovered_at: None,
+            last_error: None,
+        };
+        let live = vec![ToolSummary {
+            name: "dingtalk__live".to_string(),
+            title: None,
+            description: String::new(),
+            raw_tool_name: Some("live".to_string()),
+            input_schema: None,
+        }];
+
+        let item = installed_app_projection(&app, Some(&stored), Some(&live)).unwrap();
+
+        assert!(item.callable);
         assert_eq!(
-            user_connection(&mysql, &row_to_app(&oauth), 83)
-                .await
-                .unwrap()
-                .status,
-            "disconnected"
+            item.tool_summaries[0].raw_tool_name.as_deref(),
+            Some("live")
         );
-        // Only the authorized app needs a stored connection lookup.
-        assert_eq!(mysql.queries().len(), 1);
-        assert!(mysql.queries()[0].sql.contains("ConnectorConnection"));
-        assert_eq!(mysql.queries()[0].args, 2);
+    }
+
+    #[test]
+    fn disconnected_apps_are_not_projected() {
+        let app = row_to_app(&app_row(
+            9,
+            "dingtalk",
+            serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
+        ));
+
+        assert!(installed_app_projection(&app, None, None).is_none());
     }
 
     #[tokio::test]
@@ -638,7 +830,10 @@ mod tests {
                 .await
                 .unwrap()
         );
+        // Only the authorized app needs a stored connection lookup.
         assert_eq!(mysql.queries().len(), 1);
+        assert!(mysql.queries()[0].sql.contains("ConnectorConnection"));
+        assert_eq!(mysql.queries()[0].args, 2);
     }
 
     #[tokio::test]
@@ -658,5 +853,141 @@ mod tests {
             ]
         );
         assert!(mysql.queries().is_empty());
+    }
+
+    /// A legacy HTTP+SSE MCP server that answers with one tool.
+    async fn spawn_sse_server() -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buffer = Vec::new();
+                    let mut chunk = [0_u8; 2048];
+                    let head = loop {
+                        let read = stream.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if text.contains("\r\n\r\n") {
+                            break text;
+                        }
+                    };
+                    if head.starts_with("GET ") {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
+                                  event: endpoint\r\ndata: /messages\r\n\r\n",
+                            )
+                            .await;
+                        let _ = stream.flush().await;
+                        // Serve the JSON-RPC replies on this same stream.
+                        let replies = [
+                            "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2024-11-05\"}}",
+                            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"read_doc\"}]}}",
+                        ]
+                        .into_iter();
+                        for reply in replies {
+                            let frame = format!("event: message\r\ndata: {reply}\r\n\r\n");
+                            if stream.write_all(frame.as_bytes()).await.is_err() {
+                                return;
+                            }
+                            let _ = stream.flush().await;
+                            // Wait for the next posted message before replying.
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                        return;
+                    }
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        format!("http://{address}/sse")
+    }
+
+    /// A `transport = "sse"` app must publish the same tool surface the public
+    /// MCP entry lists; discovery used to assume streamable HTTP and reported
+    /// no tools for a legacy SSE server.
+    #[tokio::test]
+    async fn sse_transport_apps_publish_the_same_tools_as_the_mcp_entry() {
+        let url = spawn_sse_server().await;
+        let row = app_row(
+            11,
+            "legacy_sse",
+            serde_json::json!({
+                "name": "Legacy SSE",
+                "mcpUrl": url,
+                "enabled": true,
+                "authType": "none",
+                "transport": "sse",
+                "visibility": "all",
+                "description": "d",
+                "allowedRoles": [],
+                "toolAllowlist": [],
+            }),
+        );
+        let app = row_to_app(&row);
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+
+        let listed = list_tools(&capture, std::slice::from_ref(&app), &user())
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].name, "legacy_sse__read_doc");
+        assert_eq!(listed[0].raw_tool_name, "read_doc");
+
+        // The public MCP entry projects the same upstream tool.
+        let entry = mcp::list_tools_for_transport("sse", &app.mcp_url, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            entry
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["read_doc".to_string()]
+        );
+    }
+
+    /// HTTP-transport apps contribute their configured operations to the
+    /// catalog, matching the public MCP entry.
+    #[tokio::test]
+    async fn http_transport_apps_publish_their_configured_tools() {
+        let row = app_row(
+            12,
+            "erp",
+            serde_json::json!({
+                "name": "ERP",
+                "mcpUrl": "https://api.example.invalid/v1",
+                "enabled": true,
+                "authType": "none",
+                "transport": "http",
+                "visibility": "all",
+                "description": "d",
+                "allowedRoles": [],
+                "toolAllowlist": [],
+                "httpTools": [{"name": "lookup", "description": "Lookup", "method": "GET", "path": "/records/{id}"}],
+            }),
+        );
+        let app = row_to_app(&row);
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+
+        let listed = list_tools(&capture, std::slice::from_ref(&app), &user())
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].name, "erp__lookup");
+        assert_eq!(listed[0].raw_tool_name, "lookup");
     }
 }

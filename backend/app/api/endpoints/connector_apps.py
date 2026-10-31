@@ -13,11 +13,14 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorAppResponse,
+    ConnectorConnectionResponse,
     ConnectorOAuthSessionCreateResponse,
     ConnectorOAuthSessionPollResponse,
 )
 from app.services.connector_apps import connector_app_service
+from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import connector_oauth_service
+from app.services.connector_runtime import connector_runtime_service
 
 router = APIRouter()
 
@@ -52,7 +55,7 @@ async def create_connector_oauth_session(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Connector app does not use OAuth",
         )
-    return await connector_oauth_service.create_session(slug=slug, user_id=user.id)
+    return await connector_oauth_service.create_session(db, slug=slug, user_id=user.id)
 
 
 @router.get(
@@ -100,3 +103,34 @@ async def disconnect_connector(
 ) -> Response:
     await connector_oauth_service.disconnect(db, slug=slug, user_id=user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# The Rust `apps_installed::refresh_endpoint` handler owns this route; the
+# function stays for the retained HTTP contract test.
+async def refresh_connector_connection(
+    slug: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ConnectorConnectionResponse:
+    app = connector_app_service.get_app_by_slug(db, slug)
+    visible_ids = {
+        item.id for item in connector_app_service.list_visible_apps(db, user)
+    }
+    if not app or app.id not in visible_ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+    if app.auth_type != "oauth2":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Connector app does not use OAuth",
+        )
+    connection = connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+    if not connection:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector connection not found")
+    if connector_connection_service.response(connection).status == "expired":
+        await connector_oauth_service.refresh_connection(db, connection)
+    # Refresh the upstream probe too: a still-broken upstream must keep its
+    # error instead of looking recovered just because tokens are valid.
+    await connector_runtime_service.probe_app(db, app, user)
+    return connector_connection_service.response(
+        connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+    )

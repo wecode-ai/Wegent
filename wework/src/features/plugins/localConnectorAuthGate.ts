@@ -120,3 +120,30 @@ export function resolveLocalConnectorAuthHint(
   }
   return null
 }
+
+export interface ConnectorAuthHint {
+  /** Local plugin key; absent for administrator-published cloud apps. */
+  pluginKey: string | null
+  connectorSlug: string
+  displayName: string
+}
+
+/**
+ * Resolve any connector authorization request.
+ *
+ * A `wegent_apps` tool failure names only `connectorSlug` because cloud apps are
+ * not local plugins; those are authorized through the Wegent cloud OAuth flow.
+ */
+export function resolveConnectorAuthHint(
+  text: string | null | undefined
+): ConnectorAuthHint | null {
+  if (!text || !messageRequiresConnectorAuth(text)) return null
+  const pluginKey = extractConnectorAuthPluginKey(text)
+  const connectorSlug = extractConnectorAuthConnectorSlug(text)
+  if (!connectorSlug) return null
+  return {
+    pluginKey,
+    connectorSlug,
+    displayName: pluginKey ?? connectorSlug,
+  }
+}

@@ -193,12 +193,22 @@ pub(crate) fn unsupported_protocol_version(protocol_version: Option<&str>) -> Re
 /// `ServerSession._received_request(InitializeRequest)`: the SDK's negotiated
 /// protocol version, the server's declared capabilities, and its identity.
 pub(crate) fn initialize_result(server_name: &str, params: Option<&Value>) -> Value {
+    initialize_result_with(server_name, params, capabilities())
+}
+
+/// [`initialize_result`] with an explicit capability set, for a server whose
+/// handler registration differs from the FastMCP servers.
+pub(crate) fn initialize_result_with(
+    server_name: &str,
+    params: Option<&Value>,
+    capabilities: Value,
+) -> Value {
     let requested = params
         .and_then(|params| params.get("protocolVersion"))
         .and_then(Value::as_str);
     json!({
         "protocolVersion": protocol::negotiated_protocol_version(requested),
-        "capabilities": capabilities(),
+        "capabilities": capabilities,
         "serverInfo": { "name": server_name, "version": protocol::SERVER_VERSION },
     })
 }

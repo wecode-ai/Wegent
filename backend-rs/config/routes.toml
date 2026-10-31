@@ -498,6 +498,17 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/subscription/sse"
+# `GET`/`POST /api/mcp/connectors/sse` — the dynamic connector MCP surface
+# (`mcp::connectors`). The source kept it in `app/mcp_server/connectors_app.py`
+# even though the endpoint is new with the generic OAuth server, so it moves to
+# Rust like every other new Backend API. The executors still address the
+# unprefixed `/mcp/connectors/sse` alias that `BACKEND_INTERNAL_URL` serves.
+[[routes]]
+methods = ["GET"]
+path = "/api/mcp/connectors/sse"
+[[routes]]
+methods = ["POST"]
+path = "/api/mcp/connectors/sse"
 # `POST /api/api/mcp/system`: the source's `get_mcp_system_config` advertises
 # the system MCP URL with a doubled `/api` prefix (`BACKEND_INTERNAL_URL` ends
 # in `/api` and `API_PREFIX` prefixes `/api` again), so FastAPI answers the
@@ -569,6 +580,13 @@ path = "/api/auth/wework/refresh"
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-runtime/token"
+
+# `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
+# and probe the upstream (`app/api/endpoints/connector_apps.py`). The Python
+# function is retained only for its HTTP contract test.
+[[routes]]
+methods = ["POST"]
+path = "/api/connector-apps/:slug/connection/refresh"
 
 # `GET /api/internal/health` — internal chat-storage health probe
 # (`app/api/endpoints/internal/chat_storage.py`).

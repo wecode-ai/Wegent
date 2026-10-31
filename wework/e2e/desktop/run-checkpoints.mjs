@@ -80,6 +80,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
+  'connector-oauth': './scenarios/connector-oauth.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',

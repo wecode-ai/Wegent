@@ -2677,7 +2677,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
     }
   }
-  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
+  // Expose bundled sidecars such as `dws` to agent shells. Without this entry
+  // skills fall back to scanning the home directory, which triggers macOS
+  // privacy prompts (for example, Photos).
+  const componentBin = components?.dws
+    ? dirname(components.dws)
+    : join(componentResourcesRoot, 'bin')
+  nodeRuntime.environment.PATH = [cliBin, componentBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
   logStartupStep('wework-cli-install', 'completed')

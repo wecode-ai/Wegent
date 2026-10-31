@@ -442,6 +442,30 @@ describe('Process explorer capabilities', () => {
   })
 })
 
+describe('External link capabilities', () => {
+  beforeEach(() => {
+    electronMocks.shellOpenExternal.mockClear()
+  })
+
+  test('opens DingTalk deep links with the system handler', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    const url = 'dingtalk://dingtalkclient/page/link?url=https%3A%2F%2Fn.dingtalk.com&pc_slide=true'
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openExternal', { url })
+
+    expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith(url)
+  })
+
+  test('rejects protocols outside the external-link allowlist', async () => {
+    const { router } = createIsolatedClipboardRouter()
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'shell.openExternal', { url: 'file:///etc/passwd' })
+    ).rejects.toThrow('External URL protocol is not allowed')
+    expect(electronMocks.shellOpenExternal).not.toHaveBeenCalled()
+  })
+})
+
 describe('Core DSH runtime capabilities', () => {
   test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
     const stored = { workbenchMode: 'developer' }

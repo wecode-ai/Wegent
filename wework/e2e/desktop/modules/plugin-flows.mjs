@@ -713,6 +713,13 @@ async function installOfficialPluginFixture({
   )
   await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
 
+  // The action stays rendered while the marketplace refreshes its install
+  // state, so wait for it to become actionable instead of clicking a disabled
+  // snapshot.
+  await control.command('waitFor', installSelector, {
+    enabled: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('click', installSelector)
   await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

@@ -57,7 +57,6 @@ import {
   hasTrailingCompletedProcessText,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
-
 export function AssistantMessage({
   imageServices,
   renderVisualization,

@@ -27,6 +27,11 @@ def test_registered_transport_methods_follow_effective_mount(
 
     for spec in MCP_APP_SPECS:
         effective = _apply_mount_prefix(spec, prefix)
+        if prefix and spec.rust_owned_public_path:
+            # The public transport belongs to backend-rs; only the internal
+            # unprefixed alias stays mounted in Python.
+            assert effective.mount_path not in mounts
+            continue
         assert effective.mount_path == f"{prefix}{spec.mount_path}"
         assert effective.server is spec.server
         assert effective.token_context is spec.token_context
@@ -43,3 +48,20 @@ def test_registered_transport_methods_follow_effective_mount(
             {"HEAD"} if "GET" in expected else set()
         )
         assert set(spec.transport_methods) == set(MCP_TRANSPORT_METHODS)
+
+
+def test_rust_owned_public_transport_keeps_only_its_internal_alias() -> None:
+    """`/api/mcp/connectors/sse` is Rust-owned; the executor alias stays."""
+    from app.mcp_server.server import CONNECTORS_MCP_MOUNT_PATH
+
+    app = FastAPI()
+    register_mcp_apps(app, "/api")
+    assert f"/api{CONNECTORS_MCP_MOUNT_PATH}" not in {
+        route.path for route in app.routes if hasattr(route, "app")
+    }
+
+    internal = FastAPI()
+    register_mcp_apps(internal)
+    assert CONNECTORS_MCP_MOUNT_PATH in {
+        route.path for route in internal.routes if hasattr(route, "app")
+    }

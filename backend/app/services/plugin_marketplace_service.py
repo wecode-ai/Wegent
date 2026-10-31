@@ -21,9 +21,11 @@ from typing import Any, Callable, Iterable
 from fastapi import HTTPException
 from packaging.version import Version
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db_errors import is_mysql_deadlock
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.plugin_marketplace import (
@@ -656,6 +658,55 @@ class PluginMarketplaceService:
         return result
 
     def publish_catalog_release(
+        self,
+        db: Session,
+        *,
+        catalog_namespace: str,
+        slug: str,
+        package: bytes,
+        listing_type: str = "plugin",
+        visibility: str = "workspace",
+        featured_rank: int | None = None,
+        created_by_user_id: int | None = None,
+        origin_plugin_id: int = 0,
+        publication_revision_id: int = 0,
+        source_commit_sha: str = "",
+        provenance: dict[str, Any] | None = None,
+        defer_commit: bool = False,
+    ) -> PublishedRelease:
+        """Publish one system-owned catalog release, retrying deadlocks.
+
+        Parallel catalog publications contend on the same plugin rows, and MySQL
+        asks the client to restart the transaction when it detects a deadlock.
+        Retrying is only safe when this method owns the transaction: a deferred
+        caller has already claimed idempotency records and locks that a retry
+        here would silently discard.
+        """
+        attempts = 1 if defer_commit else 3
+        for attempt in range(attempts):
+            try:
+                return self._publish_catalog_release_once(
+                    db,
+                    catalog_namespace=catalog_namespace,
+                    slug=slug,
+                    package=package,
+                    listing_type=listing_type,
+                    visibility=visibility,
+                    featured_rank=featured_rank,
+                    created_by_user_id=created_by_user_id,
+                    origin_plugin_id=origin_plugin_id,
+                    publication_revision_id=publication_revision_id,
+                    source_commit_sha=source_commit_sha,
+                    provenance=provenance,
+                    defer_commit=defer_commit,
+                )
+            except OperationalError as error:
+                if not is_mysql_deadlock(error) or attempt == attempts - 1:
+                    raise
+                db.rollback()
+        raise AssertionError("publish_catalog_release retry loop exited")
+
+    def _publish_catalog_release_once(
         self,
         db: Session,
         *,

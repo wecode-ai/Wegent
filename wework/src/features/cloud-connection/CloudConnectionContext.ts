@@ -5,6 +5,13 @@ import type { CloudConnectionSnapshot } from './cloudConnectionStorage'
 export interface CloudAuthorizationHandle {
   closed?: Promise<void>
   close?: () => Promise<void> | void
+  /**
+   * Authoritative window state for hosts that can answer it.
+   *
+   * `closed` is a notification; this is the check that still works when a
+   * notification is late or lost, so cancel is detected within one poll.
+   */
+  isOpen?: () => Promise<boolean>
 }
 
 export type OpenCloudAuthorizationUrl = (

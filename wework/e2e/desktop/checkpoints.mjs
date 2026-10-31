@@ -16,6 +16,7 @@ export const DESKTOP_CHECKPOINTS = [
   'task-model-deletion',
   'cloud-model-presets',
   'cloud-space-mention',
+  'connector-oauth',
   'collaboration-shared-core',
   'collaboration-deliveries',
   'collaboration-delivery-editing',

@@ -23,6 +23,15 @@ import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import {
+  authorizeWegentConnector,
+  listWegentConnectorApps,
+  listWegentInstalledConnectorApps,
+  refreshWegentConnector,
+  type WegentConnectorApp,
+  type WegentInstalledConnectorApp,
+} from '@/api/cloud/connectorApps'
+import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -397,6 +406,63 @@ interface CloudDeviceConnectionInfo {
   deviceId: string
   username: string
   password: string
+}
+
+/** One row of the app-connection list, including not-yet-authorized apps. */
+type ConnectorConnectionRow = WegentInstalledConnectorApp & {
+  name: string
+  auth_type: WegentConnectorApp['auth_type']
+}
+
+function normalizeToolLoadingMode(value: string | undefined): 'static' | 'lazy' {
+  return value === 'lazy' || value === 'skill' ? 'lazy' : 'static'
+}
+
+/**
+ * Show every visible app, not only the installed (authorized + discovered)
+ * ones, so users can find and authorize an app they have not used yet.
+ */
+function mergeConnectorRows(
+  catalog: WegentConnectorApp[],
+  installed: WegentInstalledConnectorApp[]
+): ConnectorConnectionRow[] {
+  const installedBySlug = new Map(installed.map(app => [app.slug, app]))
+  return catalog.map(app => {
+    const installedApp = installedBySlug.get(app.slug)
+    return {
+      id: app.slug,
+      slug: app.slug,
+      name: app.name,
+      description: app.description,
+      icon_url: app.icon_url,
+      auth_type: app.auth_type,
+      runtime_name: installedApp?.runtime_name ?? null,
+      enabled: installedApp?.enabled ?? true,
+      callable: installedApp?.callable ?? false,
+      tool_loading_mode: normalizeToolLoadingMode(
+        installedApp?.tool_loading_mode ?? app.tool_loading_mode
+      ),
+      connection: installedApp?.connection ?? app.connection,
+      tool_summaries: installedApp?.tool_summaries ?? [],
+    }
+  })
+}
+
+function connectorStatusText(
+  app: ConnectorConnectionRow,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  if (app.connection.status === 'expired') {
+    return t('workbench.connector_connection_expired', {
+      defaultValue: '连接已过期，可刷新或重新授权',
+    })
+  }
+  if (app.connection.status === 'connected') {
+    return t('workbench.connector_connection_connected', { defaultValue: '已连接' })
+  }
+  return t('workbench.connector_connection_not_authorized', {
+    defaultValue: '尚未授权，授权后即可在对话中使用',
+  })
 }
 
 function getCloudDeviceConnectionInfo(device: DeviceInfo): CloudDeviceConnectionInfo {
@@ -1201,6 +1267,10 @@ export function ConnectionsDeviceSettingsPage({
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
+  const [connectorApps, setConnectorApps] = useState<ConnectorConnectionRow[]>([])
+  const [connectorLoading, setConnectorLoading] = useState(true)
+  const [connectorError, setConnectorError] = useState<string | null>(null)
+  const [refreshingConnectorSlug, setRefreshingConnectorSlug] = useState<string | null>(null)
 
   const applyDevices = useCallback((allDevices: DeviceInfo[]) => {
     const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
@@ -1237,6 +1307,97 @@ export function ConnectionsDeviceSettingsPage({
   const refreshDevices = useCallback(async () => {
     await fetchDevices()
   }, [fetchDevices])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadConnectors = async () => {
+      if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
+        setConnectorApps([])
+        setConnectorLoading(false)
+        return
+      }
+      setConnectorLoading(true)
+      try {
+        const [installed, catalog] = await Promise.all([
+          listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token),
+          listWegentConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token),
+        ])
+        if (!cancelled) {
+          setConnectorApps(mergeConnectorRows(catalog, installed.apps))
+          setConnectorError(null)
+        }
+      } catch {
+        if (!cancelled) {
+          setConnectorError(
+            t('workbench.connector_connections_load_failed', {
+              defaultValue: '应用连接加载失败，请稍后重试',
+            })
+          )
+        }
+      } finally {
+        if (!cancelled) setConnectorLoading(false)
+      }
+    }
+
+    void loadConnectors()
+    return () => {
+      cancelled = true
+    }
+  }, [cloudConnection, t])
+
+  const refreshConnector = useCallback(
+    async (app: WegentInstalledConnectorApp) => {
+      if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
+        return
+      }
+      setRefreshingConnectorSlug(app.slug)
+      setConnectorError(null)
+      try {
+        let connection = app.connection
+        if (app.connection.status === 'expired') {
+          try {
+            connection = await refreshWegentConnector(
+              cloudConnection.apiBaseUrl,
+              cloudConnection.token,
+              app.slug
+            )
+          } catch {
+            // A revoked refresh token cannot be refreshed; fall through to a
+            // full OAuth authorization instead of surfacing a dead end.
+            connection = app.connection
+          }
+        }
+        if (connection.status !== 'connected') {
+          connection = await authorizeWegentConnector(
+            cloudConnection.apiBaseUrl,
+            cloudConnection.token,
+            app.slug,
+            openCloudAuthorizationWindow
+          )
+        }
+        setConnectorApps(current =>
+          current.map(item =>
+            item.slug === app.slug
+              ? {
+                  ...item,
+                  connection,
+                  callable: connection.status === 'connected',
+                }
+              : item
+          )
+        )
+      } catch (error) {
+        setConnectorError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.connector_refresh_failed', { defaultValue: '连接刷新失败' })
+        )
+      } finally {
+        setRefreshingConnectorSlug(null)
+      }
+    },
+    [cloudConnection, t]
+  )
 
   const handleDeviceCreated = useCallback(
     (discoveredDevices?: DeviceInfo[]) => {
@@ -1413,6 +1574,85 @@ export function ConnectionsDeviceSettingsPage({
           <DshSettingsSectionSurface page="connections" />
 
           <CloudModelsSection cloudConnection={cloudConnection} />
+
+          <section
+            className="rounded-lg border border-border bg-background p-5"
+            data-testid="connector-connections-section"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.connector_connections_title', {
+                  defaultValue: '应用连接',
+                })}
+              </h2>
+            </div>
+            {connectorError ? (
+              <p className="mb-3 text-sm text-red-600" data-testid="connector-connections-error">
+                {connectorError}
+              </p>
+            ) : null}
+            {connectorLoading ? (
+              <div className="py-6 text-center text-sm text-text-secondary">
+                {t('common.loading', '加载中...')}
+              </div>
+            ) : connectorApps.length === 0 ? (
+              <div className="py-6 text-center text-sm text-text-secondary">
+                {t('workbench.connector_connections_empty', {
+                  defaultValue: '暂无应用连接',
+                })}
+              </div>
+            ) : (
+              <div className="divide-y divide-border/60">
+                {connectorApps.map(app => (
+                  <div
+                    key={app.slug}
+                    className="flex items-center justify-between gap-4 py-3"
+                    data-testid={`connector-connection-${app.slug}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-text-primary">
+                        {app.runtime_name ?? app.name}
+                      </p>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        {connectorStatusText(app, t)}
+                      </p>
+                    </div>
+                    {app.connection.status === 'expired' ? (
+                      <button
+                        type="button"
+                        data-testid={`connector-refresh-${app.slug}`}
+                        disabled={refreshingConnectorSlug === app.slug}
+                        aria-busy={refreshingConnectorSlug === app.slug}
+                        onClick={() => void refreshConnector(app)}
+                        className="h-8 shrink-0 rounded-lg bg-text-primary px-3 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {refreshingConnectorSlug === app.slug
+                          ? t('common.loading', '加载中...')
+                          : t('workbench.connector_refresh', {
+                              defaultValue: '刷新连接',
+                            })}
+                      </button>
+                    ) : app.connection.status !== 'connected' && app.auth_type === 'oauth2' ? (
+                      <button
+                        type="button"
+                        data-testid={`connector-authorize-${app.slug}`}
+                        disabled={refreshingConnectorSlug === app.slug}
+                        aria-busy={refreshingConnectorSlug === app.slug}
+                        onClick={() => void refreshConnector(app)}
+                        className="h-8 shrink-0 rounded-lg bg-text-primary px-3 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {refreshingConnectorSlug === app.slug
+                          ? t('common.loading', '加载中...')
+                          : t('workbench.plugins_connector_auth_action', {
+                              defaultValue: 'OAuth 授权',
+                            })}
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
 
           <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">

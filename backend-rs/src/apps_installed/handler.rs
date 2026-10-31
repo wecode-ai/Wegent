@@ -20,7 +20,13 @@ const INVALID_CREDENTIALS: &str = "Could not validate credentials";
 const APPS_MISSING: &str = "Wegent-Apps-Not-Authenticated";
 const APPS_INACTIVE: &str = "Wegent-Apps-User-Inactive";
 
-struct InstalledAppsUser(UserRow);
+pub(crate) struct InstalledAppsUser(UserRow);
+
+impl InstalledAppsUser {
+    pub(crate) fn into_row(self) -> UserRow {
+        self.0
+    }
+}
 
 impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
     async fn authenticate<'a>(

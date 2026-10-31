@@ -1,9 +1,16 @@
 import { ExternalLink, Loader2, QrCode } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { openExternalUrl } from '@/lib/external-links'
 import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
+import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
+import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import {
+  ConnectorSyncAbortedError,
+  waitForLocalConnectorSync,
+} from '@/features/cloud-connection/connectorAppSync'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
@@ -16,6 +23,150 @@ interface ConnectorAuthCardProps {
   description?: string
   onSuccess: (result: LocalConnectorAuthResult) => void
   onCancel?: () => void
+}
+
+interface CloudConnectorAuthCardProps {
+  slug: string
+  apiBaseUrl?: string | null
+  token?: string | null
+  onSuccess: () => void
+  onCancel?: () => void
+}
+
+/**
+ * Authorization card for an administrator-published Wegent connector app.
+ *
+ * These apps are authorized through the Wegent cloud OAuth flow instead of the
+ * executor's local plugin login, so they get their own card.
+ */
+export function CloudConnectorAuthCard({
+  slug,
+  apiBaseUrl,
+  token,
+  onSuccess,
+  onCancel,
+}: CloudConnectorAuthCardProps) {
+  const { t } = useTranslation('common')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // One attempt owns one account/backend identity. Changing any of them, or
+  // unmounting the card, ends the attempt: its pending poll, catalog wait and
+  // local sync must not configure or resume against the next identity.
+  const attemptGenerationRef = useRef(0)
+  useEffect(() => {
+    attemptGenerationRef.current += 1
+    return () => {
+      attemptGenerationRef.current += 1
+    }
+  }, [apiBaseUrl, token, slug])
+
+  const authorize = async () => {
+    if (!apiBaseUrl || !token) {
+      setError(t('workbench.plugins_connector_cloud_required'))
+      return
+    }
+    const generation = attemptGenerationRef.current
+    const isCurrentAttempt = () => attemptGenerationRef.current === generation
+    setBusy(true)
+    setError(null)
+    try {
+      const connection = await authorizeWegentConnector(
+        apiBaseUrl,
+        token,
+        slug,
+        openCloudAuthorizationWindow,
+        { isCurrent: isCurrentAttempt }
+      )
+      if (!isCurrentAttempt()) return
+      if (connection.status !== 'connected') {
+        setError(t('workbench.plugins_connector_auth_failed', { name: slug }))
+        return
+      }
+      // Resume only once the cloud catalog lists this app's tools *and* the
+      // local executor has applied them: the continuation runs on the local
+      // runtime, so a cloud-only confirmation would still start it without the
+      // connector. A timeout keeps the card retryable instead of resuming.
+      const catalogReady = await waitForConnectorToolCatalog(apiBaseUrl, token, slug)
+      if (!isCurrentAttempt()) return
+      if (!catalogReady) {
+        setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
+        return
+      }
+      if (isLocalFirstAppRuntime()) {
+        const synced = await waitForLocalConnectorSync({
+          apiBaseUrl,
+          token,
+          slug,
+          isCurrent: isCurrentAttempt,
+        })
+        if (!isCurrentAttempt()) return
+        if (!synced) {
+          setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
+          return
+        }
+      }
+      onSuccess()
+    } catch (cause) {
+      // A cancelled attempt is not an error: the card is gone or now belongs
+      // to another identity.
+      if (cause instanceof ConnectorSyncAbortedError) return
+      if ((cause as { name?: unknown } | null)?.name === 'AbortError') return
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="mb-3 max-w-md rounded-2xl border bg-background p-4 shadow-sm"
+      data-testid="cloud-connector-auth-card"
+    >
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">
+          {t('workbench.plugins_connector_auth_title', { name: slug })}
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('workbench.connector_auth_description')}
+        </p>
+      </div>
+      <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/30 p-4">
+        <Button
+          data-testid="cloud-connector-auth-authorize"
+          onClick={() => void authorize()}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <ExternalLink className="mr-2 h-4 w-4" />
+          )}
+          {t('workbench.plugins_connector_auth_action')}
+        </Button>
+        {error ? (
+          <p
+            className="text-xs text-destructive"
+            role="alert"
+            data-testid="cloud-connector-auth-error"
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+      {onCancel ? (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+            data-testid="cloud-connector-auth-cancel"
+            onClick={onCancel}
+          >
+            {t('workbench.cancel', '取消')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function ConnectorAuthCard(props: ConnectorAuthCardProps) {

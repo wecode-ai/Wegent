@@ -319,7 +319,12 @@ export function createStreamingToolChecks({
       'The child agent stream leaked into the root conversation'
     )
     await captureSubagent(control, 'streaming-text-subagent-01-inline-activity.png')
-    await control.command('click', '[data-testid="subagent-activity-chip"]')
+    // The chip lives in the live processing preview, which re-mounts while the
+    // transcript re-projects, so give the click the same retry budget as the
+    // wait instead of clicking a single DOM snapshot.
+    await control.command('clickWhenEnabled', '[data-testid="subagent-activity-chip"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       timeoutMs: uiTimeoutMs,
     })

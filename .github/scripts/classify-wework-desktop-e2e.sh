@@ -173,6 +173,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-model-recovery
+  connector-oauth
   task-model-deletion
   cloud-model-presets
   cloud-project-creation
@@ -229,7 +230,7 @@ cloud_shards=(
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
-  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
+  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github,connector-oauth
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
