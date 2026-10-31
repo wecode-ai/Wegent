@@ -2,7 +2,10 @@ import {
   dispatchTaskCommentReply,
   cardSessionAddress,
 } from '@wegent/collaboration/execution/taskCardReply'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  createExecutorClientForWorkbenchServices,
+  type WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { createWorkbenchDeviceResolver } from '@/lib/workbench-device'
 
@@ -13,7 +16,15 @@ async function ownsInteraction(
 ): Promise<boolean> {
   if (!owner || owner.taskId !== item.task.address.taskId) return false
   if (owner.deviceId === item.task.address.deviceId) return true
-  const listed = await services.deviceApi.listDevices()
+  const { registry } = createExecutorClientForWorkbenchServices(services)
+  await registry.refresh()
+  try {
+    await registry.resolve(owner.deviceId)
+  } catch (error) {
+    if (!(error instanceof Error && error.message.startsWith('executor-not-found:'))) throw error
+    return false
+  }
+  const listed = registry.list().map(entry => entry.device)
   const devices = createWorkbenchDeviceResolver(listed)
   const ownerDevice = devices.resolve(owner.deviceId)
   const interactionDevice = devices.resolve(item.task.address.deviceId)

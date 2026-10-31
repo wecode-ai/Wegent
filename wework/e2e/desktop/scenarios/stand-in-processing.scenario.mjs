@@ -305,6 +305,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         const history = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.ok(history.actions.some(action => action.status === 'succeeded'))
+        await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
         await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
         // Register its code workspace separately from the collaboration project's Issue storage.

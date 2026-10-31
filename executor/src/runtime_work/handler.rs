@@ -167,6 +167,7 @@ mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_diagnostics;
 mod transcript_overlays;
 mod transcript_search;
 mod transcript_sync;

@@ -768,11 +768,13 @@ export function createHybridWorkbenchServices(
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
-    const knownDevice = (await listKnownDevices()).find(device => deviceMatchesId(device, deviceId))
+    const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
-    const cloudDevices = await listCloudDevices()
-    return cloudDevices.find(device => deviceMatchesId(device, deviceId)) ?? null
+    await listCloudDevices()
+    return createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
   }
   const listLocalRuntimeWork = async (
     requestOptions?: Parameters<

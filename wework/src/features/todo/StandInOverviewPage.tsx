@@ -49,6 +49,7 @@ export function StandInOverviewPage({
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
+  const { saved, setDraft, reload } = state
   const [roleId, setRoleId] = useState<string | undefined>(
     props.initialProfileId === '@primary' ? undefined : props.initialProfileId
   )
@@ -88,8 +89,21 @@ export function StandInOverviewPage({
       const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
       if (!route) return
       const [pathname, search] = route.split('?')
-      if (pathname !== '/stand-in' || new URLSearchParams(search).get('view') !== 'scheduled')
+      if (pathname !== '/stand-in') return
+      if (!search) {
+        const openPrimary = () => {
+          setRoleId(undefined)
+          setChatting(false)
+          setWorkView('work')
+          setProfile(null)
+          reload()
+        }
+        if (panelRef.current) panelRef.current.requestLeave(openPrimary)
+        else if (automationRef.current) automationRef.current.requestLeave(openPrimary)
+        else openPrimary()
         return
+      }
+      if (new URLSearchParams(search).get('view') !== 'scheduled') return
       const openView = () => {
         setWorkView('scheduled')
         setChatting(!roleId)
@@ -100,13 +114,12 @@ export function StandInOverviewPage({
     }
     window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
     return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [active, roleId])
+  }, [active, roleId, reload])
   const leaveSchedules = (action: () => void) => {
     if (automationRef.current) automationRef.current.requestLeave(action)
     else action()
   }
   const pressedInPanel = useRef(false)
-  const { saved, setDraft, reload } = state
   const deviceId = saved?.executionDeviceId
   const api = props.services.standInApi
   const inbox = useStandInInbox(api, props.userId, deviceId)
@@ -307,6 +320,7 @@ export function StandInOverviewPage({
           <button
             type="button"
             data-testid="stand-in-settings-open"
+            disabled={state.loading || state.saving}
             onClick={() => setProfile(role ? 'role' : 'primary')}
             className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
           >

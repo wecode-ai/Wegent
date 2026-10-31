@@ -570,6 +570,34 @@ describe('stand-in save routing', () => {
 })
 
 describe('qualified local sidebar routing', () => {
+  it('resolves a cold app registration through the refreshed local runtime identity', async () => {
+    mocks.cloudListDevices.mockClear()
+    const local = {
+      id: 0,
+      device_id: 'electron-cold',
+      name: 'Local',
+      status: 'online',
+      is_default: true,
+      device_type: 'local',
+      runtime_instance_id: 'runtime-cold',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        ...local,
+        id: 73,
+        device_id: 'app-record-73',
+        device_type: 'app',
+        app_device_id: local.device_id,
+      },
+    ])
+    const services = createServices()
+    const entry = await services.executorClient!.registry.resolve('app-record-73')
+    expect(entry.device.device_id).toBe(local.device_id)
+    expect(entry.device.runtime_instance_id).toBe('runtime-cold')
+    expect(mocks.cloudListDevices).toHaveBeenCalledOnce()
+  })
+
   const identity = {
     deviceId: 'electron-shared',
     runtimeInstanceId: 'current-runtime',

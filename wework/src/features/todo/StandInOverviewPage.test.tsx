@@ -534,3 +534,30 @@ it('guards a dirty memory panel before a new explicit settings request', async (
   await user.click(await screen.findByTestId('stand-in-memory-discard'))
   expect(await screen.findByTestId('stand-in-role-name')).toHaveValue('')
 })
+
+it('refreshes external configuration and returns to the primary identity on explicit sidebar navigation', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  render(<StandInOverviewPage {...props} />)
+  await user.click(await screen.findByTestId('stand-in-overview-role-default'))
+  const external = { ...newStandInRole('device', 'external'), name: 'External configuration' }
+  vi.mocked(api.personalGet).mockResolvedValue({
+    ...settings,
+    roles: [...settings.roles, external],
+  })
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  expect(await screen.findByTestId('stand-in-overview-role-external')).toHaveTextContent(
+    'External configuration'
+  )
+  expect(screen.getByTestId('stand-in-primary-open')).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByTestId('identity-conversation')).toHaveTextContent('primary')
+  await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
+})
