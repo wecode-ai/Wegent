@@ -542,11 +542,15 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
         // Admission can precede the native start notification. History must not
         // synthesize interruption for that identity while its start is pending.
-        let admitted = self.store.read_task(local_task_id, |link| {
-            crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
-                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+        let execution = self
+            .store
+            .read_task(local_task_id, |link| {
+                crate::runtime_work::lifecycle::native_execution_state(link)
             })
-        }) == Some(true);
+            .flatten();
+        let admitted = execution.as_ref().is_some_and(|state| {
+            state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+        });
         let admitted_turn = admitted
             .then(|| self.active_codex_turn(local_task_id))
             .flatten();
@@ -578,7 +582,31 @@ impl RuntimeWorkRpcHandler {
             // Turn-list status can synthesize interruption without a terminal boundary.
             // Execution identity remains authoritative for this open turn even when
             // every observed item has already been persisted.
-            if !positioned || turn["timelineCompleted"] != true {
+            let native_open = admitted
+                || execution
+                    .as_ref()
+                    .is_some_and(|state| state.turn_id.as_deref() == Some(turn_id.as_str()));
+            if native_open
+                && positioned
+                && turn["timelineCompleted"] == true
+                && matches!(
+                    turn["status"].as_str(),
+                    Some("interrupted" | "cancelled" | "failed" | "completed")
+                )
+            {
+                log_executor_event(
+                    "runtime open turn overrides terminal timeline",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("turn_id", turn_id.clone()),
+                        (
+                            "history_status",
+                            string_field(turn, "status").unwrap_or_default(),
+                        ),
+                    ],
+                );
+            }
+            if native_open || !positioned || turn["timelineCompleted"] != true {
                 turn["status"] = json!("inProgress");
                 turn["completedAt"] = Value::Null;
                 turn["durationMs"] = Value::Null;

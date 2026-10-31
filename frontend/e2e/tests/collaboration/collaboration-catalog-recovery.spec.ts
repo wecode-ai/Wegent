@@ -622,7 +622,7 @@ test('workspace members remain usable while the real Agent catalog response is p
   const held = new Promise<void>(resolve => {
     release = resolve
   })
-  let fetched = false
+  let intercepted = false
   let agentRequests = 0
   let memberRequests = 0
   page.on('request', request => {
@@ -633,18 +633,18 @@ test('workspace members remain usable while the real Agent catalog response is p
   const catalogUrl = (url: URL) => url.pathname === `${workspacePath}/agents`
   const holdFirst = async (route: Route) => {
     expect(new URL(route.request().url()).searchParams.get('include_readiness')).toBe('false')
-    if (fetched) return route.continue()
-    const response = await route.fetch()
-    expect(response.ok()).toBe(true)
-    fetched = true
+    if (intercepted) return route.continue()
+    intercepted = true
+    // Delay the original browser request; no second Node HTTP connection is
+    // needed to prove that members remain usable while this read is pending.
     await held
-    await route.fulfill({ response })
+    await route.continue()
   }
   await page.route(catalogUrl, holdFirst)
   try {
     await page.goto(`/collaboration/workspaces/${workspaceId}/agents`)
     await expect(page.getByTestId('project-agent-config-loading')).toBeVisible()
-    await expect.poll(() => fetched).toBe(true)
+    await expect.poll(() => intercepted).toBe(true)
     expect(agentRequests).toBe(1)
     expect(memberRequests).toBe(0)
     await page.getByTestId('collaboration-workspace-participants-tab-members').click()
@@ -652,7 +652,11 @@ test('workspace members remain usable while the real Agent catalog response is p
     await expect(page.getByTestId('workspace-members-loading')).toHaveCount(0)
     expect(memberRequests).toBe(1)
     expect(agentRequests).toBe(1)
+    const catalogResponse = page.waitForResponse(
+      response => catalogUrl(new URL(response.url())) && response.request().method() === 'GET'
+    )
     release()
+    expect((await catalogResponse).ok()).toBe(true)
     await page.getByTestId('collaboration-workspace-participants-tab-agents').click()
     await expect(page.getByTestId('project-agent-config-loading')).toHaveCount(0)
     await expect(page.getByTestId('project-agent-add')).toBeEnabled()

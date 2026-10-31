@@ -66,6 +66,53 @@ fn admitted_turn_history_cannot_synthesize_interruption_before_native_start() {
 }
 
 #[test]
+fn completed_timeline_cannot_settle_an_owned_native_turn() {
+    for admitted in [true, false] {
+        for status in ["interrupted", "completed", "failed"] {
+            let (handler, root, _) = setup("native-open-timeline-boundary");
+            let execution_id = start_test_execution(&handler, "task-1");
+            handler.record_active_codex_turn(
+                "task-1",
+                execution_id,
+                "thread-1".into(),
+                "turn-1".into(),
+            );
+            if !admitted {
+                handler.route_codex_notification(notification("turn/started", "turn-1"));
+            }
+            let before = handler.local_task_link("task-1").unwrap().execution_state;
+            let mut thread = json!({"timeline": true, "turns": [
+                {"id": "older-turn", "status": "completed", "timelineCompleted": true},
+                {"id": "turn-1", "status": status, "timelineCompleted": true,
+                 "completedAt": 123, "durationMs": 12, "error": {"message": "Historical placeholder"},
+                 "items": [{"id": "user-1", "type": "userMessage", "text": "Continue"}]}
+            ]});
+            handler.merge_active_codex_transcript("task-1", &mut thread);
+            assert_eq!(thread["turns"][0]["status"], "completed");
+            assert_eq!(thread["turns"][1]["status"], "inProgress");
+            assert_eq!(thread["turns"][1]["completedAt"], Value::Null);
+            assert_eq!(thread["turns"][1]["durationMs"], Value::Null);
+            assert_eq!(thread["turns"][1]["error"], Value::Null);
+            let projected =
+                crate::runtime_work::transcript::project_transcript(&thread, "device-1", false);
+            assert_eq!(projected.turns[1]["status"], "streaming");
+            assert_eq!(
+                handler.local_task_link("task-1").unwrap().execution_state,
+                before
+            );
+            if admitted {
+                handler.route_codex_notification(notification("turn/started", "turn-1"));
+            }
+            handler.route_codex_notification(notification("turn/completed", "turn-1"));
+            thread["turns"][1]["status"] = json!("completed");
+            handler.merge_active_codex_transcript("task-1", &mut thread);
+            assert_eq!(thread["turns"][1]["status"], "completed");
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+}
+
+#[test]
 fn recovery_exit_settles_only_its_own_failed_turn() {
     for next_turn in [false, true] {
         let (handler, root, _) = setup("native-recovery-exit");
