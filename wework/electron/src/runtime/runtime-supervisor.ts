@@ -113,12 +113,16 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     this.child = child
     this.attach(child)
     this.emit('spawn', child)
-    void this.writeLog('supervisor', `spawned pid=${child.pid ?? 'unknown'}`)
+    void this.writeLog(
+      'supervisor',
+      `spawned pid=${child.pid ?? 'unknown'} executable=${JSON.stringify(resolved.command)}`
+    )
 
     try {
       await spawned
       await this.waitUntilReady(child)
     } catch (error) {
+      void this.writeLog('supervisor', `startup failed: ${String(error)}`)
       if (this.current() === child) await terminateProcessTree(child, 1_000)
       if (!this.stopping && this.currentState !== 'backoff' && this.currentState !== 'failed') {
         this.recordCrash()
