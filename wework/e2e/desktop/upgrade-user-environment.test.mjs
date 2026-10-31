@@ -59,21 +59,57 @@ if (process.platform === 'win32') {
     const home = await mkdtemp(join(tmpdir(), 'wework-native-profile-'))
     try {
       const environment = upgradeUserEnvironment(process.env, home)
-      const { stdout } = await promisify(execFile)(
-        join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)',
-        ],
-        { env: environment, timeout: 10_000, maxBuffer: 4096, windowsHide: true }
-      )
-      assert.ok(stdout.trim(), 'Windows could not resolve the application-data directory')
-      assert.equal(await realpath(stdout.trim()), await realpath(process.env.APPDATA))
+      const cases = [
+        { name: 'native', environment: process.env, timeout: 30_000 },
+        { name: 'isolated', environment, timeout: 10_000 },
+      ]
+      const observations = await Promise.all(cases.map(observeWindowsAppData))
+      if (observations.some(result => result.error)) {
+        if (process.env.PSModulePath && !environment.PSModulePath)
+          observations.push(
+            await observeWindowsAppData({
+              name: 'isolated-with-system-module-path',
+              environment: { ...environment, PSModulePath: process.env.PSModulePath },
+              timeout: 10_000,
+            })
+          )
+        console.error(JSON.stringify(observations))
+      }
+      for (const result of observations) assert.ifError(result.error)
+      const [native, isolated] = observations
+      assert.ok(isolated.stdout.trim(), 'Windows could not resolve the application-data directory')
+      assert.equal(await realpath(isolated.stdout.trim()), await realpath(native.stdout.trim()))
       assert.equal(environment.HOME, home)
     } finally {
       await rm(home, { recursive: true, force: true })
     }
   })
+}
+
+async function observeWindowsAppData({ name, environment, timeout }) {
+  const started = Date.now()
+  try {
+    const result = await promisify(execFile)(
+      join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[Console]::Error.WriteLine("probe-entered"); [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::Error.WriteLine("encoding-ready"); [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData); [Console]::Error.WriteLine("query-finished")',
+      ],
+      { env: environment, timeout, maxBuffer: 4096, windowsHide: true }
+    )
+    return { name, elapsedMs: Date.now() - started, ...result }
+  } catch (error) {
+    return {
+      name,
+      elapsedMs: Date.now() - started,
+      error,
+      code: error.code,
+      signal: error.signal,
+      killed: error.killed,
+      stdout: error.stdout,
+      stderr: error.stderr,
+    }
+  }
 }
