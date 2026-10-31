@@ -226,8 +226,8 @@ impl RuntimeWorkRpcHandler {
             }
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
-                    !(connection["policy"]["automatic"] == true
-                        && !immediate_policy(&connection["policy"]))
+                    (connection["policy"]["automatic"] != true
+                        || immediate_policy(&connection["policy"]))
                         && connection["enabledAfter"]
                             .as_str()
                             .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())

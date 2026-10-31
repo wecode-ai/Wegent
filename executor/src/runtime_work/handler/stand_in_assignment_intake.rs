@@ -43,9 +43,10 @@ impl RuntimeWorkRpcHandler {
                 .last()
                 .ok_or_else(|| AppIpcError::new("invalid_assignment", "Missing assignment"))?;
             let binding = json!({"humanAssignmentId":format!("{id}-{}",history.len())});
+            let expected_user_id = user.to_string();
             if binding["humanAssignmentId"] != event["assignmentId"]
                 || assignment["to_type"] != "user"
-                || assignment["to_id"] != user.to_string()
+                || assignment["to_id"].as_str() != Some(expected_user_id.as_str())
                 || !super::stand_in::assignment_after_enable(
                     &json!({"created_at":assignment["at"]}),
                     &config,

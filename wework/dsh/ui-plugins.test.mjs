@@ -97,7 +97,7 @@ test('core settings are metadata-driven DSH pages', async () => {
   assert.equal('module' in registrations[0].options, false)
 })
 
-test('first-party route packages own their routes and sidebar navigation', async () => {
+test('first-party routes preserve direct access while arrangements stay inside stand-in navigation', async () => {
   const registrations = []
   const injections = []
   for (const packageName of [
@@ -121,9 +121,9 @@ test('first-party route packages own their routes and sidebar navigation', async
   )
   assert.deepEqual(
     navigation.map(entry => entry.descriptor.path),
-    ['/plugins', '/sites', '/automations', '/cloud-work']
+    ['/plugins', '/sites', '/cloud-work']
   )
-  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 4)
+  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 3)
   assert.ok(actions.some(entry => entry.descriptor.id === 'plugin-center.open'))
   assert.ok(
     routes
