@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
-import { assertSurfaces, openPlugin } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { test, vi } from 'vitest'
+import {
+  assertSurfaces,
+  installFixture,
+  openPlugin,
+} from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { verifyPluginEnabledState } from '../e2e/desktop/modules/plugin-inventory-state.mjs'
 
 const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
 
@@ -45,7 +50,7 @@ function controlFixture({ present, managerIds }) {
     async command(action, selector) {
       calls.push({ action, selector })
       if (action === 'getComposerPluginInventoryDiagnostics') {
-        const plugins = present ? [{ pluginKey: plugin.slug }] : []
+        const plugins = present ? [{ pluginKey: plugin.slug, enabled: true, isEnabled: true }] : []
         return JSON.stringify({
           sharedInventory: { installedPlugins: plugins },
           composerApps: plugins,
@@ -61,11 +66,77 @@ function controlFixture({ present, managerIds }) {
         })
       }
       if (action === 'getText') return `${plugin.slug}-retained`
-      if (['click', 'clickIfPresent', 'waitFor', 'fill'].includes(action)) return ''
+      if (['click', 'clickWhenEnabled', 'clickIfPresent', 'waitFor', 'fill'].includes(action))
+        return ''
       throw new Error(`Unexpected control command: ${action}`)
     },
   }
 }
+
+test.each(['installation', 'surfaces', 'enabled state'])(
+  '%s waits for the new chat composer to mount before opening its plugin picker',
+  async entry => {
+    const control = controlFixture({ present: true, managerIds: [plugin.installedId] })
+    const command = control.command.bind(control)
+    const mounted = Promise.withResolvers()
+    let mounting = false
+    let finished = false
+    control.command = async (action, selector, options) => {
+      if (action === 'click' && selector === '[data-testid="new-chat-button"]') mounting = true
+      if (mounting && selector === '[data-testid="composer-plugin-picker-button"]') {
+        if (action === 'waitFor' || action === 'clickWhenEnabled') {
+          await mounted.promise
+          mounting = false
+        }
+        assert.equal(mounting, false, 'The new composer is not mounted yet')
+      }
+      return command(action, selector, options)
+    }
+    const cloud = {
+      backendUrl: 'https://cloud.example',
+      authToken: 'fixture-token',
+      publishPluginRelease: async () => ({ pluginId: 5 }),
+    }
+    vi.stubGlobal('fetch', async () =>
+      Response.json({
+        items: [
+          {
+            metadata: { labels: { id: String(plugin.installedId) } },
+            spec: { source: { pluginKey: plugin.slug } },
+          },
+        ],
+      })
+    )
+    const verify =
+      entry === 'installation'
+        ? installFixture(cloud, control, plugin.slug, 'device-id', 1000)
+        : entry === 'surfaces'
+          ? assertSurfaces(control, plugin, true)
+          : verifyPluginEnabledState(control, plugin, true, 1000)
+    let failure
+    const result = verify.then(
+      () => {
+        finished = true
+      },
+      error => {
+        finished = true
+        failure = error
+      }
+    )
+    try {
+      await vi.waitFor(() => assert.ok(mounting))
+      assert.equal(finished, false, 'The picker must wait for the delayed composer')
+      mounted.resolve()
+      await result
+      if (failure) throw failure
+      assert.equal(finished, true)
+    } finally {
+      mounted.resolve()
+      await result
+      vi.unstubAllGlobals()
+    }
+  }
+)
 
 test('an unrelated retained plugin does not count as the uninstalled target', async () => {
   const control = controlFixture({ present: false, managerIds: [70] })

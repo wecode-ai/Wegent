@@ -43,7 +43,7 @@ export async function verifyPluginEnabledState(control, fixture, enabled, timeou
   // A fresh renderer loads the composer catalog only when the real picker is
   // requested, so trigger that path before comparing its projection.
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
   await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
   let state
   try {
