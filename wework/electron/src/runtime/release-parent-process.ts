@@ -18,7 +18,7 @@ export async function processExecutable(pid: number): Promise<string> {
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); (Get-Process -Id ${pid} -ErrorAction Stop).Path`,
+            `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [System.Diagnostics.Process]::GetProcessById(${pid}).MainModule.FileName`,
           ],
         ] as const)
       : (['/bin/ps', ['-p', String(pid), '-o', 'comm=']] as const)

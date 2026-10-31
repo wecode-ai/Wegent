@@ -65,14 +65,6 @@ if (process.platform === 'win32') {
       ]
       const observations = await Promise.all(cases.map(observeWindowsAppData))
       if (observations.some(result => result.error)) {
-        if (process.env.PSModulePath && !environment.PSModulePath)
-          observations.push(
-            await observeWindowsAppData({
-              name: 'isolated-with-system-module-path',
-              environment: { ...environment, PSModulePath: process.env.PSModulePath },
-              timeout: 10_000,
-            })
-          )
         console.error(JSON.stringify(observations))
       }
       for (const result of observations) assert.ifError(result.error)
@@ -101,7 +93,7 @@ async function observeWindowsAppData({ name, environment, timeout }) {
           '[Console]::Error.WriteLine("encoding-ready")',
           '[Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)',
           '[Console]::Error.WriteLine("query-finished")',
-          'if ([string]::IsNullOrWhiteSpace((Get-Process -Id $PID -ErrorAction Stop).Path)) { throw "Native process path is unavailable" }',
+          'if ([string]::IsNullOrWhiteSpace([System.Diagnostics.Process]::GetProcessById($PID).MainModule.FileName)) { throw "Native process path is unavailable" }',
           '[Console]::Error.WriteLine("process-query-finished")',
         ].join('; '),
       ],
