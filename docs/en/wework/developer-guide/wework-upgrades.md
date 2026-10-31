@@ -65,18 +65,19 @@ pnpm --dir wework/electron test src/runtime/release-store.test.ts src/runtime/re
 pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 ```
 
-For existing pairs, provide `WEWORK_E2E_UPGRADE_PAIR`, `WEWORK_E2E_APP_BIN`, and `WEWORK_E2E_EXECUTOR_BIN`. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Change the shared scenario for behavior changes; change pair data for releases. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Run macOS arm64, macOS x64, and Windows x64 independently. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
+For existing pairs, provide `WEWORK_E2E_UPGRADE_PAIR`, `WEWORK_E2E_APP_BIN`, and `WEWORK_E2E_EXECUTOR_BIN`. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Change the shared scenario for behavior changes; change pair data for releases. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Run macOS arm64, macOS x64, Windows x64, and Windows arm64 independently. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
 
-The `Wework Upgrade E2E` workflow runs the complete three-platform matrix for non-draft PRs under `ci:all` and supports manual dispatch. Keep acceptance versions in `upgrade-suite.mjs`; rebuild fixtures after strengthening assertions instead of reusing old proof.
+The `Wework Upgrade E2E` workflow runs the complete four-platform matrix for non-draft PRs under `ci:all` and supports manual dispatch. Keep acceptance versions in `upgrade-suite.mjs`; rebuild fixtures after strengthening assertions instead of reusing old proof.
 
 The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
-The upgrade workflow covers all three platforms by default; manual dispatches can select one
+The upgrade workflow covers all four platforms by default; manual dispatches can select one
 `runner` for focused diagnosis. Intel Mac cold builds plus five serial real-package checkpoints
-have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
-75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
+have exceeded 75 minutes, so that platform has a 90-minute job budget. Windows arm64 uses a
+120-minute bound for native package construction, while the other platforms retain 75 minutes.
+These job limits do not change scenarios, assertions, or their internal waiting budgets.
 
 ## Native launcher linker
 
@@ -91,7 +92,7 @@ the build, matching Cargo.
 `node --test wework/scripts/build-launcher.test.mjs` compiles and starts the real launcher with
 Git `link.exe` first on PATH, and verifies that invalid linker settings are never ignored. Windows
 uses Git's actual `link.exe`; macOS/Linux use a native conflicting program to shadow the default
-`cc`. The upgrade E2E workflow runs this test on all three platforms.
+`cc`. The upgrade E2E workflow runs this test on all four platforms.
 
 ## Release promotion
 
@@ -108,11 +109,11 @@ assertion budget.
 
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
-| Fixed baseline X | Previous release | Publication decision |
-| --- | --- | --- |
-| Passes | Passes | Retain X and publish both verified edges |
-| Fails or is not a registered verification source | Passes | Raise the minimum to the previous release and publish only successful edges |
-| Any result | Fails | Block publication without advancing rolling manifests |
+| Fixed baseline X                                 | Previous release | Publication decision                                                        |
+| ------------------------------------------------ | ---------------- | --------------------------------------------------------------------------- |
+| Passes                                           | Passes           | Retain X and publish both verified edges                                    |
+| Fails or is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges |
+| Any result                                       | Fails            | Block publication without advancing rolling manifests                       |
 
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 

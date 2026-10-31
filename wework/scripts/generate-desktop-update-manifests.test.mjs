@@ -31,6 +31,7 @@ test('generates Electron and component rolling manifests from one release', asyn
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
+    ['windows', 'arm64'],
     ['windows', 'x64'],
     ['linux', 'x64'],
   ]) {
@@ -84,6 +85,7 @@ test('generates Electron and component rolling manifests from one release', asyn
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWork_${version}_windows_x64-setup.exe`
   )
+  await expect(readFile(resolve(output, 'latest-arm64.yml'))).rejects.toThrow()
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
@@ -99,6 +101,14 @@ test('generates Electron and component rolling manifests from one release', asyn
   expect(components.components.executor.downloadUrl).toBe(
     `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
   )
+  const windowsArm64 = JSON.parse(
+    await readFile(resolve(output, 'components-stable-windows-arm64.json'), 'utf8')
+  )
+  expect(windowsArm64).toMatchObject({
+    channel: 'stable',
+    platform: 'windows',
+    arch: 'arm64',
+  })
 })
 
 test('prefers slim Host update artifacts while retaining version release URLs', async () => {
@@ -119,6 +129,7 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
+    ['windows', 'arm64'],
     ['windows', 'x64'],
   ]) {
     await writeFile(
@@ -156,6 +167,15 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
   )
+  await expect(readFile(resolve(output, 'beta-arm64.yml'))).rejects.toThrow()
+  const windowsArm64 = JSON.parse(
+    await readFile(resolve(output, 'components-beta-windows-arm64.json'), 'utf8')
+  )
+  expect(windowsArm64).toMatchObject({
+    channel: 'beta',
+    platform: 'windows',
+    arch: 'arm64',
+  })
 })
 
 test('rejects an invalid release source SHA', async () => {
@@ -244,6 +264,44 @@ async function verifiedManifestFixture() {
       )
     }
   }
+  // The first native arm64 release has no prior arm64 package to verify. Its
+  // release job publishes a self-baseline policy with no incoming edges.
+  await writeFile(
+    resolve(assets, 'components-windows-arm64.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      appVersion: '1.2.3',
+      sourceSha: 'a'.repeat(40),
+      platform: 'windows',
+      arch: 'arm64',
+      components: {},
+    })
+  )
+  for (const channel of ['stable', 'beta']) {
+    await writeFile(
+      resolve(assets, `upgrade-policy-${channel}-windows-arm64.json`),
+      JSON.stringify({
+        schemaVersion: 1,
+        channel,
+        platform: 'windows',
+        arch: 'arm64',
+        releases: [
+          {
+            version: '1.2.3',
+            minSourceVersion: '1.2.3',
+            sha256: '3'.repeat(64),
+            sourceSha: 'a'.repeat(40),
+            url: 'https://example.com/1.2.3.tar.gz',
+            bytes: 1,
+            dataSchema: 1,
+            readableDataSchemas: [1],
+            revoked: false,
+          },
+        ],
+        edges: [],
+      })
+    )
+  }
   return {
     assets,
     output,
@@ -284,6 +342,29 @@ test('publishes the CI-confirmed floor and exact edges for every platform and ch
         rollback: 'passed',
       })
     }
+  }
+})
+
+test('publishes the first arm64 release as a self-baseline policy', async () => {
+  const fixture = await verifiedManifestFixture()
+  await run(fixture.args, { WEWORK_REQUIRE_UPGRADE_POLICY: 'true' })
+  for (const channel of ['stable', 'beta']) {
+    const manifest = JSON.parse(
+      await readFile(resolve(fixture.output, `components-${channel}-windows-arm64.json`), 'utf8')
+    )
+    expect(manifest.upgradePolicy).toMatchObject({
+      channel,
+      platform: 'windows',
+      arch: 'arm64',
+      releases: [
+        {
+          version: '1.2.3',
+          minSourceVersion: '1.2.3',
+          sourceSha: 'a'.repeat(40),
+        },
+      ],
+      edges: [],
+    })
   }
 })
 

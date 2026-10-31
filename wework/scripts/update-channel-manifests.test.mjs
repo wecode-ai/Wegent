@@ -27,6 +27,7 @@ describe('Wework update channel manifests', () => {
       'latest-mac.yml',
       'components-stable-macos-arm64.json',
       'components-stable-macos-x64.json',
+      'components-stable-windows-arm64.json',
       'components-stable-windows-x64.json',
       'components-stable-linux-x64.json',
     ])
@@ -44,6 +45,7 @@ describe('Wework update channel manifests', () => {
           'beta-mac.yml',
           'components-beta-macos-arm64.json',
           'components-beta-macos-x64.json',
+          'components-beta-windows-arm64.json',
           'components-beta-windows-x64.json',
           'components-beta-linux-x64.json',
         ],
