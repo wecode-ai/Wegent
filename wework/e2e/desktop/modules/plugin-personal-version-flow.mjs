@@ -85,6 +85,7 @@ export async function verifyPersonalPluginVersionSubmission({
   userDataDirectory,
 }) {
   const flowStartedAt = Date.now()
+  const commandStart = control.commandHistory.length
   const runtimeCost = { processRestarts: [], accountSwitches: [], phases: [] }
   let phaseStartedAt = flowStartedAt
   const recordPhase = phase => {
@@ -169,7 +170,8 @@ export async function verifyPersonalPluginVersionSubmission({
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: initialDisplayName })
-  await control.command('click', testId('plugins-refresh-button'))
+  // Native import invalidates its read cache without updating the mounted page.
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await control.command('waitFor', testId(`plugin-marketplace-row-${initialized.pluginId}`))
   await control.command('click', testId(`plugin-marketplace-row-${initialized.pluginId}`))
   await control.command('waitFor', testId('plugin-version-submit-notice'), { text: nextVersion })
@@ -218,42 +220,34 @@ export async function verifyPersonalPluginVersionSubmission({
   assert.ok(login.access_token, 'The real recipient login did not return an access token')
   const recipientCloud = { backendUrl: cloudEnvironment.backendUrl, authToken: login.access_token }
   recordPhase('version-submission')
-  const managedRecipient = await verifyPersonalRecipientManagedInstall({
-    cloudEnvironment,
-    control,
-    restartDesktopApp,
-    plugin: after,
-    recipientToken: login.access_token,
-    executorHome,
-    codexHome,
-    userDataDirectory,
-  })
-  recordPhase('recipient-managed-install')
-  const authorLifecycle = await verifyAuthorSourceUninstall({
-    control,
-    cloudEnvironment,
-    recipientCloud,
-    plugin: after,
-    access: accessBefore,
-    codexHome,
-    restartDesktopApp,
-    version: '1.1.1',
-    prepareSource: version => importPersonalSource(control, root, version, true),
-  })
-  after = authorLifecycle.plugin
-  recordPhase('author-source-uninstall-reinstall')
   const ownerAccount = await prepareAuthorAccountInstall({
     control,
     cloudEnvironment,
     plugin: after,
     executorHome,
-    source: authorLifecycle.source,
   })
   recordPhase('author-account-install')
+  let managedRecipient
   let crossAccountUninstall
   try {
-    // Keep the real local source on disk: cloud recipient authority must override it.
-    runtimeCost.accountSwitches.push(await switchPersonalPluginAccount(control, recipientCloud))
+    managedRecipient = await verifyPersonalRecipientManagedInstall({
+      cloudEnvironment,
+      control,
+      restartDesktopApp,
+      plugin: after,
+      recipientToken: login.access_token,
+      // Return to the retained source with the recipient still signed in. This
+      // shares the runtime-home restoration with the cross-account checks.
+      restoreToken: login.access_token,
+      executorHome,
+      codexHome,
+      userDataDirectory,
+    })
+    recordPhase('recipient-managed-install')
+    const connection = JSON.parse(
+      await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+    )
+    assert.equal(connection.user.id, recipient.id, 'The source runtime restored the wrong account')
     await control.command('navigate', 'body', { value: '/plugins' })
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('click', testId('plugins-distribution-tab-personal'))
@@ -288,7 +282,7 @@ export async function verifyPersonalPluginVersionSubmission({
       cloudEnvironment,
       recipientCloud,
       plugin: after,
-      source: authorLifecycle.source,
+      source: ownerAccount.source,
       ownerIdentity: ownerAccount.identity,
     })
 
@@ -339,12 +333,30 @@ export async function verifyPersonalPluginVersionSubmission({
     cloudEnvironment,
     recipientCloud,
     plugin: after,
-    source: authorLifecycle.source,
+    source: ownerAccount.source,
     ownerIdentity: ownerAccount.identity,
     executorHome,
     access: accessBefore,
   })
   recordPhase('author-account-uninstall')
+  // Account uninstall establishes the no-membership precondition. Keep the
+  // separate real restart that proves an explicitly uninstalled source stays off.
+  const authorLifecycle = await verifyAuthorSourceUninstall({
+    control,
+    cloudEnvironment,
+    recipientCloud,
+    plugin: after,
+    access: accessBefore,
+    codexHome,
+    restartDesktopApp: () =>
+      restartDesktopApp({
+        appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken },
+      }),
+    version: '1.1.1',
+    prepareSource: version => importPersonalSource(control, root, version, true),
+  })
+  after = authorLifecycle.plugin
+  recordPhase('author-source-uninstall-reinstall')
   const ownerContract = await verifyOwnerApiContract({
     control,
     cloudEnvironment,
@@ -385,16 +397,34 @@ export async function verifyPersonalPluginVersionSubmission({
     runtimeCost.processRestarts.every(restart => !restart.deviceSwitch),
     'Personal publication must reuse the initialized Electron device'
   )
-  assert.equal(runtimeCost.accountSwitches.length, 2)
-  const accountCommands = control.commandHistory.filter(
-    command => command.action === 'setCloudSessionToken'
-  )
-  assert.equal(accountCommands.length, 2)
+  assert.equal(runtimeCost.accountSwitches.length, 1)
+  const flowCommands = control.commandHistory.slice(commandStart)
+  const accountCommands = flowCommands.filter(command => command.action === 'setCloudSessionToken')
+  assert.equal(accountCommands.length, 1)
   assert.ok(
     accountCommands.every(command => command.value === '[redacted]'),
     'Account-switch diagnostics exposed a backend token'
   )
-  const cost = { ...runtimeCost, durationMs: Date.now() - flowStartedAt }
+  const rendererReloads = flowCommands.filter(
+    command => command.action === 'reloadMainWindow'
+  ).length
+  const runtimeReconnects = flowCommands.filter(
+    command => command.action === 'reconnectLocalExecutorCloud'
+  ).length
+  assert.equal(rendererReloads, 1, 'Personal publication added a full renderer reload')
+  assert.equal(runtimeReconnects, 2)
+  const inventoryRefreshes = flowCommands.filter(
+    command =>
+      ['click', 'clickWhenEnabled'].includes(command.action) &&
+      command.selector === testId('plugins-refresh-button')
+  ).length
+  const cost = {
+    ...runtimeCost,
+    rendererReloads,
+    runtimeReconnects,
+    inventoryRefreshes,
+    durationMs: Date.now() - flowStartedAt,
+  }
   console.log(`[personal-plugin-cost] ${JSON.stringify(cost)}`)
   await writeFile(
     join(root, 'verification.json'),

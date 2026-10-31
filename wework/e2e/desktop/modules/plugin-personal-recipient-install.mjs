@@ -3,10 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { writeCodexConfig } from './desktop-build-flows.mjs'
-import {
-  refreshPluginInventory,
-  waitForBundledPluginMarketplace,
-} from './plugin-inventory-state.mjs'
+import { waitForBundledPluginMarketplace } from './plugin-inventory-state.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -40,8 +37,10 @@ async function installSharedPlugin({ control, recipientCloud, plugin, executorHo
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
-  setPhase('refresh-shared-plugin')
-  await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
+  setPhase('wait-shared-plugin')
+  await control.command('waitFor', testId(`plugin-marketplace-install-${plugin.id}`), {
+    enabled: true,
+  })
   setPhase('verify-disconnected-recipient-gate')
   const deviceId = await disconnectPersonalPluginRuntime(control, recipientCloud, plugin)
   try {
@@ -69,11 +68,6 @@ async function installSharedPlugin({ control, recipientCloud, plugin, executorHo
   } finally {
     await restorePersonalPluginRuntime(control, deviceId)
   }
-  await control.command('navigate', 'body', { value: '/plugins' })
-  await control.command('waitFor', testId('plugins-search-input'))
-  await control.command('click', testId('plugins-distribution-tab-personal'))
-  await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
-  await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
   setPhase('open-install-confirmation')
   await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
   await control.command('waitFor', testId('install-plugin-dialog-confirm'))
@@ -151,8 +145,7 @@ async function assertManagedPackage(plugin, managed) {
 }
 
 async function assertRecipientActions(control, plugin) {
-  await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
-  await control.command('click', testId(`plugin-marketplace-row-${plugin.id}`))
+  await control.command('clickWhenEnabled', testId(`plugin-marketplace-row-${plugin.id}`))
   const primary = 'button[data-testid^="plugin-detail-toggle-"]'
   await control.command('waitFor', primary)
   await until(
@@ -184,12 +177,14 @@ export async function verifyPersonalRecipientManagedInstall({
   restartDesktopApp,
   plugin,
   recipientToken,
+  restoreToken,
   executorHome,
   codexHome,
   userDataDirectory,
 }) {
   assert.ok(executorHome && codexHome && userDataDirectory, 'Owner runtime paths are required')
   assert.ok(control.url, 'The existing synthetic model server URL is required')
+  assert.ok(restoreToken, 'The account for the restored source runtime is required')
   const recipientRoot = join(resultDir, 'personal-recipient-device')
   const recipientExecutorHome = join(recipientRoot, 'executor-home')
   const recipientCodexHome = join(recipientExecutorHome, 'codex')
@@ -265,7 +260,7 @@ export async function verifyPersonalRecipientManagedInstall({
         WEGENT_CODEX_HOME: codexHome,
         CODEX_HOME: codexHome,
         WEWORK_USER_DATA_DIR: userDataDirectory,
-        WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken,
+        WEWORK_E2E_CLOUD_TOKEN: restoreToken,
       },
     })
     const restored = await readyExecutor(control)

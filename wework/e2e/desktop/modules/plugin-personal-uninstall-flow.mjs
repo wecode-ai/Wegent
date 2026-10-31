@@ -78,7 +78,11 @@ async function assertPersonalSourceUnchanged(snapshot) {
   )
 }
 
-async function openPersonalPlugin(control, plugin, { expectSourceConflict = false } = {}) {
+async function openPersonalPlugin(
+  control,
+  plugin,
+  { expectSourceConflict = false, refresh = false, expectedVersion } = {}
+) {
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   await control.command('waitFor', testId('plugins-search-input'))
@@ -97,10 +101,19 @@ async function openPersonalPlugin(control, plugin, { expectSourceConflict = fals
       }
     )
     await control.command('waitFor', `${testId('plugins-refresh-button')}:not(:disabled)`)
-  } else {
+  } else if (refresh) {
     await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
   }
-  await control.command('click', testId(`plugin-marketplace-row-${plugin.id}`))
+  await openPersonalPluginDetail(control, plugin)
+  if (expectedVersion) {
+    await control.command('waitFor', testId('plugin-version-submit-notice'), {
+      text: expectedVersion,
+    })
+  }
+}
+
+async function openPersonalPluginDetail(control, plugin) {
+  await control.command('clickWhenEnabled', testId(`plugin-marketplace-row-${plugin.id}`))
   await control.command('waitFor', 'button[data-testid^="plugin-detail-actions-"]')
 }
 
@@ -166,15 +179,16 @@ export async function disconnectPersonalPluginRuntime(control, cloud, plugin) {
 }
 
 export async function restorePersonalPluginRuntime(control, deviceId) {
-  await reloadMainWindow(control, 'The restored Runtime did not reconnect to desktop control')
-  await control.command('waitFor', testId('new-chat-button'), {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await control.command('reconnectLocalExecutorCloud', 'body')
+  await waitForPersonalPluginConnection(control, deviceId)
+}
+
+async function waitForPersonalPluginConnection(control, deviceId) {
   await until(
     async () =>
       JSON.parse(await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })),
     state => state.backend.configured && state.backend.connected && state.rendererConnected,
-    'The real Runtime Socket did not reconnect after restoring the renderer',
+    'The real Runtime Socket did not reconnect to the renderer',
     WORKBENCH_READY_TIMEOUT_MS
   )
 }
@@ -187,7 +201,11 @@ export async function switchPersonalPluginAccount(control, cloud) {
   const disconnected = JSON.parse(await control.command('disconnectLocalExecutorCloud', 'body'))
   assert.deepEqual(disconnected, { configured: false, connected: false })
   await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
-  await restorePersonalPluginRuntime(control, before.deviceId)
+  await reloadMainWindow(control, 'The selected account did not reconnect to desktop control')
+  await control.command('waitFor', testId('new-chat-button'), {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForPersonalPluginConnection(control, before.deviceId)
   const connection = JSON.parse(
     await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
   )
@@ -223,7 +241,7 @@ export async function verifyAuthorSourceUninstall({
     true,
     'The author source was not installed before uninstall'
   )
-  await uninstallPersonalPluginInUi(control, plugin)
+  await uninstallPersonalPluginInUi(control, plugin, { refresh: true, expectedVersion: version })
   await until(
     () => pathExists(cache),
     exists => !exists,
@@ -232,7 +250,7 @@ export async function verifyAuthorSourceUninstall({
   await assertPersonalSourceUnchanged(source)
   await assertSharedRelease(cloudEnvironment, plugin, access)
   await assertAccountIdentity(recipientCloud, plugin, recipient)
-  await openPersonalPlugin(control, plugin)
+  await openPersonalPlugin(control, plugin, { refresh: true })
   assert.equal(
     await pathExists(cache),
     false,
@@ -250,6 +268,7 @@ export async function verifyAuthorSourceUninstall({
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
   await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
+  assert.equal(await pathExists(cache), false, 'Post-restart refresh reinstalled author source')
   const deviceId = await disconnectPersonalPluginRuntime(control, cloudEnvironment, plugin)
   try {
     assert.deepEqual(
@@ -284,7 +303,7 @@ export async function verifyAuthorSourceUninstall({
   } finally {
     await restorePersonalPluginRuntime(control, deviceId)
   }
-  await openPersonalPlugin(control, plugin)
+  await openPersonalPluginDetail(control, plugin)
   await control.command('waitFor', testId('plugin-version-submit-notice'), { text: version })
   await control.command('click', testId('plugin-version-submit-open'))
   await control.command('waitFor', testId('plugin-version-submit-drawer'))
@@ -321,8 +340,8 @@ export async function prepareAuthorAccountInstall({
   cloudEnvironment,
   plugin,
   executorHome,
-  source,
 }) {
+  const source = await snapshotPersonalSource(control, plugin)
   const runtime = JSON.parse(
     await control.command('getPluginRuntimeIdentityDiagnostics', 'body', {
       value: `${cloudEnvironment.backendUrl}/api`,
@@ -369,7 +388,7 @@ export async function prepareAuthorAccountInstall({
   )
   await openPersonalPlugin(control, plugin, { expectSourceConflict: true })
   assert.equal(String(installed.plugin.metadata.labels.id), identity.id)
-  return { identity }
+  return { identity, source }
 }
 
 export async function verifyRecipientUninstallDoesNotRemoveOwner({
@@ -403,7 +422,7 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
   await pluginApi(recipientCloud, `/plugins/installed/${recipientId}`, 'DELETE')
   assert.equal(await accountPlugin(recipientCloud, plugin.name), undefined)
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  await uninstallPersonalPluginInUi(control, plugin)
+  await uninstallPersonalPluginInUi(control, plugin, { refresh: true })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('uninstall-plugin-dialog'),
