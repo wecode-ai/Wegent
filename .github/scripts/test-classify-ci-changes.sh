@@ -2900,7 +2900,11 @@ import { execFileSync } from 'node:child_process'
 
 for (const suffix of ['', '_tests']) {
   const path = `executor/src/runtime_work/handler/stand_in_processing${suffix}.rs`
-  const output = execFileSync('bash', [process.argv[2]], { input: `${path}\n`, encoding: 'utf8' })
+  const output = execFileSync('bash', [process.argv[2]], {
+    input: `${path}\n`,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
+  })
   const matrix = output.split('\n').find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
   const checkpoints = JSON.parse(matrix.slice(matrix.indexOf('=') + 1)).include
     .flatMap(entry => entry.segments.split(','))
