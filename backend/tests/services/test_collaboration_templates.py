@@ -82,7 +82,7 @@ def test_templates_publish_and_install_by_reference_without_copying_source(
             resource_type="template",
             source_id=source.id,
             display_name="Product delivery",
-            version="1.0.0",
+            version=source.json["spec"]["version"],
         ),
         current_user=test_user,
     )
@@ -125,7 +125,7 @@ def test_inbox_templates_cannot_be_published_as_collaboration(test_db, test_user
                 resource_type="template",
                 source_id=source.id,
                 display_name="Inbox",
-                version="1.0.0",
+                version=source.json["spec"]["version"],
             ),
             current_user=test_user,
         )
@@ -141,7 +141,7 @@ def test_other_owner_cannot_publish_private_template(test_db, test_user):
                 resource_type="template",
                 source_id=source.id,
                 display_name="Private",
-                version="1.0.0",
+                version=source.json["spec"]["version"],
             ),
             current_user=test_user,
         )
