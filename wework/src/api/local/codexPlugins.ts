@@ -830,6 +830,18 @@ function rememberInstalledReadSnapshot(
   cachedStateAt = Date.now()
 }
 
+/** Read live inventory for diagnostics without selecting, hydrating, or refreshing a catalog. */
+export function peekLocalInstalledPluginInventory(): LocalPluginInventoryRead | null {
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!readStateMatchesDevice(cachedState, deviceId) || !cachedState.sourceReads) return null
+  return {
+    deviceId: cachedState.deviceId,
+    items: cachedState.installedPlugins,
+    sourceReads: cachedState.sourceReads,
+    partial: cachedState.installedPartial,
+  }
+}
+
 /** Returns the last local Codex marketplace snapshot without waiting on plugin/list. */
 export function peekLocalCodexPluginsReadState(
   params: {

@@ -5,6 +5,7 @@ import {
   listLocalInstalledPluginsFromDisk,
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
+  peekLocalInstalledPluginInventory,
   readLocalInstalledInventoryFromDisk,
   type LocalCodexPluginsState,
 } from './codexPlugins'
@@ -103,6 +104,66 @@ describe('local plugin source isolation', () => {
     expect(shared.localInstalledSourceStatus).toEqual(local.localInstalledSourceStatus)
     return local
   }
+
+  test.each(['membership-only', 'catalog-pending'] as const)(
+    'observes live %s inventory without selecting or mutating a catalog',
+    async mode => {
+      expect(peekLocalInstalledPluginInventory()).toBeNull()
+      const api = createLocalCodexPluginApi()
+      let release!: (value: unknown) => void
+      let catalog: Promise<LocalCodexPluginsState> | undefined
+      if (mode === 'catalog-pending') {
+        const original = mocks.request.getMockImplementation()!
+        mocks.request.mockImplementation((method, args) => {
+          if (method === 'codex.app_server_request' && args.method === 'plugin/list')
+            return new Promise(resolve => {
+              release = resolve
+            })
+          return original(method, args)
+        })
+        catalog = api.readState({
+          mergeAllMarketplaces: true,
+          marketplaceKinds: ['local'],
+          refresh: true,
+        })
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+      } else {
+        await api.listInstalledPlugins({ refresh: true })
+      }
+      try {
+        const requestCount = mocks.request.mock.calls.length
+        const snapshot = peekLocalInstalledPluginInventory()!
+        expect(snapshot.sourceReads?.store?.status).toBe('fulfilled')
+        expect(
+          snapshot.sourceReads?.store?.items?.map(plugin => plugin.spec.source.pluginKey)
+        ).toEqual(['managed-tool'])
+        expect(snapshot.items.map(plugin => plugin.spec.source.pluginKey).sort()).toEqual([
+          'codex-tool',
+          'managed-tool',
+        ])
+        expect(
+          peekLocalCodexPluginsReadState({
+            mergeAllMarketplaces: true,
+            marketplaceKinds: ['local'],
+          })
+        ).toBeNull()
+        expect(mocks.request).toHaveBeenCalledTimes(requestCount)
+        mocks.deviceId = 'device-b'
+        expect(peekLocalInstalledPluginInventory()).toBeNull()
+        mocks.deviceId = ''
+        expect(peekLocalInstalledPluginInventory()).toBeNull()
+        mocks.deviceId = 'device-a'
+        expect(peekLocalInstalledPluginInventory()).toEqual(snapshot)
+      } finally {
+        if (catalog) {
+          release({ marketplaces: [marketplace] })
+          await catalog
+        }
+      }
+      clearLocalCodexPluginsReadStateCache()
+      expect(peekLocalInstalledPluginInventory()).toBeNull()
+    }
+  )
 
   test.each([
     ['installed', 'remove'],

@@ -3371,15 +3371,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getComposerPluginInventoryDiagnostics': {
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
-      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
-      // PluginsWorkspace reconciles local-only catalogs before remote discovery.
-      const installed =
-        peekLocalCodexPluginsReadState({
-          mergeAllMarketplaces: true,
-          marketplaceKinds: ['local'],
-        }) ??
-        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
-        peekLocalCodexPluginsReadState()
+      const { peekLocalInstalledPluginInventory } = await import('@/api/local/codexPlugins')
+      const installed = peekLocalInstalledPluginInventory()
       return JSON.stringify({
         sharedInventory: getPluginInventoryDiagnostics(),
         installedSourceReads: pluginSourceReadDiagnostics(installed?.sourceReads),
@@ -3391,7 +3384,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           pluginKey: app.pluginKey ?? null,
           source: app.source,
         })),
-        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+        installedPlugins: (installed?.items ?? []).map(plugin => ({
           enabled: plugin.spec.enabled,
           installState: plugin.spec.installState,
           marketplace: plugin.spec.source.marketplace,

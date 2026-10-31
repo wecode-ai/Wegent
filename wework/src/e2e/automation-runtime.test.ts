@@ -42,83 +42,88 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
-  test.each(['local-only', 'prefer-local', 'legacy-all', 'legacy-selected'] as const)(
-    'reads coherent plugin source diagnostics from the %s catalog selection',
-    async mode => {
-      const snapshot = (name: string): codexPlugins.LocalCodexPluginsState => {
-        const plugin = toInstalledPlugin(
-          { name: 'wegent', path: '/plugins', plugins: [] },
-          { name, installed: true, enabled: true },
-          undefined,
-          key => key
-        )
-        return {
-          deviceId: 'diagnostic-device',
-          installedPlugins: [plugin],
-          sourceReads: { store: { status: 'fulfilled', items: [plugin] } },
-          marketplaceItems: [],
-          marketplaces: [],
-          selectedMarketplaceId: 'wegent',
-          marketplacePath: '/plugins',
-          installRegistryPath: '',
-        }
-      }
-      const local = snapshot('local-tool')
-      const all = snapshot('older-all-tool')
-      const selected = snapshot('selected-tool')
-      const peek = vi
-        .spyOn(codexPlugins, 'peekLocalCodexPluginsReadState')
-        .mockImplementation(params => {
-          if (params?.marketplaceKinds?.includes('local'))
-            return mode === 'local-only' || mode === 'prefer-local' ? local : null
-          if (params?.mergeAllMarketplaces)
-            return mode === 'prefer-local' || mode === 'legacy-all' ? all : null
-          return mode === 'legacy-selected' ? selected : null
-        })
-      const expected =
-        mode === 'legacy-all'
-          ? 'older-all-tool'
-          : mode === 'legacy-selected'
-            ? 'selected-tool'
-            : 'local-tool'
-      const results: Array<{ ok: boolean; value?: string }> = []
-      let polls = 0
-      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
-        if (url.includes('/commands?')) {
-          if (++polls > 1) return new Promise<Response>(() => {})
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                id: 'plugin-source-diagnostics',
-                action: 'getComposerPluginInventoryDiagnostics',
-                selector: 'body',
-              })
-            )
-          )
-        }
-        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
-        return Promise.resolve(new Response('{}'))
-      })
-      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
-      await vi.waitFor(() => expect(results).toHaveLength(1))
-      expect(results[0].ok).toBe(true)
-      const diagnostics = JSON.parse(results[0].value!)
-      expect(diagnostics.installedSourceReads.store).toEqual({
-        status: 'fulfilled',
-        pluginKeys: [expected],
-      })
-      expect(
-        diagnostics.installedPlugins.map((plugin: { pluginKey: string }) => plugin.pluginKey)
-      ).toEqual([expected])
-      expect(peek).toHaveBeenNthCalledWith(1, {
-        mergeAllMarketplaces: true,
-        marketplaceKinds: ['local'],
-      })
-      expect(peek).toHaveBeenCalledTimes(
-        mode === 'legacy-selected' ? 3 : mode === 'legacy-all' ? 2 : 1
+  test.each([
+    'no-catalog',
+    'local-only',
+    'prefer-local',
+    'legacy-all',
+    'legacy-selected',
+    'empty-inventory',
+    'no-inventory',
+  ] as const)('reads live plugin inventory diagnostics with a %s catalog', async mode => {
+    const snapshot = (name: string): codexPlugins.LocalCodexPluginsState => {
+      const plugin = toInstalledPlugin(
+        { name: 'wegent', path: '/plugins', plugins: [] },
+        { name, installed: true, enabled: true },
+        undefined,
+        key => key
       )
+      return {
+        deviceId: 'diagnostic-device',
+        installedPlugins: [plugin],
+        sourceReads: { store: { status: 'fulfilled', items: [plugin] } },
+        marketplaceItems: [],
+        marketplaces: [],
+        selectedMarketplaceId: 'wegent',
+        marketplacePath: '/plugins',
+        installRegistryPath: '',
+      }
     }
-  )
+    const local = snapshot('local-tool')
+    const all = snapshot('older-all-tool')
+    const selected = snapshot('selected-tool')
+    const peek = vi
+      .spyOn(codexPlugins, 'peekLocalCodexPluginsReadState')
+      .mockImplementation(params => {
+        if (params?.marketplaceKinds?.includes('local'))
+          return mode === 'local-only' || mode === 'prefer-local' ? local : null
+        if (params?.mergeAllMarketplaces)
+          return mode === 'prefer-local' || mode === 'legacy-all' ? all : null
+        return mode === 'legacy-selected' ? selected : null
+      })
+    const live = snapshot('live-tool')
+    const expectedKeys = mode === 'empty-inventory' || mode === 'no-inventory' ? [] : ['live-tool']
+    const liveItems = mode === 'empty-inventory' ? [] : live.installedPlugins
+    const inventory = vi.spyOn(codexPlugins, 'peekLocalInstalledPluginInventory').mockReturnValue(
+      mode === 'no-inventory'
+        ? null
+        : {
+            deviceId: live.deviceId,
+            items: liveItems,
+            sourceReads: { store: { status: 'fulfilled', items: liveItems } },
+          }
+    )
+    const results: Array<{ ok: boolean; value?: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'plugin-source-diagnostics',
+              action: 'getComposerPluginInventoryDiagnostics',
+              selector: 'body',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await vi.waitFor(() => expect(results).toHaveLength(1))
+    expect(results[0].ok).toBe(true)
+    const diagnostics = JSON.parse(results[0].value!)
+    expect(diagnostics.installedSourceReads).toEqual(
+      mode === 'no-inventory' ? {} : { store: { status: 'fulfilled', pluginKeys: expectedKeys } }
+    )
+    expect(
+      diagnostics.installedPlugins.map((plugin: { pluginKey: string }) => plugin.pluginKey)
+    ).toEqual(expectedKeys)
+    expect(inventory).toHaveBeenCalledTimes(1)
+    expect(peek).not.toHaveBeenCalled()
+  })
   test('reports metric cardinality across missing, mounted, and duplicate DOM surfaces', async () => {
     const surface = document.createElement('section')
     surface.dataset.testid = 'layout-cardinality-surface'

@@ -4,11 +4,53 @@ import {
   assertSurfaces,
   installFixture,
   openPlugin,
+  requestPluginExecutor,
 } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 import { verifyPluginEnabledState } from '../e2e/desktop/modules/plugin-inventory-state.mjs'
 import { assertRecoveredPluginInventory } from '../e2e/desktop/modules/plugin-partial-inventory-resilience.mjs'
 
 const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
+
+test.each([200, 401, 403, 500])(
+  'uses the Electron session for plugin RPC and preserves HTTP %s',
+  async status => {
+    const origin = 'http://127.0.0.1:3000'
+    const payload =
+      status === 200 ? { ok: true, result: [] } : { ok: false, error: { code: 'probe' } }
+    const command = vi.fn(async (action, selector, options) => {
+      assert.equal(selector, 'body')
+      if (action === 'getLocationOrigin') return origin
+      assert.equal(action, 'fetchLocalRuntime')
+      assert.equal(options.timeoutMs, 10_000)
+      assert.deepEqual(JSON.parse(options.value), {
+        url: `${origin}/wework/executor/v1/rpc`,
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: 'plugin-regression',
+          method: 'executor.plugins.store.list',
+          params: {},
+        }),
+        timeoutMs: 10_000,
+      })
+      return JSON.stringify({ status, headers: {}, body: JSON.stringify(payload) })
+    })
+    const fetch = vi.fn(() => {
+      throw new Error('Plugin RPC must use the authenticated session')
+    })
+    vi.stubGlobal('fetch', fetch)
+    try {
+      assert.deepEqual(await requestPluginExecutor({ command }, 'executor.plugins.store.list'), {
+        status,
+        payload,
+      })
+      assert.equal(command.mock.calls.length, 2)
+      assert.equal(fetch.mock.calls.length, 0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+)
 
 test.each(['home', 'marketplace', 'detail'])(
   'opens the requested marketplace row from %s without retaining an earlier detail',
