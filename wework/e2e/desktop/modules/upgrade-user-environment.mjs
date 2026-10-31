@@ -13,6 +13,7 @@ const SYSTEM_KEYS = new Set(
     'TMPDIR',
     'USER',
     'USERNAME',
+    'USERPROFILE',
     'LOGNAME',
     'SHELL',
     'LANG',
@@ -40,6 +41,7 @@ const CONTROL_KEYS = new Set([
 ])
 
 export function upgradeUserEnvironment(environment, home) {
+  // HOME isolates workbench data; USERPROFILE remains the Windows logon profile.
   return {
     ...Object.fromEntries(
       Object.entries(environment).filter(
@@ -47,6 +49,5 @@ export function upgradeUserEnvironment(environment, home) {
       )
     ),
     HOME: home,
-    USERPROFILE: home,
   }
 }
