@@ -1,6 +1,10 @@
 import type { WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import {
+  getDshTelemetrySinks,
+  subscribeDshTelemetrySinks,
+} from '@/features/dsh-runtime/dshExtensions'
 import { subscribeBusinessEvents } from './businessEvents'
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
@@ -15,7 +19,7 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { trackEvent, useTelemetryEnabled } from './client'
 import { createTelemetryDispatcher } from './dispatcher'
 import type { AnalyticsEvent, AnalyticsEventName } from './events'
-import type { DomainTelemetryEvent, WeworkTelemetryFact } from './facts'
+import type { DomainTelemetryEvent, WeworkTelemetryFact, WeworkTelemetrySink } from './facts'
 import type { OperationResult } from './operationBus'
 import { subscribeOperationResults } from './operationBus'
 import { resolveTelemetryRoute } from './routeRegistry'
@@ -56,6 +60,14 @@ function fact(
   context?: WeworkTelemetryFact['context']
 ): WeworkTelemetryFact {
   return { ...event, ...(context ? { context } : {}), occurredAt: new Date().toISOString() }
+}
+
+function internalSinks(): readonly WeworkTelemetrySink[] {
+  return getDshTelemetrySinks().map(sink => ({
+    id: sink.id,
+    protocol: sink.protocol,
+    accept: envelope => sink.accept(envelope as unknown as Readonly<Record<string, unknown>>),
+  }))
 }
 
 function operationEvent(result: OperationResult): DomainTelemetryEvent {
@@ -142,7 +154,14 @@ export function TelemetryAgent() {
   const telemetryExplicitlyDisabledRef = useRef(telemetryExplicitlyDisabled)
   const telemetryEnabledRef = useRef(telemetryEnabled)
   const seenDesktopStartupEventsRef = useRef(new Set<string>())
-  const dispatcher = useMemo(() => createTelemetryDispatcher(trackEvent), [])
+  const dispatcher = useMemo(
+    () =>
+      createTelemetryDispatcher(trackEvent, {
+        internalSinks,
+        isInternalDeliveryEnabled: () => telemetryEnabled && !telemetryExplicitlyDisabled,
+      }),
+    [telemetryEnabled, telemetryExplicitlyDisabled]
+  )
 
   useEffect(() => {
     telemetryEnabledRef.current = telemetryEnabled
@@ -150,7 +169,10 @@ export function TelemetryAgent() {
     if (telemetryExplicitlyDisabled) {
       pendingDesktopStartupEventsRef.current = []
     }
-  }, [telemetryEnabled, telemetryExplicitlyDisabled])
+    if (telemetryEnabled && !telemetryExplicitlyDisabled) dispatcher.flushInternalSinks()
+  }, [dispatcher, telemetryEnabled, telemetryExplicitlyDisabled])
+
+  useEffect(() => subscribeDshTelemetrySinks(() => dispatcher.flushInternalSinks()), [dispatcher])
 
   useEffect(
     () =>

@@ -10,6 +10,7 @@ import type {
   WeworkExtensionHost,
   WeworkKeybindingContribution,
   WeworkMenuContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -108,6 +109,14 @@ export function subscribeDshExtensions(listener: () => void): () => void {
   return host.subscribe(listener)
 }
 
+export function getDshTelemetrySinks(): readonly WeworkTelemetrySink[] {
+  return getDshExtensionHost()?.telemetry.sinks.list() ?? []
+}
+
+export function subscribeDshTelemetrySinks(listener: () => void): () => void {
+  return getDshExtensionHost()?.telemetry.sinks.subscribe(listener) ?? (() => {})
+}
+
 export function getDshKeybindingDefaults(platform: DesktopPlatform): readonly KeybindingCommand[] {
   const host = getDshExtensionHost()
   if (!host) return []
@@ -131,4 +140,5 @@ export type {
   WeworkMenuTitle,
   WeworkResolvedMenuContribution,
   WeworkResolvedComposerReferenceContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'

@@ -655,6 +655,11 @@ jobs:
           pnpm --filter @wegent/process-explorer typecheck
           pnpm --filter @wegent/process-explorer test
 
+      - name: Run Wework DSH Node tests
+        if: matrix.shard == 1
+        working-directory: ./wework
+        run: node --test $(find dsh -name '*.test.mjs' -print)
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai

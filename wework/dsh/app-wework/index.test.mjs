@@ -52,6 +52,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
   assert.ok(html.includes('"controlToken":"control-token"'))
   assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))
   assert.ok(html.includes('"posthogKey":"posthog-test-key"'))
+  assert.ok(!html.includes('"telemetryDistribution"'))
   assert.ok(html.includes('"localModelsCatalogReady":false'))
   assert.ok(html.includes('"seedLocalModels":true'))
   assert.ok(html.includes('"transcriptPageSize":20'))

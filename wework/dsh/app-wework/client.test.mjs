@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import vm from 'node:vm'
+import JSZip from 'jszip'
 
-async function loadClient() {
+import { apply as applyConversationExport } from '../conversation-export/index.js'
+
+async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let registration
   const listeners = new Map()
@@ -27,6 +32,7 @@ async function loadClient() {
     String,
     Symbol,
     console,
+    setTimeout: setTimeoutImpl,
     window: hostWindow,
   })
   assert.ok(registration)
@@ -107,6 +113,34 @@ test('registers Wework as the DSH root application', async () => {
   assert.equal(workspaceGroup.options.children['wework.workspace.tab'].scope, 'session-maybe')
   assert.equal(workspaceGroup.options.children['wework.task.status'].scope, 'root')
   assert.equal(typeof registration.component, 'function')
+})
+
+test('registers telemetry sinks with Cordis lifecycle cleanup', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const cleanups = []
+  const owner = {
+    effect(factory) {
+      const cleanup = factory()
+      cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  const sink = {
+    id: 'internal',
+    protocol: 'telemetry-sink/v1',
+    accept() {},
+  }
+
+  runtime.service.telemetry.sinks.register(owner, sink)
+  assert.equal(runtime.service.telemetry.sinks.list()[0].id, sink.id)
+  assert.throws(
+    () => runtime.service.telemetry.sinks.register(owner, { ...sink, accept: undefined }),
+    /requires accept\(\)/
+  )
+
+  for (const cleanup of cleanups.reverse()) cleanup()
+  assert.equal(runtime.service.telemetry.sinks.list().length, 0)
 })
 
 test('projects native DSH sidebar slot entries into Wework containers', async () => {
@@ -416,6 +450,246 @@ test('calls lifecycle-safe plugin backends through the shared runtime', async ()
 
   runtime.dispose()
   await assert.rejects(backend.request('analyze'), /disposed/)
+})
+
+test('retries a plugin backend that is not registered yet', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              ok: false,
+              error: { code: 'plugin_not_found', message: 'not registered', retryable: false },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result: { enabled: true } }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  assert.deepEqual(await backend.request('ready', {}), { enabled: true })
+  assert.equal(attempts, 2)
+  runtime.dispose()
+})
+
+test('stops retrying when a plugin backend does not register in time', async () => {
+  const delayed = []
+  const client = await loadClient({
+    setTimeoutImpl(resolve) {
+      delayed.push(resolve)
+      return delayed.length
+    },
+  })
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      return {
+        ok: false,
+        status: 404,
+        async json() {
+          return {
+            ok: false,
+            error: { code: 'plugin_not_found', message: 'not registered', retryable: false },
+          }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  const request = backend.request('ready', {})
+  for (let retry = 0; retry < 8; retry += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(delayed.length, 1)
+    delayed.shift()()
+  }
+
+  await assert.rejects(request, /not registered/)
+  assert.equal(attempts, 9)
+  runtime.dispose()
+})
+
+test('does not retry a plugin backend request after its transport loses the response', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      if (attempts === 1)
+        throw new TypeError('Failed to fetch after the handler wrote the response')
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result: { enabled: true } }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  await assert.rejects(backend.request('ready', {}), /Plugin backend is unreachable/)
+  assert.equal(attempts, 1)
+  runtime.dispose()
+})
+
+test('does not duplicate a conversation export write after its response is lost', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-backend-retry-'))
+  const destination = join(root, 'conversation.zip')
+  let registration
+  const cleanups = []
+  applyConversationExport({
+    effect(factory) {
+      cleanups.push(factory())
+    },
+    weworkPluginRuntime: {
+      register(_owner, value) {
+        registration = value
+      },
+    },
+  })
+  const { exportTaskId } = await registration.methods.start({
+    path: destination,
+    archive: true,
+    documentName: 'conversation.md',
+    assetCount: 1,
+  })
+  const calls = new Map()
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async (_path, options) => {
+      const request = JSON.parse(options.body)
+      const count = (calls.get(request.method) ?? 0) + 1
+      calls.set(request.method, count)
+      const result = await registration.methods[request.method](request.params)
+      if (count === 1) throw new TypeError('Response lost after the handler wrote the export')
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result }
+        },
+      }
+    },
+  })
+  const backend = runtime.service.backend.scope('conversation-export')
+
+  await assert.rejects(
+    backend.request('append', { exportTaskId, content: 'hello\\n' }),
+    /Plugin backend is unreachable/
+  )
+  await assert.rejects(
+    backend.request('appendAsset', {
+      exportTaskId,
+      archivePath: 'attachments/hello.txt',
+      contentBase64: Buffer.from('hello\\n').toString('base64'),
+    }),
+    /Plugin backend is unreachable/
+  )
+  assert.deepEqual(
+    [...calls],
+    [
+      ['append', 1],
+      ['appendAsset', 1],
+    ]
+  )
+
+  await registration.methods.finish({ exportTaskId })
+  const status = await waitForExportCompletion(registration.methods, exportTaskId)
+  const archive = await JSZip.loadAsync(await readFile(destination))
+  assert.equal(status.state, 'completed')
+  assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
+  assert.equal(await archive.file('attachments/hello.txt').async('string'), 'hello\\n')
+
+  runtime.dispose()
+  for (const cleanup of cleanups) cleanup()
+  await rm(root, { recursive: true, force: true })
+})
+
+test('does not send a delayed retry after the extension runtime is disposed', async () => {
+  let resolveDelay
+  const client = await loadClient({
+    setTimeoutImpl(resolve) {
+      resolveDelay = resolve
+      return 0
+    },
+  })
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              ok: false,
+              error: { code: 'plugin_not_found', message: 'not registered', retryable: false },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result: { enabled: true } }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  const request = backend.request('ready', {})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(typeof resolveDelay, 'function')
+
+  runtime.dispose()
+  resolveDelay()
+
+  await assert.rejects(request, /disposed/)
+  assert.equal(attempts, 1)
+})
+
+test('surfaces plugin backend failures that retrying cannot fix', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      return {
+        ok: false,
+        status: 404,
+        async json() {
+          return {
+            ok: false,
+            error: { code: 'method_not_found', message: 'missing method', retryable: false },
+          }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  await assert.rejects(backend.request('ready', {}), /missing method/)
+  assert.equal(attempts, 1)
+  runtime.dispose()
 })
 
 test('filters menus and keybindings through shared context expressions', async () => {
@@ -795,3 +1069,12 @@ test('waits for the Wework application bundle when it loads after DSH plugins', 
   assert.equal(mounted, true)
   cleanup()
 })
+
+async function waitForExportCompletion(methods, exportTaskId) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const status = await methods.status({ exportTaskId })
+    if (status.state === 'completed' || status.state === 'failed') return status
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error('Conversation export did not finish in time')
+}
