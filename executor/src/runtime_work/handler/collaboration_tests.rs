@@ -7,6 +7,47 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 
+#[test]
+fn native_member_does_not_complete_before_its_first_turn_starts() {
+    use crate::runtime_work::lifecycle::begin_native_request;
+
+    let mut link = RuntimeTaskLink::new_pending(
+        "member-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Member".to_owned(),
+    );
+    begin_native_request(&mut link);
+
+    assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    assert!(link.running);
+    assert_eq!(collaboration_member_status(&link), "running");
+}
+
+#[test]
+fn native_member_waits_for_the_execution_after_a_completed_turn() {
+    use crate::runtime_work::lifecycle::{
+        begin_native_request, native_execution_state, project_native_execution,
+        settle_native_execution, NativeExecutionPhase,
+    };
+
+    let mut link = RuntimeTaskLink::new_pending(
+        "member-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Member".to_owned(),
+    );
+    begin_native_request(&mut link);
+    settle_native_execution(&mut link, "succeeded");
+    assert_eq!(collaboration_member_status(&link), "completed");
+
+    let mut state = native_execution_state(&link).unwrap();
+    state.phase = NativeExecutionPhase::Continuing;
+    project_native_execution(&mut link, &state);
+
+    assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    assert!(link.completed_at.is_none());
+    assert_eq!(collaboration_member_status(&link), "running");
+}
+
 async fn assignment_report_backend() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     assignment_report_backend_with_status(StatusCode::SERVICE_UNAVAILABLE).await
 }

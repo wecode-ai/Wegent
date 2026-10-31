@@ -340,6 +340,13 @@ export async function createDesktopScenario(options) {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       assert.equal(await installedVersion(), pair.from.version)
+      const { release: sourceRuntime } = JSON.parse(
+        await control.command('getDesktopRuntimeDiagnostics', 'body')
+      )
+      await writeFile(
+        join(resultDir, 'source-runtime-result.json'),
+        `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
+      )
       console.log(`[upgrade-e2e] Source ${pair.from.version} is ready`)
       const workspace = join(workspacePath, 'upgrade-source-project')
       await mkdir(workspace, { recursive: true })
