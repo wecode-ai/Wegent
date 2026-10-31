@@ -1,3 +1,4 @@
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { Brain, Plus, X } from 'lucide-react'
@@ -113,13 +114,10 @@ export function StandInMemoryPanel({
         scope: fixedScope ?? { kind: 'personal' },
       }
     )
-  const close = () => {
-    if (busy) return
-    if (dirty) setDiscard('close')
-    else onClose()
-  }
+  const navigation = useStandInPanelNavigation(dirty, busy, () => setDiscard('close'))
+  const close = () => navigation.requestLeave(onClose)
   const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
-  useImperativeHandle(ref, () => ({ requestClose: close }))
+  useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true)
     setError(null)
@@ -338,11 +336,16 @@ export function StandInMemoryPanel({
         confirmLabel={t('standIn.memory.discard')}
         confirmTestId="stand-in-memory-discard"
         cancelTestId="stand-in-memory-keep"
-        onClose={() => setDiscard(null)}
+        onClose={() => {
+          navigation.cancelLeave()
+          setDiscard(null)
+        }}
         onConfirm={() => {
           setEditing(null)
           setDiscard(null)
-          if (discard === 'close') onClose()
+          navigation.confirmLeave(() => {
+            if (discard === 'close') onClose()
+          })
         }}
       />
     </div>

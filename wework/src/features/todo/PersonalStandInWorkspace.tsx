@@ -88,9 +88,10 @@ export function PersonalStandInWorkspace({
         </div>
       )}
       <StandInOverviewPage
-        key={`${profileId ?? 'primary'}:${deviceId ?? 'default'}`}
+        key={deviceId ?? 'default'}
         initialProfileId={profileId}
         initialDeviceId={deviceId}
+        settingsRequestKey={query.get('settingsRequest') ?? undefined}
         initialWorkView={workView}
         api={api}
         projects={projects}

@@ -1,3 +1,4 @@
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
@@ -44,6 +45,7 @@ import { findStandInProject } from './standInProjects'
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
   requestClose(): void
+  requestLeave(action: () => void): void
 }
 
 export function StandInSettingsPage({
@@ -204,16 +206,16 @@ export function StandInSettingsPage({
     } else if (dirty) setConfirmDiscard(true)
     else onCancel?.()
   }
-  const closeSettings = () => {
-    if (saving) return
-    if (dirty) setConfirmDiscard(true)
-    else onCancel?.()
-  }
+  const navigation = useStandInPanelNavigation(dirty, saving, () => setConfirmDiscard(true))
+  const closeSettings = () => navigation.requestLeave(() => onCancel?.())
   const dialogRef = useDialogKeyboard<HTMLElement>(
     close,
     Boolean(initialCreate || initialProfileId) && !confirmDiscard
   )
-  useImperativeHandle(ref, () => ({ requestClose: closeSettings }))
+  useImperativeHandle(ref, () => ({
+    requestClose: closeSettings,
+    requestLeave: navigation.requestLeave,
+  }))
   const save = async (disconnectProject = false) => {
     if (!draft || !role) return
     if (view === 'create' && !role.name.trim()) {
@@ -794,11 +796,14 @@ export function StandInSettingsPage({
                 confirmLabel={t('standIn.personal.discard')}
                 confirmTestId="stand-in-discard"
                 cancelTestId="stand-in-keep-editing"
-                onClose={() => setConfirmDiscard(false)}
+                onClose={() => {
+                  navigation.cancelLeave()
+                  setConfirmDiscard(false)
+                }}
                 onConfirm={() => {
                   setDraft(saved)
                   setConfirmDiscard(false)
-                  onCancel?.()
+                  navigation.confirmLeave(() => onCancel?.())
                 }}
               />
             </div>

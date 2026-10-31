@@ -1891,7 +1891,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onFocusedItemHandled={props.onFocusedItemHandled}
               onOpenSettings={props.onOpenSettings}
               onOpenStandInSettings={(roleId, deviceId) => {
-                const query = new URLSearchParams({ profileId: roleId, deviceId })
+                const query = new URLSearchParams({
+                  profileId: roleId,
+                  deviceId,
+                  settingsRequest: crypto.randomUUID(),
+                })
                 navigateTo(`/stand-in?${query}`)
               }}
               onOpenRuntimeTask={props.onOpenRuntimeTask}

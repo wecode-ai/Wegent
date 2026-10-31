@@ -476,3 +476,61 @@ it('handles repeated scheduled menu requests and guards each request after cance
   requestScheduledWork()
   expect(menuMocks.leave).toHaveBeenCalledTimes(afterCancellation + 1)
 })
+
+it('reopens the same role settings for a new explicit project entry request', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  const view = render(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="first" />
+  )
+  await screen.findByTestId('stand-in-role-name')
+  await user.click(screen.getByTestId('stand-in-cancel'))
+  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
+  view.rerender(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="second" />
+  )
+  expect(await screen.findByTestId('stand-in-role-name')).toHaveValue('')
+})
+
+it('locates the requested role after a different role was selected inside the page', async () => {
+  const other = { ...newStandInRole('device', 'other'), name: 'Other role' }
+  const { props } = fixture([newStandInRole('device', 'default'), other])
+  const user = userEvent.setup()
+  const view = render(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="first" />
+  )
+  await user.click(await screen.findByTestId('stand-in-cancel'))
+  await user.click(screen.getByTestId('stand-in-overview-role-other'))
+  view.rerender(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="second" />
+  )
+  expect(await screen.findByTestId('stand-in-role-name')).toHaveValue('')
+  expect(screen.getByTestId('stand-in-overview-role-default')).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+})
+
+it('guards a dirty memory panel before a new explicit settings request', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  const view = render(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="first" />
+  )
+  await user.click(await screen.findByTestId('stand-in-cancel'))
+  await user.click(screen.getByTestId('stand-in-memory-open'))
+  await user.click(await screen.findByTestId('stand-in-memory-add'))
+  const field = await screen.findByTestId('stand-in-memory-content')
+  await user.type(field, 'Keep this memory draft')
+  view.rerender(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="second" />
+  )
+  expect(screen.getByTestId('stand-in-memory-content')).toBe(field)
+  await user.click(await screen.findByTestId('stand-in-memory-keep'))
+  expect(field).toHaveValue('Keep this memory draft')
+  view.rerender(
+    <StandInOverviewPage {...props} initialProfileId="default" settingsRequestKey="third" />
+  )
+  await user.click(await screen.findByTestId('stand-in-memory-discard'))
+  expect(await screen.findByTestId('stand-in-role-name')).toHaveValue('')
+})

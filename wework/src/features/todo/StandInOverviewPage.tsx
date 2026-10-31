@@ -36,12 +36,14 @@ export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
   initialWorkView = 'work',
+  settingsRequestKey,
   active = true,
   ...props
 }: SettingsProps & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
   initialWorkView?: 'work' | 'scheduled'
+  settingsRequestKey?: string
   active?: boolean
 }) {
   const { t } = useTranslation('common')
@@ -64,6 +66,22 @@ export function StandInOverviewPage({
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   const automationRef = useRef<AutomationNavigationHandle>(null)
+  const previousSettingsRequest = useRef(settingsRequestKey)
+  useEffect(() => {
+    if (previousSettingsRequest.current === settingsRequestKey) return
+    previousSettingsRequest.current = settingsRequestKey
+    if (!settingsRequestKey) return
+    const targetRole = props.initialProfileId === '@primary' ? undefined : props.initialProfileId
+    const targetPanel = props.initialProfileId === '@primary' ? 'primary' : 'role'
+    if (profile === targetPanel && roleId === targetRole) return
+    const openSettings = () => {
+      setRoleId(targetRole)
+      setProfile(targetPanel)
+    }
+    if (panelRef.current) panelRef.current.requestLeave(openSettings)
+    else if (automationRef.current) automationRef.current.requestLeave(openSettings)
+    else openSettings()
+  }, [settingsRequestKey, props.initialProfileId, profile, roleId])
   useEffect(() => {
     if (!active) return
     const onNavigate = (event: Event) => {
@@ -538,6 +556,7 @@ export function StandInOverviewPage({
                   />
                 ) : (
                   <StandInSettingsPage
+                    key={profile === 'create' ? '@create' : (roleId ?? '@default')}
                     {...props}
                     ref={panelRef}
                     initialProfileId={roleId}

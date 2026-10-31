@@ -1,3 +1,4 @@
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { X } from 'lucide-react'
@@ -80,13 +81,10 @@ export function StandInPrimaryProfile({
     ...draft,
     collaboration: draft.collaboration ?? newStandInRole(settings.executionDeviceId).collaboration,
   }
-  const close = () => {
-    if (saving) return
-    if (dirty) setDiscard(true)
-    else onClose()
-  }
+  const navigation = useStandInPanelNavigation(dirty, saving, () => setDiscard(true))
+  const close = () => navigation.requestLeave(onClose)
   const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
-  useImperativeHandle(ref, () => ({ requestClose: close }))
+  useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
   return (
     <div
       ref={dialogRef}
@@ -222,8 +220,14 @@ export function StandInPrimaryProfile({
         confirmLabel={t('standIn.personal.discard')}
         confirmTestId="stand-in-primary-discard"
         cancelTestId="stand-in-primary-keep-editing"
-        onClose={() => setDiscard(false)}
-        onConfirm={onClose}
+        onClose={() => {
+          navigation.cancelLeave()
+          setDiscard(false)
+        }}
+        onConfirm={() => {
+          setDiscard(false)
+          navigation.confirmLeave(onClose)
+        }}
       />
       <footer className="sticky bottom-0 z-10 mt-6 flex justify-end gap-2 border-t border-border bg-background py-4">
         <button
