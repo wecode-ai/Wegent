@@ -66,6 +66,30 @@ fn admitted_turn_history_cannot_synthesize_interruption_before_native_start() {
 }
 
 #[test]
+fn started_turn_history_stays_running_before_its_transcript_buffer_is_created() {
+    let (handler, root, request) = setup("native-start-history-publication");
+    handler.apply_native_lifecycle("task-1", &request, &notification("turn/started", "turn-1"));
+    let before = handler.local_task_link("task-1").unwrap().execution_state;
+    let mut thread = json!({"id": "thread-1", "timeline": true, "turns": [{
+        "id": "turn-1", "status": "interrupted", "items": []
+    }]});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    assert_eq!(
+        handler.local_task_link("task-1").unwrap().execution_state,
+        before
+    );
+    assert!(handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn recovery_exit_settles_only_its_own_failed_turn() {
     for next_turn in [false, true] {
         let (handler, root, _) = setup("native-recovery-exit");

@@ -98,6 +98,7 @@ import {
   removePluginMarketplaceInstallation,
 } from '@/features/plugins/pluginMarketplaceCache'
 import {
+  pluginInstallationReadIsCurrent,
   updatePluginInventoryInstallation,
   writePluginInventory,
   pluginInventoryReadIsCurrent,
@@ -4314,7 +4315,7 @@ export function PluginsWorkspace({
       })
       .then(localState => {
         if (cancelled) return
-        if (!pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
+        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
         if (deferredCodexCatalogRequestRef.current !== requestKey) return
         applyLiveCodexCatalog(localState)
       })

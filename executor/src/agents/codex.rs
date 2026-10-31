@@ -3695,6 +3695,14 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
+    // Preserve the extended-length Windows path for binaries in component caches.
+    #[cfg(windows)]
+    let resolved_binary = fs::canonicalize(&resolved_binary)
+        .map_err(|error| {
+            format!("resolve codex app-server executable {resolved_binary:?}: {error}")
+        })?
+        .to_string_lossy()
+        .into_owned();
     let codex_home = launch_config
         .env
         .get(CODEX_HOME_ENV)
