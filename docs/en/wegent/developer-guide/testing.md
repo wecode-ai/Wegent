@@ -250,6 +250,19 @@ passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
 
+### Async Question Model Fixtures
+
+The desktop E2E async question fixture recognizes only an exact expected answer
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
+AGENTS.md and environment context can also arrive with `role=user`; scanning the
+whole request or matching an answer substring cannot establish a user reply.
+
+`desktop-async-input-fixture.test.mjs` covers injected context, historical answers,
+tool output, and actual replies. Existing desktop async question scenarios retain
+the distracting word `Complete` in their prompt and assert both the waiting
+message before an answer and the completion message afterward.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:
@@ -320,6 +333,15 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Desktop E2E element mounting and subsequent value polling each use the shared
+  step budget. Mounting must not consume the entire value loop before its first
+  read; retain actual-value diagnostics and exact-match assertions.
+- After routing control commands back from another window, explicitly restore
+  native window focus before checking virtualized content. Control routing does
+  not bring a native window to the foreground.
+- Desktop teardown observes both exit events and operating-system liveness and
+  always checks the entire process group. Timeouts retain the PID, exit status,
+  and Linux kernel process state without relaxing cleanup assertions.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns

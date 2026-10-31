@@ -55,7 +55,7 @@ jobs:
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
       - name: Verify real packaged upgrade, snapshot restore, and failed activation recovery
-        run: pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full
+        run: pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full,startup-network-change
       - name: Retain reproducible diagnostics and results
         if: always()
         uses: actions/upload-artifact@v4

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
-  applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeConversationHydration,
@@ -31,7 +30,6 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   replaceRuntimeConversationSnapshot,
-  markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
   subscribeRuntimeConversation,
   settleRuntimeConversationAcceptedMessage,
@@ -909,17 +907,9 @@ describe('runtimeConversationCache', () => {
       agentPath: 'agents/agent-1',
       status: 'running',
     })
-    markRuntimeConversationAssistantStarted(address)
-    applyRuntimeConversationGoalContinuation(address, {
-      deviceId: address.deviceId,
-      taskId: address.taskId,
-      turnId: 'turn-1',
-      status: 'started',
-    })
 
     expect(getRuntimeConversationMetadata(address)).toMatchObject({
       goal: { objective: 'Finish the fix', status: 'active' },
-      goalContinuation: { turnId: 'turn-1', status: 'started' },
       taskPlan: {
         turnId: 'turn-1',
         plan: [{ step: 'Implement', status: 'inProgress' }],

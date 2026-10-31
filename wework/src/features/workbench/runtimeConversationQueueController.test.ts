@@ -17,6 +17,7 @@ import {
 } from './runtimeConversationQueueController'
 import type { RuntimeQueuedMessageSenderDependencies } from './runtimeQueuedMessageSender'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 
 type SendRuntimePaneMessage = RuntimeQueuedMessageSenderDependencies['sendRuntimePaneMessage']
 
@@ -677,6 +678,59 @@ describe('RuntimeConversationQueueController', () => {
       expect.objectContaining({ id: item.id, turnId: `turn-${item.id}` }),
     ])
   })
+
+  test.each([false, true])(
+    'joins native queue admission and RPC binding in either order, native first: %s',
+    async nativeFirst => {
+      const store = idleStore(taskA)
+      const item = { ...message('native-queued'), runtimeQueued: true }
+      const send = acceptingTransport(store)
+      cacheRuntimeConversationQueuedMessages(taskA, [item])
+      attach(taskA, store, send)
+      await flushQueue()
+      const handlers = createRuntimeTaskStreamHandlers(taskA, {
+        onMessageAction: action => applyRuntimeConversationAction(taskA, action),
+      })
+      const task = {
+        taskId: taskA.taskId,
+        workspacePath: '/workspace/queue-tests',
+        title: 'Queue test',
+        runtime: 'codex',
+        executionState: {
+          revision: '1',
+          phase: 'running' as const,
+          turnId: 'native-turn',
+          latestTurnId: 'native-turn',
+        },
+      }
+      const startNative = () =>
+        handlers.onRuntimeTurnUpdated?.({
+          ...taskA,
+          status: 'started',
+          turnId: 'native-turn',
+          task,
+        })
+      const bindRequest = () =>
+        handlers.onChatStart?.({
+          ...taskA,
+          subtaskId: 'native-turn',
+          clientUserMessageId: item.id,
+          task,
+        })
+      if (nativeFirst) startNative()
+      else bindRequest()
+      await flushQueue()
+      expect(getRuntimeConversationQueuedMessages(taskA)).toHaveLength(1)
+      if (nativeFirst) bindRequest()
+      else startNative()
+      await flushQueue()
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([])
+      expect(getRuntimeConversationMessages(taskA).filter(entry => entry.role === 'user')).toEqual([
+        expect.objectContaining({ id: item.id, turnId: 'native-turn' }),
+      ])
+      expect(send).not.toHaveBeenCalled()
+    }
+  )
 
   test('starts a queued initial goal between turns even when the task execution remains running', async () => {
     const store = idleStore(taskA)

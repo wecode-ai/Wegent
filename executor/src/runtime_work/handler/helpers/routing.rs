@@ -87,6 +87,10 @@ fn apply_local_execution_state(
         link.runtime_handle = Value::Object(runtime_handle);
         return;
     }
+    if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(link) {
+        crate::runtime_work::lifecycle::project_native_execution(link, &state);
+        return;
+    }
     if !running {
         link.running = false;
         normalize_settled_task_state(link);

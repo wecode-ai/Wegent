@@ -427,7 +427,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-15, windows-latest]
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
 

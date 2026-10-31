@@ -31,7 +31,7 @@ async fn global_router_persists_async_question_after_execution_settles() {
     handler.route_codex_notification(question.clone());
     handler.route_codex_notification(question.clone());
     handler
-        .map_execution_codex_notification(
+        .observe_execution_codex_notification(
             "task",
             execution,
             &ExecutionRequest {
@@ -40,7 +40,6 @@ async fn global_router_persists_async_question_after_execution_settles() {
                 ..Default::default()
             },
             None,
-            &mut CodexNotificationEventMapper::default(),
             question,
         )
         .await;
@@ -78,7 +77,7 @@ async fn global_router_persists_async_question_after_execution_settles() {
 }
 
 #[tokio::test]
-async fn execution_receiver_persists_async_question_for_identified_active_root_turn() {
+async fn global_router_persists_async_question_for_identified_active_root_turn() {
     assert_execution_question_delivery(false).await;
 }
 
@@ -109,21 +108,33 @@ async fn assert_execution_question_delivery(clear_active: bool) {
         "method":"item/completed", "params":{"threadId":"thread", "turnId":"turn",
         "item":{"id":"question", "type":"agentMessage", "questions":[{"title":"Continue?","options":["Yes","No"]}]}}
     }));
-    handler.route_codex_notification(question.clone());
     let mapper_turn = handler.active_codex_turn("task");
     if clear_active {
         handler.clear_active_codex_turn("task", execution);
     }
     handler
-        .map_execution_codex_notification(
+        .observe_execution_codex_notification(
             "task",
             execution,
             &request,
             mapper_turn,
-            &mut CodexNotificationEventMapper::default(),
             question.clone(),
         )
         .await;
+    assert!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .is_none(),
+        "The RPC observer must not persist native notification state"
+    );
+    assert!(
+        !std::iter::from_fn(|| event_rx.try_recv().ok())
+            .any(|event| event["event"] == "response.block.created"),
+        "The RPC observer must not publish or claim native delivery"
+    );
+    handler.route_codex_notification(question.clone());
     handler.route_codex_notification(question);
     assert!(handler.finish_local_task("task", execution, None, "done"));
     assert_eq!(
@@ -175,18 +186,8 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
         link.runtime_handle = json!({"lastTurnId":"turn"});
         link.interaction_status = interaction.map(str::to_owned);
         handler.upsert_local_task(link);
-        let mut delivering_turn = None;
         if executing {
             let execution = start_test_execution(&handler, "task");
-            delivering_turn = Some(ActiveCodexTurn {
-                execution_id: if active_turn.is_some() {
-                    execution
-                } else {
-                    execution + 1
-                },
-                thread_id: "thread".into(),
-                turn_id: "turn".into(),
-            });
             if let Some(active_turn) = active_turn {
                 handler.record_active_codex_turn(
                     "task",
@@ -196,10 +197,15 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
                 );
             }
         }
+        handler.store.update_task("task", |link| {
+            if executing {
+                link.runtime_handle["lastTurnId"] = json!(active_turn.unwrap_or("next-turn"));
+            }
+        });
         handler.persist_async_question_interaction("task", &json!({
             "method":"item/completed", "params":{"threadId":thread,"turnId":turn,
             "item":{"id":"question","type":"agentMessage","questions":[{"title":"Continue?","options":["Yes","No"]}]}}
-        }), delivering_turn.as_ref());
+        }).into());
         assert_eq!(
             handler
                 .local_task_link("task")
@@ -213,7 +219,7 @@ fn async_question_delivery_ignores_foreign_stale_and_terminal_notifications() {
 }
 
 #[test]
-fn async_question_rejects_mapper_context_older_than_recorded_native_turn() {
+fn async_question_rejects_notification_older_than_recorded_native_turn() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
@@ -222,19 +228,57 @@ fn async_question_rejects_mapper_context_older_than_recorded_native_turn() {
     link.thread_id = Some("thread".into());
     link.runtime_handle = json!({"lastTurnId":"next-turn"});
     handler.upsert_local_task(link);
-    let execution = start_test_execution(&handler, "task");
-    let context = ActiveCodexTurn {
-        execution_id: execution,
-        thread_id: "thread".into(),
-        turn_id: "old-turn".into(),
-    };
     handler.persist_async_question_interaction("task", &json!({
         "method":"item/completed", "params":{"threadId":"thread","turnId":"old-turn",
         "item":{"id":"question","type":"agentMessage","questions":[{"title":"Continue?","options":["Yes","No"]}]}}
-    }), Some(&context));
+    }).into());
     assert!(handler
         .local_task_link("task")
         .unwrap()
         .interaction_status
         .is_none());
+}
+
+#[test]
+fn async_question_uses_native_generation_after_rpc_observer_finishes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let mut link =
+        RuntimeTaskLink::new_pending("task".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread".into());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route(
+        "thread",
+        "task".into(),
+        ExecutionRequest::default(),
+        false,
+    );
+    handler.route_codex_notification(
+        CodexNotification::from(json!({
+            "method":"turn/started", "params":{"threadId":"thread", "turn":{"id":"turn"}}
+        }))
+        .with_process_generation(2),
+    );
+    let question = json!({
+        "method":"item/completed", "params":{"threadId":"thread", "turnId":"turn",
+        "item":{"id":"question", "type":"agentMessage", "questions":[{"title":"Continue?","options":["Yes","No"]}]}}
+    });
+    handler.route_codex_notification(
+        CodexNotification::from(question.clone()).with_process_generation(1),
+    );
+    assert!(handler
+        .local_task_link("task")
+        .unwrap()
+        .interaction_status
+        .is_none());
+    handler.route_codex_notification(CodexNotification::from(question).with_process_generation(2));
+    assert_eq!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
 }

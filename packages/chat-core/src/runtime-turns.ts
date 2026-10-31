@@ -17,11 +17,13 @@ import {
   mergeRuntimeConversationItem,
   orderRuntimeConversationTurns,
   isTerminalProcessingBlockStatus,
+  isUnsettledTurnStatus,
 } from "./runtime-turn-merge";
 import {
   seedRuntimeConversationTurns,
   appendOptimisticUser,
   updateStartedTurn,
+  bindAssistantTurn,
   updateTurn,
   updateFailedTurn,
   upsertAssistantText,
@@ -290,6 +292,8 @@ export function reduceRuntimeConversationTurns(
       return appendOptimisticUser(turns, action.message);
     case "assistant_started":
       return updateStartedTurn(turns, action);
+    case "assistant_bound":
+      return bindAssistantTurn(turns, action);
     case "assistant_chunk":
       return updateTurn(turns, action.subtaskId, (turn) => {
         let items = hasAssistantChunkProgress(action)
@@ -322,7 +326,9 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
-          status: "streaming",
+          status: isUnsettledTurnStatus(turn.status)
+            ? "streaming"
+            : turn.status,
           streamingThinkingContent: resolveRuntimeStreamingThinkingContent(
             turn,
             action,

@@ -3,7 +3,10 @@ import {
   MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS,
   processingBlocks,
 } from "./runtime-turn-helpers";
-import { mergeRuntimeConversationItem } from "./runtime-turn-merge";
+import {
+  mergeRuntimeConversationItem,
+  mergeRuntimeConversationTurn,
+} from "./runtime-turn-merge";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
 import type { TurnFileChangesSummary } from "./runtime";
@@ -137,11 +140,77 @@ export function appendOptimisticUser(
   ];
 }
 
+export function bindAssistantTurn(
+  turns: RuntimeConversationTurn[],
+  action: Pick<
+    Extract<RuntimePaneMessageAction, { type: "assistant_bound" }>,
+    "subtaskId" | "clientUserMessageId"
+  >,
+): RuntimeConversationTurn[] {
+  if (!action.subtaskId || !action.clientUserMessageId) return turns;
+  const existingIndex = turns.findIndex((turn) => turn.id === action.subtaskId);
+  const userIndex = turns.findIndex(
+    (turn) =>
+      hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!) ||
+      (turn.id === null &&
+        turn.clientUserMessageId === action.clientUserMessageId),
+  );
+  if (userIndex < 0) {
+    // The RPC identity can arrive before the native start. Keep the join without
+    // claiming that execution or assistant content has started.
+    return existingIndex < 0
+      ? [
+          ...turns,
+          {
+            id: action.subtaskId,
+            clientUserMessageId: action.clientUserMessageId,
+            items: [],
+            status: "pending",
+          },
+        ]
+      : replaceAt(turns, existingIndex, {
+          ...turns[existingIndex],
+          clientUserMessageId: action.clientUserMessageId,
+        });
+  }
+  const bound = {
+    ...turns[userIndex],
+    id: action.subtaskId,
+    clientUserMessageId: action.clientUserMessageId,
+    items: turns[userIndex].items.map((item) =>
+      item.type === "user_message"
+        ? {
+            ...item,
+            message: {
+              ...item.message,
+              subtaskId: action.subtaskId,
+              turnId: action.subtaskId,
+            },
+          }
+        : item,
+    ),
+  };
+  const merged =
+    existingIndex >= 0 && existingIndex !== userIndex
+      ? mergeRuntimeConversationTurn(bound, turns[existingIndex])
+      : bound;
+  const target =
+    existingIndex < 0 ? userIndex : Math.min(userIndex, existingIndex);
+  return turns.flatMap((turn, index) =>
+    index === target
+      ? [merged]
+      : index === existingIndex || index === userIndex
+        ? []
+        : [turn],
+  );
+}
+
 export function updateStartedTurn(
   turns: RuntimeConversationTurn[],
   action: Extract<RuntimePaneMessageAction, { type: "assistant_started" }>,
 ): RuntimeConversationTurn[] {
   if (!action.subtaskId) return turns;
+  turns = bindAssistantTurn(turns, action);
   const existingIndex = turns.findIndex((turn) => turn.id === action.subtaskId);
   if (existingIndex >= 0) {
     if (turns[existingIndex].status === "cancelled") return turns;
@@ -163,14 +232,16 @@ export function updateStartedTurn(
           turn.clientUserMessageId === action.clientUserMessageId ||
           hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
       )
-    : findLastIndex(
-        turns,
-        (turn) =>
-          turn.id === null &&
-          (turn.status === "pending" ||
-            turn.status === "streaming" ||
-            turn.status === "cancelled"),
-      );
+    : action.clientUserMessageId === null
+      ? -1
+      : findLastIndex(
+          turns,
+          (turn) =>
+            turn.id === null &&
+            (turn.status === "pending" ||
+              turn.status === "streaming" ||
+              turn.status === "cancelled"),
+        );
   if (optimisticIndex >= 0) {
     const optimistic = turns[optimisticIndex];
     return replaceAt(turns, optimisticIndex, {
@@ -210,7 +281,7 @@ export function updateStartedTurn(
     ...turns,
     {
       id: action.subtaskId,
-      clientUserMessageId: action.clientUserMessageId,
+      clientUserMessageId: action.clientUserMessageId ?? undefined,
       items: [],
       status: "streaming",
       startedAt: action.startedAt ?? Date.now(),
@@ -303,9 +374,7 @@ export function upsertAssistantText(
   contentMode: "delta" | "snapshot" | undefined,
   offset: number | undefined,
 ): RuntimeConversationItem[] {
-  const index = items.findIndex(
-    (item) => item.type === "assistant_text" && item.id === itemId,
-  );
+  const index = items.findIndex((item) => item.id === itemId);
   if (index < 0) {
     return [
       ...items,
@@ -321,7 +390,18 @@ export function upsertAssistantText(
       },
     ];
   }
-  const current = items[index];
+  const existing = items[index];
+  const current =
+    existing.type === "block" && existing.block.type === "text"
+      ? {
+          id: existing.id,
+          position: existing.position,
+          type: "assistant_text" as const,
+          content: existing.block.content ?? "",
+          createdAt: new Date(existing.block.createdAt).toISOString(),
+          streamTextOffset: undefined,
+        }
+      : existing;
   if (current.type !== "assistant_text") return items;
   if (contentMode === "snapshot") {
     return replaceAt(items, index, {
@@ -368,7 +448,7 @@ export function applyCompletedAssistantContent(
   );
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {
-      id: itemId ?? `runtime-final:${turnId ?? "pending"}`,
+      id: itemId ?? items[matchingProcessTextIndex].id,
       type: "assistant_text",
       content,
       createdAt: new Date().toISOString(),
@@ -442,9 +522,9 @@ export function upsertBlocks(
   if (!blocks?.length) return items;
   let next = items;
   for (const block of blocks) {
-    const exactIndex = next.findIndex(
-      (item) => item.type === "block" && item.id === block.id,
-    );
+    const exactIndex = next.findIndex((item) => item.id === block.id);
+    if (next[exactIndex]?.type === "assistant_text" && block.type === "text")
+      continue;
     const contextCompactionIndex =
       exactIndex < 0 && isContextCompactionBlock(block)
         ? next.findIndex(
@@ -528,7 +608,7 @@ export function upsertRuntimeBlock(
   if (existingIndex >= 0) {
     if (
       items[existingIndex]?.type === "assistant_text" &&
-      (turnStatus === "done" || block.type === "text")
+      turnStatus === "done"
     ) {
       return items;
     }

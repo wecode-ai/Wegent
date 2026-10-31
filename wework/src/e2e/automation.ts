@@ -625,8 +625,6 @@ function desktopControlElementText(selector: string, visible = false): string {
 
 function desktopControlElementMetrics(selector: string): string {
   const elements = findDesktopControlElements(selector)
-  if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
-
   return JSON.stringify(
     elements.map(element => {
       const rect = element.getBoundingClientRect()
@@ -2527,6 +2525,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
               contentTruncated: activeAssistantMessage.contentTruncated === true,
               displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              displayItems: activeAssistantMessage.runtimeDisplayItems?.map(item => ({
+                id: item.id,
+                type: item.type,
+                contentChars: item.type === 'assistant_text' ? item.content.length : 0,
+              })),
               maxNarrativeBlockChars: Math.max(
                 0,
                 ...narrativeBlocks.map(block => block.content.length)
