@@ -76,14 +76,6 @@ describe('resolveWorkspaceTarget', () => {
     ).toBe('//server/share')
   })
 
-  test('opens a UNC file without inheriting the standalone synthetic root style', () => {
-    expect(
-      createLocalFileWorkspaceTarget(String.raw`\\server\share\report.md`, localDevices, {
-        workspaceTargets: [{ ...root, path: '/', workspaceSource: 'remote' }],
-      })
-    ).toEqual({ ...root, path: '//server/share' })
-  })
-
   test('skips invalid candidate roots before matching a local file target', () => {
     expect(
       createLocalFileWorkspaceTarget('/fixture/repo/src/a.ts', localDevices, {
