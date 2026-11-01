@@ -4375,10 +4375,17 @@ class LoopItemExecutionService:
         runtime_status: str,
         running: bool,
         turn_status: Optional[str] = None,
+        runtime_turn_id: Optional[str] = None,
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
-        row = db.get(LoopItemExecution, execution_id)
+        row = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == execution_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
         if row is None or row.status not in CAPACITY_STATUSES:
             return row
         normalized = runtime_status.lower().strip()
@@ -4469,6 +4476,11 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
+            if runtime_turn_id:
+                self._bind_activity_runtime_turn(
+                    db, row, {"subtaskId": runtime_turn_id}
+                )
+                db.flush()
             return self.complete(
                 db,
                 execution_id=row.id,

@@ -493,6 +493,9 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-detail-close"]`, {
+        visible: false,
+      })
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
