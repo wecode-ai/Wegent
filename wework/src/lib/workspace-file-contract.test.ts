@@ -9,6 +9,49 @@ import {
 } from './workspace-file-contract'
 
 describe('workspace file contract', () => {
+  test('preserves POSIX backslashes across file paths and native read responses', () => {
+    const path = String.raw`/workspace/local report\2026.md`
+    const name = String.raw`local report\2026.md`
+    expect(normalizeAbsoluteWorkspacePath(path, 'invalid')).toBe(path)
+    expect(splitAbsoluteWorkspaceFilePath(path)).toEqual({
+      parentPath: '/workspace',
+      fileName: name,
+    })
+    expect(
+      normalizeWorkspaceTextFile(
+        {
+          path,
+          name,
+          content: 'ok',
+          editable: true,
+          revision: 'revision-1',
+          truncated: false,
+          size: 2,
+        },
+        path
+      )
+    ).toMatchObject({ path, name, content: 'ok' })
+    expect(
+      normalizeWorkspaceFileChunk(
+        { path, name, content_base64: 'b2s=', offset: 0, eof: true, size: 2 },
+        path,
+        0
+      )
+    ).toMatchObject({ path, name, contentBase64: 'b2s=' })
+  })
+
+  test('preserves POSIX directory and entry names containing backslashes', () => {
+    const root = String.raw`/workspace/back\slash`
+    const name = String.raw`local report\2026.md`
+    const path = `${root}/${name}`
+    expect(
+      normalizeWorkspaceTree(
+        { path: root, entries: [{ name, path, is_directory: false, size: 2 }] },
+        root
+      )
+    ).toMatchObject({ path: root, entries: [{ path, name }] })
+  })
+
   test('normalizes Windows drive paths and canonical verbatim paths', () => {
     expect(normalizeAbsoluteWorkspacePath(String.raw`c:\work\Wegent`, 'invalid')).toBe(
       'C:/work/Wegent'

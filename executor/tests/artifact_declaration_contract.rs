@@ -31,6 +31,12 @@ async fn run_declaration(
         "device-only bytes",
     )
     .unwrap();
+    #[cfg(unix)]
+    std::fs::write(
+        workspace.path().join(r"local-conversation/report\2026.md"),
+        "device-only bytes",
+    )
+    .unwrap();
     let (sender, mut receiver) = mpsc::channel(1);
     let app = Router::new().route(
         "/api/tasks/{task_id}/remote-workspace/artifacts",
@@ -85,22 +91,41 @@ async fn local_declaration_returns_a_file_reference_without_backend_or_credentia
     let (output, request) = run_declaration(None, true, None, "report.txt").await;
 
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
         request.is_none(),
         "Local declaration must not contact Backend"
     );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let metadata: Value =
-        serde_json::from_str(stdout.trim().strip_prefix("[WEGENT_ARTIFACT]").unwrap()).unwrap();
+    let metadata = declaration_result(&output);
     assert_eq!(metadata["relative_path"], "report.txt");
     assert_eq!(metadata["file_size"], 17);
     assert_eq!(metadata["sha256"].as_str().unwrap().len(), 64);
     assert!(std::path::Path::new(metadata["local_path"].as_str().unwrap()).is_absolute());
     assert!(metadata.get("content").is_none());
+}
+
+fn declaration_result(output: &Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim().strip_prefix("[WEGENT_ARTIFACT]").unwrap()).unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_declaration_preserves_backslashes_in_posix_filenames() {
+    let (output, request) = run_declaration(None, true, None, r"report\2026.md").await;
+
+    let metadata = declaration_result(&output);
+    assert_eq!(metadata["relative_path"], r"report\2026.md");
+    assert_eq!(
+        std::path::Path::new(metadata["local_path"].as_str().unwrap())
+            .file_name()
+            .unwrap(),
+        std::ffi::OsStr::new(r"report\2026.md")
+    );
+    assert!(request.is_none());
 }
 
 #[tokio::test]

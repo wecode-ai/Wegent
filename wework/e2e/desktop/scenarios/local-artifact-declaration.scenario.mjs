@@ -21,7 +21,7 @@ import {
 const PROMPT = 'WEWORK_LOCAL_ARTIFACT_DECLARATION'
 const COMPLETE = 'LOCAL_ARTIFACT_DECLARATION_COMPLETE'
 const CONTENT = '# Local deliverable\nGenerated without a Backend Task.\n'
-const NAME = 'local report.md'
+const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`local report\2026.md`
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CARD = `${PANE} [data-testid="codex-reference-card"]`
 

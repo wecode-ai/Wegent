@@ -23,8 +23,10 @@ type WorkspacePathRoot =
   | { kind: 'drive'; prefix: string }
   | { kind: 'unc'; prefix: string }
 
-function normalizeWorkspaceSeparators(path: string): string {
-  const normalized = path.trim().replace(/\\/g, '/')
+export function normalizeWorkspaceSeparators(path: string): string {
+  const trimmed = path.trim()
+  const windows = /^[a-z]:[\\/]/i.test(trimmed) || /^(?:\\\\|\/\/)/.test(trimmed)
+  const normalized = windows ? trimmed.replace(/\\/g, '/') : trimmed
   if (/^\/\/\?\/UNC\//i.test(normalized)) {
     return `//${normalized.slice(8)}`
   }
@@ -78,11 +80,16 @@ function workspacePathLeafMatches(leftPath: string, rightPath: string): boolean 
 }
 
 function formatRequestedWorkspacePath(normalizedPath: string, requestedPath: string): string {
-  return requestedPath.trim().includes('\\') ? normalizedPath.replace(/\//g, '\\') : normalizedPath
+  return isWindowsWorkspacePath(normalizedPath) && requestedPath.includes('\\')
+    ? normalizedPath.replace(/\//g, '\\')
+    : normalizedPath
 }
 
 function appendWorkspacePathSuffix(rootPath: string, suffix: string): string {
-  return `${rootPath}${rootPath.includes('\\') ? suffix.replace(/\//g, '\\') : suffix}`
+  return formatRequestedWorkspacePath(
+    `${normalizeWorkspaceSeparators(rootPath)}${suffix}`,
+    rootPath
+  )
 }
 
 export function isAbsoluteWorkspacePath(path: string): boolean {

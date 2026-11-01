@@ -159,7 +159,9 @@ fn artifact_metadata(workspace: &Path, requested_path: &Path) -> Result<Artifact
         .strip_prefix(&canonical_workspace)
         .map_err(|_| "artifact file is outside the Task workspace".to_owned())?
         .to_string_lossy()
-        .replace('\\', "/");
+        .into_owned();
+    #[cfg(windows)]
+    let relative_path = relative_path.replace('\\', "/");
     let name = canonical_file
         .file_name()
         .and_then(|value| value.to_str())
@@ -318,6 +320,14 @@ mod tests {
             local_reference_path(r"/tmp/back\slash", "local report.md"),
             r"/tmp/back\slash/local report.md",
         );
+
+        let workspace = tempdir().unwrap();
+        let file = workspace.path().join(r"report\2026.md");
+        fs::write(&file, b"original POSIX filename").unwrap();
+        let metadata = artifact_metadata(workspace.path(), &file).unwrap();
+        assert_eq!(metadata.relative_path, r"report\2026.md");
+        let reference = local_reference_path(&metadata.workspace_root, &metadata.relative_path);
+        assert_eq!(fs::read(reference).unwrap(), b"original POSIX filename");
     }
 
     #[test]

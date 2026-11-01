@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from "@wegent/chat-core/workspace-file-contract";
 import type {
   CodexReference,
   TurnFileChangesSummary,
@@ -175,7 +176,10 @@ function referencePathsMatch(left: string, right: string): boolean {
 }
 
 function normalizeReferencePath(path: string): string {
-  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  const normalized = normalizeWorkspaceSeparators(path.trim()).replace(
+    /\/+/g,
+    "/",
+  );
   const drive = normalized.match(/^[a-zA-Z]:\//)?.[0];
   const absolute = normalized.startsWith("/") || Boolean(drive);
   const segments: string[] = [];
@@ -222,5 +226,7 @@ export function fileExtension(path: string): string {
 }
 
 export function basename(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+  return (
+    normalizeWorkspaceSeparators(path).split("/").filter(Boolean).pop() || path
+  );
 }

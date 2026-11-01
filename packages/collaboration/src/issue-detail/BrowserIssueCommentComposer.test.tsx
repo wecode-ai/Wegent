@@ -66,6 +66,7 @@ describe('browser main comment with the PC execution pipeline', () => {
   let api: Pick<SharedWorkspaceApi, 'issues' | 'attachments' | 'taskBindings'>
   let client: ProjectChatClient
   const onMessages = vi.fn()
+  const onTaskUpdated = vi.fn()
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
@@ -183,6 +184,7 @@ describe('browser main comment with the PC execution pipeline', () => {
         .mockResolvedValue({ ...message, messageId: 'response', status: 'failed' }),
     } as unknown as ProjectChatClient
     onMessages.mockClear()
+    onTaskUpdated.mockClear()
   })
   afterEach(() => {
     act(() => root.unmount())
@@ -220,6 +222,7 @@ describe('browser main comment with the PC execution pipeline', () => {
               loading={false}
               translate={createCollaborationTranslator('en')}
               onMessages={onMessages}
+              onTaskUpdated={onTaskUpdated}
             />
           </BrowserIssueExecution>
         </BrowserTaskDrafts>
@@ -237,6 +240,21 @@ describe('browser main comment with the PC execution pipeline', () => {
   async function click(id: string) {
     await act(async () => element(id).click())
   }
+  it('refreshes persisted Issue badges after a plain comment without an assigned agent', async () => {
+    const updated = {
+      ...issue,
+      metadata: { badges: [{ id: 'mr', label: '!7' }] },
+    }
+    vi.mocked(api.issues.get).mockResolvedValue(updated)
+    await mount([], [])
+    await type('Also review https://gitlab.example.test/group/app/-/merge_requests/7')
+    await click('collaboration-issue-comment-submit')
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(api.issues.get).toHaveBeenCalledExactlyOnceWith(issue.id)
+    expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(updated)
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+    expect(input().value).toBe('')
+  })
   it('executes an assigned hidden agent without requiring the members own runtime catalog', async () => {
     client.executeTaskComment = vi.fn().mockResolvedValue([message])
     vi.mocked(runtime.listDevices).mockResolvedValue([])

@@ -15,6 +15,7 @@ import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFi
 import {
   isAbsoluteWorkspacePath,
   normalizeAbsoluteWorkspacePath,
+  normalizeWorkspaceSeparators,
 } from '@/lib/workspace-file-contract'
 import {
   createFilePreviewTraceId,
@@ -125,7 +126,7 @@ function mimeTypeForFileName(name: string): string {
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
-  const normalizedPath = path.trim().replace(/\\/g, '/')
+  const normalizedPath = normalizeWorkspaceSeparators(path)
   if (!normalizedPath) return null
   if (isAbsoluteWorkspacePath(normalizedPath)) {
     try {
@@ -135,15 +136,19 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
     }
   }
 
+  const root = normalizeWorkspaceSeparators(target.path).replace(/\/+$/, '') || '/'
+  const prefix = root.endsWith('/') ? root : `${root}/`
+  const relativePath = normalizeWorkspaceSeparators(`${prefix}${normalizedPath}`).slice(
+    prefix.length
+  )
   const segments: string[] = []
-  for (const segment of normalizedPath.split('/')) {
+  for (const segment of relativePath.split('/')) {
     if (!segment || segment === '.') continue
     if (segment === '..') return null
     segments.push(segment)
   }
   if (segments.length === 0) return null
 
-  const root = target.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
   const child = segments.join('/')
   return root === '/' ? `/${child}` : `${root}/${child}`
 }

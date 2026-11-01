@@ -118,21 +118,30 @@ describe("shared conversation cards without Electron", () => {
     });
   });
 
-  it("opens a reference at its original file and line range", () => {
+  it.each([
+    "/workspace/notes.md",
+    String.raw`/workspace/report\2026.md`,
+    String.raw`C:\workspace\notes.md`,
+  ])("opens reference %s at its original file and line range", (path) => {
     const openFile = vi.fn();
     render(
       <CodexReferenceList
-        references={[{ path: "/workspace/notes.md", lineStart: 5, lineEnd: 8 }]}
+        references={[{ path, lineStart: 5, lineEnd: 8 }]}
         onOpenFile={openFile}
       />,
     );
     act(() => element("codex-reference-card").click());
-    expect(openFile).toHaveBeenCalledExactlyOnceWith("/workspace/notes.md", {
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(path, {
       lineStart: 5,
       lineEnd: 8,
     });
     expect(element("codex-reference-kind-label").textContent).toBe(
       "Document · MD",
+    );
+    expect(element("codex-reference-card").textContent).toContain(
+      path === String.raw`/workspace/report\2026.md`
+        ? String.raw`report\2026.md`
+        : "notes.md",
     );
   });
 
