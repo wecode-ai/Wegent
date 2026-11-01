@@ -1535,6 +1535,16 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     text: MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  // Streaming completes before the post-rollback transcript replaces old history.
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.text.includes(MESSAGE_EDIT_ORIGINAL_PROMPT) &&
+      !snapshot.text.includes(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+    'The edited transcript did not replace the superseded conversation',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
 
   const transcriptText = await control.command(
     'getText',
