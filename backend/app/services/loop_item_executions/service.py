@@ -2037,6 +2037,15 @@ class LoopItemExecutionService:
                 else {}
             )
             bound_turn_id = metadata.get("runtime_turn_id")
+            logger.info(
+                "[LoopItemExecution] Delayed completion candidate execution=%s "
+                "activity=%s bound_turn=%s requested_turn=%s request_turn=%s",
+                execution.id,
+                activity.message_id,
+                bound_turn_id,
+                turn_id,
+                execution_runtime_turn_id(execution),
+            )
             if isinstance(bound_turn_id, str) and bound_turn_id:
                 if bound_turn_id == turn_id:
                     return activity
@@ -2592,6 +2601,15 @@ class LoopItemExecutionService:
         if commit:
             db.refresh(execution)
             self._push_activity_after_commit(db, activity)
+        logger.info(
+            "[LoopItemExecution] Terminal outcome execution=%s status=%s "
+            "event_seq=%s reconciled=%s content_length=%s",
+            execution.id,
+            execution.status,
+            event_seq,
+            reconciled,
+            len(content or ""),
+        )
         return execution
 
     def publish_terminal_projection(
