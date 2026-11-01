@@ -75,7 +75,7 @@ function serveEnvironmentProbe(name, evidencePath, toolName) {
   })
 }
 
-function startNativeClient({ binary, args, cwd, env, root, phase }) {
+export function startNativeClient({ binary, args, cwd, env, root, phase }) {
   const child = spawn(binary, args, {
     cwd,
     env,
