@@ -20,6 +20,38 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if let Some(command_id) = payload.get("commandId") {
+        request
+            .extra
+            .insert("runtime_command_id".to_owned(), command_id.clone());
+    } else {
+        request.extra.remove("runtime_command_id");
+    }
+    if payload.get("commandId").is_some() {
+        let mut model = request.model_config.clone();
+        if let Some(values) = model.as_object_mut() {
+            values.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "model_id" | "model_provider" | "model" | "reasoning_effort"
+                )
+            });
+        }
+        let origin = payload
+            .get("origin")
+            .or_else(|| request.extra.get("origin"))
+            .cloned();
+        let input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
+            "message":payload.get("message"), "attachments":payload.get("attachments"),
+            "workspace":payload.get("workspacePath"), "model":model,
+            "origin":origin, "permissionProfile":request.extra.get("runtime_permission_profile"),
+            "threadId":payload.get("threadId"), "runtimeSessionId":payload.get("runtimeSessionId")});
+        request
+            .extra
+            .insert("runtime_command_input".to_owned(), input);
+    } else {
+        request.extra.remove("runtime_command_input");
+    }
     if let Some(title) = string_field(payload, "title") {
         set_runtime_task_title(request, &title);
     }

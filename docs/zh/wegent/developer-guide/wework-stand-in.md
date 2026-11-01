@@ -148,3 +148,15 @@ Codex 来源任务保留正常网络和已经配置的连接，不使用网站�
 正常联网不等于允许向任意目标外发私密数据。读取网页、搜索或访问内部系统应与任务相关，发送、上传和命令执行还需检查具体内容、目标和用户授权。操作系统沙箱与模型审核都存在覆盖范围；不能把提示词、工具“只读”标记或 AI 判断视为绝对隔离保证。各平台的实际支持以原生验证和 CI 为准，不能将不支持的能力静默当作已保护。
 
 Linux 桌面 E2E 容器必须允许原生 Codex 创建用户和挂载命名空间，并允许其挂载独立的 `/proc`。工作流在运行前执行 `verify-native-sandbox-namespaces.sh` 验证这些内核能力；不支持时直接失败，禁止退回无沙箱执行。容器配置只用于临时 CI runner，产品的根路径拒绝和来源权限断言保持不变。
+
+## Runtime 命令回执
+
+支持 `runtime.command-receipts-v1` 能力的 Executor 为 `runtime.tasks.create` 和 `runtime.tasks.send` 提供显式 `commandId`。同一任务内重复提交同一命令及相同输入，返回原接收回执；同一 ID 改变输入或执行身份返回 `command_conflict`。普通查询和命令重放都校验所属用户；连接云端时还校验当前登录账号。未携带 `commandId` 的旧调用不获得这一幂等保证。
+
+使用 `runtime.tasks.commands.get` 查询 `{ taskId, commandId, userId }`。`accepted` 表示 Runtime 已持久接收，不表示模型已经读取，更不表示业务工作完成。状态区分 `queued`、`dispatching`、`started`、`settled`、`failed`、`cancelled` 和 `recovery_required`。`settled` 可以表示这一轮已经提出用户问题；原工作仍按自身状态等待回答。
+
+待执行请求、命令身份和队列变更一起写入现有加密 Runtime 队列文件，不用 transcript 是否可见来猜测消息是否已接收。业务事件、评估快照及业务动作继续使用现有分身存储；它们与 Runtime 投递回执承担不同职责。确认终态后删除命令记录中的启动凭据和完整请求，只保留回执所需身份与原生关联。
+
+重启后按具体 thread 和 turn 核对原生 timeline 的真实完成边界。`thread/turns/list` 可能合成 `interrupted`，单独这一状态不足以证明已取消。无法确认执行事实时返回 `recovery_required`，保留待核对请求，要求在原工作检查状态，不自动重发。Goal 的自主恢复不重新提交原用户命令；真实执行结果和 generation 决定命令收尾，迟到回调不得结算后续命令。
+
+新协调调用方必须先检查能力标记，不能在缺少该能力时降级为不带命令 ID 的发送。接收回执不替代来源、角色、项目权限或原生操作确认，也不能用于替用户回答问题或批准操作。

@@ -399,6 +399,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let command_gate = payload
+            .get("commandId")
+            .and_then(|_| runtime_task_id(&payload))
+            .map(|id| self.task_send_gate(&id));
+        let _command_guard = match command_gate.as_ref() {
+            Some(gate) => Some(gate.lock().await),
+            None => None,
+        };
+        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+            return Ok(receipt);
+        }
         let schema_version = payload
             .get("schemaVersion")
             .or_else(|| payload.get("schema_version"))
@@ -892,7 +903,7 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
+    pub(super) fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
         self.store.update_task(local_task_id, |link| {
             apply_runtime_task_start_failure(link, error);
         });
@@ -990,6 +1001,9 @@ impl RuntimeWorkRpcHandler {
         } else {
             payload
         };
+        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+            return Ok(receipt);
+        }
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
         if let Some(response) = request_user_input_response(&payload) {
@@ -2040,7 +2054,11 @@ impl RuntimeWorkRpcHandler {
             (previous, turn, scheduler.queued_turns.clone())
         };
         if let Err(error) = self
-            .persist_turn_queue(remaining_turns, Some(&previous))
+            .persist_turn_queue(
+                remaining_turns,
+                Some(&previous),
+                std::slice::from_ref(&queued_turn),
+            )
             .await
         {
             *self
@@ -2125,7 +2143,10 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>();
             (previous, ordered_task_ids, reordered)
         };
-        if let Err(error) = self.persist_turn_queue(reordered, Some(&previous)).await {
+        if let Err(error) = self
+            .persist_turn_queue(reordered, Some(&previous), &[])
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()

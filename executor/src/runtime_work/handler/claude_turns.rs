@@ -319,8 +319,16 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
-            let _scheduled_turn_guard =
-                ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
+            let mut scheduled_turn_guard = ScheduledTurnGuard::new(
+                handler.clone(),
+                local_task_id.clone(),
+                execution_id,
+                request
+                    .extra
+                    .get("runtime_command_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -364,6 +372,8 @@ impl RuntimeWorkRpcHandler {
                 ) => outcome,
             };
 
+            scheduled_turn_guard.command_outcome =
+                Some(command_journal::CommandState::from_execution(&outcome));
             if let Some(session) = crate::agent_session::saved_executor_session(&request) {
                 handler.store.update_task(&local_task_id, |link| {
                     link.runtime_handle["executorSession"] = session;

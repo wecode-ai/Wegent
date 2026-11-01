@@ -131,6 +131,7 @@ mod codex_accounts;
 mod codex_config;
 mod collection;
 mod command_items;
+mod command_journal;
 mod connections;
 mod context_compaction;
 mod fork_transfer;
@@ -628,6 +629,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
+    command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
@@ -754,6 +756,9 @@ struct PendingCodexNotificationReplay {
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+    execution_id: u64,
+    command_id: Option<String>,
+    command_outcome: Option<command_journal::CommandState>,
 }
 
 struct StoppedTurnGuard {
@@ -777,10 +782,18 @@ impl Drop for StoppedTurnGuard {
 }
 
 impl ScheduledTurnGuard {
-    fn new(handler: RuntimeWorkRpcHandler, local_task_id: String) -> Self {
+    fn new(
+        handler: RuntimeWorkRpcHandler,
+        local_task_id: String,
+        execution_id: u64,
+        command_id: Option<String>,
+    ) -> Self {
         Self {
             handler,
             local_task_id,
+            execution_id,
+            command_id,
+            command_outcome: None,
         }
     }
 }
@@ -789,9 +802,19 @@ impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
         let handler = self.handler.clone();
         let local_task_id = self.local_task_id.clone();
+        let execution_id = self.execution_id;
+        let command_id = self.command_id.clone();
+        let command_outcome = self.command_outcome.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                handler.finish_scheduled_turn(&local_task_id).await;
+                handler
+                    .finish_command_execution(
+                        &local_task_id,
+                        execution_id,
+                        command_id.as_deref(),
+                        command_outcome,
+                    )
+                    .await;
             });
         }
     }
@@ -844,19 +867,69 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 turns::RuntimeTurnQueueState::default()
             });
+        for command in persisted_turns.commands.values_mut() {
+            if matches!(
+                command.state,
+                command_journal::CommandState::Dispatching | command_journal::CommandState::Started
+            ) {
+                command.state = command_journal::CommandState::RecoveryRequired;
+            }
+        }
+        persisted_turns.active_goal_turns.retain(|task, turn| {
+            let Some(id) = turn
+                .request
+                .extra
+                .get("runtime_command_id")
+                .and_then(Value::as_str)
+            else {
+                return true;
+            };
+            let Some(command) = persisted_turns
+                .commands
+                .get(&command_journal::key(task, id))
+            else {
+                return false;
+            };
+            if matches!(
+                command.state,
+                command_journal::CommandState::Cancelled | command_journal::CommandState::Failed
+            ) {
+                return false;
+            }
+            let known_native = command.native.is_some()
+                || store
+                    .read_task(task, |link| {
+                        link.runtime_handle["turnIdsBySubtask"][&turn.request.subtask_id]
+                            .is_string()
+                    })
+                    .unwrap_or(false);
+            command.state != command_journal::CommandState::RecoveryRequired || known_native
+        });
         let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        let command_journal = persisted_turns.commands;
         for turn in persisted_turns.active_goal_turns.values_mut() {
             turn.initial_thread_goal = None;
             turn.request.prompt = Value::String(String::new());
+            // Goal continuation is not a resubmission of its original user command.
+            turn.request.extra.remove("runtime_command_id");
+            turn.request.extra.remove("runtime_command_input");
             turn.request
                 .extra
                 .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         }
         let mut queued_turns = persisted_turns.queued_turns;
+        let mut restored_inputs = queued_turns
+            .iter()
+            .map(|turn| (turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+            .collect::<HashSet<_>>();
         queued_turns.extend(
             persisted_turns
                 .active_goal_turns
                 .into_values()
+                .filter(|turn| {
+                    restored_inputs
+                        .insert((turn.local_task_id.clone(), turn.request.subtask_id.clone()))
+                })
                 .filter(|turn| {
                     turn.request
                         .extra
@@ -911,6 +984,7 @@ impl RuntimeWorkRpcHandler {
                 queued_turns,
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
+            command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
@@ -962,6 +1036,7 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
     }

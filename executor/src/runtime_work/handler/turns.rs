@@ -67,12 +67,15 @@ struct RuntimeTurnQueuePayload {
     turns: VecDeque<SpawnTurnRequest>,
     #[serde(default)]
     active_goal_turns: HashMap<String, SpawnTurnRequest>,
+    #[serde(default)]
+    commands: command_journal::CommandJournal,
 }
 
 #[derive(Default)]
 pub(super) struct RuntimeTurnQueueState {
     pub(super) queued_turns: VecDeque<SpawnTurnRequest>,
     pub(super) active_goal_turns: HashMap<String, SpawnTurnRequest>,
+    pub(super) commands: command_journal::CommandJournal,
 }
 
 pub(super) fn runtime_turn_queue_path() -> PathBuf {
@@ -134,6 +137,7 @@ pub(super) fn read_runtime_turn_state(queue_path: &Path) -> Result<RuntimeTurnQu
     Ok(RuntimeTurnQueueState {
         queued_turns: payload.turns,
         active_goal_turns: payload.active_goal_turns,
+        commands: payload.commands,
     })
 }
 
@@ -142,13 +146,14 @@ pub(super) fn write_runtime_turn_queue(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
 ) -> Result<(), String> {
-    write_runtime_turn_state(queue_path, turns, &HashMap::new())
+    write_runtime_turn_state(queue_path, turns, &HashMap::new(), &Default::default())
 }
 
 fn write_runtime_turn_state(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
     active_goal_turns: &HashMap<String, SpawnTurnRequest>,
+    commands: &command_journal::CommandJournal,
 ) -> Result<(), String> {
     let _write_guard = RUNTIME_TURN_QUEUE_WRITE_LOCK
         .get_or_init(|| StdMutex::new(()))
@@ -164,6 +169,7 @@ fn write_runtime_turn_state(
         version: RUNTIME_TURN_QUEUE_VERSION,
         turns: turns.clone(),
         active_goal_turns: active_goal_turns.clone(),
+        commands: commands.clone(),
     })
     .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
     let mut nonce = [0_u8; 12];
@@ -310,6 +316,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         turns: VecDeque<SpawnTurnRequest>,
         previous: Option<&RuntimeTurnScheduler>,
+        starting: &[SpawnTurnRequest],
     ) -> Result<(), AppIpcError> {
         let admissions = previous.map(|previous| {
             (
@@ -333,6 +340,13 @@ impl RuntimeWorkRpcHandler {
                     .collect(),
             )
         });
+        let mut commands = self
+            .command_journal
+            .lock()
+            .expect("command journal lock should not be poisoned")
+            .clone();
+        command_journal::project_queue(&mut commands, &turns, starting)?;
+        let committed_commands = commands.clone();
         let queue_path = Arc::clone(&self.turn_queue_path);
         let active_goal_turns = self
             .active_goal_turns
@@ -340,7 +354,7 @@ impl RuntimeWorkRpcHandler {
             .expect("active Goal turn map lock should not be poisoned")
             .clone();
         tokio::task::spawn_blocking(move || {
-            write_runtime_turn_state(&queue_path, &turns, &active_goal_turns)
+            write_runtime_turn_state(&queue_path, &turns, &active_goal_turns, &commands)
         })
         .await
         .map_err(|error| {
@@ -350,6 +364,10 @@ impl RuntimeWorkRpcHandler {
             )
         })?
         .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+        *self
+            .command_journal
+            .lock()
+            .expect("command journal lock should not be poisoned") = committed_commands;
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -380,6 +398,9 @@ impl RuntimeWorkRpcHandler {
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
+        if self.existing_command(&turn)?.is_some() {
+            return Ok(());
+        }
         if turn.request.extra.contains_key("standInSchedule") {
             let scheduler = self
                 .turn_scheduler
@@ -431,7 +452,14 @@ impl RuntimeWorkRpcHandler {
             let queued_turns = scheduler.queued_turns.clone();
             (previous, turn_to_start, queued_turns)
         };
-        if let Err(error) = self.persist_turn_queue(queued_turns, Some(&previous)).await {
+        if let Err(error) = self
+            .persist_turn_queue(
+                queued_turns,
+                Some(&previous),
+                &turn_to_start.iter().cloned().collect::<Vec<_>>(),
+            )
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -656,7 +684,7 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .queued_turns
             .clone();
-        self.persist_turn_queue(queued_turns, None).await
+        self.persist_turn_queue(queued_turns, None, &[]).await
     }
 
     pub(super) fn set_goal_execution_status(&self, local_task_id: &str, status: Option<&str>) {
@@ -933,7 +961,8 @@ impl RuntimeWorkRpcHandler {
             }
             self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn(&turn.local_task_id).await;
+            self.finish_prepared_command(&turn, command_journal::CommandState::Cancelled)
+                .await;
             return Ok(());
         }
         let cancelled = {
@@ -948,12 +977,14 @@ impl RuntimeWorkRpcHandler {
         if cancelled {
             self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn(&turn.local_task_id).await;
+            self.finish_prepared_command(&turn, command_journal::CommandState::Cancelled)
+                .await;
             return Ok(());
         }
         let error = preparation.expect_err("failed preparation should contain an error");
         self.mark_deferred_worktree_failed(&turn, &error);
-        self.finish_scheduled_turn(&turn.local_task_id).await;
+        self.finish_prepared_command(&turn, command_journal::CommandState::Failed)
+            .await;
         Err(error)
     }
 
@@ -1212,8 +1243,16 @@ impl RuntimeWorkRpcHandler {
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
-            let _scheduled_turn_guard =
-                ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
+            let mut scheduled_turn_guard = ScheduledTurnGuard::new(
+                handler.clone(),
+                turn_local_task_id.clone(),
+                execution_id,
+                request
+                    .extra
+                    .get("runtime_command_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) =
                 mpsc::unbounded_channel::<CodexNotification>();
@@ -1298,6 +1337,13 @@ impl RuntimeWorkRpcHandler {
                         .lock()
                         .expect("turn presentation lock should not be poisoned")
                         .clone();
+                    active_turn_handler.bind_command_turn(
+                        &active_turn_local_task_id,
+                        &active_turn_request,
+                        active_turn_execution_id,
+                        &thread_id,
+                        &turn_id,
+                    );
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         presentation
@@ -1382,6 +1428,14 @@ impl RuntimeWorkRpcHandler {
             }
             .await;
             let runtime_was_stopped = interrupted_by_runtime_stop(&result);
+            scheduled_turn_guard.command_outcome = Some(match result.as_ref() {
+                Ok(turn) => command_journal::CommandState::from_execution(&turn.outcome),
+                Err(_) if runtime_was_stopped => command_journal::CommandState::RecoveryRequired,
+                Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => {
+                    command_journal::CommandState::Cancelled
+                }
+                Err(_) => command_journal::CommandState::Failed,
+            });
             let goal_execution_needs_attention = match result.as_ref() {
                 Err(_) if runtime_was_stopped => false,
                 Err(_) => true,
@@ -1534,7 +1588,7 @@ impl RuntimeWorkRpcHandler {
             (previous, scheduler.queued_turns.clone())
         };
         if let Err(error) = self
-            .persist_turn_queue(remaining_turns, Some(&previous))
+            .persist_turn_queue(remaining_turns, Some(&previous), &[])
             .await
         {
             *self
@@ -1547,7 +1601,16 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn finish_scheduled_turn(&self, local_task_id: &str) {
-        let _operation = self.turn_queue_operation.lock().await;
+        let operation = self.turn_queue_operation.clone().lock_owned().await;
+        self.finish_scheduled_turn_locked(local_task_id, operation)
+            .await;
+    }
+
+    pub(super) async fn finish_scheduled_turn_locked(
+        &self,
+        local_task_id: &str,
+        _operation: tokio::sync::OwnedMutexGuard<()>,
+    ) {
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler
@@ -1555,27 +1618,25 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
             let turns = scheduler.finish(local_task_id);
-            let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
+            let remaining_turns = scheduler.queued_turns.clone();
             (previous, turns, remaining_turns)
         };
-        if let Some(remaining_turns) = remaining_turns {
-            if let Err(error) = self
-                .persist_turn_queue(remaining_turns, Some(&previous))
-                .await
-            {
-                let mut scheduler = self
-                    .turn_scheduler
-                    .lock()
-                    .expect("runtime turn scheduler lock should not be poisoned");
-                *scheduler = previous;
-                scheduler.active_task_ids.remove(local_task_id);
-                scheduler.active_tasks = scheduler.active_task_ids.len();
-                log_executor_event(
-                    "runtime turn queue drain persistence failed",
-                    &[("error", error.message)],
-                );
-                return;
-            }
+        if let Err(error) = self
+            .persist_turn_queue(remaining_turns, Some(&previous), &turns)
+            .await
+        {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            *scheduler = previous;
+            scheduler.active_task_ids.remove(local_task_id);
+            scheduler.active_tasks = scheduler.active_task_ids.len();
+            log_executor_event(
+                "runtime turn queue drain persistence failed",
+                &[("error", error.message)],
+            );
+            return;
         }
         for turn in &turns {
             self.reserve_worktree_preparation(turn);
@@ -1600,7 +1661,7 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(remaining_turns) = remaining_turns {
             if let Err(error) = self
-                .persist_turn_queue(remaining_turns, Some(&previous))
+                .persist_turn_queue(remaining_turns, Some(&previous), &turns)
                 .await
             {
                 let mut scheduler = self
@@ -1640,7 +1701,7 @@ impl RuntimeWorkRpcHandler {
             (previous, turns, scheduler.queued_turns.clone())
         };
         if let Err(error) = self
-            .persist_turn_queue(remaining_turns, Some(&previous))
+            .persist_turn_queue(remaining_turns, Some(&previous), &turns)
             .await
         {
             *self
@@ -2294,6 +2355,40 @@ mod tests {
     }
 
     #[test]
+    fn accepted_command_and_waiting_queue_share_one_encrypted_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("turn-queue.json");
+        let mut turn = scheduled_turn("task-command");
+        turn.request.prompt = json!("durable input");
+        turn.request.extra.insert("user_id".into(), json!(7));
+        turn.request.auth_token = Some("command-secret".into());
+        apply_runtime_payload_metadata(
+            &mut turn.request,
+            &json!({"commandId":"stable-command","message":"durable input"}),
+        );
+        let command = command_journal::RuntimeCommand::from_turn(
+            &turn,
+            command_journal::CommandState::Dispatching,
+        )
+        .unwrap()
+        .unwrap();
+        let journal = std::collections::BTreeMap::from([(command.key(), command)]);
+        write_runtime_turn_state(&path, &VecDeque::new(), &HashMap::new(), &journal).unwrap();
+        let restored = read_runtime_turn_state(&path).unwrap();
+        let command = restored.commands.values().next().unwrap();
+        assert_eq!(command.state, command_journal::CommandState::Dispatching);
+        assert_eq!(command.turn.request.prompt, json!("durable input"));
+        assert_eq!(
+            command.turn.request.auth_token.as_deref(),
+            Some("command-secret")
+        );
+        let disk = fs::read_to_string(&path).unwrap();
+        assert!(!disk.contains("durable input"));
+        assert!(!disk.contains("command-secret"));
+        assert!(restored.queued_turns.is_empty());
+    }
+
+    #[test]
     fn persisted_queue_retains_active_goal_turns_separately_from_waiting_turns() {
         let temp = tempfile::tempdir().expect("temporary queue directory should exist");
         let queue_path = temp.path().join("turn-queue.json");
@@ -2301,8 +2396,13 @@ mod tests {
         let active_goal_turns =
             HashMap::from([("task-goal".to_owned(), scheduled_turn("task-goal"))]);
 
-        write_runtime_turn_state(&queue_path, &queued, &active_goal_turns)
-            .expect("runtime queue state should be persisted");
+        write_runtime_turn_state(
+            &queue_path,
+            &queued,
+            &active_goal_turns,
+            &Default::default(),
+        )
+        .expect("runtime queue state should be persisted");
 
         let restored =
             read_runtime_turn_state(&queue_path).expect("runtime queue state should be restored");

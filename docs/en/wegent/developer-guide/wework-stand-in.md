@@ -135,3 +135,15 @@ Normal network access does not authorize arbitrary disclosure of private informa
 Source filesystem profiles explicitly deny the root before granting the bound project and installed binary, library, and resource directories. This keeps custom shells usable without widening the filesystem boundary after a failed launch. Windows source runs request the native restricted-token sandbox. Executor-owned approval evidence is restored through `runtimeTurns`; Codex continues to own historical text and order.
 
 Linux desktop E2E containers must allow native Codex to create user and mount namespaces and mount a private `/proc`. Before execution, the workflow runs `verify-native-sandbox-namespaces.sh` to verify these kernel capabilities. Unsupported runners fail rather than falling back to unsandboxed execution. These container options apply only to disposable CI runners; product root-deny rules and source-permission assertions remain unchanged.
+
+## Runtime command receipts
+
+Executors advertising `runtime.command-receipts-v1` accept an explicit `commandId` on `runtime.tasks.create` and `runtime.tasks.send`. Repeating the same command and input within a task returns its original acceptance receipt. Reusing the ID with different input or execution identity returns `command_conflict`. Receipt queries and replays both check ownership and, when connected to the backend, the current account. Legacy calls without `commandId` do not receive this idempotency guarantee.
+
+Query `runtime.tasks.commands.get` with `{ taskId, commandId, userId }`. `accepted` means the Runtime durably received the input; it does not mean the model read it or the business work finished. States distinguish `queued`, `dispatching`, `started`, `settled`, `failed`, `cancelled`, and `recovery_required`. A settled turn may have asked a user question; its business work still waits for the answer.
+
+Pending requests, command identity, and queue changes share the existing encrypted Runtime queue commit. Transcript visibility is not an acceptance ledger. Business events, assessment snapshots, and business actions retain their existing stand-in storage and are distinct from Runtime delivery receipts. Confirmed terminal commands discard launch credentials and the complete request, retaining receipt identity and native associations.
+
+After restart, recovery checks the exact native thread and turn for a real timeline completion boundary. `thread/turns/list` can synthesize `interrupted`; that status alone cannot prove cancellation. Unconfirmed execution returns `recovery_required`, retains the request for inspection in the original work, and never resends automatically. Autonomous Goal recovery does not resubmit its original user command. Actual execution outcomes and generation checks determine settlement; late callbacks cannot settle a later command.
+
+New coordination callers must check the capability and must not fall back to sending without command IDs. Acceptance receipts never replace source, role, project authorization, or native operation confirmation, and cannot answer or approve requests for the user.
