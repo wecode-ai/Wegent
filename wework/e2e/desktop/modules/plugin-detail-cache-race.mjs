@@ -124,13 +124,16 @@ export async function verifyPluginSettingsWriteRace({
         { path: 'params.params.enabled', equals: true },
       ],
     })
+    const beforeNewSave = (await inventory(control)).sharedInventory.mutationRevision
     await control.command('clickWhenEnabled', toggle)
     const newer = await gates.wait(newGate)
     assert.equal(newer.value.result.effectiveEnabled, true)
     entry.beforeRelease = member(
       await until(
         () => inventory(control),
-        state => member(state)?.componentStates[key] === true,
+        state =>
+          state.sharedInventory.mutationRevision > beforeNewSave &&
+          member(state)?.componentStates[key] === true,
         'The newer real skill enable did not reach shared inventory'
       )
     )
