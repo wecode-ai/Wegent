@@ -5,6 +5,10 @@ import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalS
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
+  isWegentManagedStorePlugin,
+  localMatchesCloudPlugin,
+} from '@wegent/chat-core/installed-plugin-merge'
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -54,7 +58,7 @@ import {
 import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import {
   createLocalCodexPluginApi,
-  listLocalInstalledPluginsFromDisk,
+  readLocalInstalledInventoryFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
@@ -71,8 +75,8 @@ import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
-import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
+import { sameLocalPluginSources } from '@/features/plugins/pluginInventorySources'
 import {
   loadPluginInventory,
   selectComposerPluginApps,
@@ -89,7 +93,6 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type {
-  InstalledPlugin,
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -2414,7 +2417,6 @@ export function WorkbenchProvider({
         notifyComposerAppsListeners()
         return apps
       }
-      const cached = getPluginMarketplaceCache(cacheKey)
       if (localAppsInflightRef.current) return localAppsInflightRef.current
 
       const generation = localAppsLoadGenerationRef.current
@@ -2426,6 +2428,7 @@ export function WorkbenchProvider({
           (await ensureLocalExecutorStarted()).deviceId?.trim()
         if (!deviceId) throw new Error('Composer plugin inventory requires a device ID')
         if (!isCurrent()) return []
+        const cached = getPluginMarketplaceCache(cacheKey)
         const hasFreshInventory =
           !options?.supersedeInstalledRequest &&
           cached?.deviceId === deviceId &&
@@ -2433,16 +2436,31 @@ export function WorkbenchProvider({
           [...(projectPluginNamesRef.current ?? [])].every(name =>
             cached.installedPlugins.some(plugin => plugin.spec.source.pluginKey === name)
           )
-        const cloudInstalled =
-          !hasFreshInventory && cloudConnection.isConnected
-            ? cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
-            : Promise.resolve([] as InstalledPlugin[])
         // Disk membership is cheap and can change outside this renderer (ZIP
         // import, CLI, restart). Presentation freshness never replaces this read.
+        const localInstalled = readLocalInstalledInventoryFromDisk()
+        const cloudInstalled = (async () => {
+          if (!cloudConnection.isConnected) return undefined
+          if (hasFreshInventory) {
+            const local = await localInstalled
+            // Unknown managed files may be awaiting an acknowledged uninstall's cleanup.
+            if (
+              local.items.every(
+                plugin =>
+                  !isWegentManagedStorePlugin(plugin) ||
+                  cached.installedPlugins.some(installed =>
+                    localMatchesCloudPlugin(plugin, installed)
+                  )
+              )
+            )
+              return undefined
+          }
+          return (await cloudPluginApi.listInstalledPlugins(deviceId)).items
+        })()
         const snapshot = await loadPluginInventory({
           cacheKey,
           deviceId,
-          readLocalInstalledPlugins: listLocalInstalledPluginsFromDisk,
+          readLocalInstalledPlugins: () => localInstalled,
           listCloudInstalledPlugins: () => cloudInstalled,
           isCurrent,
           partial: true,
@@ -2488,15 +2506,15 @@ export function WorkbenchProvider({
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
                 const current = getPluginMarketplaceCache(cacheKey)
                 if (!current || current.deviceId !== deviceId) return
+                if (!sameLocalPluginSources(current, snapshot)) return
                 if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
-                writePluginInventory(cacheKey, deviceId, {
-                  installedPluginsFetchedAt: Date.now(),
-                  installedPlugins: mergeInstalledPlugins(
-                    cloud,
-                    local.items,
-                    deviceId,
-                    cloudConnection.isConnected
-                  ),
+                return loadPluginInventory({
+                  cacheKey,
+                  deviceId,
+                  readLocalInstalledPlugins: async () => local,
+                  listCloudInstalledPlugins: async () => cloud,
+                  isCurrent,
+                  cloudMembershipAuthoritative: cloudConnection.isConnected,
                 })
               })
               .catch(error => {
