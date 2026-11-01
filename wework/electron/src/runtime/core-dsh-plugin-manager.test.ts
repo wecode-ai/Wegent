@@ -320,6 +320,7 @@ if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Err
     const pnpmCalls = runCommand.mock.calls.filter(([, args]) => args.includes('update'))
     expect(pnpmCalls).toHaveLength(1)
     expect(pnpmCalls[0]?.[2]?.cwd).toBe(fixture.profileRoot)
+    expect(pnpmCalls[0]?.[1]).toEqual(expect.arrayContaining(['--dir', fixture.profileRoot]))
     expect(pnpmCalls[0]?.[1]).toEqual(
       expect.arrayContaining(['--store-dir', join(fixture.profileRoot, '..', '..', 'pnpm-store')])
     )

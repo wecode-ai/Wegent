@@ -400,6 +400,8 @@ export class CoreDshPluginManager {
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     const commandArgs = runtimeNodeArgs(this.options.environment, [
       pnpmEntry,
+      '--dir',
+      this.profileRoot,
       '--store-dir',
       join(this.options.dshHome, 'pnpm-store'),
       ...args,
