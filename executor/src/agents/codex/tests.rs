@@ -326,7 +326,7 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
-fn spawn_idle_app_server_child() -> Child {
+pub(super) fn spawn_idle_app_server_child() -> Child {
     #[cfg(windows)]
     let mut command = {
         let mut command = Command::new("cmd");

@@ -853,6 +853,10 @@ impl CodexAppServerClient {
     async fn mark_thread_active(&self, thread_id: &str) {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
+        self.mark_thread_active_under_admission(thread_id).await;
+    }
+
+    async fn mark_thread_active_under_admission(&self, thread_id: &str) {
         let mut state = self.state.lock().await;
         let generation = state.next_thread_generation;
         state.next_thread_generation += 1;
@@ -880,6 +884,7 @@ impl CodexAppServerClient {
             return None;
         }
         state.active_threads.remove(thread_id);
+        state.thread_activity_changed.notify_waiters();
         let generation = state.thread_generations.get(thread_id).copied()?;
         if !retain_subscription {
             state.thread_mcp_configurations.remove(thread_id);
@@ -937,21 +942,79 @@ impl CodexAppServerClient {
     }
 
     async fn release_thread_subscription(&self, thread_id: &str) -> Result<(), String> {
+        self.release_thread_subscription_until(thread_id, false)
+            .await
+    }
+
+    async fn release_thread_subscription_until(
+        &self,
+        thread_id: &str,
+        wait_for_close: bool,
+    ) -> Result<(), String> {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
+        self.release_thread_subscription_under_admission(thread_id, wait_for_close)
+            .await
+    }
+
+    async fn release_thread_subscription_under_admission(
+        &self,
+        thread_id: &str,
+        wait_for_close: bool,
+    ) -> Result<(), String> {
+        let mut closed = if wait_for_close {
+            Some(
+                self.existing_process()
+                    .await?
+                    .notifications
+                    .subscribe_thread(thread_id),
+            )
+        } else {
+            None
+        };
         {
             let mut state = self.state.lock().await;
             state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
         }
-        self.request_thread_unsubscribe(thread_id).await
+        let response = self.request_thread_unsubscribe(thread_id).await?;
+        if response["status"] == "notLoaded" {
+            return Ok(());
+        }
+        if wait_for_close
+            && !matches!(
+                response["status"].as_str(),
+                Some("unsubscribed" | "notSubscribed")
+            )
+        {
+            return Err("Native thread/unsubscribe returned no valid unload status; MCP authority was not reloaded".into());
+        }
+        if let Some(notifications) = closed.as_mut() {
+            with_rpc_timeout(
+                "thread/closed after MCP configuration change",
+                codex_rpc_timeout_seconds(),
+                async {
+                    loop {
+                        let message = notifications.recv().await.map_err(|error| {
+                            format!("Thread close notification unavailable: {error}")
+                        })?;
+                        if message["method"] == "thread/closed"
+                            && message["params"]["threadId"] == thread_id
+                        {
+                            return Ok(());
+                        }
+                    }
+                },
+            )
+            .await?;
+        }
+        Ok(())
     }
 
-    async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<(), String> {
+    async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<Value, String> {
         self.request_existing("thread/unsubscribe", json!({"threadId": thread_id}))
             .await
-            .map(|_| ())
     }
 
     async fn request_thread_unsubscribe_if_idle(
@@ -1298,6 +1361,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
+    thread_activity_changed: Arc<tokio::sync::Notify>,
     mcp_app_sessions: HashSet<(String, String, String)>,
     thread_generations: HashMap<String, u64>,
     thread_mcp_configurations: HashMap<String, Map<String, Value>>,
@@ -1336,6 +1400,7 @@ impl Default for CodexAppServerSharedState {
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
+            thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
             mcp_app_sessions: HashSet::new(),
             thread_generations: HashMap::new(),
             thread_mcp_configurations: HashMap::new(),
@@ -2024,11 +2089,10 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        client
-            .reload_thread_configuration_if_needed(&thread_plan, request)
+        let thread_admission=client
+            .prepare_thread_admission(&thread_plan, request)
             .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
-            client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
             if resume_goal_only {
                 early_notification_rx = Some(
@@ -2103,6 +2167,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .thread_mcp_configurations
                 .insert(thread_id.clone(), mcp_configuration);
         }
+        drop(thread_admission);
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let runtime_notifications = client.existing_process().await?.notifications;
@@ -4503,6 +4568,9 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
     overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
+    // The host owns the bounded idle-subscription cache. Once it explicitly
+    // unsubscribes, Native must release the old MCP grants before a new resume.
+    overrides.push("thread_unload_delay_secs=0".to_owned());
     overrides.push(format!(
         "shell_environment_policy.exclude={}",
         toml_json_value(&json!([
