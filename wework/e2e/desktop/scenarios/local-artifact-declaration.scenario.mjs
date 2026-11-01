@@ -21,7 +21,7 @@ import {
 const PROMPT = 'WEWORK_LOCAL_ARTIFACT_DECLARATION'
 const COMPLETE = 'LOCAL_ARTIFACT_DECLARATION_COMPLETE'
 const CONTENT = '# Local deliverable\nGenerated without a Backend Task.\n'
-const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`\local report\2026.md`
+const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`\\local report\2026.md`
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CARD = `${PANE} [data-testid="codex-reference-card"]`
 
@@ -88,7 +88,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         assert.equal(await readFile(artifact.local_path, 'utf8'), CONTENT)
         events = [
           assistantMessage(
-            `${COMPLETE}\n\n[${NAME}](<${artifact.local_path}>)\n\n[Relative file](<${artifact.relative_path}>)`
+            `${COMPLETE}\n\n[${NAME}](<${encodeURI(artifact.local_path)}>)\n\n[Relative file](<${encodeURI(artifact.relative_path)}>)`
           ),
         ]
       }

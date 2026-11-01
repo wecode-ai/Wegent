@@ -55,12 +55,25 @@ describe('resolveWorkspaceTarget', () => {
       })
     ).toEqual(worktree)
   })
-  test('leaves a POSIX filename with a leading backslash relative to the active workspace', () => {
+  test.each([
+    String.raw`\report.md`,
+    String.raw`\\report.md`,
+    String.raw`\\server\share\report.md`,
+  ])('keeps POSIX filename %s relative to the active workspace', path => {
     expect(
-      createLocalFileWorkspaceTarget(String.raw`\report.md`, localDevices, {
+      createLocalFileWorkspaceTarget(path, localDevices, {
         workspaceTargets: [root],
+        pathStyleSource: root.path,
       })
     ).toBeNull()
+  })
+  test('requires a complete UNC root when resolving an absolute Windows file', () => {
+    expect(createLocalFileWorkspaceTarget(String.raw`\\report.md`, localDevices)).toBeNull()
+    expect(
+      createLocalFileWorkspaceTarget(String.raw`\\server\share\report.md`, localDevices, {
+        pathStyleSource: 'C:/workspace',
+      })?.path
+    ).toBe('//server/share')
   })
 
   test('skips invalid candidate roots before matching a local file target', () => {

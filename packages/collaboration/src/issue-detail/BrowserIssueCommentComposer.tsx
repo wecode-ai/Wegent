@@ -121,8 +121,7 @@ export function BrowserIssueCommentComposer({
     let persisted = false
     let executionFailed = false
     const reportError = (cause: unknown) => {
-      if (!executionFailed)
-        draft.setError(cause instanceof Error ? cause.message : String(cause))
+      if (!executionFailed) draft.setError(cause instanceof Error ? cause.message : String(cause))
       executionFailed = true
     }
     try {
@@ -213,7 +212,11 @@ export function BrowserIssueCommentComposer({
         try {
           onTaskUpdated(await api.issues.get(issue.id))
         } catch (cause) {
-          reportError(cause)
+          console.warn('[collaboration] Failed to refresh Issue after saving comment', {
+            projectId: project.id,
+            issueId: issue.id,
+            error: cause,
+          })
         }
       }
       draft.endOperation()

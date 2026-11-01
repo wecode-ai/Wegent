@@ -26,7 +26,8 @@ type WorkspacePathRoot =
 export function normalizeWorkspaceSeparators(path: string, pathStyleSource = path): string {
   // Relative paths inherit the known workspace or absolute reference's syntax.
   const trimmed = path.trim()
-  const style = pathStyleSource.trim()
+  const style =
+    trimmed.startsWith('/') || /^[a-z]:[\\/]/i.test(trimmed) ? trimmed : pathStyleSource.trim()
   const posixAbsolute = style.startsWith('/') && !style.startsWith('//')
   const normalized = posixAbsolute ? trimmed : trimmed.replace(/\\/g, '/')
   if (/^\/\/\?\/UNC\//i.test(normalized)) {

@@ -372,6 +372,23 @@ describe('browser main comment with the PC execution pipeline', () => {
       expect(api.taskBindings.unbindTask).toHaveBeenCalledOnce()
     }
   )
+  it('keeps a saved comment successful when its metadata refresh fails', async () => {
+    const failure = new Error('Refresh failed')
+    vi.mocked(api.issues.get).mockRejectedValue(failure)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await mount([], [])
+    await type('Saved comment')
+    await click('collaboration-issue-comment-submit')
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(onMessages).toHaveBeenCalledWith([message])
+    expect(container.textContent).not.toContain('Refresh failed')
+    expect(input().value).toBe('')
+    expect(warn).toHaveBeenCalledWith(
+      '[collaboration] Failed to refresh Issue after saving comment',
+      expect.objectContaining({ projectId: project.id, issueId: issue.id, error: failure })
+    )
+    warn.mockRestore()
+  })
   it.each([false, true])(
     'refreshes a saved comment after server execution rejects (refresh fails=%s)',
     async refreshFails => {
