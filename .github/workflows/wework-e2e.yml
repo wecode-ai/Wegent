@@ -101,8 +101,8 @@ jobs:
         shell: pwsh
         run: |
           $env:ELECTRON_RUN_AS_NODE = "1"
-          & "wework/electron/release/WeWork-win32-x64/WeWork.exe" ".github/scripts/wework-reflink-bootstrap-diagnostic.mjs"
-          if ($LASTEXITCODE -ne 0) { throw "Diagnostic package instrumentation failed" }
+          $diagnosticProcess = Start-Process -FilePath (Resolve-Path "wework/electron/release/WeWork-win32-x64/WeWork.exe").Path -ArgumentList ".github/scripts/wework-reflink-bootstrap-diagnostic.mjs" -Wait -PassThru -NoNewWindow
+          if ($diagnosticProcess.ExitCode -ne 0) { throw "Diagnostic package instrumentation failed" }
           Remove-Item Env:\ELECTRON_RUN_AS_NODE
           Move-Item -LiteralPath "wework/electron/release/WeWork-win32-x64/resources/app.asar" -Destination "wework/electron/release/WeWork-win32-x64/resources/app.asar.diagnostic-backup"
 
