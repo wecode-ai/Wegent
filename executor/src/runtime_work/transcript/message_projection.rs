@@ -42,6 +42,7 @@ pub(super) struct AssistantTurnAccumulation {
     pub(super) file_changes: Option<Value>,
     assistant_parts: Vec<AssistantTextPart>,
     item_order: Vec<AssistantItemIdentity>,
+    positioned_item_count: usize,
     memory_citations: Vec<Value>,
 }
 
@@ -63,6 +64,7 @@ impl AssistantTurnAccumulation {
             file_changes,
             assistant_parts: Vec::new(),
             item_order: Vec::new(),
+            positioned_item_count: 0,
             memory_citations: Vec::new(),
         }
     }
@@ -98,6 +100,7 @@ impl AssistantTurnAccumulation {
         self.file_changes = None;
         self.assistant_parts.clear();
         self.item_order.clear();
+        self.positioned_item_count = 0;
         self.memory_citations.clear();
     }
 
@@ -128,6 +131,31 @@ impl AssistantTurnAccumulation {
         };
         self.item_order
             .extend((part_start..self.assistant_parts.len()).map(AssistantItemIdentity::Text));
+    }
+
+    pub(super) fn record_item_positions(
+        &mut self,
+        positions: &mut HashMap<String, u64>,
+        position: u64,
+    ) {
+        // Each identity is visited once, including items preceding the first position.
+        for identity in &self.item_order[self.positioned_item_count..] {
+            let id = match identity {
+                AssistantItemIdentity::Block(index) => self
+                    .blocks
+                    .get(*index)
+                    .and_then(|block| block.get("id"))
+                    .and_then(Value::as_str),
+                AssistantItemIdentity::Text(index) => self
+                    .assistant_parts
+                    .get(*index)
+                    .map(|part| part.id.as_str()),
+            };
+            if let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) {
+                positions.entry(id.to_owned()).or_insert(position);
+            }
+        }
+        self.positioned_item_count = self.item_order.len();
     }
 
     pub(super) fn runtime_items(&self) -> Vec<Value> {

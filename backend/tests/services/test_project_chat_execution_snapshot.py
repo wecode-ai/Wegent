@@ -74,6 +74,73 @@ def report(**overrides):
     return RuntimeExecutionSnapshot.model_validate(data)
 
 
+@pytest.mark.parametrize("event_name", ["runtime.goal.cleared", "runtime.goal.updated"])
+def test_previous_goal_event_cannot_bind_a_continuation_to_an_old_turn(
+    test_db, test_user, run, event_name, monkeypatch
+):
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message",
+        lambda *args, **kwargs: None,
+    )
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.metadata_json = {**row.metadata_json, "execution_id": execution.id}
+    test_db.commit()
+
+    loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        owner_user_id=test_user.id,
+        event_name=event_name,
+        payload={"subtaskId": "previous-turn", "eventSeq": 11, "data": {}},
+    )
+    snapshot = report(
+        running=True,
+        turns=[
+            {
+                "id": "previous-turn",
+                "userMessageIds": ["previous-trigger"],
+                "status": "done",
+            },
+            {
+                "id": "current-turn",
+                "userMessageIds": ["trigger-1"],
+                "status": "running",
+            },
+        ],
+    )
+    assert (
+        reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=snapshot)
+        == []
+    )
+    test_db.expire_all()
+    assert execution.status == "running"
+    assert execution.last_event_seq == 10
+    assert row.status == "streaming"
+    assert "runtime_turn_id" not in row.metadata_json
+
+
 @pytest.mark.parametrize(
     "outcome,expected",
     [("done", "completed"), ("failed", "failed"), ("cancelled", "cancelled")],

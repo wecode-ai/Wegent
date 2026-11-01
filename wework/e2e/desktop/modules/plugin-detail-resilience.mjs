@@ -240,23 +240,17 @@ export async function verifyPluginDetailResilience({
   }
 
   async function rowFor(item) {
+    // Catalog refresh can replace a Codex row ID with its disk-personal alias.
+    // Resolve the same plugin by its accessible name on every control poll.
+    const selector =
+      '[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label$=' +
+      JSON.stringify(` ${item.displayName}`) +
+      '])'
     return until(
-      async () => {
-        const snapshot = JSON.parse(
-          await control.command('snapshot', testId('plugins-page-content'))
-        )
-        return snapshot.testIds.filter(
-          id => id.startsWith('plugin-marketplace-row-') && id.includes(item.name)
-        )
-      },
-      values => values.length === 1,
+      async () => Number(await control.command('getElementCount', selector)),
+      count => count === 1,
       `A unique real catalog row for ${item.name} was not available`
-    ).then(
-      // Disk and Codex catalog rows use different IDs for the same personal
-      // plugin. Resolve its visible business identity again when clicking.
-      () =>
-        `[data-testid^="plugin-marketplace-row-"]:has(button[aria-label$=${JSON.stringify(` ${item.displayName}`)}])`
-    )
+    ).then(() => selector)
   }
 
   async function openDetail(item) {

@@ -1650,6 +1650,28 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     false,
     'The edited conversation still rendered the superseded assistant response'
   )
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The WebView did not reconnect after editing the last user message'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const restoredText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(restoredText.includes(MESSAGE_EDIT_ORIGINAL_PROMPT), false)
+  assert.equal(restoredText.includes(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT), false)
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {

@@ -3168,6 +3168,12 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
 
+        # Thread-level Goal notifications can retain the previous request's
+        # turn identity while a continuation starts. They cannot establish
+        # the current execution's turn binding or renew its lease.
+        if event_name.startswith("runtime.goal."):
+            return None
+
         row = self.execution_for_runtime(
             db,
             runtime_device_id=device_id,
