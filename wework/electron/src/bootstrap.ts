@@ -219,15 +219,24 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
+  if (process.platform === 'darwin' && active.macosInstallation) {
+    const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
+    if (!selectedUserData) throw new Error('The selected release does not own its launch data')
+    process.env.WEWORK_USER_DATA_DIR = selectedUserData
+    process.env.WEWORK_RELEASE_ROOT = root
+  }
   const bridge = (await optionalText(join(root, 'bridge'))) || process.execPath
-  const launcher = join(
-    dirname(bridge),
-    process.platform === 'darwin'
-      ? '../Resources/wework-launcher'
-      : process.platform === 'win32'
-        ? 'resources/wework-launcher.exe'
-        : 'resources/wework-launcher'
-  )
+  const launcher =
+    process.platform === 'darwin' && active.macosInstallation
+      ? join(process.resourcesPath, 'wework-launcher')
+      : join(
+          dirname(bridge),
+          process.platform === 'darwin'
+            ? '../Resources/wework-launcher'
+            : process.platform === 'win32'
+              ? 'resources/wework-launcher.exe'
+              : 'resources/wework-launcher'
+        )
   if (!existsSync(launcher)) throw new Error('Independent Wework launcher is missing')
   // Electron's relaunch helper waits for the stable entry to exit and release native locks.
   app.relaunch({ execPath: resolve(launcher), args: [root, bridge, ...forwardedArguments()] })

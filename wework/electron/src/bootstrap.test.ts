@@ -162,3 +162,34 @@ test.each(['pending', 'rollback-selected'])(
     expect(startup.ready).toHaveBeenCalledOnce()
   }
 )
+
+if (process.platform === 'darwin') {
+  test('macOS rollback uses the loaded bootstrap installer rather than the legacy bridge launcher', async () => {
+    const resources = join(startup.home, 'installed.app/Contents/Resources')
+    const original = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+    Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+    try {
+      startup.metadata.version = '2.0.0'
+      startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+      startup.bridge = join(startup.home, 'old-payload/WeWork')
+      startup.activeRelease = {
+        id: 'rolled-back',
+        executable: process.execPath,
+        version: '1.0.0',
+        macosInstallation: { payloadExecutable: startup.bridge, bootstrapFromPayload: false },
+      }
+      startup.ready.mockResolvedValue(undefined)
+      await import('./bootstrap.js')
+      await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalled())
+      expect(startup.relaunch.mock.calls[0][0]).toMatchObject({
+        execPath: join(resources, 'wework-launcher'),
+      })
+      expect(process.env.WEWORK_USER_DATA_DIR).toBe(startup.legacyUserData)
+      expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
+      expect(startup.showErrorBox).not.toHaveBeenCalled()
+    } finally {
+      if (original) Object.defineProperty(process, 'resourcesPath', original)
+      else Reflect.deleteProperty(process, 'resourcesPath')
+    }
+  })
+}
