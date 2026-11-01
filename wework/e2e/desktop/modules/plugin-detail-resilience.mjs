@@ -251,7 +251,12 @@ export async function verifyPluginDetailResilience({
       },
       values => values.length === 1,
       `A unique real catalog row for ${item.name} was not available`
-    ).then(values => testId(values[0]))
+    ).then(
+      // Disk and Codex catalog rows use different IDs for the same personal
+      // plugin. Resolve its visible business identity again when clicking.
+      () =>
+        `[data-testid^="plugin-marketplace-row-"]:has(button[aria-label$=${JSON.stringify(` ${item.displayName}`)}])`
+    )
   }
 
   async function openDetail(item) {
@@ -816,7 +821,7 @@ export async function verifyPluginDetailResilience({
     report.failures = failures.map(error => String(error?.message ?? error))
     report.passed =
       report.preconditions.completed &&
-      report.phases.length === 7 &&
+      report.phases.length === 8 &&
       report.blocked.length === 0 &&
       failures.length === 0
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)

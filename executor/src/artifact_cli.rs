@@ -19,7 +19,7 @@ const RESULT_MARKER: &str = "[WEGENT_ARTIFACT]";
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The file remains in the Task workspace on the execution device. For local conversations the command validates the file and returns local_path without contacting Backend; include a Markdown file link to that local_path in the final response so the existing file card can open it. For Backend Tasks the command sends metadata only; mention the declared filename in the final response so the user can use its artifact card.";
+pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The file remains in the Task workspace on the execution device. For local conversations the command validates the file and returns local_path without contacting Backend; include a Markdown file link to that local_path in the final response so the existing file card can open it. For Backend Tasks, declaration registers an artifact. The command sends metadata only; mention the declared filename in the final response so the user can use its artifact card.";
 
 pub fn is_artifact_command() -> bool {
     env::args().nth(1).as_deref() == Some(COMMAND_PREFIX)
