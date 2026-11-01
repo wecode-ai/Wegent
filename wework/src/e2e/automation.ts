@@ -1206,7 +1206,20 @@ async function pressNativeDesktopControlKey(
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
-  if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  if (document.activeElement !== element) {
+    throw new Error(
+      `Keyboard target could not receive focus: ${JSON.stringify({
+        selector,
+        className: element.className,
+        connected: element.isConnected,
+        tabIndex: element.tabIndex,
+        overflowY: getComputedStyle(element).overflowY,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        activeTagName: document.activeElement?.tagName,
+      })}`
+    )
+  }
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
   const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null

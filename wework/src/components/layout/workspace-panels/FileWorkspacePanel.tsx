@@ -916,6 +916,7 @@ export function FileWorkspacePanel({
         <button
           type="button"
           data-testid="workspace-file-toggle-tree-button"
+          aria-expanded={directoryTreeVisible}
           onClick={() => setDirectoryTreeVisible(visible => !visible)}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
           aria-label={directoryTreeToggleLabel}
