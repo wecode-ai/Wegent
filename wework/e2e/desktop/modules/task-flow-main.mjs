@@ -37,6 +37,7 @@ import {
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
   verifyEnvironmentPanelScrollStability,
+  verifyTurnNavigationComposerClearance,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
@@ -3768,6 +3769,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       }
       await verifyEnvironmentPanelScrollStability(control)
+      await verifyTurnNavigationComposerClearance(control, environmentPanelTurnCount)
       if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
         console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
         return

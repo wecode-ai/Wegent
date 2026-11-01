@@ -20,6 +20,8 @@ export interface MessageTurnNavigationProps {
   onNavigationLoadStateChange?: (loading: boolean) => void
   onNavigationScrollTargetChange?: (messageId: string | null) => void
   portalTarget?: Element | null
+  /** Height of a bottom overlay, such as a sticky composer, that hides part of the scroll viewport. */
+  bottomInsetPx?: number
 }
 
 export interface UserTurn {
