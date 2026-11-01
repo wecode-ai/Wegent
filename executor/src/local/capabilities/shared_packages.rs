@@ -410,6 +410,13 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             .get("plugins")
             .and_then(|plugins| plugins.get(&spec.key))
             .cloned();
+        self.store
+            .validate_marketplace_occupancy(
+                spec,
+                previous.as_ref().unwrap_or(&Value::Null),
+                manifest,
+            )
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         let mut installed_spec = spec.clone();
         let root = self
             .store

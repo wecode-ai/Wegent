@@ -483,7 +483,7 @@ impl GlobalCapabilityStore {
         Ok(false)
     }
 
-    fn validate_marketplace_occupancy(
+    pub(super) fn validate_marketplace_occupancy(
         &self,
         spec: &PluginSyncSpec,
         entry: &Value,

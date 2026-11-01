@@ -142,6 +142,10 @@ class ModelPickerControl {
       case 'clickWhenEnabled':
         ;(await this.waitFor(selector, { ...options, visible: true })).click()
         return ''
+      case 'clickIfPresent':
+        if (!element || element.disabled) return 'missing'
+        element.click()
+        return 'clicked'
       case 'getAttribute':
         return element?.getAttribute(options.value) ?? null
       case 'getText':
@@ -215,6 +219,26 @@ describe('ensureModelOptionVisible', () => {
 
     await ensureModelOptionVisible(control, MODEL_OPTION_ID)
 
+    expect(control.advancedClicks).toBe(0)
+    expect(visible(control.document.querySelector(TARGET))).toBe(true)
+  })
+
+  test('accepts the picker switching to advanced before the reveal command executes', async () => {
+    const control = new ModelPickerControl({ initiallyOpen: true })
+    await control.complete()
+    const command = control.command.bind(control)
+    control.command = async (name, selector, options) => {
+      if (selector?.includes('model-advanced-toggle')) {
+        control.view = 'advanced'
+        control.renderCatalog()
+      }
+      return command(name, selector, options)
+    }
+
+    const operation = observe(ensureModelOptionVisible(control, MODEL_OPTION_ID))
+    await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS)
+
+    expect((await operation.result).error).toBeUndefined()
     expect(control.advancedClicks).toBe(0)
     expect(visible(control.document.querySelector(TARGET))).toBe(true)
   })

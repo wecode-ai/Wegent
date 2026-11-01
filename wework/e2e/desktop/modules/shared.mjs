@@ -1353,16 +1353,12 @@ async function ensureModelOptionVisible(
   })
   const panel = await control.command('getAttribute', menuSelector, { value: 'data-panel' })
   assert.ok(panel === 'simple' || panel === 'advanced', `Unknown model picker panel: ${panel}`)
-  if (panel === 'simple') {
-    await control.command(
-      'clickWhenEnabled',
-      `${menuSelector} [data-testid="model-advanced-toggle"]`,
-      {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        visible: true,
-      }
-    )
-  }
+  // Model readiness can switch the picker to advanced between control commands.
+  // Resolve the simple-panel toggle and click it within one renderer command.
+  await control.command(
+    'clickIfPresent',
+    `${menuSelector}[data-panel="simple"] [data-testid="model-advanced-toggle"]`
+  )
   await control.command('scrollIntoView', targetSelector)
   await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
