@@ -236,11 +236,8 @@ impl<'a> TurnTranscriptProjector<'a> {
                 if let Some(id) = string_field(&item, "id") {
                     positions.entry(id).or_insert(position);
                 }
-                for normalized in self.assistant.runtime_items() {
-                    if let Some(id) = string_field(&normalized, "id") {
-                        positions.entry(id).or_insert(position);
-                    }
-                }
+                self.assistant
+                    .record_item_positions(&mut positions, position);
             }
         }
         self.emit_assistant(true);

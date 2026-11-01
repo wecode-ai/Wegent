@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "superseded_turn_tests.rs"]
+mod superseded_turn_tests;
+
 #[test]
 fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
     for method in [
