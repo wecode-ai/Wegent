@@ -5,7 +5,7 @@ on:
       mode:
         type: choice
         default: unit
-        options: [unit, sqlite, pnpm]
+        options: [unit, sqlite, pnpm, line-endings]
 permissions:
   contents: read
   actions: read
@@ -15,11 +15,26 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-node-workspace
-      - run: pnpm --dir wework/electron install --frozen-lockfile
-      - run: pnpm --filter wework prepare:electron
-      - if: inputs.mode != 'pnpm'
+      - if: inputs.mode != 'line-endings'
+        uses: ./.github/actions/setup-node-workspace
+      - if: inputs.mode != 'line-endings'
+        run: pnpm --dir wework/electron install --frozen-lockfile
+      - if: inputs.mode != 'line-endings'
+        run: pnpm --filter wework prepare:electron
+      - if: inputs.mode != 'pnpm' && inputs.mode != 'line-endings'
         run: pnpm --dir wework/electron test src/runtime/core-dsh-plugin-manager.test.ts
+      - if: inputs.mode == 'line-endings'
+        shell: bash
+        run: |
+          git config --get core.autocrlf
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          import { createHash } from 'node:crypto'
+          const bytes = readFileSync('wework/harness-runtime/patches/pnpm@11.7.0.patch')
+          const normalized = Buffer.from(bytes.toString().replaceAll('\r\n', '\n'))
+          const lock = readFileSync('wework/harness-runtime/runtimes/0.2.0-rc.2/pnpm-lock.yaml', 'utf8')
+          console.log(JSON.stringify({ cr: [...bytes].filter(byte => byte === 13).length, actualHash: createHash('sha256').update(bytes).digest('hex'), normalizedHash: createHash('sha256').update(normalized).digest('hex'), lockHash: lock.match(/pnpm@11\.7\.0: ([a-f0-9]{64})/)[1] }))
+          NODE
       - if: inputs.mode == 'pnpm'
         run: pnpm --filter wework run diagnose:pnpm:clone
       - uses: actions/upload-artifact@v4
