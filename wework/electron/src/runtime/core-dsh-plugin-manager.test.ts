@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { PassThrough } from 'node:stream'
+import { create as createTar } from 'tar'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CoreDshPluginManager,
@@ -50,13 +51,27 @@ describe('CoreDshPluginManager', () => {
         const pnpmEntry = process.env.npm_execpath
         expect(pnpmEntry).toBeTruthy()
         // Writable profiles remain outside the versioned runtime in production.
-        const packageHome = join(fixture.root, 'plugin-home')
+        let packageHome = join(fixture.root, 'plugin-home')
+        while (packageHome.length < 175) packageHome = join(packageHome, 'nested-profile-directory')
         const packageProfile = join(packageHome, 'profiles', 'wework-core')
+        const dependencyRoot = join(fixture.root, 'dependency', 'package')
+        await mkdir(dependencyRoot, { recursive: true })
+        await writeJson(join(dependencyRoot, 'package.json'), {
+          name: 'deep-import-dependency',
+          version: '1.0.0',
+          main: 'index.js',
+        })
+        await writeFile(join(dependencyRoot, 'index.js'), 'module.exports = 42\n')
+        const dependencyArchive = join(fixture.root, 'dependency.tgz')
+        await createTar(
+          { cwd: join(fixture.root, 'dependency'), file: dependencyArchive, gzip: true },
+          ['package']
+        )
         await mkdir(packageProfile, { recursive: true })
         await writeJson(join(packageProfile, 'package.json'), {
           name: 'deep-runtime-profile',
           private: true,
-          dependencies: {},
+          dependencies: { 'deep-import-dependency': `file:${dependencyArchive}` },
           dsh: { profile: { bundles: [] } },
         })
         await writeFile(join(packageProfile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
@@ -92,7 +107,7 @@ import { RuntimeSupervisor } from ${JSON.stringify(pathToFileURL(join(compiled, 
 import { stopProcess } from ${JSON.stringify(new URL('../../../e2e/desktop/process-lifecycle.mjs', import.meta.url).href)}
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
-import { rename } from 'node:fs/promises'
+import { readFile, rename } from 'node:fs/promises'
 const manager = new CoreDshPluginManager(${JSON.stringify({
             dshHome: join(fixture.root, 'home'),
             runtimeRoot,
@@ -125,6 +140,8 @@ const packageManager = new CoreDshPluginManager(${JSON.stringify({
           })})
 const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
 if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
+const dependency = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'index.js'))}, 'utf8')
+if (dependency !== ${JSON.stringify('module.exports = 42\n')}) throw new Error('Archive dependency was not imported')
 const removed = await packageManager.uninstall('deep-runtime-plugin')
 if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin remained installed')
 const nativeChild = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume()'], { env: process.env })
