@@ -49,7 +49,8 @@ describe('CoreDshPluginManager', () => {
         )
         const pnpmEntry = process.env.npm_execpath
         expect(pnpmEntry).toBeTruthy()
-        const packageHome = join(runtimeRoot, 'plugin-home')
+        // Writable profiles remain outside the versioned runtime in production.
+        const packageHome = join(fixture.root, 'plugin-home')
         const packageProfile = join(packageHome, 'profiles', 'wework-core')
         await mkdir(packageProfile, { recursive: true })
         await writeJson(join(packageProfile, 'package.json'), {
