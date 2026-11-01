@@ -4777,6 +4777,7 @@ describe('PluginsWorkspace', () => {
       if (accountScope === 'changed inventory') {
         reconcile.mockRejectedValue(new Error('PLUGIN_RUNTIME_METADATA_FAILED'))
       }
+      let confirmedInventoryIds: string[] = []
       let finishRefresh!: () => void
       const refreshGate = new Promise<void>(resolve => {
         finishRefresh = resolve
@@ -4815,6 +4816,7 @@ describe('PluginsWorkspace', () => {
           const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
           const installed = getPluginMarketplaceCache(cacheKey)!.installedPlugins
           expect(installed.length).toBeGreaterThan(0)
+          confirmedInventoryIds = installed.map(inventoryIdentity)
           writePluginInventory(
             cacheKey,
             'current-device',
@@ -4848,11 +4850,11 @@ describe('PluginsWorkspace', () => {
           expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
             'PLUGIN_RUNTIME_METADATA_FAILED'
           )
-          expect(
-            getPluginMarketplaceCache(
-              pluginMarketplaceCacheKey('/api', 'cloud-token')
-            )!.installedPlugins.every(plugin => !plugin.spec.enabled)
-          ).toBe(true)
+          const confirmed = getPluginMarketplaceCache(
+            pluginMarketplaceCacheKey('/api', 'cloud-token')
+          )!.installedPlugins
+          expect(confirmed.map(inventoryIdentity)).toEqual(confirmedInventoryIds)
+          expect(confirmed.every(plugin => !plugin.spec.enabled)).toBe(true)
         } else if (accountScope === 'same account') {
           await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
           expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
