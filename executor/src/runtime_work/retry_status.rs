@@ -203,6 +203,66 @@ mod tests {
     }
 
     #[test]
+    fn root_turn_start_preserves_an_active_proxy_retry_wait() {
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let event_tx = Some(event_tx);
+        let request = ExecutionRequest {
+            subtask_id: "next-turn".into(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+        mapper.observe_root_thread_id("thread-1");
+        mapper.map(
+            &event_tx,
+            "device",
+            "task",
+            &request,
+            json!({"method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                "params": {"threadId": "thread-1", "waitId": "pending-request", "waiting": true}}),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+
+        mapper.map(
+            &event_tx,
+            "device",
+            "task",
+            &request,
+            json!({"method": "turn/started", "params": {
+                "threadId": "thread-1", "turn": {"id": "next-turn"}
+            }}),
+        );
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        assert!(
+            events.iter().any(|event| {
+                event["event"] == "response.block.created"
+                    && event["payload"]["data"]["block"]["tool_input"]["retry_reason"]
+                        == "rate_limit"
+            }),
+            "{events:?}"
+        );
+
+        mapper.map(
+            &event_tx,
+            "device",
+            "task",
+            &request,
+            json!({"method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                "params": {"threadId": "thread-1", "waitId": "pending-request", "waiting": false}}),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn terminal_rate_limit_errors_do_not_start_a_retry_wait() {
         let (event_tx, mut event_rx) = broadcast::channel(8);
         CodexNotificationEventMapper::default().map(
