@@ -30,6 +30,40 @@ impl RuntimeWorkRpcHandler {
             .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
         let client_id = dingtalk_client_id(id, &ids);
+        let receipt = self
+            .command_journal
+            .lock()
+            .expect("command journal poisoned")
+            .get(&super::command_journal::key(id, &client_id))
+            .filter(|command| {
+                command
+                    .turn
+                    .request
+                    .extra
+                    .get("user_id")
+                    .and_then(Value::as_i64)
+                    == Some(user)
+            })
+            .map(|command| command.receipt());
+        if let Some(receipt) = receipt {
+            let status = match receipt["state"].as_str() {
+                Some("queued" | "dispatching" | "started" | "settled") => "sent",
+                Some("failed" | "cancelled") => "failed",
+                _ => return Ok(()),
+            };
+            store
+                .update_stand_in_dispatch(
+                    user,
+                    id,
+                    &ids,
+                    status,
+                    (status == "failed")
+                        .then_some("Review the original task before retrying failed execution"),
+                )
+                .map_err(settings_error)?;
+            *work = store.stand_in_work(user, id).map_err(settings_error)?;
+            return Ok(());
+        }
         let accepted = self.local_task_link(id).is_some_and(|link| {
             crate::runtime_work::runtime_handle_messages::user_message_presentations(&link)
                 .iter()
@@ -241,7 +275,12 @@ impl RuntimeWorkRpcHandler {
         }
         let mut config = role.clone();
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":ask});
-        let prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":work["title"],"message":prompt,"origin":origin,"clientUserMessageId":client_id,"queueIfBusy":true}),&config).await;
+        let mut dispatch = json!({"taskId":task_id,"title":work["title"],"message":prompt,"origin":origin,"clientUserMessageId":client_id,"queueIfBusy":true});
+        if !manual {
+            dispatch["commandId"] = json!(client_id);
+            dispatch["automaticStandIn"] = json!(true);
+        }
+        let prepared = self.prepare_stand_in_execution(dispatch, &config).await;
         let mut dispatch_properties =
             crate::task_runtime::stand_in_telemetry::origin_properties(&origin);
         dispatch_properties["action"] = json!("dispatch");
@@ -277,6 +316,12 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.create_task(payload.take()).await
         };
+        if result.as_ref().is_ok_and(|value| value["pending"] == true) {
+            store
+                .update_stand_in_dispatch(user, work_id, &ids, "pending", None)
+                .map_err(settings_error)?;
+            return Ok(json!({"pending":true,"deviceId":self.device_id,"taskId":task_id}));
+        }
         let result = result.and_then(|value| {
             if value["success"] == false || value["accepted"] == false {
                 Err(AppIpcError::new(

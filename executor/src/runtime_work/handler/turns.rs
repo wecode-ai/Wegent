@@ -401,6 +401,30 @@ impl RuntimeWorkRpcHandler {
         if self.existing_command(&turn)?.is_some() {
             return Ok(());
         }
+        if turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true)) {
+            let user = turn
+                .request
+                .extra
+                .get("user_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "Automatic input requires an execution identity",
+                    )
+                })?;
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                .map_err(super::stand_in::settings_error)?;
+            let settings = store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(super::stand_in::settings_error)?;
+            turn.request.extra.insert(
+                "standInAutomaticVersion".into(),
+                json!(LocalTaskStore::coordination_configuration_version(
+                    &settings
+                )),
+            );
+        }
         if turn.request.extra.contains_key("standInSchedule") {
             let scheduler = self
                 .turn_scheduler
@@ -441,6 +465,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, Some(&local_task_id));
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
@@ -1127,9 +1152,38 @@ impl RuntimeWorkRpcHandler {
 
     fn start_turn_with_restore_permit(
         &self,
+        turn: SpawnTurnRequest,
+        restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) {
+        if self.automatic_stand_in_waits(&turn) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler.park_waiting_automatic_turn(turn).await;
+            });
+            return;
+        }
+        if turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true)) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler.start_automatic_turn(turn, restore_permit).await;
+            });
+            return;
+        }
+        self.start_authorized_turn(turn, restore_permit);
+    }
+
+    pub(super) fn start_authorized_turn(
+        &self,
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        if self.automatic_stand_in_waits(&turn) {
+            let handler = self.clone();
+            tokio::spawn(async move {
+                handler.park_waiting_automatic_turn(turn).await;
+            });
+            return;
+        }
         if let Err(error) =
             self.validate_stand_in_schedule_start(&turn.request, &turn.local_task_id)
         {
@@ -1617,6 +1671,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
             let turns = scheduler.finish(local_task_id);
             let remaining_turns = scheduler.queued_turns.clone();
             (previous, turns, remaining_turns)
@@ -1655,6 +1710,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
             let turns = scheduler.update_limit(max_concurrent_tasks);
             let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
             (previous, turns, remaining_turns)
@@ -1694,6 +1750,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
             let turns = scheduler.take_available();
             if turns.is_empty() {
                 return;

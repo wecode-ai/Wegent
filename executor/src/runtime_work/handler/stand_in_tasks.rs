@@ -152,7 +152,9 @@ impl RuntimeWorkRpcHandler {
         // Source-driven orchestration never elevates an existing conversation.
         request["standInDelegation"] =
             json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":true});
-        Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"queueIfBusy":true}))).await
+        use sha2::{Digest, Sha256};
+        let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
+        Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
     }
 
     pub(super) async fn validate_primary_task_followup(
@@ -216,8 +218,8 @@ impl RuntimeWorkRpcHandler {
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":true});
-        let payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin}), &config).await?;
+        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":true});
+        let payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
         Box::pin(self.create_task(payload)).await
     }
 }

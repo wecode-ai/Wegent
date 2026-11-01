@@ -25,6 +25,13 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         match method {
+            "runtime.coordination.contexts"
+            | "runtime.coordination.snapshot"
+            | "runtime.coordination.commit"
+            | "runtime.coordination.wake"
+            | "runtime.coordination.status" => {
+                boxed_rpc(move || async move { self.coordination_rpc(method, payload).await })
+            }
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {

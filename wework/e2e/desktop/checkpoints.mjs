@@ -33,6 +33,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-profile-settings',
   'stand-in-model-catalog',
   'stand-in-processing',
+  'coordination-runtime',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -220,7 +221,12 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
   ],
   [
     'stand-in-profile',
-    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-processing'],
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'coordination-runtime',
+    ],
   ],
   [
     'plugin-account-auth',

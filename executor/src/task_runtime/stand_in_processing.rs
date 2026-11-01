@@ -2,11 +2,15 @@
 use super::stand_in_inbox::stand_in_record_key;
 use super::*;
 
-const EVENT: &str = "stand_in_event";
-const STATE: &str = "stand_in_processing";
-const ACTION: &str = "stand_in_action";
+pub(super) const EVENT: &str = "stand_in_event";
+pub(super) const STATE: &str = "stand_in_processing";
+pub(super) const ACTION: &str = "stand_in_action";
 
-fn write(connection: &Connection, kind: &str, value: &Value) -> Result<(), TaskRuntimeError> {
+pub(super) fn write(
+    connection: &Connection,
+    kind: &str,
+    value: &Value,
+) -> Result<(), TaskRuntimeError> {
     connection.execute(
         "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,?2,?3,?4,?4) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
         params![value["id"].as_str(), kind, value.to_string(), now()],
@@ -14,7 +18,11 @@ fn write(connection: &Connection, kind: &str, value: &Value) -> Result<(), TaskR
     Ok(())
 }
 
-fn rows(connection: &Connection, kind: &str, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
+pub(super) fn rows(
+    connection: &Connection,
+    kind: &str,
+    user: i64,
+) -> Result<Vec<Value>, TaskRuntimeError> {
     let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type=?1 AND json_extract(metadata,'$.userId')=?2 ORDER BY created_at,id")?;
     let values = statement.query_map(params![kind, user], |row| row.get::<_, String>(0))?;
     values
@@ -39,6 +47,7 @@ pub(super) fn update_processing_configuration(
         .unwrap_or_else(|| json!({"id":id,"userId":user}));
     state["batchId"] = Value::Null;
     state["snapshot"] = Value::Null;
+    state["routerSnapshot"] = Value::Null;
     state["error"] = Value::Null;
     state["nextCheckAt"] = json!((Utc::now() + chrono::Duration::minutes(5)).to_rfc3339());
     write(connection, STATE, &state)?;
@@ -46,6 +55,11 @@ pub(super) fn update_processing_configuration(
         .into_iter()
         .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
     {
+        // An accepted assessment can be ambiguous after a restart. Retain its stable
+        // command identity even when configuration revokes its remaining tools.
+        if action["kind"] == "assess" && action["status"] == "sending" {
+            continue;
+        }
         action["status"] = json!("cancelled");
         write(connection, ACTION, &action)?;
     }

@@ -5672,10 +5672,13 @@
       "failed": "The stand-in action failed. Try again later. If it persists, check the execution device logs.",
       "device_offline": "The execution device is offline. Connect it and try again.",
       "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent.",
+      "coordination_recovery_required": "The previous background execution is unconfirmed. Review its original task; it will not be replayed automatically.",
+      "coordination_stopped": "The previous background execution failed or was cancelled. Review its task, fix the cause, then choose Check now to reassess unfinished events.",
       "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again.",
       "leader_not_ai": "This group has a human leader. Choose an AI-led group or update the project leader."
     },
     "processing": {
+      "review_execution": "Review execution",
       "title": "Automatic event handling",
       "immediate": "Handle immediately",
       "silent": "Collect silently",

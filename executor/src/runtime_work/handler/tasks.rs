@@ -407,9 +407,6 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        if let Some(receipt) = self.existing_payload_command(&payload).await? {
-            return Ok(receipt);
-        }
         let schema_version = payload
             .get("schemaVersion")
             .or_else(|| payload.get("schema_version"))
@@ -428,6 +425,9 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_schema_version",
                 format!("runtime task create schemaVersion {schema_version} is unsupported"),
             ));
+        }
+        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+            return Ok(receipt);
         }
         if schema_version == 2 {
             crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
@@ -991,6 +991,56 @@ impl RuntimeWorkRpcHandler {
         self.send_message_after_local_checks(payload).await
     }
 
+    pub(super) async fn send_coordination_assessment(
+        &self,
+        payload: Value,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&id);
+        let _guard = gate.lock().await;
+        let Some(mut link) = self.local_task_link(&id) else {
+            return Err(AppIpcError::new(
+                "not_found",
+                "Coordinator task no longer exists",
+            ));
+        };
+        if self.is_busy_local_task(&id)
+            || link
+                .interaction_status
+                .as_deref()
+                .is_some_and(|status| !status.is_empty())
+            || link.status == "archived"
+        {
+            return Ok(None);
+        }
+        let origin = &payload["executionRequest"]["origin"];
+        let user = super::stand_in_work::stand_in_user(origin)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let state = store
+            .stand_in_processing_state(user)
+            .map_err(super::stand_in::settings_error)?;
+        if id != format!("stand-in-coordinator-{user}")
+            || origin["type"] != "stand_in_coordinator"
+            || origin["deviceId"] != self.device_id
+            || link.runtime_handle["origin"]["type"] != "stand_in_coordinator"
+            || link.runtime_handle["origin"]["userId"] != user
+            || state["batchId"].is_null()
+            || state["batchId"] != origin["batchId"]
+        {
+            return Err(AppIpcError::new(
+                "stale_context",
+                "Coordinator batch is no longer current",
+            ));
+        }
+        link.runtime_handle["origin"] = origin.clone();
+        self.upsert_local_task(link);
+        self.send_message_after_local_checks(payload)
+            .await
+            .map(Some)
+    }
+
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1003,6 +1053,15 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(receipt) = self.existing_payload_command(&payload).await? {
             return Ok(receipt);
+        }
+        if payload["automaticStandIn"] == true
+            && existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status
+                    .as_deref()
+                    .is_some_and(|status| !status.is_empty())
+            })
+        {
+            return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
@@ -2048,6 +2107,7 @@ impl RuntimeWorkRpcHandler {
                 }));
             }
             let previous = scheduler.clone();
+            scheduler.refresh_automatic_waits(&self.store, None);
             let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
                 AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
             })?;

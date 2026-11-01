@@ -2,6 +2,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
+import { useState } from 'react'
 
 export function StandInProcessingNotice({
   api,
@@ -17,7 +18,27 @@ export function StandInProcessingNotice({
   onOpenTask?(taskId: string): void
 }) {
   const { t } = useTranslation('common')
-  const { status, error } = useStandInProcessingStatus(api, userId, deviceId, true)
+  const { status, error, setStatus, setError } = useStandInProcessingStatus(
+    api,
+    userId,
+    deviceId,
+    true
+  )
+  const [checking, setChecking] = useState(false)
+  const recovery = status?.error?.code === 'coordination_recovery_required'
+  const review = recovery || status?.error?.code === 'coordination_stopped'
+  const check = async () => {
+    if (!api || checking) return
+    setChecking(true)
+    try {
+      setStatus(await api.checkProcessing(userId, deviceId))
+      setError(null)
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+    } finally {
+      setChecking(false)
+    }
+  }
   const latest = status?.actions[0]
   const failure =
     error ??
@@ -42,14 +63,25 @@ export function StandInProcessingNotice({
             count: status?.pendingCount ?? 0,
           })}
       </span>
-      {status?.awaitingUser && status.taskId && onOpenTask && (
+      {(status?.awaitingUser || review) && status?.taskId && onOpenTask && (
         <button
           type="button"
           data-testid="stand-in-processing-open-task"
           className="min-h-11 underline md:min-h-8"
           onClick={() => onOpenTask(status.taskId!)}
         >
-          {t('standIn.processing.awaiting_user')}
+          {t(review ? 'standIn.processing.review_execution' : 'standIn.processing.awaiting_user')}
+        </button>
+      )}
+      {failure && !recovery && api && !status?.running && (
+        <button
+          type="button"
+          data-testid="stand-in-processing-check"
+          className="min-h-11 underline md:min-h-8"
+          disabled={checking}
+          onClick={() => void check()}
+        >
+          {t('standIn.processing.check')}
         </button>
       )}
       <button

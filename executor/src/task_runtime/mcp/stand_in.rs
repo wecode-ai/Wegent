@@ -5,6 +5,11 @@ use crate::task_runtime::LocalTaskStore;
 #[path = "stand_in_processing.rs"]
 mod processing;
 
+fn batch_fingerprint(batch: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(batch.as_bytes()))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StandInMcpIdentity {
     pub task_id: String,
@@ -58,6 +63,7 @@ pub(crate) fn stand_in_mcp_client_config(
     let Some(identity) = stand_in_identity(request) else {
         return Ok(None);
     };
+    let batch_signature = identity.coordinator_batch.as_deref().map(batch_fingerprint);
     let mut context = SpaceMcpRequestContext::new(
         None,
         request.backend_url.clone(),
@@ -66,6 +72,15 @@ pub(crate) fn stand_in_mcp_client_config(
     context.surface = WeworkMcpSurface::StandIn;
     context.stand_in = Some(identity);
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
+    if let Some(signature) = batch_signature {
+        crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
+            "Stand-in coordinator MCP context registered",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("batch_fingerprint", signature),
+            ],
+        ));
+    }
     Ok(Some(SpaceMcpClientConfig {
         url: format!(
             "{}/stand-in/mcp",

@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    immediate_policy, source_provider, stand_in_connection, stand_in_identities,
+    source_provider, stand_in_connection, stand_in_identities,
 };
 use chrono::TimeZone;
 
@@ -106,26 +106,21 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
-                if stand_in_connection(role, &work["source"]).is_some_and(|source| {
-                    source["policy"]["automatic"] == true && immediate_policy(&source["policy"])
-                }) {
-                    if let Err(error) = self
-                        .dispatch_connection_work(
-                            user,
-                            work["id"].as_str().unwrap_or_default(),
-                            false,
-                            None,
-                        )
-                        .await
+                for message in store
+                    .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+                    .map_err(settings_error)?
+                {
+                    let source = &message["source"];
+                    if message["dispatchStatus"] != "pending"
+                        || !stand_in_connection(role, source)
+                            .is_some_and(|connection| connection["policy"]["automatic"] == true)
                     {
-                        log_executor_event(
-                            "Connection work dispatch failed",
-                            &[
-                                ("work_id", work["id"].to_string()),
-                                ("error", error.message),
-                            ],
-                        );
+                        continue;
                     }
+                    store.enqueue_stand_in_event(user,
+                        json!([source_provider(source),source["profile"],source["kind"],source["id"],message["id"],role["id"]]),
+                        json!({"kind":"connection","source":source,"message":message,"roleIds":[role["id"]],"roleScoped":true}),
+                    ).map_err(settings_error)?;
                 }
             }
         }
@@ -206,7 +201,6 @@ impl RuntimeWorkRpcHandler {
                     .filter(|role| {
                         stand_in_connection(role, source).is_some_and(|connection| {
                             connection["policy"]["automatic"] == true
-                                && !immediate_policy(&connection["policy"])
                                 && connection["enabledAfter"]
                                     .as_str()
                                     .and_then(|time| {
@@ -217,17 +211,16 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|role| role["id"].clone())
                     .collect();
-                if !eligible.is_empty() {
+                for role in eligible {
                     store.enqueue_stand_in_event(user,
-                        json!([source_provider(source),source["profile"],source["kind"],source["id"],message["id"]]),
-                        json!({"kind":"connection","source":source,"message":message,"roleIds":eligible}),
+                        json!([source_provider(source),source["profile"],source["kind"],source["id"],message["id"],role]),
+                        json!({"kind":"connection","source":source,"message":message,"roleIds":[role],"roleScoped":true}),
                     ).map_err(settings_error)?;
                 }
             }
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
-                    (connection["policy"]["automatic"] != true
-                        || immediate_policy(&connection["policy"]))
+                    connection["policy"]["automatic"] != true
                         && connection["enabledAfter"]
                             .as_str()
                             .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
@@ -501,7 +494,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn silent_collection_persists_shared_events_without_grouping_or_work() {
+    async fn collection_persists_role_scoped_events_without_grouping_or_work() {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -541,10 +534,20 @@ mod tests {
                 .unwrap();
         }
         let events = store.stand_in_events(7).unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 4);
         assert!(events
             .iter()
-            .all(|event| event["roleIds"].as_array().unwrap().len() == 2));
+            .all(|event| event["roleScoped"] == true
+                && event["roleIds"].as_array().unwrap().len() == 1));
+        for role in ["role-0", "role-1"] {
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event["roleIds"] == json!([role]))
+                    .count(),
+                2
+            );
+        }
         assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
         assert!(handler.local_task_links(true).is_empty());
     }

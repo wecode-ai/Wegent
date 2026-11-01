@@ -28,6 +28,17 @@ pub(super) fn call(
         .map_err(|e| e.to_string())?;
     let batch = identity.coordinator_batch.as_deref().unwrap_or_default();
     if state["batchId"] != batch || !tools().iter().any(|tool| tool["name"] == name) {
+        crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
+            "Stand-in coordinator MCP scope rejected",
+            &[
+                ("task_id", identity.task_id.clone()),
+                ("requested_batch_fingerprint", batch_fingerprint(batch)),
+                (
+                    "current_batch_fingerprint",
+                    batch_fingerprint(state["batchId"].as_str().unwrap_or_default()),
+                ),
+            ],
+        ));
         return Err("Coordinator batch or tool is no longer available".into());
     }
     if name == "read_intake" {

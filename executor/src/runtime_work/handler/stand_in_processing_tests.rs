@@ -6,6 +6,7 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] = json!([{ "providerId":"@wegent/dsh-connection-dingtalk/dingtalk", "id":"group", "profile":"default", "kind":"group", "name":"Group", "policy":{"automatic":true,"askBeforeAct":true,"immediate":false} }]);
     let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
@@ -13,7 +14,7 @@ fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
 }
 
 fn connection_event() -> Value {
-    json!({"kind":"connection","source":{"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","id":"group","profile":"default","kind":"group"},"message":{"id":"event","text":"Source message","at":chrono::Utc::now().to_rfc3339()},"roleIds":["default"]})
+    json!({"roleScoped":true,"kind":"connection","source":{"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","id":"group","profile":"default","kind":"group"},"message":{"id":"event","text":"Source message","at":chrono::Utc::now().to_rfc3339()},"roleIds":["default"]})
 }
 
 #[tokio::test]
@@ -52,63 +53,44 @@ async fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
         .transcript(json!({"taskId":work_id,"limit":3}))
         .await
         .is_err());
-    // Model preparation can fail in this fixture; snapshot construction must still finish.
-    let _ = handler
-        .process_stand_in_user_on(&store, 7, &settings, true)
-        .await;
-    let state = store.stand_in_processing_state(7).unwrap();
-    assert!(state["batchId"].is_string());
-    assert_eq!(state["snapshot"]["works"], json!([]));
-    assert_eq!(state["snapshot"]["events"][0]["id"], event["id"]);
+    assert_eq!(
+        handler
+            .coordination_works(&store, 7, &settings)
+            .await
+            .unwrap(),
+        Vec::<Value>::new()
+    );
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["id"], event["id"]);
+    assert!(handler.local_task_link(&task_id(7)).is_none());
     assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
 }
 
 #[tokio::test]
-async fn empty_intake_and_future_checks_do_not_prepare_or_start_a_model() {
+async fn empty_intake_and_future_events_do_not_prepare_or_start_a_model() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
-    handler
-        .process_stand_in_user(&store, 7, false)
+    let empty = handler
+        .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
-    assert!(handler.local_task_links(true).is_empty());
-    store
-        .save_stand_in_processing_state(7, &json!({"nextCheckAt":"2000-01-01T00:00:00Z"}))
-        .unwrap();
-    handler
-        .process_stand_in_user(&store, 7, false)
-        .await
-        .unwrap();
-    let idle = store.stand_in_processing_state(7).unwrap();
-    assert!(
-        chrono::DateTime::parse_from_rfc3339(idle["nextCheckAt"].as_str().unwrap()).unwrap()
-            > chrono::Utc::now()
-    );
-    assert!(idle["lastCheckAt"].is_null());
-    assert!(handler.local_task_links(true).is_empty());
+    assert_eq!(empty["events"], json!([]));
+    let mut event = connection_event();
+    event["notBefore"] = json!("2099-01-01T00:00:00Z");
     let event = store
-        .enqueue_stand_in_event(7, json!(["test"]), connection_event())
+        .enqueue_stand_in_event(7, json!("future"), event)
         .unwrap();
-    handler
-        .process_stand_in_user(&store, 7, false)
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
-    let state = store.stand_in_processing_state(7).unwrap();
-    assert!(state["nextCheckAt"].is_string());
-    handler
-        .process_stand_in_user(&store, 7, false)
-        .await
-        .unwrap();
-    assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
+    let error=handler.coordination_rpc("runtime.coordination.commit",json!({"contextId":"personal:7","snapshotId":snapshot["id"],"actions":[{"kind":"assess","eventIds":[event["id"]]}],"assessmentInstructions":"Assess this batch","nextWakeAt":null})).await.unwrap_err();
+    assert_eq!(error.code, "not_due");
     assert!(handler.local_task_links(true).is_empty());
-    assert_eq!(
-        handler
-            .process_stand_in_user(&store, 7, true)
-            .await
-            .unwrap_err()
-            .code,
-        "model_unavailable"
-    );
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
     assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "pending");
 }
 
@@ -249,7 +231,7 @@ async fn events_waiting_on_a_queued_followup_do_not_launch_another_coordinator()
         )
         .unwrap();
     handler
-        .process_stand_in_user(&store, 7, true)
+        .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
     assert!(handler.local_task_link(&task_id(7)).is_none());
@@ -290,7 +272,7 @@ async fn disconnected_sources_are_cancelled_before_entering_a_new_snapshot() {
     settings["roles"][0]["connections"] = json!([]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     handler
-        .process_stand_in_user(&store, 7, true)
+        .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
     assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "cancelled");
@@ -329,7 +311,7 @@ async fn settings_save_waits_for_dispatch_and_cancelled_commands_stay_cancelled(
     drop(guard);
     save.await.unwrap();
     handler
-        .process_stand_in_user(&store, 7, false)
+        .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
     assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "cancelled");
@@ -344,16 +326,14 @@ async fn saving_after_failed_processing_clears_old_error_and_keeps_system_owned_
     store
         .enqueue_stand_in_event(7, json!(["test"]), connection_event())
         .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    let event = store.stand_in_events(7).unwrap().remove(0);
+    handler.coordination_rpc("runtime.coordination.commit",json!({"contextId":"personal:7","snapshotId":snapshot["id"],"actions":[{"kind":"assess","eventIds":[event["id"]]}],"assessmentInstructions":"Assess this batch","nextWakeAt":null})).await.unwrap();
     assert_eq!(
-        handler
-            .process_stand_in_user(&store, 7, true)
-            .await
-            .unwrap_err()
-            .code,
-        "model_unavailable"
-    );
-    assert_eq!(
-        store.stand_in_processing_state(7).unwrap()["error"]["code"],
+        store.stand_in_actions(7).unwrap()[0]["error"]["code"],
         "model_unavailable"
     );
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
@@ -376,10 +356,6 @@ async fn manual_checks_wait_for_busy_processing_and_revalidate_paused_identity()
     let (handler, store, mut settings) = fixture(root.path());
     let gate = handler.task_send_gate("stand-in-processing:7");
     let guard = gate.lock().await;
-    handler
-        .process_stand_in_user(&store, 7, false)
-        .await
-        .unwrap();
     let check = handler.check_stand_in_processing(json!({"userId":7}));
     tokio::pin!(check);
     assert!(tokio::time::timeout(Duration::from_millis(10), &mut check)
@@ -393,4 +369,212 @@ async fn manual_checks_wait_for_busy_processing_and_revalidate_paused_identity()
     assert!(state["error"].is_null());
     assert!(state["nextCheckAt"].is_string());
     assert!(handler.local_task_links(true).is_empty());
+}
+
+impl RuntimeWorkRpcHandler {
+    async fn coordination_snapshot_for_test(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+    ) -> Result<Value, AppIpcError> {
+        let settings = store.personal_stand_in(user, &self.device_id).unwrap();
+        self.coordination_rpc("runtime.coordination.snapshot",json!({"contextId":format!("personal:{user}"),"revision":LocalTaskStore::coordination_configuration_version(&settings)})).await
+    }
+}
+
+#[tokio::test]
+async fn router_migrates_legacy_connection_events_without_crossing_role_timing() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let mut second = settings["roles"][0].clone();
+    second["id"] = json!("immediate");
+    second["connections"][0]["policy"]["immediate"] = json!(true);
+    settings["roles"].as_array_mut().unwrap().push(second);
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let mut event = connection_event();
+    event.as_object_mut().unwrap().remove("roleScoped");
+    event["roleIds"] = json!(["default", "immediate"]);
+    let original = store
+        .enqueue_stand_in_event(7, json!("legacy"), event)
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    let events = snapshot["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["processingMode"] == "immediate")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["processingMode"] == "silent")
+            .count(),
+        1
+    );
+    assert!(events
+        .iter()
+        .all(|event| event["receivedAt"] == original["createdAt"]));
+    assert!(handler.local_task_links(true).is_empty());
+}
+
+#[tokio::test]
+async fn verified_reply_waits_in_original_work_and_cannot_be_redirected() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut event = connection_event();
+    let work = store
+        .ingest_stand_in_message(7, "default", &event["source"], &event["message"], None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {local_task_id:work_id.into(),status:"active".into(),interaction_status:Some("waitingForUserInput".into()),runtime_handle:json!({"origin":{"type":"connection_work","initiatedBy":"stand_in","userId":7,"standInId":"default"}}),..Default::default()});
+    event["message"]["quotedMessageId"] = event["message"]["id"].clone();
+    event["message"]["id"] = json!("reply");
+    let event = store
+        .enqueue_stand_in_event(7, json!("reply"), event)
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["binding"]["workId"], work_id);
+    assert_eq!(snapshot["events"][0]["binding"]["awaitingUser"], true);
+    let mut command = json!({"contextId":"personal:7","snapshotId":snapshot["id"],"actions":[{"kind":"wait_for_work","workId":"foreign-work","eventIds":[event["id"]]}],"nextWakeAt":null});
+    assert_eq!(
+        handler
+            .coordination_rpc("runtime.coordination.commit", command.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    command["actions"][0]["workId"] = json!(work_id);
+    let receipt = handler
+        .coordination_rpc("runtime.coordination.commit", command.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        handler
+            .coordination_rpc("runtime.coordination.commit", command)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "sending");
+    assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "pending");
+    assert!(handler.local_task_link(&task_id(7)).is_none());
+    assert!(handler
+        .stand_in_processing_status(json!({"userId":7}))
+        .unwrap()
+        .get("routerSnapshot")
+        .is_none());
+}
+
+#[tokio::test]
+async fn a_coordinator_wait_started_after_snapshot_cannot_have_its_batch_rotated() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let event = store
+        .enqueue_stand_in_event(7, json!("late-wait"), connection_event())
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    let before = store.stand_in_processing_state(7).unwrap();
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task_id(7),
+        status: "active".into(),
+        interaction_status: Some("waitingForUserInput".into()),
+        ..Default::default()
+    });
+    let error=handler.coordination_rpc("runtime.coordination.commit",json!({"contextId":"personal:7","snapshotId":snapshot["id"],"actions":[{"kind":"assess","eventIds":[event["id"]]}],"assessmentInstructions":"Assess only authorized intake","nextWakeAt":null})).await.unwrap_err();
+    assert_eq!(error.code, "stale_context");
+    assert_eq!(store.stand_in_processing_state(7).unwrap(), before);
+    assert!(store.stand_in_actions(7).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_approval_started_after_snapshot_never_receives_a_router_reply() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut event = connection_event();
+    let work = store
+        .ingest_stand_in_message(7, "default", &event["source"], &event["message"], None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let mut link = RuntimeTaskLink {
+        local_task_id: work_id.into(),
+        status: "active".into(),
+        runtime_handle: json!({"origin":{"type":"connection_work","initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    };
+    handler.upsert_local_task(link.clone());
+    event["message"]["quotedMessageId"] = event["message"]["id"].clone();
+    event["message"]["id"] = json!("late-approval");
+    let event = store
+        .enqueue_stand_in_event(7, json!("late-approval"), event)
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["binding"]["awaitingUser"], false);
+    link.interaction_status = Some("waitingForApproval".into());
+    handler.upsert_local_task(link);
+    handler.coordination_rpc("runtime.coordination.commit",json!({"contextId":"personal:7","snapshotId":snapshot["id"],"actions":[{"kind":"continue_work","workId":work_id,"eventIds":[event["id"]]}],"nextWakeAt":null})).await.unwrap();
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "sending");
+    assert_eq!(store.stand_in_events(7).unwrap()[0]["status"], "pending");
+    assert!(handler.local_task_link(&task_id(7)).is_none());
+}
+
+#[tokio::test]
+async fn primary_created_work_feedback_stays_owned_and_requires_semantic_assessment() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    let primary = stand_in_identities(&settings)
+        .into_iter()
+        .find(|role| role["id"] == "@primary")
+        .unwrap();
+    let link = RuntimeTaskLink {
+        local_task_id: "primary-created".into(),
+        status: "done".into(),
+        runtime_handle: json!({"origin":{"type":"stand_in_task","initiatedBy":"stand_in","userId":7,"standInId":"@primary"}}),
+        ..Default::default()
+    };
+    handler
+        .validate_followup_role(&store, 7, &primary, &link)
+        .await
+        .unwrap();
+    assert!(handler
+        .validate_followup_role(&store, 8, &primary, &link)
+        .await
+        .is_err());
+    assert!(handler
+        .validate_followup_role(&store, 7, &settings["roles"][0], &link)
+        .await
+        .is_err());
+    handler.upsert_local_task(link);
+    let event = store
+        .enqueue_stand_in_event(
+            7,
+            json!("primary-feedback"),
+            json!({"kind":"work_state","taskId":"primary-created","roleIds":["@primary"]}),
+        )
+        .unwrap();
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["id"], event["id"]);
+    assert!(
+        snapshot["events"][0]["binding"].is_null(),
+        "Completion feedback must not echo an automatic continuation into itself"
+    );
 }

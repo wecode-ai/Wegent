@@ -66,16 +66,12 @@ export function createDesktopScenario({
           intake = JSON.parse(readMcpToolOutput(body, readId)).snapshot
           const eventIds = intake.events.map(event => event.id)
           const taskId = intake.works[0]?.taskId
-          const name = round === 1 ? 'create_work' : 'continue_work'
-          if (round === 1) assert.ok(intake.events.some(event => event.kind === 'assignment'))
-          else assert.ok(taskId, 'The second batch must expose the original work conversation')
+          assert.ok(taskId, 'The feedback batch must expose the original work conversation')
+          assert.ok(intake.events.every(event => ['work_state', 'followup'].includes(event.kind)))
           events = mcpToolRequestEvents(body, {
-            toolName: name,
-            directToolName: `mcp__wework_stand_in__${name}`,
-            argumentsValue:
-              round === 1
-                ? { eventIds, roleId: ROLE, title: MARKER }
-                : { eventIds, taskId, message: FOLLOWUP },
+            toolName: 'continue_work',
+            directToolName: 'mcp__wework_stand_in__continue_work',
+            argumentsValue: { eventIds, taskId, message: FOLLOWUP },
             searchCallId: `silent-action-search-${round}`,
             toolCallId: actionId,
           }).events
@@ -149,6 +145,18 @@ export function createDesktopScenario({
         const catalog = await rpc(control, 'runtime.runner.catalog', {})
         const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
         assert.ok(model, 'Use the real configured E2E model catalog')
+        await control.command('seedLocalProject', 'body', {
+          value: JSON.stringify({
+            projectKey: 'silent-ordinary-workspace',
+            name: '已有工作的代码项目',
+            path: workspacePath,
+          }),
+        })
+        const workspace = {
+          projectKey: 'silent-ordinary-workspace',
+          workspacePath,
+          executionMode: 'current_workspace',
+        }
         await rpc(control, 'runtime.stand_in.personal.save', {
           userId: USER,
           settings: {
@@ -158,6 +166,7 @@ export function createDesktopScenario({
               prompt: '',
               preferences: 'Only delegate concrete work.',
               model,
+              workspace,
             },
             roles: [
               {
@@ -168,6 +177,7 @@ export function createDesktopScenario({
                 version: 0,
                 executionDeviceId: initial.executionDeviceId,
                 model,
+                workspace,
                 collaboration: {
                   enabled: true,
                   allProjects: false,
@@ -213,54 +223,33 @@ export function createDesktopScenario({
           project_id: project.id,
           todo: { title: MARKER, assignee_user_id: USER },
         })
-        await waitFor(
-          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
-          state => state.pendingCount === 1,
-          uiTimeoutMs
-        )
-        assert.deepEqual(await rpc(control, 'todos.bindings', { task_id: issue.id }), [])
-        assert.equal(coordinatorCalls, 0)
-        assert.equal(workCalls, 0)
-        // The existing overview status refresh is every 15 seconds, longer than an ordinary UI step.
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
-          text: '1',
-          timeoutMs: 20000,
-        })
-        await captureScreenshot(control, 'silent-02-intake-without-work.png')
-        const scheduled = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
-        assert.ok(
-          Date.parse(scheduled.nextCheckAt) > Date.now() + 4 * 60000,
-          'The system owns the batch interval'
-        )
-        // Advance only this isolated persisted deadline; the real scheduler still claims and executes it.
-        const dueAt = Date.now() + 1000
-        const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
-        try {
-          database
-            .prepare(
-              "UPDATE loop_items SET metadata=json_set(metadata,'$.nextCheckAt',?) WHERE id=? AND resource_type='stand_in_processing'"
-            )
-            .run(new Date(dueAt).toISOString(), `stand-in-processing:${USER}`)
-        } finally {
-          database.close()
-        }
         const bindings = await waitFor(
           () => rpc(control, 'todos.bindings', { task_id: issue.id }),
           rows => rows.length === 1,
-          // One real minute plus the existing 30-second scheduler tick and model turn.
           90000 + modelResponseTimeoutMs
         )
-        assert.ok(
-          Date.now() >= dueAt,
-          'The automatic scheduler must respect the configured due time'
-        )
-        assert.ok(coordinatorCalls > 0)
         const taskId = bindings[0].task_id
         const first = await waitFor(
           () => rpc(control, 'runtime.tasks.get', { taskId }),
           value => value.task?.status === 'done',
           modelResponseTimeoutMs
         )
+        assert.equal(workCalls, 1, 'An explicit assignment starts its one eligible role directly')
+        assert.equal(
+          coordinatorCalls,
+          0,
+          'Direct assignment must not require an extra model assessment'
+        )
+        const scheduled = await waitFor(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
+          state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 4 * 60000,
+          uiTimeoutMs
+        )
+        assert.equal(scheduled.running, false)
+        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
+          timeoutMs: 20000,
+        })
+        await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
         const workCard = `[data-testid="stand-in-activity-task-${taskId}"]`
         await control.command('waitFor', workCard)
@@ -272,12 +261,19 @@ export function createDesktopScenario({
         await captureScreenshot(control, 'silent-03-concrete-work-created.png')
         const threadId = first.task.runtimeHandle.threadId
         assert.ok(threadId)
-        await waitFor(
-          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
-          state => !state.running,
-          modelResponseTimeoutMs
-        )
-        await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
+        // Advance this isolated source's receive window, never a removed global coordinator deadline.
+        const dueAt = Date.now() + 1000
+        const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
+        try {
+          const changed = database
+            .prepare(
+              "UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"
+            )
+            .run(new Date(dueAt - 5 * 60000).toISOString(), USER)
+          assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+        } finally {
+          database.close()
+        }
         await waitFor(
           () => rpc(control, 'runtime.tasks.transcript', { taskId, limit: 20 }),
           transcript => JSON.stringify(transcript).includes('SILENT_FOLLOWUP_DONE'),
@@ -293,6 +289,8 @@ export function createDesktopScenario({
           ),
           'Internal intake JSON must not appear in the task conversation'
         )
+        assert.ok(Date.now() >= dueAt, 'The source receive window must expire before assessment')
+        assert.ok(coordinatorCalls > 0)
         await captureScreenshot(control, 'silent-04-original-session-continued.png')
         const continued = await rpc(control, 'runtime.tasks.get', { taskId })
         assert.equal(continued.task.runtimeHandle.threadId, threadId)
@@ -308,14 +306,6 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
         await captureScreenshot(control, 'silent-05-return-to-stand-in.png')
         // Establish an ordinary user task through the real public task API.
-        // Register its code workspace separately from the collaboration project's Issue storage.
-        await control.command('seedLocalProject', 'body', {
-          value: JSON.stringify({
-            projectKey: 'silent-ordinary-workspace',
-            name: '已有工作的代码项目',
-            path: workspacePath,
-          }),
-        })
         const ordinary = await rpc(control, 'runtime.tasks.create', {
           taskId: `ordinary-user-${process.pid}`,
           title: '用户已有的普通任务',

@@ -20,6 +20,12 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if payload["automaticStandIn"] == true {
+        request.extra.insert("standInAutomatic".into(), json!(true));
+    } else {
+        request.extra.remove("standInAutomatic");
+        request.extra.remove("standInAutomaticVersion");
+    }
     if let Some(command_id) = payload.get("commandId") {
         request
             .extra

@@ -23,7 +23,7 @@ impl RuntimeWorkRpcHandler {
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
         let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
-        let mut configs: Vec<Value> = project_configs
+        let configs: Vec<Value> = project_configs
             .iter()
             .filter(|config| {
                 config["enabled"] == true
@@ -62,11 +62,18 @@ impl RuntimeWorkRpcHandler {
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
+        if super::personal_stand_in::matching_personal_roles(&configs, &issue)
+            .iter()
+            .all(|role| {
+                self.local_task_link(&self.stand_in_task_id(role, &issue["human_task_binding"]))
+                    .is_some()
+            })
+        {
+            return Ok(());
+        }
 
         let user = configs[0]["userId"].as_i64().unwrap_or_default();
-        if configs.iter().any(|config| {
-            !crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
-        }) {
+        {
             let assignments = self
                 .stand_in_http(
                     reqwest::Method::GET,
@@ -86,9 +93,7 @@ impl RuntimeWorkRpcHandler {
                 super::personal_stand_in::matching_personal_roles(&configs, &issue)
                     .iter()
                     .filter(|role| {
-                        !crate::task_runtime::personal_stand_in::immediate_policy(
-                            &role["handlingPolicy"],
-                        ) && super::stand_in::assignment_after_enable(active, role)
+                        super::stand_in::assignment_after_enable(active, role)
                             && self
                                 .local_task_link(
                                     &self.stand_in_task_id(role, &issue["human_task_binding"]),
@@ -103,24 +108,7 @@ impl RuntimeWorkRpcHandler {
             ).map_err(settings_error)?;
             }
         }
-        configs.retain(|config| {
-            crate::task_runtime::personal_stand_in::immediate_policy(&config["handlingPolicy"])
-        });
-        if configs.is_empty() {
-            return Ok(());
-        }
-        let result = self.start_cloud_stand_in_with_roles(&configs, &issue).await;
-        self.log_stand_in_decision(
-            &configs[0],
-            &issue,
-            if result.is_ok() {
-                "notification_processed"
-            } else {
-                "notification_failed"
-            },
-            json!({"errorCode":result.as_ref().err().map(|error| &error.code)}),
-        );
-        result
+        Ok(())
     }
 }
 
@@ -191,7 +179,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_assignment_bound_elsewhere_silently_skips_then_reports_already_handled() {
+    async fn admitted_assignment_cannot_overwrite_a_binding_on_another_device() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         fixture
             .handler
@@ -199,7 +187,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
+        // Admission persists an event; only dispatch queries execution bindings.
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
         assert!(fixture.handler.local_task_links(true).is_empty());
 
         let error = fixture
@@ -219,7 +210,7 @@ mod tests {
             "This assignment has already been handled or is no longer active"
         );
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
 
@@ -247,7 +238,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn received_notification_validates_once_and_preserves_existing_binding() {
+    async fn received_notification_only_admits_intake_and_local_discovery_stays_local() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         fixture
             .handler
@@ -255,7 +246,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
         assert!(fixture
             .handler
             .local_task_link("stand-in-human-default")

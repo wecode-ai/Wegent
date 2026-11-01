@@ -124,6 +124,7 @@ mod active_text;
 mod archives;
 mod assignment_receipts;
 mod async_questions;
+mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
@@ -321,6 +322,7 @@ struct RuntimeTurnScheduler {
     active_tasks: usize,
     active_task_ids: HashSet<String>,
     queued_turns: VecDeque<SpawnTurnRequest>,
+    waiting_automatic_task_ids: HashSet<String>,
 }
 
 impl RuntimeTurnScheduler {
@@ -330,11 +332,37 @@ impl RuntimeTurnScheduler {
             active_tasks: 0,
             active_task_ids: HashSet::new(),
             queued_turns,
+            waiting_automatic_task_ids: HashSet::new(),
         }
+    }
+
+    fn refresh_automatic_waits(&mut self, store: &RuntimeWorkStore, incoming: Option<&str>) {
+        self.waiting_automatic_task_ids = self
+            .queued_turns
+            .iter()
+            .map(|turn| turn.local_task_id.as_str())
+            .chain(incoming)
+            .filter(|id| {
+                store.get_task_summary(id).is_some_and(|link| {
+                    link.interaction_status
+                        .as_deref()
+                        .is_some_and(|status| !status.is_empty())
+                })
+            })
+            .map(str::to_owned)
+            .collect();
+    }
+
+    fn automatic_waits(&self, turn: &SpawnTurnRequest) -> bool {
+        turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
+            && self
+                .waiting_automatic_task_ids
+                .contains(&turn.local_task_id)
     }
 
     fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
         if self.active_tasks >= self.max_concurrent_tasks
+            || self.automatic_waits(&turn)
             || self.active_task_ids.contains(&turn.local_task_id)
             || !self.queued_turns.is_empty()
         {
@@ -389,6 +417,9 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
+        if self.automatic_waits(&self.queued_turns[position]) {
+            return None;
+        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
@@ -404,11 +435,9 @@ impl RuntimeTurnScheduler {
         let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
         let mut turns = Vec::with_capacity(available);
         while turns.len() < available {
-            let Some(position) = self
-                .queued_turns
-                .iter()
-                .position(|turn| !self.active_task_ids.contains(&turn.local_task_id))
-            else {
+            let Some(position) = self.queued_turns.iter().position(|turn| {
+                !self.active_task_ids.contains(&turn.local_task_id) && !self.automatic_waits(turn)
+            }) else {
                 break;
             };
             let Some(turn) = self.queued_turns.remove(position) else {

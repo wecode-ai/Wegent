@@ -447,9 +447,7 @@ impl RuntimeWorkRpcHandler {
                         .iter()
                         .filter(|role| {
                             let id = self.stand_in_task_id(role, &binding);
-                            !crate::task_runtime::personal_stand_in::immediate_policy(
-                                &role["handlingPolicy"],
-                            ) && self.local_task_link(&id).is_none()
+                            self.local_task_link(&id).is_none()
                                 && !bindings.iter().any(|row| row.task_id == id)
                         })
                         .map(|role| role["id"].clone())
@@ -458,35 +456,6 @@ impl RuntimeWorkRpcHandler {
                     store.enqueue_stand_in_event(user, json!(["assignment","local",project,issue.id,binding["humanAssignmentId"]]),
                         json!({"kind":"assignment","projectId":project,"projectStore":"local","issueId":issue.id,"assignmentId":binding["humanAssignmentId"],"issue":issue_value,"roleIds":roles})
                     ).map_err(settings_error)?;
-                }
-            }
-            for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
-            {
-                if !crate::task_runtime::personal_stand_in::immediate_policy(
-                    &config["handlingPolicy"],
-                ) {
-                    continue;
-                }
-                let task_id = self.stand_in_task_id(config, &binding);
-                if self.stand_in_task_is_handled(
-                    config,
-                    &task_id,
-                    bindings.iter().any(|binding| binding.task_id == task_id),
-                ) {
-                    continue;
-                }
-                if let Err(error) = self
-                    .start_local_stand_in(config, &issue_value, &binding)
-                    .await
-                {
-                    log_executor_event(
-                        "stand-in assignment failed",
-                        &[
-                            ("issue_id", issue.id.clone()),
-                            ("role_id", config["id"].to_string()),
-                            ("error", error.message),
-                        ],
-                    );
                 }
             }
         }
@@ -673,7 +642,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        payload: Value,
+        mut payload: Value,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] == "cloud" {
             self.verify_stand_in_user(config).await?;
@@ -734,6 +703,14 @@ impl RuntimeWorkRpcHandler {
             "task_binding_created",
             json!({"taskId":task_id,"retry":retry}),
         );
+        if config["manual"] != true {
+            use sha2::{Digest, Sha256};
+            payload["automaticStandIn"] = json!(true);
+            payload["commandId"] = json!(format!(
+                "stand-in-initial:{:x}",
+                Sha256::digest(task_id.as_bytes())
+            ));
+        }
         let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
             let cleanup = if local {

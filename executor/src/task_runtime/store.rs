@@ -69,6 +69,9 @@ mod stand_in_inbox;
 #[path = "stand_in_processing.rs"]
 mod stand_in_processing;
 
+#[path = "coordination_store.rs"]
+mod coordination_store;
+
 #[path = "stand_in_telemetry.rs"]
 pub(crate) mod stand_in_telemetry;
 

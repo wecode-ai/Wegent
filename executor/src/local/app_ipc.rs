@@ -96,6 +96,7 @@ const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
 const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.command-receipts-v1",
+    "runtime.coordination-v1",
     "device.command",
     "executor.backend",
     "executor.codex_home",

@@ -1198,7 +1198,7 @@ fn finish_test_native_turn(handler: &RuntimeWorkRpcHandler, task_id: &str, threa
     }
 }
 
-fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
+pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
