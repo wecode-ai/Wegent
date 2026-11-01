@@ -844,12 +844,22 @@ describe('DesktopSidebar', () => {
     await act(async () => vi.advanceTimersByTime(120))
     expect(screen.getByTestId('project-hover-card-7')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('project-hover-pin-7'))
+    const pinAction = screen.getByTestId('project-hover-pin-7')
+    fireEvent.pointerDown(pinAction)
+    act(() => pinAction.focus())
+    fireEvent.click(pinAction)
     expect(onSetRuntimeProjectPinned).toHaveBeenCalledWith({
       deviceId: 'local-device',
       projectKey: 'project-7',
       pinned: true,
     })
+    fireEvent.mouseLeave(hoverCard)
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.queryByTestId('project-hover-card-7')).not.toBeInTheDocument()
+
+    fireEvent.mouseEnter(projectRow)
+    await act(async () => vi.advanceTimersByTime(450))
     fireEvent.click(screen.getByTestId('project-hover-rename-7'))
     expect(screen.getByTestId('rename-project-input')).toHaveValue('Wegent')
     fireEvent.click(screen.getByTestId('rename-project-input-close-button'))
