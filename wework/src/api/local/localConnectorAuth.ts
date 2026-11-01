@@ -77,6 +77,7 @@ export function pluginLocalConnectorAuthTarget(
 
 interface LocalConnectorAuthHealthOptions {
   bypassCache?: boolean
+  prepareRuntime?: boolean
 }
 
 /** Reuse recent success for management views; runtime authorization recovery bypasses it. */
@@ -96,7 +97,8 @@ export function clearLocalConnectorAuthHealthCache(): void {
 async function callLocalConnectorAuth(
   method: 'health' | 'start' | 'poll' | 'cancel' | 'logout',
   target: LocalConnectorAuthTarget,
-  sessionId?: string | null
+  sessionId?: string | null,
+  prepareRuntime = false
 ): Promise<LocalConnectorAuthResult> {
   await ensureLocalExecutorStarted()
   return requestLocalExecutor<LocalConnectorAuthResult>(`runtime.local_connector_auth.${method}`, {
@@ -104,6 +106,7 @@ async function callLocalConnectorAuth(
     connectorSlug: target.connectorSlug,
     pluginRoot: target.pluginRoot ?? undefined,
     sessionId: sessionId ?? undefined,
+    ...(prepareRuntime ? { prepareRuntime: true } : {}),
   })
 }
 
@@ -117,18 +120,21 @@ export function localConnectorAuthHealth(
   if (
     !isGithubCliTarget(target) &&
     !options.bypassCache &&
+    !options.prepareRuntime &&
     cachedAt != null &&
     Date.now() - cachedAt < OK_HEALTH_TTL_MS
   ) {
     return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
   }
-  return callLocalConnectorAuth('health', target).then(result => {
-    if (revision === healthCacheRevision) {
-      if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
-      else okHealthCache.delete(key)
+  return callLocalConnectorAuth('health', target, undefined, options.prepareRuntime).then(
+    result => {
+      if (revision === healthCacheRevision) {
+        if (result.status === 'ok' && !isGithubCliTarget(target)) okHealthCache.set(key, Date.now())
+        else okHealthCache.delete(key)
+      }
+      return result
     }
-    return result
-  })
+  )
 }
 
 export function localConnectorAuthStart(target: LocalConnectorAuthTarget) {

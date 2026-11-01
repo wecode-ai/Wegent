@@ -19,6 +19,7 @@ export interface ExecutionEnvironmentStatus {
   source?: 'electron' | 'configured' | 'system' | 'managed'
   configuredPath?: string | null
   restartRequired?: boolean
+  phase?: 'download' | 'install' | 'verify' | null
 }
 
 export function listExecutionEnvironments() {

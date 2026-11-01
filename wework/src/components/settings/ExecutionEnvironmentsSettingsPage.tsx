@@ -1,6 +1,7 @@
 import { Box, Download, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -31,10 +32,19 @@ export function ExecutionEnvironmentsSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [actionId, setActionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const latestPythonStatus = useRef<ExecutionEnvironmentStatus | null>(null)
 
   const refresh = useCallback(async () => {
+    const previousPythonStatus = latestPythonStatus.current
     try {
-      setEnvironments(await listExecutionEnvironments())
+      const next = await listExecutionEnvironments()
+      setEnvironments(
+        next.map(item =>
+          item.id === 'python' && latestPythonStatus.current !== previousPythonStatus
+            ? (latestPythonStatus.current ?? item)
+            : item
+        )
+      )
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -50,11 +60,20 @@ export function ExecutionEnvironmentsSettingsPage() {
     }
   }, [refresh])
 
-  useEffect(() => {
-    if (!environments.some(item => item.state === 'downloading')) return
-    const timer = window.setInterval(() => void refresh(), 1000)
-    return () => window.clearInterval(timer)
-  }, [environments, refresh])
+  useEffect(
+    () =>
+      subscribeDesktopHostEvents(event => {
+        if (event.type !== 'python-runtime-status') return
+        const status = event.payload as unknown as ExecutionEnvironmentStatus
+        latestPythonStatus.current = status
+        setEnvironments(previous =>
+          previous.some(item => item.id === 'python')
+            ? previous.map(item => (item.id === 'python' ? status : item))
+            : [...previous, status]
+        )
+      }),
+    []
+  )
 
   const runAction = async (id: string, action: () => Promise<unknown>) => {
     setActionId(id)
@@ -104,7 +123,11 @@ export function ExecutionEnvironmentsSettingsPage() {
               ? Math.min(100, (environment.downloadedBytes / environment.totalBytes) * 100)
               : 0
           const status = downloading
-            ? t('workbench.execution_environment_downloading', '正在后台下载')
+            ? environment.phase === 'install'
+              ? t('workbench.plugin_python_installing', '正在安装插件 Python 环境…')
+              : environment.phase === 'verify'
+                ? t('workbench.plugin_python_verifying', '正在验证插件 Python 环境…')
+                : t('workbench.execution_environment_downloading', '正在后台下载')
             : installed
               ? t('workbench.execution_environment_installed', '已安装')
               : environment.state === 'error'
@@ -154,21 +177,27 @@ export function ExecutionEnvironmentsSettingsPage() {
                         )
                       : t(
                           'workbench.execution_environment_python_description',
-                          '由 Wework 自动准备独立的 Python 3.12，不依赖系统 Python，也不会修改系统 PATH。'
+                          '首次使用 Python 插件时自动准备独立的 Python 3.12，普通任务保留原有的 Python 环境。'
                         )}
                   </p>
                   {downloading && (
                     <div className="mt-3">
                       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full rounded-full bg-text-primary transition-[width]"
-                          style={{ width: `${progress}%` }}
+                          className={
+                            environment.totalBytes > 0
+                              ? 'h-full rounded-full bg-text-primary transition-[width]'
+                              : 'h-full w-1/3 animate-pulse rounded-full bg-text-primary'
+                          }
+                          style={environment.totalBytes > 0 ? { width: `${progress}%` } : undefined}
                         />
                       </div>
-                      <div className="mt-1 text-xs text-text-secondary">
-                        {formatBytes(environment.downloadedBytes) ?? '0 B'} /{' '}
-                        {formatBytes(environment.totalBytes) ?? '—'}
-                      </div>
+                      {environment.totalBytes > 0 && (
+                        <div className="mt-1 text-xs text-text-secondary">
+                          {formatBytes(environment.downloadedBytes) ?? '0 B'} /{' '}
+                          {formatBytes(environment.totalBytes) ?? '—'}
+                        </div>
+                      )}
                     </div>
                   )}
                   {environment.error && (

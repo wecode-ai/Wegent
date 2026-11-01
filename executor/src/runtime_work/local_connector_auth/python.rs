@@ -7,6 +7,20 @@ pub(super) async fn prepare_command(
     args: &[String],
     tool: Option<&Path>,
 ) -> Result<bool, AppIpcError> {
+    let requires_python = command_uses_python(root, args, tool)?;
+    if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        crate::python_runtime::ensure_managed_python()
+            .await
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+    }
+    Ok(requires_python)
+}
+
+pub(super) fn command_uses_python(
+    root: &Path,
+    args: &[String],
+    tool: Option<&Path>,
+) -> Result<bool, AppIpcError> {
     let python_program = args
         .first()
         .is_some_and(|program| crate::python_runtime::is_python_program(program));
@@ -17,15 +31,9 @@ pub(super) async fn prepare_command(
     if !crate::python_runtime::managed_python_bridge_configured() {
         return Ok(python_program || python_tool);
     }
-    let requires_python = python_program
+    Ok(python_program
         || python_tool
-        || (!args.is_empty() && command_requires_python(&read_plugin_manifest(root)?, args));
-    if requires_python {
-        crate::python_runtime::ensure_managed_python()
-            .await
-            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
-    }
-    Ok(requires_python)
+        || (!args.is_empty() && command_requires_python(&read_plugin_manifest(root)?, args)))
 }
 
 fn command_requires_python(manifest: &Value, args: &[String]) -> bool {

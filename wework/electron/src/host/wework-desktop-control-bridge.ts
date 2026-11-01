@@ -45,6 +45,7 @@ export interface WeworkDesktopControlBridgeOptions {
   window: () => DesktopWindow | null
   smartApps?: () => SmartAppControlService | null
   ensurePython?: () => Promise<unknown>
+  pythonStatus?: () => Promise<unknown>
 }
 
 export interface SmartAppControlService {
@@ -147,14 +148,20 @@ export class WeworkDesktopControlBridge {
     pythonToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
-    if (request.method === 'POST' && request.url === '/runtime/python/ensure') {
+    const pythonOperation =
+      request.method === 'POST' && request.url === '/runtime/python/ensure'
+        ? this.options.ensurePython
+        : request.method === 'GET' && request.url === '/runtime/python/status'
+          ? this.options.pythonStatus
+          : undefined
+    if (pythonOperation) {
       if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
         writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })
         return
       }
       request.resume()
       try {
-        writeResponse(response, 200, { ok: true, data: await this.options.ensurePython!() })
+        writeResponse(response, 200, { ok: true, data: await pythonOperation() })
       } catch (error) {
         writeResponse(response, 200, { ok: false, error: errorMessage(error) })
       }

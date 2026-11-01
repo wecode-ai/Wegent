@@ -213,7 +213,7 @@ export function executorRequestTimeoutMs(method, defaultTimeoutMs) {
     method === 'executor.plugin_auth.run' ||
     method === 'runtime.connections.cli' ||
     method.startsWith('runtime.local_connector_auth.')
-  return preparesPython ? 18 * 60_000 + 5_000 : defaultTimeoutMs
+  return preparesPython ? 21 * 60_000 + 5_000 : defaultTimeoutMs
 }
 
 function validRendererMethods(methods) {

@@ -124,9 +124,12 @@ pub(super) async fn prepare_package_python(
     package: &PreparedPackage,
 ) -> Result<(), AuthError> {
     if package_uses_python(home, package)? {
-        crate::python_runtime::ensure_managed_python()
+        let ready = crate::python_runtime::managed_python_ready()
             .await
             .map_err(|_| AuthError("python_runtime_unavailable"))?;
+        if !ready {
+            return Err(AuthError("python_runtime_unavailable"));
+        }
     }
     Ok(())
 }

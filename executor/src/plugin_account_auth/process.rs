@@ -99,7 +99,8 @@ pub(super) async fn invoke(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     if requires_python {
-        crate::python_runtime::isolate_python_environment(&mut command);
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
     }
     if let Some(configuration) = local_configuration {
         command.env("WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION", configuration);

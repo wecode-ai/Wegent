@@ -64,7 +64,7 @@ pub async fn revoke_pending<T: LocalBackendTransport>(
             if requires_python {
                 if python.is_empty() {
                     // One shared runtime wait never occupies a provider operation slot.
-                    preparation.spawn(crate::python_runtime::ensure_managed_python());
+                    preparation.spawn(crate::python_runtime::managed_python_ready());
                 }
                 python.push(target);
             } else {
@@ -76,7 +76,7 @@ pub async fn revoke_pending<T: LocalBackendTransport>(
             None => break,
         }
     }
-    if matches!(preparation.join_next().await, Some(Ok(Ok(())))) {
+    if matches!(preparation.join_next().await, Some(Ok(Ok(true)))) {
         for target in python {
             spawn_revocation(&mut pending, transport.clone(), home, target).await;
         }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   ensurePython: vi.fn(),
   list: vi.fn(),
   useBuiltinNode: vi.fn(),
+  subscribe: vi.fn(),
 }))
+
+vi.mock('@/api/dsh/desktopHost', () => ({ subscribeDesktopHostEvents: mocks.subscribe }))
 
 vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => true,
@@ -24,6 +27,7 @@ vi.mock('@/desktop/executionEnvironments', () => ({
 
 describe('ExecutionEnvironmentsSettingsPage', () => {
   beforeEach(() => {
+    mocks.subscribe.mockReset().mockReturnValue(vi.fn())
     mocks.chooseNode.mockReset()
     mocks.ensurePython.mockReset().mockResolvedValue({ state: 'installed' })
     mocks.useBuiltinNode.mockReset()
@@ -78,6 +82,29 @@ describe('ExecutionEnvironmentsSettingsPage', () => {
 
     await waitFor(() => expect(mocks.ensurePython).toHaveBeenCalledOnce())
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2))
+  })
+
+  test('updates installation stages from host events while preparation is pending', async () => {
+    const user = userEvent.setup()
+    mocks.ensurePython.mockReturnValue(new Promise(() => undefined))
+    render(<ExecutionEnvironmentsSettingsPage />)
+    await user.click(await screen.findByTestId('execution-environment-python-install'))
+    const environments = await mocks.list.mock.results[0].value
+    act(() =>
+      mocks.subscribe.mock.calls[0][0]({
+        type: 'python-runtime-status',
+        payload: {
+          ...environments.find((item: { id: string }) => item.id === 'python'),
+          state: 'downloading',
+          phase: 'install',
+          source: 'managed',
+          totalBytes: 0,
+          downloadedBytes: 0,
+        },
+      })
+    )
+    expect(screen.getByTestId('execution-environment-python-status')).toHaveTextContent('正在安装')
+    expect(mocks.list).toHaveBeenCalledOnce()
   })
 
   test('keeps diagnostic status separate from credential-bearing runtime errors', async () => {

@@ -21,6 +21,7 @@ describe('WeworkDesktopControlBridge', () => {
           complete = resolve
         })
     )
+    const pythonStatus = vi.fn(async () => ({ id: 'python', state: 'notInstalled' }))
     const bridge = new WeworkDesktopControlBridge({
       instanceId: 'python-test',
       instanceKind: 'main',
@@ -29,6 +30,7 @@ describe('WeworkDesktopControlBridge', () => {
       registryDirectory,
       window: () => null,
       ensurePython,
+      pythonStatus,
     })
     await bridge.start()
     const environment = bridge.environment()
@@ -37,6 +39,18 @@ describe('WeworkDesktopControlBridge', () => {
     try {
       const unauthorized = await fetch(endpoint, { method: 'POST' })
       expect(unauthorized.status).toBe(401)
+      expect(ensurePython).not.toHaveBeenCalled()
+
+      const unauthorizedStatus = await fetch(new URL('/runtime/python/status', endpoint))
+      expect(unauthorizedStatus.status).toBe(401)
+      expect(pythonStatus).not.toHaveBeenCalled()
+
+      const status = await fetch(new URL('/runtime/python/status', endpoint), { headers })
+      expect(await status.json()).toEqual({
+        ok: true,
+        data: { id: 'python', state: 'notInstalled' },
+      })
+      expect(pythonStatus).toHaveBeenCalledOnce()
       expect(ensurePython).not.toHaveBeenCalled()
 
       const desktop = await fetch(new URL('/status', endpoint), { headers })

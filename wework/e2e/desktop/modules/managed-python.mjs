@@ -5,13 +5,14 @@ import { isAbsolute, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
-export const PYTHON_BOOTSTRAP_TIMEOUT_MS = 13 * 60_000
+export const PYTHON_BOOTSTRAP_TIMEOUT_MS = 16 * 60_000
 export const MANAGED_PYTHON_VERSION = '3.12.12'
 
 export function managedPythonPath(userDataDirectory) {
   return join(
     userDataDirectory,
-    'runtime',
+    'managed-runtimes',
+    'python',
     'bin',
     process.platform === 'win32' ? 'python.exe' : 'python3'
   )
@@ -96,7 +97,18 @@ export async function collectManagedPythonStatus(control, windowLabel = 'main') 
   return diagnostic
 }
 
-export async function assertManagedPythonStartup(
+export async function requestManagedPythonInstall(control, windowLabel = 'main') {
+  await control.commandForWindow(windowLabel, 'navigate', 'body', {
+    value: '/settings/execution-environments',
+  })
+  await control.commandForWindow(
+    windowLabel,
+    'clickWhenEnabled',
+    '[data-testid="execution-environment-python-install"]'
+  )
+}
+
+export async function assertManagedPythonReady(
   control,
   { userDataDirectory, windowLabel = 'main', logPath, diagnosticPath }
 ) {
@@ -109,7 +121,7 @@ export async function assertManagedPythonStartup(
       const diagnostic = await collectManagedPythonStatus(control, windowLabel)
       await writeFile(diagnosticPath, JSON.stringify(diagnostic, null, 2))
     } catch {
-      console.error('[desktop-e2e] Python startup diagnostic collection failed')
+      console.error('[desktop-e2e] Python preparation diagnostic collection failed')
     }
     throw error
   }

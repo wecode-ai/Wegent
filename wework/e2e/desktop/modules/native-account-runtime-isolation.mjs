@@ -51,6 +51,7 @@ export async function createNativeAccountFixture(resultDir, pluginRoot) {
 
 export async function verifyNativeAccountRuntimeIsolation({
   api,
+  control,
   connectionFor,
   electronUserDataDirectory,
   homePath,
@@ -75,6 +76,15 @@ export async function verifyNativeAccountRuntimeIsolation({
   })
   try {
     await signalAutomaticRetry()
+    assert.ok(
+      !(await readFile(appLog, 'utf8')).slice(logOffset).includes('python-runtime-install-started'),
+      'Background maintenance attempted to install Python'
+    )
+    await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="execution-environment-python-install"]'
+    )
     await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
     await writeFile(
       source,

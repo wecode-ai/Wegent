@@ -21,7 +21,7 @@ test('keeps auth RPC alive while the host prepares Python', () => {
     'runtime.local_connector_auth.health',
     'runtime.local_connector_auth.start',
   ]) {
-    assert.equal(executorRequestTimeoutMs(method, 120_000), 18 * 60_000 + 5_000)
+    assert.equal(executorRequestTimeoutMs(method, 120_000), 21 * 60_000 + 5_000)
   }
   assert.equal(executorRequestTimeoutMs('executor.health', 120_000), 120_000)
 })

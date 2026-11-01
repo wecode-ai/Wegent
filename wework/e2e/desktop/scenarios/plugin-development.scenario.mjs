@@ -7,7 +7,9 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
-  assertManagedPythonStartup,
+  assertManagedPythonReady,
+  assertPathMissing,
+  requestManagedPythonInstall,
   inspectManagedPython,
   managedPythonPath,
 } from '../modules/managed-python.mjs'
@@ -279,7 +281,12 @@ export async function createDesktopScenario({
         isolatedInstanceId,
         'user-data'
       )
-      await assertManagedPythonStartup(control, {
+      await assertPathMissing(
+        managedPythonPath(isolatedUserData),
+        'Starting plugin development installed Python before use'
+      )
+      await requestManagedPythonInstall(control, isolatedWindowLabel)
+      await assertManagedPythonReady(control, {
         userDataDirectory: isolatedUserData,
         windowLabel: isolatedWindowLabel,
         logPath: join(dirname(isolatedUserData), 'logs', 'wework-plugin-development.log'),

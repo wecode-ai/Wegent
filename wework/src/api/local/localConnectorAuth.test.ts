@@ -88,6 +88,15 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 
+  test('only explicit plugin use requests runtime preparation and bypasses passive cached health', async () => {
+    const target = { pluginKey: 'wiki', connectorSlug: 'wiki' }
+    await localConnectorAuthHealth(target)
+    expect(mocks.requestLocalExecutor.mock.calls[0][1]).not.toHaveProperty('prepareRuntime')
+    await localConnectorAuthHealth(target, { prepareRuntime: true })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+    expect(mocks.requestLocalExecutor.mock.calls[1][1]).toMatchObject({ prepareRuntime: true })
+  })
+
   test.each([
     ['Python', ['scripts/auth.py', 'login']],
     ['shell', ['scripts/local-auth.sh', 'login']],

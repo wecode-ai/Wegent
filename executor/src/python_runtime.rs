@@ -4,7 +4,7 @@
 
 //! Prepare the desktop-managed interpreter before Python plugin execution.
 
-use std::{env, net::Ipv4Addr, net::Ipv6Addr, time::Duration};
+use std::{env, net::Ipv4Addr, net::Ipv6Addr, path::Path, time::Duration};
 
 use reqwest::{redirect::Policy, Url};
 use serde::Deserialize;
@@ -14,7 +14,8 @@ use tokio::process::Command;
 const RUNTIME_URL_ENV: &str = "WEWORK_PYTHON_RUNTIME_URL";
 const RUNTIME_TOKEN_ENV: &str = "WEWORK_PYTHON_RUNTIME_TOKEN";
 const ENSURE_PATH: &str = "/runtime/python/ensure";
-pub(crate) const PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS: u64 = 13 * 60;
+const STATUS_PATH: &str = "/runtime/python/status";
+pub(crate) const PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS: u64 = 16 * 60;
 
 pub(crate) fn managed_python_bridge_configured() -> bool {
     env::var_os(RUNTIME_URL_ENV).is_some() || env::var_os(RUNTIME_TOKEN_ENV).is_some()
@@ -51,7 +52,7 @@ pub(crate) fn is_python_program(program: &str) -> bool {
         && parts.all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-pub(crate) fn isolate_python_environment(command: &mut Command) {
+pub(crate) fn isolate_python_environment(command: &mut Command) -> Result<(), String> {
     let inherited = env::vars_os().map(|(name, _)| name);
     let configured = command.as_std().get_envs().map(|(name, _)| name.to_owned());
     let names: Vec<_> = inherited
@@ -73,6 +74,70 @@ pub(crate) fn isolate_python_environment(command: &mut Command) {
         command.env_remove(name);
     }
     command.env("PYTHONNOUSERSITE", "1");
+    if let Some(interpreter) = env::var_os("WEGENT_PYTHON_PATH") {
+        prepend_python_path(command, Path::new(&interpreter))?;
+    }
+    Ok(())
+}
+
+fn prepend_python_path(command: &mut Command, interpreter: &Path) -> Result<(), String> {
+    let Some(directory) = interpreter.parent().filter(|path| path.is_absolute()) else {
+        return Ok(());
+    };
+    let configured = command.as_std().get_envs().find_map(|(key, value)| {
+        key.to_str()
+            .is_some_and(|key| key.eq_ignore_ascii_case("PATH"))
+            .then(|| value.map(|value| value.to_owned()))
+    });
+    let inherited = configured.unwrap_or_else(|| env::var_os("PATH"));
+    let paths = std::iter::once(directory.to_owned()).chain(
+        inherited
+            .iter()
+            .flat_map(env::split_paths)
+            .filter(|path| path != directory),
+    );
+    let path =
+        env::join_paths(paths).map_err(|_| "Managed Python search path is invalid".to_owned())?;
+    command.env("PATH", path);
+    Ok(())
+}
+
+/// Background account maintenance must never download a runtime for an idle user.
+pub(crate) async fn managed_python_ready() -> Result<bool, String> {
+    let url = configured_value(RUNTIME_URL_ENV)?;
+    let token = configured_value(RUNTIME_TOKEN_ENV)?;
+    configured_python_ready(url.as_deref(), token.as_deref()).await
+}
+
+async fn configured_python_ready(url: Option<&str>, token: Option<&str>) -> Result<bool, String> {
+    let Some(mut url) = bridge_configuration(url, token)? else {
+        return Ok(true);
+    };
+    url.set_path(STATUS_PATH);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(|_| "Managed Python runtime bridge is unavailable".to_owned())?;
+    let response = client
+        .get(url)
+        .bearer_auth(token.expect("validated bridge token"))
+        .send()
+        .await
+        .map_err(|_| "Managed Python runtime status is unavailable".to_owned())?;
+    if !response.status().is_success() {
+        return Err("Managed Python runtime status request failed".to_owned());
+    }
+    let response: PreparationResponse = response
+        .json()
+        .await
+        .map_err(|_| "Managed Python runtime status is invalid".to_owned())?;
+    Ok(response.ok
+        && response
+            .data
+            .as_ref()
+            .is_some_and(|status| status["id"] == "python" && status["state"] == "installed"))
 }
 
 fn configured_value(name: &str) -> Result<Option<String>, String> {
@@ -153,7 +218,7 @@ mod tests {
     use axum::{
         http::{header, HeaderMap, StatusCode},
         response::IntoResponse,
-        routing::post,
+        routing::{get, post},
         Router,
     };
 
@@ -203,6 +268,72 @@ mod tests {
     #[tokio::test]
     async fn standalone_executor_does_not_require_a_desktop_bridge() {
         ensure_configured_python(None, None).await.unwrap();
+        assert!(configured_python_ready(None, None).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn background_readiness_only_reads_status_without_requesting_installation() {
+        for (state, expected) in [
+            ("notInstalled", false),
+            ("downloading", false),
+            ("installed", true),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let router = Router::new().route(
+                STATUS_PATH,
+                get(move |headers: HeaderMap| async move {
+                    assert_eq!(headers[header::AUTHORIZATION], "Bearer test-runtime-token");
+                    axum::Json(
+                        serde_json::json!({"ok": true, "data": {"id":"python", "state":state}}),
+                    )
+                }),
+            );
+            let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let bridge = TestBridge {
+                url: format!("http://{address}{ENSURE_PATH}"),
+                task,
+            };
+            assert_eq!(
+                configured_python_ready(Some(&bridge.url), Some("test-runtime-token"))
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn managed_search_path_only_changes_the_plugin_child_and_preserves_command_overrides() {
+        let original = env::var_os("PATH");
+        let directory = env::temp_dir().join("wework-plugin-python");
+        let inherited = env::temp_dir().join("plugin-extra-tools");
+        let mut command = Command::new("python3");
+        command.env("PATH", &inherited);
+        prepend_python_path(&mut command, &directory.join("python3")).unwrap();
+        let path = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(
+            env::split_paths(path).collect::<Vec<_>>(),
+            vec![directory.clone(), inherited]
+        );
+        assert_eq!(env::var_os("PATH"), original);
+
+        command.env_remove("PATH");
+        prepend_python_path(&mut command, &directory.join("python3")).unwrap();
+        let path = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(env::split_paths(path).collect::<Vec<_>>(), vec![directory]);
     }
 
     #[test]
@@ -246,7 +377,7 @@ mod tests {
             .env("PythonNoUserSite", "0")
             .env("PLUGIN_SETTING", "keep");
 
-        isolate_python_environment(&mut command);
+        isolate_python_environment(&mut command).unwrap();
 
         let environment: std::collections::HashMap<_, _> = command.as_std().get_envs().collect();
         for name in ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE"] {

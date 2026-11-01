@@ -8,6 +8,7 @@ import {
   collectManagedPythonStatus,
   inspectManagedPython,
   managedPythonPath,
+  requestManagedPythonInstall,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
@@ -46,8 +47,18 @@ export async function createDesktopScenario({
       )
     },
     async verify(control) {
-      // No settings action triggers this first installation: startup owns it.
+      await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+      await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
+        text: '未安装',
+      })
+      await assertPathMissing(pythonPath, 'Startup or opening settings installed Python before use')
+      assert.ok(!(await readFile(appLog, 'utf8')).includes('python-runtime-ensure-started'))
+      await requestManagedPythonInstall(control)
       try {
+        await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
+          text: '首次使用 Python 插件',
+        })
+        await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
       } catch (error) {
         try {
@@ -91,18 +102,29 @@ export async function createDesktopScenario({
         },
       })
       try {
+        await control.command('navigate', 'body', { value: '/settings/execution-environments' })
+        await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
+          text: '未安装',
+        })
+        assert.ok(
+          !(await readFile(appLog, 'utf8'))
+            .slice(logOffset)
+            .includes('python-runtime-install-started'),
+          'An unhealthy restart installed Python without explicit use'
+        )
+        await requestManagedPythonInstall(control)
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
         await control.command('waitFor', '[data-testid="execution-environment-python"]', {
           text: '安装失败',
         })
+        await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
+          text: '准备失败',
+        })
         await captureScreenshot(control, 'python-runtime-publication-failed.png', 'body')
         await rm(pythonPath, { recursive: true })
         logOffset = (await readFile(appLog, 'utf8')).length
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="execution-environment-python-install"]'
-        )
+        await control.command('clickWhenEnabled', '[data-testid="plugin-python-runtime-retry"]')
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed', logOffset)
         await control.command('waitFor', '[data-testid="execution-environment-python"]', {
           text: '已安装 · Wework 管理 · 3.12.12',

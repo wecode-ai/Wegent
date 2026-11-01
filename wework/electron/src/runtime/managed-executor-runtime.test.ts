@@ -22,7 +22,7 @@ describe('managed executor runtime', () => {
       'runtime.local_connector_auth.start',
       'runtime.local_connector_auth.health',
     ]) {
-      expect(executorRequestTimeoutMs(method)).toBe(18 * 60_000 + 5_000)
+      expect(executorRequestTimeoutMs(method)).toBe(21 * 60_000 + 5_000)
     }
     expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
   })

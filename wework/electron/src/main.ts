@@ -2011,6 +2011,9 @@ async function configureDesktopRuntime(): Promise<void> {
     ensurePython: pythonRuntimeEnabled
       ? async () => (await managedPythonRuntime()).ensure()
       : undefined,
+    pythonStatus: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).status()
+      : undefined,
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
@@ -2669,9 +2672,6 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     platform: process.platform,
     arch: process.arch,
   })
-  if (pythonRuntimeEnabled) {
-    pythonRuntime.startBackgroundEnsure()
-  }
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
   logStartupStep('wework-cli-install', 'started')
   await installWeworkCli(
@@ -2811,10 +2811,10 @@ function managedPythonRuntime(): Promise<PythonRuntimeManager> {
     return new PythonRuntimeManager({
       dataDirectory: app.getPath('userData'),
       environment: nodeRuntime.environment,
-      runtimeBin: join(app.getPath('userData'), 'runtime', 'bin'),
       fetch: cloudFetch,
       resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
       log: event => console.info('[python-runtime]', event),
+      onStatusChange: status => desktopHostEvents.publish('python-runtime-status', { ...status }),
     })
   })
   return pythonRuntimeManagerPromise

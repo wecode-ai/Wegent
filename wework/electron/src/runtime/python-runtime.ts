@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { dirname, join, posix, win32 } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile)
 
 const PYTHON_VERSION = '3.12.12'
 const UV_VERSION = '0.9.5'
-const UV_DOWNLOAD_TIMEOUT_MS = 120_000
+const UV_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 const UV_DOWNLOAD_BASE_URL = `https://mjs.sinaimg.cn/umd/cs-packages/uv/${UV_VERSION}`
 const PYTHON_DOWNLOAD_MIRROR_URL =
   'https://python-standalone.org/mirror/astral-sh/python-build-standalone/'
@@ -87,6 +87,7 @@ export interface PythonRuntimeStatus {
   path: string
   error: string | null
   source: 'managed'
+  phase: 'download' | 'install' | 'verify' | null
 }
 
 interface RunFileResult {
@@ -103,7 +104,6 @@ type RunFile = (
 export interface PythonRuntimeManagerOptions {
   dataDirectory: string
   environment: NodeJS.ProcessEnv
-  runtimeBin: string
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
@@ -112,6 +112,7 @@ export interface PythonRuntimeManagerOptions {
   runFile?: RunFile
   fileSha256?: (path: string) => Promise<string>
   log?: (event: Record<string, unknown>) => void
+  onStatusChange?: (status: PythonRuntimeStatus) => void
 }
 
 export class PythonRuntimeManager {
@@ -127,11 +128,14 @@ export class PythonRuntimeManager {
   private readonly fileSha256: (path: string) => Promise<string>
   private readonly log: (event: Record<string, unknown>) => void
   private activeEnsure: Promise<PythonRuntimeStatus> | null = null
+  private activeStatus: Promise<PythonRuntimeStatus> | null = null
   private currentStatus: PythonRuntimeStatus
+  private lastStatusPublishedAt = 0
+  private readonly onStatusChange?: (status: PythonRuntimeStatus) => void
 
   constructor(options: PythonRuntimeManagerOptions) {
     this.root = join(options.dataDirectory, 'managed-runtimes', 'python')
-    this.runtimeBin = options.runtimeBin
+    this.runtimeBin = join(this.root, 'bin')
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
@@ -145,14 +149,10 @@ export class PythonRuntimeManager {
         return { stdout: result.stdout, stderr: result.stderr }
       })
     this.log = options.log ?? (() => undefined)
+    this.onStatusChange = options.onStatusChange
     this.runtimeEnvironment = {
-      ...withPrependedPath(
-        isolatedPythonEnvironment(options.environment, this.platform),
-        this.runtimeBin,
-        this.platform
-      ),
+      ...options.environment,
       WEGENT_PYTHON_PATH: this.pythonPath(),
-      WEWORK_RUNTIME_BIN: this.runtimeBin,
     }
     this.currentStatus = this.statusValue('idle')
   }
@@ -161,12 +161,23 @@ export class PythonRuntimeManager {
     return { ...this.runtimeEnvironment }
   }
 
-  async status(): Promise<PythonRuntimeStatus> {
-    if (this.activeEnsure) return { ...this.currentStatus }
+  status(): Promise<PythonRuntimeStatus> {
+    if (this.activeEnsure) return Promise.resolve({ ...this.currentStatus })
+    this.activeStatus ??= this.inspectStatus().finally(() => {
+      this.activeStatus = null
+    })
+    return this.activeStatus
+  }
+
+  private async inspectStatus(): Promise<PythonRuntimeStatus> {
     const installed = await this.inspectInstalledPython()
-    this.currentStatus =
+    if (this.activeEnsure) return { ...this.currentStatus }
+    this.setStatus(
       installed ??
-      (this.currentStatus.state === 'error' ? this.currentStatus : this.statusValue('notInstalled'))
+        (this.currentStatus.state === 'error'
+          ? this.currentStatus
+          : this.statusValue('notInstalled'))
+    )
     return { ...this.currentStatus }
   }
 
@@ -178,12 +189,6 @@ export class PythonRuntimeManager {
     return this.activeEnsure
   }
 
-  startBackgroundEnsure(): void {
-    void this.ensure().catch(error => {
-      this.log({ event: 'python-runtime-background-ensure-failed', error: errorMessage(error) })
-    })
-  }
-
   private async performEnsure(): Promise<PythonRuntimeStatus> {
     this.log({
       event: 'python-runtime-ensure-started',
@@ -193,14 +198,14 @@ export class PythonRuntimeManager {
     })
     const installed = await this.inspectInstalledPython()
     if (installed?.version === PYTHON_VERSION) {
-      this.currentStatus = installed
+      this.setStatus(installed)
       this.log({ event: 'python-runtime-ensure-completed', version: installed.version })
       return { ...installed }
     }
 
     try {
       const uvPath = await this.ensureUv()
-      this.currentStatus = this.statusValue('downloading')
+      this.setStatus(this.statusValue('downloading', { phase: 'install' }))
       this.log({ event: 'python-runtime-install-started', version: PYTHON_VERSION })
       await mkdir(this.runtimeBin, { recursive: true, mode: 0o700 })
       const installResult = await this.runFile(
@@ -222,18 +227,19 @@ export class PythonRuntimeManager {
       if (warning) {
         this.log({ event: 'python-runtime-install-warning', warning: warning.slice(0, 2_000) })
       }
+      this.setStatus(this.statusValue('downloading', { phase: 'verify' }))
       const ready = await this.inspectInstalledPython()
       if (!ready) {
         throw new Error(`Python ${PYTHON_VERSION} installation completed without a usable launcher`)
       }
-      this.currentStatus = ready
+      this.setStatus(ready)
       this.log({ event: 'python-runtime-install-completed', version: ready.version })
       return { ...ready }
     } catch (error) {
       const message = errorMessage(error)
       const usable = installed ? await this.inspectInstalledPython() : null
       if (usable) {
-        this.currentStatus = usable
+        this.setStatus(usable)
         this.log({
           event: 'python-runtime-upgrade-failed',
           currentVersion: usable.version,
@@ -242,7 +248,7 @@ export class PythonRuntimeManager {
         })
         return { ...usable }
       }
-      this.currentStatus = this.statusValue('error', { error: message })
+      this.setStatus(this.statusValue('error', { error: message }))
       this.log({ event: 'python-runtime-install-failed', error: message })
       throw error
     }
@@ -253,7 +259,7 @@ export class PythonRuntimeManager {
     if (!(await isFile(path))) return null
     try {
       const { stdout, stderr } = await this.runFile(path, ['-I', '-c', PYTHON_HEALTH_CHECK], {
-        env: this.runtimeEnvironment,
+        env: isolatedPythonEnvironment(this.runtimeEnvironment, this.platform),
         timeout: 5_000,
       })
       const output = `${stdout}\n${stderr}`.trim()
@@ -293,9 +299,12 @@ export class PythonRuntimeManager {
     const archivePath = join(temporaryRoot, artifact.archiveName)
     const stagingDirectory = join(temporaryRoot, 'extracted')
     await mkdir(stagingDirectory, { recursive: true, mode: 0o700 })
-    this.currentStatus = this.statusValue('downloading', {
-      totalBytes: artifact.archiveBytes,
-    })
+    this.setStatus(
+      this.statusValue('downloading', {
+        phase: 'download',
+        totalBytes: artifact.archiveBytes,
+      })
+    )
 
     let stage = 'download'
     try {
@@ -340,7 +349,7 @@ export class PythonRuntimeManager {
 
   private async bootstrapEnvironment(): Promise<NodeJS.ProcessEnv> {
     const inherited = Object.fromEntries(
-      Object.entries(this.runtimeEnvironment).filter(
+      Object.entries(isolatedPythonEnvironment(this.runtimeEnvironment, this.platform)).filter(
         ([key]) => !key.toUpperCase().startsWith('UV_')
       )
     )
@@ -401,10 +410,13 @@ export class PythonRuntimeManager {
         transform: (chunk: Buffer, _encoding, callback) => {
           downloadedBytes += chunk.length
           hash.update(chunk)
-          this.currentStatus = this.statusValue('downloading', {
-            downloadedBytes,
-            totalBytes: artifact.archiveBytes,
-          })
+          this.setStatus(
+            this.statusValue('downloading', {
+              phase: 'download',
+              downloadedBytes,
+              totalBytes: artifact.archiveBytes,
+            })
+          )
           callback(null, chunk)
         },
       })
@@ -454,6 +466,22 @@ export class PythonRuntimeManager {
     return join(this.runtimeBin, this.platform === 'win32' ? 'python.exe' : 'python3')
   }
 
+  private setStatus(status: PythonRuntimeStatus): void {
+    const previous = this.currentStatus
+    this.currentStatus = status
+    if (JSON.stringify(previous) === JSON.stringify(status)) return
+    const now = Date.now()
+    if (
+      status.state === 'downloading' &&
+      previous.state === status.state &&
+      previous.phase === status.phase &&
+      now - this.lastStatusPublishedAt < 250
+    )
+      return
+    this.lastStatusPublishedAt = now
+    this.onStatusChange?.({ ...status })
+  }
+
   private statusValue(
     state: PythonRuntimeStatus['state'],
     overrides: Partial<PythonRuntimeStatus> = {}
@@ -470,6 +498,7 @@ export class PythonRuntimeManager {
       path: this.pythonPath(),
       error: null,
       source: 'managed',
+      phase: null,
       ...overrides,
     }
   }
@@ -506,26 +535,4 @@ function isolatedPythonEnvironment(
   }
   isolated.PYTHONNOUSERSITE = '1'
   return isolated
-}
-
-function withPrependedPath(
-  environment: NodeJS.ProcessEnv,
-  directory: string,
-  platform: NodeJS.Platform
-): NodeJS.ProcessEnv {
-  const normalized = { ...environment }
-  const currentPath =
-    environment.PATH ??
-    (platform === 'win32'
-      ? Object.entries(environment).find(([key]) => key.toLowerCase() === 'path')?.[1]
-      : undefined)
-  if (platform === 'win32') {
-    for (const key of Object.keys(normalized)) {
-      if (key !== 'PATH' && key.toLowerCase() === 'path') delete normalized[key]
-    }
-  }
-  const separator = platform === 'win32' ? win32.delimiter : posix.delimiter
-  const entries = currentPath?.split(separator).filter(Boolean) ?? []
-  normalized.PATH = [directory, ...entries.filter(entry => entry !== directory)].join(separator)
-  return normalized
 }

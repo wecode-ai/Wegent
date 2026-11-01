@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
-  assertManagedPythonStartup,
+  assertManagedPythonReady,
   collectManagedPythonStatus,
   managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
@@ -87,7 +87,7 @@ describe('managed Python installation event waits', () => {
   })
 })
 
-describe('managed Python startup diagnostics', () => {
+describe('managed Python preparation diagnostics', () => {
   test('reads only the safe status leaf without copying the root-card error or requesting installation', async () => {
     const statusText = '正在后台下载 · Wework 管理'
     const commandForWindow = vi.fn(async (_window, action, selector) => {
@@ -124,7 +124,7 @@ describe('managed Python startup diagnostics', () => {
   })
 })
 
-describe('development-instance Python startup readiness', () => {
+describe('development-instance Python requested readiness', () => {
   async function fixture(contents, status, diagnosticStatus = '已安装 · Wework 管理 · 3.12.12') {
     const logPath = await temporaryLog(contents)
     const userDataDirectory = join(dirname(logPath), 'child-user-data')
@@ -156,7 +156,7 @@ describe('development-instance Python startup readiness', () => {
         `Python 安装失败 · Wework 管理 ${SENSITIVE_DETAIL}`,
         '安装失败 · Wework 管理'
       )
-      await expect(assertManagedPythonStartup(control, options)).rejects.toThrow(
+      await expect(assertManagedPythonReady(control, options)).rejects.toThrow(
         `The real Python installation reported ${event}; see ${options.logPath}`
       )
       const diagnostic = JSON.parse(await readFile(options.diagnosticPath, 'utf8'))
@@ -184,7 +184,7 @@ describe('development-instance Python startup readiness', () => {
       if (action === 'navigate') now = 30_000
       if (action === 'getText') return `Python ${managedPythonPath(options.userDataDirectory)}`
     })
-    const completion = expect(assertManagedPythonStartup(control, options)).resolves.toBeUndefined()
+    const completion = expect(assertManagedPythonReady(control, options)).resolves.toBeUndefined()
     now = 25_000
     await appendFile(
       options.logPath,
@@ -217,7 +217,7 @@ describe('development-instance Python startup readiness', () => {
       if (action === 'navigate') now = PYTHON_BOOTSTRAP_TIMEOUT_MS
       if (action === 'getText') return 'Python 安装状态已采集'
     })
-    await expect(assertManagedPythonStartup(control, options)).rejects.toThrow(
+    await expect(assertManagedPythonReady(control, options)).rejects.toThrow(
       'The managed Python readiness deadline expired before checking settings'
     )
     expect(
@@ -236,12 +236,12 @@ describe('development-instance Python startup readiness', () => {
       "[stdout] [python-runtime] { event: 'python-runtime-install-completed' }",
       'Python 已安装 · Wework 管理 · 3.12.12 /another-instance/python3'
     )
-    await expect(assertManagedPythonStartup(control, options)).rejects.toThrow(
+    await expect(assertManagedPythonReady(control, options)).rejects.toThrow(
       'The runtime UI advertised another instance Python'
     )
   })
 
-  test('preserves the original startup error when diagnostic navigation also fails', async () => {
+  test('preserves the original preparation error when diagnostic navigation also fails', async () => {
     const { control, options, commandForWindow } = await fixture(
       "[stdout] [python-runtime] { event: 'python-runtime-install-completed' }"
     )
@@ -250,7 +250,7 @@ describe('development-instance Python startup readiness', () => {
       .mockRejectedValueOnce(original)
       .mockRejectedValueOnce(new Error(SENSITIVE_DETAIL))
 
-    await expect(assertManagedPythonStartup(control, options)).rejects.toBe(original)
+    await expect(assertManagedPythonReady(control, options)).rejects.toBe(original)
     const diagnostic = JSON.parse(await readFile(options.diagnosticPath, 'utf8'))
     expect(diagnostic).toEqual({
       capturedAt: expect.any(String),

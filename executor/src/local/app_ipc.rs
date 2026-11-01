@@ -80,7 +80,8 @@ const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
 // Python provisioning (uv + CPython) precedes the adapter's own action deadline.
-const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 = 18 * 60;
+const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 =
+    crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 5 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {

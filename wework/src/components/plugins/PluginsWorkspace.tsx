@@ -3077,7 +3077,10 @@ export function PluginsWorkspace({
       // A displayed logout action must not depend on a remote health probe.
       if (action !== 'logout') {
         try {
-          const health = await localConnectorAuthHealth(target, { bypassCache: true })
+          const health = await localConnectorAuthHealth(target, {
+            bypassCache: true,
+            prepareRuntime: true,
+          })
           if (!detailIsCurrent()) return
           if (githubCli && !['ok', 'need_login'].includes(health.status)) {
             reportDetailError(

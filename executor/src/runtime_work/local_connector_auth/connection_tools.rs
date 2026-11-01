@@ -66,7 +66,8 @@ async fn run_tool_json(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     if requires_python {
-        crate::python_runtime::isolate_python_environment(&mut command);
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
     let mut child = command.spawn().map_err(|_| {
         AppIpcError::new(

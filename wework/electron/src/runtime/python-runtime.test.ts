@@ -19,13 +19,12 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 describe('PythonRuntimeManager', () => {
-  test('exposes an isolated Python environment without changing the system PATH', async () => {
+  test('does not install or change ordinary task environments before Python is requested', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
-      environment: { PATH: '/system/bin' },
-      runtimeBin,
+      environment: { PATH: '/system/bin', WEWORK_RUNTIME_BIN: '/node/bin' },
       platform: 'darwin',
       arch: 'arm64',
       runFile: vi.fn().mockRejectedValue(new Error('missing')),
@@ -33,26 +32,29 @@ describe('PythonRuntimeManager', () => {
 
     const environment = manager.environment()
 
-    expect(environment.PATH).toBe(`${runtimeBin}:/system/bin`)
-    expect(environment.WEWORK_RUNTIME_BIN).toBe(runtimeBin)
+    expect(environment.PATH).toBe('/system/bin')
+    expect(environment.WEWORK_RUNTIME_BIN).toBe('/node/bin')
     expect(environment.WEGENT_PYTHON_PATH).toBe(join(runtimeBin, 'python3'))
     expect(environment.UV_PYTHON_BIN_DIR).toBeUndefined()
     expect(environment.UV_MANAGED_PYTHON).toBeUndefined()
     expect(environment.UV_PYTHON_INSTALL_MIRROR).toBeUndefined()
-    expect(environment.PYTHONNOUSERSITE).toBe('1')
+    expect(environment.PYTHONNOUSERSITE).toBeUndefined()
     await expect(manager.status()).resolves.toMatchObject({
       id: 'python',
       managed: true,
       state: 'notInstalled',
       path: join(runtimeBin, 'python3'),
     })
+    await expect(access(join(directory, 'managed-runtimes', 'python'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 
   test.each(['darwin', 'win32'] as const)(
-    'does not inherit external Python import paths on %s',
+    'preserves ordinary task Python import paths on %s',
     async platform => {
       const directory = await temporaryDirectory()
-      const runtimeBin = join(directory, 'runtime', 'bin')
+      const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
       const environment =
         platform === 'win32'
           ? {
@@ -75,32 +77,22 @@ describe('PythonRuntimeManager', () => {
       const manager = new PythonRuntimeManager({
         dataDirectory: directory,
         environment,
-        runtimeBin,
         platform,
       })
 
       const prepared = manager.environment()
 
-      expect(prepared.PATH).toBe(
-        platform === 'win32' ? `${runtimeBin};C:\\Windows\\System32` : `${runtimeBin}:/usr/bin`
-      )
-      expect(prepared.PYTHONNOUSERSITE).toBe('1')
-      expect(prepared.PLUGIN_SETTING).toBe('preserved')
-      expect(
-        Object.keys(prepared).filter(key =>
-          ['PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE'].includes(key.toUpperCase())
-        )
-      ).toEqual([])
-      expect(Object.keys(prepared).filter(key => key.toUpperCase() === 'PYTHONNOUSERSITE')).toEqual(
-        ['PYTHONNOUSERSITE']
-      )
+      expect(prepared).toEqual({
+        ...original,
+        WEGENT_PYTHON_PATH: join(runtimeBin, platform === 'win32' ? 'python.exe' : 'python3'),
+      })
       expect(environment).toEqual(original)
     }
   )
 
   test('installs Python once and validates the managed launcher', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const pythonPath = join(runtimeBin, 'python3')
     const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
     await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
@@ -108,12 +100,15 @@ describe('PythonRuntimeManager', () => {
     })
     await writeFile(uvPath, 'fake uv')
     let pythonReady = false
+    const onStatusChange = vi.fn()
     const runFile = vi.fn(
       async (file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
         if (file === pythonPath && args[0] === '-I' && args[1] === '-c') {
           if (!pythonReady) throw new Error('missing')
           expect(args[2]).toContain('import ensurepip, ssl, sys, venv, zlib')
           expect(options.env.PYTHONNOUSERSITE).toBe('1')
+          expect(options.env.PYTHONHOME).toBeUndefined()
+          expect(options.env.PYTHONPATH).toBeUndefined()
           return { stdout: 'Python 3.12.12\n', stderr: '' }
         }
         if (file === uvPath) {
@@ -142,6 +137,8 @@ describe('PythonRuntimeManager', () => {
           expect(options.env.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
           expect(options.env.UV_OFFLINE).toBeUndefined()
           expect(options.env.UV_NO_MANAGED_PYTHON).toBeUndefined()
+          expect(options.env.PYTHONHOME).toBeUndefined()
+          expect(options.env.PYTHONPATH).toBeUndefined()
           await mkdir(runtimeBin, { recursive: true })
           await writeFile(pythonPath, 'fake python')
           pythonReady = true
@@ -153,16 +150,18 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {
+        PYTHONHOME: '/external/python',
+        PYTHONPATH: '/external/packages',
         UV_OFFLINE: '1',
         UV_NO_MANAGED_PYTHON: 'true',
         UV_PYTHON_INSTALL_DIR: '/user-python',
         UV_PYTHON_INSTALL_MIRROR: 'https://user-mirror.invalid/',
         UV_PYTHON_INSTALL_MIRROR_URL: 'https://incorrect-mirror.invalid/',
       },
-      runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
       runFile,
+      onStatusChange,
       resolveProxy: vi.fn().mockResolvedValue('http://proxy.internal:8080'),
       fileSha256: vi
         .fn()
@@ -173,6 +172,15 @@ describe('PythonRuntimeManager', () => {
 
     expect(first).toMatchObject({ state: 'installed', version: '3.12.12', path: pythonPath })
     expect(second).toEqual(first)
+    expect(onStatusChange.mock.calls.map(([status]) => [status.state, status.phase])).toEqual([
+      ['downloading', 'install'],
+      ['downloading', 'verify'],
+      ['installed', null],
+    ])
+    expect(manager.environment()).toMatchObject({
+      PYTHONHOME: '/external/python',
+      PYTHONPATH: '/external/packages',
+    })
     expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
     await expect(manager.ensure()).resolves.toEqual(first)
     expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
@@ -180,7 +188,7 @@ describe('PythonRuntimeManager', () => {
 
   test('upgrades an older managed Python patch release', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const pythonPath = join(runtimeBin, 'python3')
     const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
     await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
@@ -203,7 +211,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
       runFile,
@@ -223,7 +230,7 @@ describe('PythonRuntimeManager', () => {
     'returns the revalidated %s launcher after a patch upgrade fails',
     async remainingVersion => {
       const directory = await temporaryDirectory()
-      const runtimeBin = join(directory, 'runtime', 'bin')
+      const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
       const pythonPath = join(runtimeBin, 'python3')
       const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
       await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
@@ -247,7 +254,6 @@ describe('PythonRuntimeManager', () => {
       const manager = new PythonRuntimeManager({
         dataDirectory: directory,
         environment: {},
-        runtimeBin,
         platform: 'darwin',
         arch: 'arm64',
         runFile,
@@ -276,7 +282,7 @@ describe('PythonRuntimeManager', () => {
     'rejects a %s launcher after an upgrade and allows repair on retry',
     async failure => {
       const directory = await temporaryDirectory()
-      const runtimeBin = join(directory, 'runtime', 'bin')
+      const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
       const pythonPath = join(runtimeBin, 'python3')
       const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
       await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
@@ -309,7 +315,6 @@ describe('PythonRuntimeManager', () => {
       const manager = new PythonRuntimeManager({
         dataDirectory: directory,
         environment: {},
-        runtimeBin,
         platform: 'darwin',
         arch: 'arm64',
         runFile,
@@ -330,14 +335,13 @@ describe('PythonRuntimeManager', () => {
 
   test('does not accept a later Python minor version as the managed runtime', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const pythonPath = join(runtimeBin, 'python3')
     await mkdir(runtimeBin, { recursive: true })
     await writeFile(pythonPath, 'fake python')
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
       runFile: vi.fn().mockResolvedValue({ stdout: 'Python 3.13.1\n', stderr: '' }),
@@ -348,7 +352,7 @@ describe('PythonRuntimeManager', () => {
 
   test('rejects a version-compatible Python when its required standard library cannot load', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
+    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
     const pythonPath = join(runtimeBin, 'python3')
     await mkdir(runtimeBin, { recursive: true })
     await writeFile(pythonPath, 'fake python')
@@ -359,7 +363,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
       runFile,
@@ -375,7 +378,6 @@ describe('PythonRuntimeManager', () => {
 
   test('removes a corrupted cached uv executable before redownloading', async () => {
     const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'runtime', 'bin')
     const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
     await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
       recursive: true,
@@ -385,7 +387,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
       fetch,
@@ -403,7 +404,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin: join(directory, 'runtime', 'bin'),
       platform: 'darwin',
       arch: 'arm64',
       fetch: vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]))),
@@ -448,7 +448,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin: join(directory, 'runtime', 'bin'),
       platform: 'darwin',
       arch: 'arm64',
       fetch,
@@ -482,7 +481,6 @@ describe('PythonRuntimeManager', () => {
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
-      runtimeBin: join(directory, 'runtime', 'bin'),
       platform: 'darwin',
       arch: 'arm64',
       fetch,

@@ -168,7 +168,12 @@ async function localConnectorAuth(command: DesktopControlCommand): Promise<strin
   const { action, sessionId, ...target } = input
   switch (action) {
     case 'health':
-      return JSON.stringify(await localConnectorAuthHealth(target, { bypassCache: true }))
+      return JSON.stringify(
+        await localConnectorAuthHealth(target, {
+          bypassCache: true,
+          prepareRuntime: true,
+        })
+      )
     case 'logout':
       return JSON.stringify(await localConnectorAuthLogout(target))
     case 'start':

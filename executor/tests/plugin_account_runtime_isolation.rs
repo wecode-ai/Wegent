@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exercise real reconciliation and revocation entry points with mixed runtimes.
 
-use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::HeaderMap,
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::{json, Value};
 use std::{
     ffi::OsString,
@@ -166,9 +171,10 @@ struct Bridge {
     release: watch::Receiver<bool>,
     ready: Arc<AtomicBool>,
     requests: Arc<AtomicUsize>,
+    installation_requests: Arc<AtomicUsize>,
 }
 
-async fn ensure(State(mut bridge): State<Bridge>, headers: HeaderMap) -> Json<Value> {
+async fn status(State(mut bridge): State<Bridge>, headers: HeaderMap) -> Json<Value> {
     assert_eq!(headers["authorization"], "Bearer synthetic-runtime-token");
     bridge.requests.fetch_add(1, Ordering::SeqCst);
     loop {
@@ -209,9 +215,17 @@ async fn mixed_connectors_prepare_independently_before_intents_and_revocation_le
         release: released,
         ready: Arc::new(AtomicBool::new(false)),
         requests: Arc::new(AtomicUsize::new(0)),
+        installation_requests: Arc::new(AtomicUsize::new(0)),
     };
     let router = Router::new()
-        .route("/runtime/python/ensure", post(ensure))
+        .route("/runtime/python/status", get(status))
+        .route(
+            "/runtime/python/ensure",
+            post(|State(bridge): State<Bridge>| async move {
+                bridge.installation_requests.fetch_add(1, Ordering::SeqCst);
+                Json(json!({"ok":false,"error":"Background preparation is forbidden"}))
+            }),
+        )
         .with_state(bridge.clone());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let marker = home.path().join("reconciled.marker");
@@ -251,7 +265,8 @@ async fn mixed_connectors_prepare_independently_before_intents_and_revocation_le
         .unwrap()
         .iter()
         .all(|(_, slug)| slug == "native"));
-    assert!(!marker.exists(), "Python has not finished preparation");
+    assert!(!marker.exists(), "Python readiness is still pending");
+    assert_eq!(bridge.installation_requests.load(Ordering::SeqCst), 0);
     release.send(true).unwrap();
     revocations.await.unwrap();
     until(|| marker.exists()).await;
@@ -287,6 +302,7 @@ async fn mixed_connectors_prepare_independently_before_intents_and_revocation_le
             "each connector may create only its own intent and lease"
         );
     }
+    assert_eq!(bridge.installation_requests.load(Ordering::SeqCst), 0);
     server.abort();
 }
 

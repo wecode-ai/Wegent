@@ -66,6 +66,18 @@ pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     // A source that still owns its credential remains usable without the cloud.
     let local = async {
         let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+        if payload["prepareRuntime"] != true
+            && crate::python_runtime::managed_python_bridge_configured()
+            && python::command_uses_python(&plugin_root, &spec.health, tool.as_deref())?
+            && !crate::python_runtime::managed_python_ready()
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?
+        {
+            return Err(AppIpcError::new(
+                "python_runtime_unavailable",
+                "Python will be prepared when this plugin is used",
+            ));
+        }
         let result = run_plugin_command(
             &plugin_root,
             &spec.health,
@@ -821,7 +833,8 @@ async fn run_plugin_command_inner(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     if requires_python {
-        crate::python_runtime::isolate_python_environment(&mut command);
+        crate::python_runtime::isolate_python_environment(&mut command)
+            .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);

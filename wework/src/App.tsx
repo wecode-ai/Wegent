@@ -8,6 +8,7 @@ import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
 import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
 import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
 import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   Activity,
@@ -1354,6 +1355,7 @@ function AppShell() {
             </div>
             {!isPopoutWindow && <WeworkDevInstanceBadge />}
             {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}
+            {isElectron && !isPopoutWindow && !isWorkspaceWindow && <PluginPythonRuntimeNotice />}
           </div>
         </RuntimeInteractionsProvider>
       </WorkspaceTabsProvider>

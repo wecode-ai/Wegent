@@ -72,7 +72,10 @@ describe('authorization after plugin use', () => {
     const { result } = renderRecovery()
 
     await waitFor(() => expect(result.current.pending?.target).toEqual(target))
-    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, { bypassCache: true })
+    expect(mocks.health).toHaveBeenCalledExactlyOnceWith(target, {
+      bypassCache: true,
+      prepareRuntime: true,
+    })
     expect(result.current.pending?.title).toBeUndefined()
   })
 
