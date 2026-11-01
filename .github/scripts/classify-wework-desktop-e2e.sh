@@ -1556,6 +1556,27 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      return
+      ;;
+    wework/dsh/coordination-runtime/*|executor/src/runtime_work/handler/coordination_rpc.rs|wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs)
+      select_target "core:stand-in-permissions"
+      select_collaboration_dispatch_checkpoints
+      case "$path" in
+        wework/dsh/coordination-runtime/index.js|wework/dsh/coordination-runtime/package.json|wework/dsh/coordination-runtime/cordis.patch.yml)
+          select_target "core:release-package-startup"
+          select_target "core:core-dsh-plugin-management"
+          ;;
+      esac
+      return
+      ;;
+    executor/src/task_runtime/coordination_store.rs)
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in-permissions"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-processing.scenario.mjs|wework/src/features/todo/StandInProcessing*|wework/src/features/todo/useStandInProcessingStatus*|executor/src/runtime_work/handler/stand_in_processing*|executor/src/task_runtime/stand_in_processing.rs|executor/src/task_runtime/mcp/stand_in_processing.rs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"
