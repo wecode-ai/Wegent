@@ -143,6 +143,7 @@ mod notifications;
 mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
+mod project_coordination_binding;
 mod project_coordinator;
 mod project_preparation;
 mod queries;

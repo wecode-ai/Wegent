@@ -3,6 +3,27 @@ import i18n from '@/i18n'
 import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorApi } from './standIn'
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
+
+it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
+  const state = { binding: null, canEnable: true, canStop: false }
+  const request = vi.fn().mockResolvedValue(state)
+  const api = createStandInExecutorApi(request)
+  const target = { projectId: 'project', projectStore: 'cloud' as const, groupId: 'group' }
+  expect(await api.projectCoordination(7, 'selected-device', target)).toBe(state)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.binding.get',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+  const update = { enabled: true, expectedGeneration: 'current-generation', takeover: true }
+  expect(await api.projectCoordination(7, 'selected-device', target, update)).toBe(state)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.binding.save',
+    { userId: 7, ...target, binding: update },
+    'selected-device'
+  )
+})
+
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),

@@ -107,6 +107,34 @@ export interface StandInMemory {
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
+
+export interface ProjectCoordinatorTarget {
+  projectId: string
+  projectStore: ProjectStore
+  groupId: string
+}
+
+export interface ProjectCoordinationBinding {
+  enabled: boolean
+  userId: number
+  deviceId: string
+  generation: string
+  sourceCutoff: string
+  updatedBy: number
+  updatedAt: string
+}
+
+export interface ProjectCoordinationUpdate {
+  enabled: boolean
+  expectedGeneration: string | null
+  takeover?: boolean
+}
+
+export interface ProjectCoordinationState {
+  binding: ProjectCoordinationBinding | null
+  canEnable: boolean
+  canStop: boolean
+}
 export type StandInProjectSettings = WorkspaceStandInSettings & {
   projectId: string
   projectStore: ProjectStore
@@ -122,6 +150,12 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  projectCoordination(
+    userId: number,
+    deviceId: string,
+    target: ProjectCoordinatorTarget,
+    update?: ProjectCoordinationUpdate
+  ): Promise<ProjectCoordinationState>
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
@@ -353,6 +387,14 @@ export function createStandInExecutorApi(
       request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
+    projectCoordination: (userId, deviceId, target, update) =>
+      request(
+        update === undefined
+          ? 'runtime.project_coordinator.binding.get'
+          : 'runtime.project_coordinator.binding.save',
+        { userId, ...target, ...(update === undefined ? {} : { binding: update }) },
+        deviceId
+      ),
     projectConversation: (userId, deviceId, projectId, projectStore, groupId, message, options) =>
       request(
         'runtime.project_coordinator.conversation',

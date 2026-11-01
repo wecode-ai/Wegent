@@ -2,6 +2,25 @@
 use super::stand_in::settings_error;
 use super::*;
 
+pub(super) fn validate_project_coordinator_target(
+    project: &str,
+    group: &str,
+) -> Result<(), AppIpcError> {
+    if [project, group].iter().any(|id| {
+        id.is_empty()
+            || id.len() > 256
+            || !id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    }) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Invalid project or group identity",
+        ));
+    }
+    Ok(())
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn project_coordinator_context(
         &self,
@@ -10,18 +29,7 @@ impl RuntimeWorkRpcHandler {
         project: &str,
         group: &str,
     ) -> Result<Value, AppIpcError> {
-        if [project, group].iter().any(|id| {
-            id.is_empty()
-                || id.len() > 256
-                || !id
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-        }) {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Invalid project or group identity",
-            ));
-        }
+        validate_project_coordinator_target(project, group)?;
         if storage == "local" {
             return LocalTaskStore::open(self.task_store_path.as_ref())
                 .map_err(settings_error)?

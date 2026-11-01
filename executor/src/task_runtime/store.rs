@@ -20,6 +20,8 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+#[path = "project_coordination.rs"]
+mod project_coordination;
 mod project_coordinator;
 mod project_tags;
 

@@ -61,6 +61,10 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.project_coordinator_conversation(payload).await },
                 )
             }
+            "runtime.project_coordinator.binding.get"
+            | "runtime.project_coordinator.binding.save" => boxed_rpc(move || async move {
+                self.project_coordination_binding(method, payload).await
+            }),
             "runtime.stand_in.processing.status" => {
                 boxed_rpc(move || async move { self.stand_in_processing_status(payload) })
             }
