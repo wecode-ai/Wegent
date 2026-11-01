@@ -211,14 +211,20 @@ export class ReleaseStore {
     if (!activation || activation.to !== next.id || !next.macosInstallation?.rollbackReleaseId)
       return
     const previous = await this.read(activation.from)
-    if (previous.id === next.macosInstallation.rollbackReleaseId) return
-    if ((await optionalText(join(this.root, 'data-opened'))) === activation.token)
-      throw new Error('The macOS activation source cannot change after data opens')
-    const source = await this.activationSource(next, previous, activation.snapshot)
-    await atomicReleaseWrite(
-      join(this.root, 'activation.json'),
-      JSON.stringify({ ...activation, from: source.id })
-    )
+    if (previous.id !== next.macosInstallation.rollbackReleaseId) {
+      if ((await optionalText(join(this.root, 'data-opened'))) === activation.token)
+        throw new Error('The macOS activation source cannot change after data opens')
+      const source = await this.activationSource(next, previous, activation.snapshot)
+      await atomicReleaseWrite(
+        join(this.root, 'activation.json'),
+        JSON.stringify({ ...activation, from: source.id })
+      )
+    }
+    // The selected signed bootstrap has now loaded before opening data. Legacy
+    // parents may recover through a cached versioned source, whose old native
+    // launcher cannot restore Contents. Route that recovery through this loaded
+    // bootstrap; runtime/renderer health is still confirmed independently.
+    await atomicReleaseWrite(join(this.root, 'bridge'), next.macosInstallation.payloadExecutable)
   }
 
   async confirm(id: string): Promise<void> {

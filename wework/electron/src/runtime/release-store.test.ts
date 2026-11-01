@@ -123,11 +123,27 @@ test.each([false, true])(
     } else {
       await store.repairMacosActivationSource(after)
       expect(await store.activation()).toEqual({ ...original, from: retained.id })
+      expect(await optionalText(join(root, 'bridge'))).toBe(
+        after.macosInstallation!.payloadExecutable
+      )
       await store.repairMacosActivationSource(after)
       expect(await store.activation()).toEqual({ ...original, from: retained.id })
     }
   }
 )
+
+test('a loaded target bootstrap owns recovery even when a new installer already bound its source', async () => {
+  const { store, after, retained, root } = await macosFixture()
+  await store.activate(after, 'snapshot')
+  expect(await optionalText(join(root, 'bridge'))).toBe(
+    retained.macosInstallation!.payloadExecutable
+  )
+  expect(await optionalText(join(root, 'healthy'))).toBeNull()
+  await store.repairMacosActivationSource(after)
+  expect(await optionalText(join(root, 'bridge'))).toBe(after.macosInstallation!.payloadExecutable)
+  expect(await optionalText(join(root, 'healthy'))).toBeNull()
+  expect(await store.activation()).toMatchObject({ from: retained.id, to: after.id })
+})
 
 test('macOS refuses a retained source with a different version or owner', async () => {
   const { store, after, retained } = await macosFixture()

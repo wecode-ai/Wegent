@@ -17,6 +17,7 @@ import {
   assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
   pruneWithRolledBackSource,
+  useVersionedMacosRecoveryBridge,
 } from '../modules/macos-upgrade-identity.mjs'
 import {
   assistantMessage,
@@ -453,6 +454,8 @@ export async function createDesktopScenario(options) {
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
       )
+      if (checkpoint === 'app-upgrade-recovery')
+        await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)

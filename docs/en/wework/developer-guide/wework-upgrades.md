@@ -75,12 +75,16 @@ Delivered launchers enter the new payload bootstrap first. Its native helper ins
 selected host, then the bootstrap executes the installed application with the same PID.
 A retained legacy program copy references the original source's data owner. Activation uses
 the existing snapshot-preservation protocol so delivered cleaners also retain that profile.
+After the selected bootstrap loads with the matching version, it takes over recovery forwarding
+before opening data. Cached versioned entries in delivered launchers then forward through that
+loaded bootstrap to restore the installed host. This does not confirm runtime or renderer health.
 Preparation leaves the active source record unchanged; cancellation removes only owned stages.
 
 Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
 outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
 continuing the original task after rollback. Source fixtures retain snapshots of the delivered
 bootstrap, release store, and native launcher rather than reimplementing their behavior.
+Failed activation also enters through the signed versioned source to cover cached legacy recovery.
 Mechanism evidence still cannot authorize production edges bound to different package hashes.
 
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.

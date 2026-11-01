@@ -104,13 +104,13 @@ async function routeRelease(): Promise<boolean> {
   if (!active) return true
   const supervised = supervisedId === active.id
   if (supervised) {
+    if (metadata.version !== active.version)
+      throw new Error('The installed host does not match the selected release version')
     await store.repairMacosActivationSource(active)
     await enterInstalledMacosRelease(store, active, process.resourcesPath)
   }
   // Only the independent launcher grants a child this one-use handoff.
   if (supervised && resolve(active.executable) === resolve(process.execPath)) {
-    if (metadata.version !== active.version)
-      throw new Error('The installed host does not match the selected release version')
     process.env.WEWORK_HARNESS_RUNTIME_ROOT = active.runtimeRoot
     process.env.WEWORK_ACTIVE_RELEASE_ID = active.id
     process.env.WEWORK_RELEASE_ROOT = root

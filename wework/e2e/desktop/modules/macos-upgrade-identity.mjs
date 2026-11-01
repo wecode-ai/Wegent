@@ -1,12 +1,38 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
 
 const execute = promisify(execFile)
+
+/** Reproduce a delivered launcher's cached recovery entry in an immutable slot. */
+export async function useVersionedMacosRecoveryBridge(root, version) {
+  if (process.platform !== 'darwin') return
+  const candidates = []
+  for (const id of await readdir(join(root, 'slots'))) {
+    let release
+    try {
+      release = JSON.parse(await readFile(join(root, 'slots', id, 'release.json'), 'utf8'))
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    if (release.version === version && release.macosInstallation?.rollbackReleaseId)
+      candidates.push(release)
+  }
+  assert.equal(candidates.length, 1, 'The failed-upgrade fixture requires one prepared target')
+  const sourceId = candidates[0].macosInstallation.rollbackReleaseId
+  const source = JSON.parse(await readFile(join(root, 'slots', sourceId, 'release.json'), 'utf8'))
+  const bridge = source.macosInstallation.payloadExecutable
+  await stat(bridge)
+  const pending = join(root, 'versioned-bridge.pending')
+  await writeFile(pending, bridge, { mode: 0o600 })
+  await rename(pending, join(root, 'bridge'))
+  console.log('[upgrade-e2e] Legacy source recovery uses its signed versioned program copy')
+}
 
 export async function macosUpgradeIdentity(executable) {
   if (process.platform !== 'darwin') return null
