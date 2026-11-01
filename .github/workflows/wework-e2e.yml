@@ -104,6 +104,7 @@ jobs:
           & "wework/electron/release/WeWork-win32-x64/WeWork.exe" ".github/scripts/wework-reflink-bootstrap-diagnostic.mjs"
           if ($LASTEXITCODE -ne 0) { throw "Diagnostic package instrumentation failed" }
           Remove-Item Env:\ELECTRON_RUN_AS_NODE
+          Move-Item -LiteralPath "wework/electron/release/WeWork-win32-x64/resources/app.asar" -Destination "wework/electron/release/WeWork-win32-x64/resources/app.asar.diagnostic-backup"
 
       - name: Configure Windows Redis E2E tools
         shell: pwsh

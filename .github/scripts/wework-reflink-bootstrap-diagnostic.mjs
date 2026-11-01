@@ -39,5 +39,4 @@ diagnosticModule._load = function(request, ...args) {
 }
 `
 physicalFs.writeFileSync(bootstrap, source.replace(marker, marker + hook))
-physicalFs.renameSync(archive, archive + '.diagnostic-backup')
 console.log('Instrumented diagnostic package bootstrap without altering clone results')
