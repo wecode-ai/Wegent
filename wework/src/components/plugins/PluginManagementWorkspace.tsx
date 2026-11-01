@@ -1,5 +1,11 @@
 import { toInstalledPluginItem } from './installedPluginPresentation'
 import {
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+  restorePluginComponentState,
+  type PluginSettingsUpdate,
+} from '@/features/plugins/pluginSettingsRequest'
+import {
   updatePluginInventoryInstallation,
   hasLoadedPluginInventory,
   refreshInstalledPluginInventory,
@@ -234,9 +240,21 @@ function PluginManagementWorkspaceContent({
     [installedPlugins, selectedPluginId]
   )
 
+  const beginSettingsUpdate = (id: string | number, request: PluginSettingsUpdate) =>
+    beginPluginSettingsRequest(
+      JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
+      id,
+      request,
+      () =>
+        mounted.current &&
+        (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId) &&
+        getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId === currentDeviceId
+    )
+
   const updateInstalledPlugin = (
     id: string | number,
-    request: { enabled?: boolean; componentStates?: Record<string, boolean> }
+    request: { enabled?: boolean; componentStates?: Record<string, boolean> },
+    operation: ReturnType<typeof beginSettingsUpdate>
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
@@ -244,7 +262,13 @@ function PluginManagementWorkspaceContent({
       ? cloudPluginApi.updateInstalledPlugin(id, request, currentDeviceId || undefined)
       : localPluginApi.updateInstalledPlugin(id, request)
     return requestPromise.then(updated => {
-      updatePluginInventoryInstallation(marketplaceCacheKeyValue, id, updated, request)
+      if (operation.isCurrent())
+        updatePluginInventoryInstallation(
+          marketplaceCacheKeyValue,
+          id,
+          updated,
+          operation.currentUpdate()
+        )
     })
   }
 
@@ -256,8 +280,11 @@ function PluginManagementWorkspaceContent({
         String(item.id) === String(id) ? { ...item, enabled: !item.enabled } : item
       )
     )
-    void updateInstalledPlugin(id, { enabled: !plugin.enabled })
+    const request = { enabled: !plugin.enabled }
+    const operation = beginSettingsUpdate(id, request)
+    void updateInstalledPlugin(id, request, operation)
       .then(() => {
+        if (!operation.isCurrent()) return
         notifyLocalPluginSkillsChanged()
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
@@ -266,7 +293,8 @@ function PluginManagementWorkspaceContent({
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
-      .catch(() => {
+      .catch(error => {
+        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
         setInstalledPlugins(previous =>
           previous.map(item =>
             String(item.id) === String(id) ? { ...item, enabled: plugin.enabled } : item
@@ -274,6 +302,7 @@ function PluginManagementWorkspaceContent({
         )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+      .finally(operation.finish)
   }
 
   const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {
@@ -296,8 +325,11 @@ function PluginManagementWorkspaceContent({
           : item
       )
     )
-    void updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+    const request = { componentStates: { [componentKey]: enabled } }
+    const operation = beginSettingsUpdate(id, request)
+    void updateInstalledPlugin(id, request, operation)
       .then(() => {
+        if (!operation.isCurrent()) return
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
@@ -305,12 +337,31 @@ function PluginManagementWorkspaceContent({
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
-      .catch(() => {
+      .catch(error => {
+        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
         setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(id) ? plugin : item))
+          previous.map(item =>
+            String(item.id) === String(id)
+              ? {
+                  ...item,
+                  raw: {
+                    ...item.raw,
+                    spec: {
+                      ...item.raw.spec,
+                      componentStates: restorePluginComponentState(
+                        item.raw.spec.componentStates,
+                        previousStates,
+                        componentKey
+                      ),
+                    },
+                  },
+                }
+              : item
+          )
         )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+      .finally(operation.finish)
   }
 
   const requestUninstallPlugin = (id: string | number, name: string) => {

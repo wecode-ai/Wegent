@@ -9232,6 +9232,88 @@ describe('PluginsWorkspace', () => {
     }
   })
 
+  test.each(['success', 'failure', 'account switch', 'device switch'] as const)(
+    'ignores an older component save after its late %s',
+    async outcome => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceHasSkill: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      const response = await originalFetch('/api/plugins/installed')
+      const { items } = (await response.json()) as InstalledPluginListResponse
+      const installed = items[0]!
+      let releaseOld!: (response: Response) => void
+      const oldResponse = new Promise<Response>(resolve => {
+        releaseOld = resolve
+      })
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        if (
+          String(args[0]).startsWith('/api/plugins/installed/101?') &&
+          args[1]?.method === 'PUT'
+        ) {
+          const request = JSON.parse(String(args[1].body)) as {
+            componentStates: Record<string, boolean>
+          }
+          if (!request.componentStates['skill:documents']) return oldResponse
+          return Response.json({
+            ...installed,
+            spec: { ...installed.spec, componentStates: request.componentStates },
+          })
+        }
+        return originalFetch(...args)
+      })
+      const { rerender } = render(
+        <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+      )
+      await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+      const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      const token = outcome === 'account switch' ? 'other-account' : 'cloud-token'
+      const deviceId = outcome === 'device switch' ? 'other-device' : 'current-device'
+      if (outcome === 'account switch' || outcome === 'device switch') {
+        mockKnownExecutorDevice(deviceId)
+        rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken={token} />)
+      } else await userEvent.click(toggle)
+      const key = pluginMarketplaceCacheKey('/api', token)
+      await waitFor(() => expect(getPluginMarketplaceCache(key)?.deviceId).toBe(deviceId))
+      if (outcome === 'account switch' || outcome === 'device switch')
+        await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+      const activeToggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+      await waitFor(() => expect(activeToggle).toHaveAttribute('aria-checked', 'true'))
+      if (outcome === 'success' || outcome === 'failure')
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(key)?.installedPlugins[0].spec.componentStates[
+              'skill:documents'
+            ]
+          ).toBe(true)
+        )
+      const before = getPluginMarketplaceCache(key)
+
+      await act(async () =>
+        releaseOld(
+          outcome === 'failure'
+            ? Response.json({ detail: 'Old save failed' }, { status: 500 })
+            : Response.json({
+                ...installed,
+                spec: { ...installed.spec, componentStates: { 'skill:documents': false } },
+              })
+        )
+      )
+
+      expect(activeToggle).toHaveAttribute('aria-checked', 'true')
+      expect(getPluginMarketplaceCache(key)).toBe(before)
+      expect(telemetryMocks.track).not.toHaveBeenCalledWith('operation_failed', {
+        operation: 'plugin_toggle',
+      })
+    }
+  )
+
   test('does not reload the marketplace when a plugin component is toggled', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({

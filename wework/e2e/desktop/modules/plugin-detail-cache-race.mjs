@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { inventory, testId, until } from './plugin-regression-fixture.mjs'
+import { inventory, requestPluginExecutor, testId, until } from './plugin-regression-fixture.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
 // Hold original Runtime detail bytes while a real management action changes membership.
@@ -77,5 +77,81 @@ export async function verifyPluginDetailCacheRace({
       state => member(state)?.enabled === true,
       'The isolated race fixture did not restore its original enabled state'
     )
+  }
+}
+
+// Delay only the response: both writes still run through the real Codex settings path.
+export async function verifyPluginSettingsWriteRace({
+  control,
+  item,
+  openDetail,
+  backToList,
+  entry,
+}) {
+  const gates = runtimeTransportGates(control)
+  const oldGate = 'plugin-settings-old-disable'
+  const newGate = 'plugin-settings-new-enable'
+  const key = `skill:${item.qualifiedSkill}`
+  const toggle = testId(`plugin-component-toggle-${key}`)
+  let skillPath = null
+  const member = state =>
+    state.sharedInventory.installedPlugins.find(plugin => plugin.pluginKey === item.name)
+  try {
+    await openDetail(item)
+    await control.command('waitFor', `${toggle}[aria-checked="true"]`, { enabled: true })
+    await gates.arm({
+      id: oldGate,
+      kind: 'response',
+      name: 'codex.app_server_request',
+      where: [
+        { path: 'params.method', equals: 'skills/config/write' },
+        { path: 'params.params.enabled', equals: false },
+      ],
+    })
+    await control.command('clickWhenEnabled', toggle)
+    const held = await gates.wait(oldGate)
+    skillPath = held.value.params.params.path
+    assert.equal(held.deliveries, 0)
+    assert.equal(held.value.result.effectiveEnabled, false)
+    await control.command('waitFor', `${toggle}[aria-checked="false"]`, { enabled: true })
+    await gates.arm({
+      id: newGate,
+      kind: 'response',
+      name: 'codex.app_server_request',
+      hold: false,
+      where: [
+        { path: 'params.method', equals: 'skills/config/write' },
+        { path: 'params.params.enabled', equals: true },
+      ],
+    })
+    await control.command('clickWhenEnabled', toggle)
+    const newer = await gates.wait(newGate)
+    assert.equal(newer.value.result.effectiveEnabled, true)
+    entry.beforeRelease = member(
+      await until(
+        () => inventory(control),
+        state => member(state)?.componentStates[key] === true,
+        'The newer real skill enable did not reach shared inventory'
+      )
+    )
+    await gates.release(oldGate)
+    assert.equal((await gates.read(oldGate)).deliveries, 1)
+    entry.afterRelease = member(await inventory(control))
+    assert.deepEqual(
+      entry.afterRelease,
+      entry.beforeRelease,
+      'The older save replaced the newer component state'
+    )
+    await control.command('waitFor', `${toggle}[aria-checked="true"]`, { enabled: true })
+    entry.oldResponseDeliveredAfterNewerSave = true
+  } finally {
+    await gates.reset()
+    // Restore through the production write path even if an assertion failed mid-race.
+    const restored = await requestPluginExecutor(control, 'codex.app_server_request', {
+      method: 'skills/config/write',
+      params: { path: skillPath, name: skillPath ? null : item.qualifiedSkill, enabled: true },
+    })
+    assert.equal(restored.payload.result?.effectiveEnabled, true)
+    await backToList()
   }
 }

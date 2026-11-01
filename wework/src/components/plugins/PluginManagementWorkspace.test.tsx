@@ -716,6 +716,107 @@ describe('PluginManagementWorkspace cache', () => {
     expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-1')
   })
 
+  test.each(['success', 'failure'] as const)(
+    'keeps the newer enabled setting after an older save returns %s',
+    async outcome => {
+      const { key, installed } = seedCloudInstalledPlugin()
+      let releaseOld!: (response: Response) => void
+      const oldResponse = new Promise<Response>(resolve => {
+        releaseOld = resolve
+      })
+      let firstWrite = true
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method !== 'PUT') return Response.json({ items: [installed] })
+          const { enabled } = JSON.parse(String(init.body)) as { enabled: boolean }
+          if (firstWrite) {
+            firstWrite = false
+            return oldResponse
+          }
+          return Response.json({ ...installed, spec: { ...installed.spec, enabled } })
+        })
+      )
+      render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      const toggle = await screen.findByTestId('installed-plugin-toggle-cached-1')
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      await userEvent.click(toggle)
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(true)
+      )
+      if (outcome === 'failure') {
+        await userEvent.click(toggle)
+        await waitFor(() =>
+          expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(false)
+        )
+      }
+      const before = getPluginMarketplaceCache(key)
+
+      await act(async () =>
+        releaseOld(
+          outcome === 'failure'
+            ? Response.json({ detail: 'Old save failed' }, { status: 500 })
+            : Response.json({ ...installed, spec: { ...installed.spec, enabled: false } })
+        )
+      )
+
+      expect(toggle).toHaveAttribute('aria-checked', String(outcome === 'success'))
+      expect(getPluginMarketplaceCache(key)).toBe(before)
+    }
+  )
+
+  test('rolls back only the failed component while preserving another completed save', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    delete installed.spec.pluginId
+    delete installed.spec.releaseId
+    installed.spec.components.skills = [{ name: 'alpha' }, { name: 'beta' }]
+    installed.spec.componentStates = { 'skill:alpha': true, 'skill:beta': false }
+    let failAlpha!: (error: Error) => void
+    const alphaResponse = new Promise<InstalledPlugin>((_resolve, reject) => {
+      failAlpha = reject
+    })
+    const api = localPlugins.createLocalCodexPluginApi()
+    vi.mocked(localPlugins.createLocalCodexPluginApi).mockReturnValue({
+      ...api,
+      updateInstalledPlugin: vi.fn(async (_id, request) => {
+        const componentStates = request.componentStates ?? {}
+        if (Object.hasOwn(componentStates, 'skill:alpha')) return alphaResponse
+        return {
+          ...installed,
+          spec: {
+            ...installed.spec,
+            componentStates: { ...installed.spec.componentStates, ...componentStates },
+          },
+        }
+      }),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ items: [] }))
+    )
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByRole('button', { name: '查看 Cached Plugin 详情' }))
+    const alpha = screen.getByTestId('plugin-component-toggle-skill:alpha')
+    const beta = screen.getByTestId('plugin-component-toggle-skill:beta')
+    await userEvent.click(alpha)
+    await userEvent.click(beta)
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(key)?.installedPlugins[0].spec.componentStates['skill:beta']
+      ).toBe(true)
+    )
+
+    await act(async () => failAlpha(new Error('Alpha save failed')))
+
+    expect(alpha).toHaveAttribute('aria-checked', 'true')
+    expect(beta).toHaveAttribute('aria-checked', 'true')
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.componentStates).toEqual({
+      'skill:alpha': true,
+      'skill:beta': true,
+    })
+  })
+
   test('rolls back the enabled toggle when the account preference HTTP request fails', async () => {
     const { key } = seedCloudInstalledPlugin()
     vi.mocked(ensureLocalExecutorAvailable).mockRejectedValue(new Error('Runtime IPC unavailable'))

@@ -34,6 +34,10 @@ import { getErrorMessage } from '@/lib/error-message'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
+import {
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+} from '@/features/plugins/pluginSettingsRequest'
 import { remotePluginInstallation } from './codexPluginInstallation'
 import {
   ensureBundledPluginMarketplaceRegistered,
@@ -373,6 +377,7 @@ type InstalledReadSnapshot = Pick<
 >
 let cachedState: CachedPluginsState | null = null
 let cachedStateGeneration = 0
+let settingsScopeEpoch = 0
 let cachedCatalogGeneration = 0
 let nextReadStateGeneration = 1
 let cachedStateAt = 0
@@ -399,12 +404,17 @@ type PersistedReadStateStore = {
 
 /** Clears the short-lived readState cache. Intended for tests and explicit invalidation. */
 export function clearLocalCodexPluginsReadStateCache(): void {
+  settingsScopeEpoch += 1
+  invalidateReadState()
+}
+
+function invalidateReadState(deviceId: string | null = null): void {
   cachedState = null
   cachedStateGeneration = nextReadStateGeneration++
   cachedCatalogGeneration = cachedStateGeneration
   cachedStateAt = 0
   cachedStateParamsKey = ''
-  activeReadStateDeviceId = null
+  activeReadStateDeviceId = deviceId
   inflightReadState.clear()
   inflightPluginInstalled = null
   inflightWegentStoreList = null
@@ -742,6 +752,7 @@ function readStateMatchesDevice(
 
 function resetInMemoryReadStateForDevice(deviceId: string): void {
   if (activeReadStateDeviceId === deviceId) return
+  settingsScopeEpoch += 1
   activeReadStateDeviceId = deviceId
   cachedState = null
   cachedStateGeneration = nextReadStateGeneration++
@@ -1030,12 +1041,16 @@ export async function writeCodexPluginEnabled(
   id: string | number,
   enabled: boolean
 ): Promise<void> {
+  await writeCodexPluginEnabledConfig(id, enabled)
+  clearLocalCodexPluginsReadStateCache()
+}
+
+async function writeCodexPluginEnabledConfig(id: string | number, enabled: boolean): Promise<void> {
   await codexAppServerRequest('config/value/write', {
     keyPath: pluginEnabledConfigKeyPath(id),
     value: enabled,
     mergeStrategy: 'upsert',
   })
-  clearLocalCodexPluginsReadStateCache()
 }
 
 export function pluginEnabledConfigKeyPath(id: string | number): string {
@@ -3422,78 +3437,133 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
     async updateInstalledPlugin(id, data) {
-      const currentState = cachedState ?? (await readState())
-      const plugin = currentState.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(id)
+      let deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+      resetInMemoryReadStateForDevice(deviceId)
+      let epoch = settingsScopeEpoch
+      const operation = beginPluginSettingsRequest(
+        'native-local',
+        id,
+        data,
+        () =>
+          Boolean(deviceId) &&
+          deviceId === getKnownLocalExecutorDeviceId()?.trim() &&
+          epoch === settingsScopeEpoch
       )
-      if (!plugin) throw new Error('Codex plugin is not installed')
-      if (data.enabled !== undefined) {
-        await writeCodexPluginEnabled(installedPluginConfigId(plugin, id), data.enabled)
+      const assertCurrent = () => {
+        if (!operation.isCurrent()) throw new ExpiredPluginSettingsRequest()
       }
-      const componentResults = data.componentStates
-        ? await Promise.allSettled(
-            Object.entries(data.componentStates).map(async ([componentKey, enabled]) => {
-              const skillName = componentKey.startsWith('skill:')
-                ? componentKey.slice('skill:'.length)
-                : componentKey
-              const skill = plugin.spec.components.skills.find(skill => skill.name === skillName)
-              const result = await codexAppServerRequest<{ effectiveEnabled: boolean }>(
-                'skills/config/write',
-                {
-                  path: skill?.path ?? null,
-                  name: skill?.path ? null : skillName,
-                  enabled,
-                }
-              )
-              if (
-                typeof result?.effectiveEnabled !== 'boolean' ||
-                result.effectiveEnabled !== enabled
-              ) {
-                throw new Error('Codex did not apply the requested skill setting')
-              }
-              return [componentKey, result.effectiveEnabled] as const
-            })
-          )
-        : undefined
-      clearLocalCodexPluginsReadStateCache()
-      const failedWrite = componentResults?.find(result => result.status === 'rejected')
-      if (failedWrite) {
-        try {
-          const state = await readState({ refresh: true })
-          const installed = state.installedPlugins.find(
-            plugin => String(installedPluginId(plugin)) === String(id)
-          )
-          if (installed) await readDetailForInstalledPlugin(installed)
-        } catch (error) {
-          clearLocalCodexPluginsReadStateCache()
-          console.warn('[Wework] Failed to reconcile Codex plugin settings after a write failure', {
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          })
+      try {
+        const currentState = cachedState ?? (await readState())
+        if (!deviceId) {
+          deviceId = currentState.deviceId
+          epoch = settingsScopeEpoch
         }
-        throw failedWrite.reason
-      }
-      const state = await readState({ refresh: true })
-      const installed = state.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(id)
-      )
-      if (!installed) throw new Error('Updated Codex plugin was not returned by app-server')
-      if (!componentResults) return installed
-      const componentStates = Object.fromEntries(
-        componentResults.filter(result => result.status === 'fulfilled').map(result => result.value)
-      )
-      const updated = {
-        ...installed,
-        spec: {
-          ...installed.spec,
-          componentStates: {
-            ...plugin.spec.componentStates,
-            ...installed.spec.componentStates,
-            ...componentStates,
+        assertCurrent()
+        const plugin = currentState.installedPlugins.find(
+          plugin => String(installedPluginId(plugin)) === String(id)
+        )
+        if (!plugin) throw new Error('Codex plugin is not installed')
+        const enabled = operation.currentUpdate().enabled
+        if (enabled !== undefined) {
+          await writeCodexPluginEnabledConfig(installedPluginConfigId(plugin, id), enabled)
+        }
+        const componentRequest = operation.currentUpdate().componentStates
+        const componentKeys = Object.keys(componentRequest ?? {})
+        const componentResults = componentRequest
+          ? await Promise.allSettled(
+              Object.entries(componentRequest).map(async ([componentKey, enabled]) => {
+                const skillName = componentKey.startsWith('skill:')
+                  ? componentKey.slice('skill:'.length)
+                  : componentKey
+                const skill = plugin.spec.components.skills.find(skill => skill.name === skillName)
+                const result = await codexAppServerRequest<{ effectiveEnabled: boolean }>(
+                  'skills/config/write',
+                  {
+                    path: skill?.path ?? null,
+                    name: skill?.path ? null : skillName,
+                    enabled,
+                  }
+                )
+                if (
+                  typeof result?.effectiveEnabled !== 'boolean' ||
+                  result.effectiveEnabled !== enabled
+                ) {
+                  throw new Error('Codex did not apply the requested skill setting')
+                }
+                return [componentKey, result.effectiveEnabled] as const
+              })
+            )
+          : undefined
+        assertCurrent()
+        const retainedComponentStates = cachedState?.installedPlugins.find(
+          candidate => String(installedPluginId(candidate)) === String(id)
+        )?.spec.componentStates
+        invalidateReadState(deviceId)
+        const currentComponents = operation.currentUpdate().componentStates ?? {}
+        const failedWrite = componentResults?.find(
+          (result, index) =>
+            result.status === 'rejected' && Object.hasOwn(currentComponents, componentKeys[index])
+        )
+        if (failedWrite?.status === 'rejected') {
+          try {
+            const state = await readState({ refresh: true })
+            assertCurrent()
+            const installed = state.installedPlugins.find(
+              plugin => String(installedPluginId(plugin)) === String(id)
+            )
+            if (installed) await readDetailForInstalledPlugin(installed)
+          } catch (error) {
+            assertCurrent()
+            invalidateReadState(deviceId)
+            console.warn(
+              '[Wework] Failed to reconcile Codex plugin settings after a write failure',
+              {
+                errorType: error instanceof Error ? error.name : 'Unknown',
+              }
+            )
+          }
+          throw failedWrite.reason
+        }
+        const state = await readState({ refresh: true })
+        assertCurrent()
+        const installed = state.installedPlugins.find(
+          plugin => String(installedPluginId(plugin)) === String(id)
+        )
+        if (!installed) throw new Error('Updated Codex plugin was not returned by app-server')
+        if (!componentResults) return installed
+        const componentStates = Object.fromEntries(
+          componentResults.flatMap(result =>
+            result.status === 'fulfilled' &&
+            Object.hasOwn(operation.currentUpdate().componentStates ?? {}, result.value[0])
+              ? [result.value]
+              : []
+          )
+        )
+        const latest = cachedState?.installedPlugins.find(
+          candidate => String(installedPluginId(candidate)) === String(id)
+        )
+        const updated = {
+          ...installed,
+          spec: {
+            ...installed.spec,
+            componentStates: {
+              ...plugin.spec.componentStates,
+              ...retainedComponentStates,
+              ...installed.spec.componentStates,
+              ...latest?.spec.componentStates,
+              ...componentStates,
+            },
           },
-        },
+        }
+        rememberInstalledPluginDetail(
+          updated,
+          pluginDetailCacheScope(),
+          updated.spec.componentStates
+        )
+        return updated
+      } finally {
+        operation.finish()
       }
-      rememberInstalledPluginDetail(updated, pluginDetailCacheScope(), updated.spec.componentStates)
-      return updated
     },
     async uninstallInstalledPlugin(id) {
       const requestedId = String(id)

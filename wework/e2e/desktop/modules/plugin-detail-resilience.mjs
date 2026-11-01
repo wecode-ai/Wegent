@@ -14,7 +14,10 @@ import {
   waitForTestIdByText,
 } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
-import { verifyPluginDetailCacheRace } from './plugin-detail-cache-race.mjs'
+import {
+  verifyPluginDetailCacheRace,
+  verifyPluginSettingsWriteRace,
+} from './plugin-detail-cache-race.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PREFIX = 'cloud-project-chat-agent'
@@ -661,6 +664,10 @@ export async function verifyPluginDetailResilience({
 
     await phase('old-detail-preserves-new-disabled-inventory', entry =>
       verifyPluginDetailCacheRace({ control, item: broken, openDetail, backToList, entry })
+    )
+
+    await phase('old-settings-response-preserves-new-component-state', entry =>
+      verifyPluginSettingsWriteRace({ control, item: broken, openDetail, backToList, entry })
     )
 
     const logoBaseline = await phase('healthy-logos-before-fault', async entry => {

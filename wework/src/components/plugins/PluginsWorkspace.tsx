@@ -12,6 +12,11 @@ import {
 } from '@/features/plugins/pluginDeviceApi'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
+import {
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+  restorePluginComponentState,
+} from '@/features/plugins/pluginSettingsRequest'
 import { usePluginVersionSubmission } from './hooks/usePluginVersionSubmission'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
@@ -586,6 +591,14 @@ export function PluginsWorkspace({
   const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
   const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
   const publicationLifetime = useRef<symbol | null>(null)
+  const settingsLifetime = useRef<symbol | null>(null)
+  useLayoutEffect(() => {
+    const lifetime = Symbol('plugin-settings-scope')
+    settingsLifetime.current = lifetime
+    return () => {
+      settingsLifetime.current = null
+    }
+  }, [marketplaceCacheKeyValue, knownExecutorDeviceId])
   useLayoutEffect(() => {
     const lifetime = Symbol('plugin-publication-scope')
     publicationLifetime.current = lifetime
@@ -1615,6 +1628,19 @@ export function PluginsWorkspace({
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return
 
+    const lifetime = settingsLifetime.current
+    const deviceId = currentDeviceIdRef.current
+    const request = { componentStates: { [componentKey]: enabled } }
+    const operation = beginPluginSettingsRequest(
+      JSON.stringify([marketplaceCacheKeyValue, deviceId]),
+      id,
+      request,
+      () =>
+        lifetime !== null &&
+        settingsLifetime.current === lifetime &&
+        currentDeviceIdRef.current === deviceId
+    )
+
     const previousStates = plugin.raw.spec.componentStates || {}
     const nextStates = { ...previousStates, [componentKey]: enabled }
     setInstalledPlugins(previous =>
@@ -1647,9 +1673,13 @@ export function PluginsWorkspace({
           )
     updateApi
       .then(updated => {
-        updatePluginInventoryInstallation(marketplaceCacheKeyValue, id, updated, {
-          componentStates: { [componentKey]: enabled },
-        })
+        if (!operation.isCurrent()) return
+        updatePluginInventoryInstallation(
+          marketplaceCacheKeyValue,
+          id,
+          updated,
+          operation.currentUpdate()
+        )
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
@@ -1657,10 +1687,31 @@ export function PluginsWorkspace({
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
-      .catch(() => {
-        setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+      .catch(error => {
+        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
+        setInstalledPlugins(previous =>
+          previous.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  raw: {
+                    ...item.raw,
+                    spec: {
+                      ...item.raw.spec,
+                      componentStates: restorePluginComponentState(
+                        item.raw.spec.componentStates,
+                        previousStates,
+                        componentKey
+                      ),
+                    },
+                  },
+                }
+              : item
+          )
+        )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+      .finally(operation.finish)
   }
 
   useEffect(() => {
