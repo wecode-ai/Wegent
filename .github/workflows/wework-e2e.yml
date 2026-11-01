@@ -21,7 +21,7 @@ jobs:
       - if: inputs.mode != 'pnpm'
         run: pnpm --dir wework/electron test src/runtime/core-dsh-plugin-manager.test.ts
       - if: inputs.mode == 'pnpm'
-        run: pnpm --filter wework exec node ../.github/scripts/wework-pnpm-clone-diagnostic.mjs
+        run: pnpm --filter wework run diagnose:pnpm:clone
       - uses: actions/upload-artifact@v4
         if: always() && inputs.mode == 'pnpm'
         with:

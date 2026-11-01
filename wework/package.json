@@ -4,6 +4,7 @@
   "version": "0.6.4-beta.1",
   "type": "module",
   "scripts": {
+    "diagnose:pnpm:clone": "node ../.github/scripts/wework-pnpm-clone-diagnostic.mjs",
     "dev": "vite",
     "prepare:electron": "node scripts/prepare-electron.mjs",
     "dev:desktop": "pnpm run prepare:electron && pnpm --dir electron dev",
