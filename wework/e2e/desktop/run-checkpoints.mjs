@@ -493,7 +493,7 @@ function checkpointScenarioEnv(env, checkpoint) {
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
     nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
     if (
-      ['app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
+      ['app-upgrade', 'app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
       env.WEWORK_E2E_UPGRADE_THIN_PAIR
     ) {
       nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR

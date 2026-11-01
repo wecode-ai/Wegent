@@ -540,28 +540,34 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
-        // Admission can precede the native start notification. History must not
-        // synthesize interruption for that identity while its start is pending.
-        let execution = self
+        // The lifecycle is published before its transcript buffer is created.
+        // Preserve that native identity across a concurrent historical read.
+        let state = self
             .store
-            .read_task(local_task_id, |link| {
-                crate::runtime_work::lifecycle::native_execution_state(link)
-            })
+            .read_task(
+                local_task_id,
+                crate::runtime_work::lifecycle::native_execution_state,
+            )
             .flatten();
-        let admitted = execution.as_ref().is_some_and(|state| {
+        let admitted = state.as_ref().is_some_and(|state| {
             state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
         });
-        let admitted_turn = admitted
-            .then(|| self.active_codex_turn(local_task_id))
-            .flatten();
+        let owned_turn_id = state
+            .as_ref()
+            .and_then(|state| state.turn_id.clone())
+            .or_else(|| {
+                admitted
+                    .then(|| self.active_codex_turn(local_task_id))
+                    .flatten()
+                    .map(|turn| turn.turn_id)
+            });
         let active = self
             .active_codex_transcript_items
             .lock()
             .ok()
             .and_then(|items| items.get(local_task_id).cloned());
-        let Some(turn_id) = admitted_turn
-            .map(|turn| turn.turn_id)
-            .or_else(|| active.as_ref().map(|turn| turn.turn_id.clone()))
+        let Some(turn_id) =
+            owned_turn_id.or_else(|| active.as_ref().map(|turn| turn.turn_id.clone()))
         else {
             return;
         };
@@ -583,7 +589,7 @@ impl RuntimeWorkRpcHandler {
             // Execution identity remains authoritative for this open turn even when
             // every observed item has already been persisted.
             let native_open = admitted
-                || execution
+                || state
                     .as_ref()
                     .is_some_and(|state| state.turn_id.as_deref() == Some(turn_id.as_str()));
             if native_open
@@ -992,6 +998,7 @@ impl RuntimeWorkRpcHandler {
         });
         if route.local_task_id != local_task_id {
             route.generation = next_thread_event_route_generation(&mut routing);
+            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
             routing.replaying_route_generations.remove(thread_id);
             routing
                 .pending_notifications
@@ -1001,9 +1008,6 @@ impl RuntimeWorkRpcHandler {
             && !active
             && !is_context_compaction_request(&route.request)
             && is_context_compaction_request(&request);
-        if active {
-            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
-        }
         route
             .event_mapper
             .lock()

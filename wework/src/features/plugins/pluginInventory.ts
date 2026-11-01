@@ -230,6 +230,18 @@ export function pluginInventoryReadIsCurrent(
   )
 }
 
+export function pluginInstallationReadIsCurrent(
+  cacheKey: string,
+  initial: PluginMarketplaceCacheSnapshot | null
+): boolean {
+  const current = getPluginMarketplaceCache(cacheKey)
+  return (
+    pluginInventoryReadIsCurrent(cacheKey, initial) &&
+    current?.installedPluginsFetchedAt === initial?.installedPluginsFetchedAt &&
+    samePluginInstallations(current?.installedPlugins ?? [], initial?.installedPlugins ?? [])
+  )
+}
+
 export function hasLoadedPluginInventory(snapshot: PluginMarketplaceCacheSnapshot | null): boolean {
   return Boolean(snapshot?.installedPlugins.length || snapshot?.installedPluginsFetchedAt)
 }
@@ -250,11 +262,8 @@ export async function refreshInstalledPluginInventory(options: {
     return (
       options.isCurrent() &&
       (current === expected || !current?.deviceId || current.deviceId === deviceId) &&
-      pluginInventoryReadIsCurrent(options.cacheKey, expected) &&
-      sameLocalPluginSources(current, expected) &&
-      current?.installedPluginsFetchedAt === expected?.installedPluginsFetchedAt &&
-      (current === expected ||
-        samePluginInstallations(current?.installedPlugins ?? [], expected?.installedPlugins ?? []))
+      pluginInstallationReadIsCurrent(options.cacheKey, expected) &&
+      sameLocalPluginSources(current, expected)
     )
   }
   const publishInventory = (installedPlugins: InstalledPlugin[], complete = false) => {

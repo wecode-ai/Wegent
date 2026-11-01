@@ -437,35 +437,30 @@ export function isCollapsibleToolBlock(block: ProcessingBlock): boolean {
   );
 }
 
-export function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
-  return buildProcessingDisplayRows(blocks).length > 0;
-}
-
-export function hasTrailingCompletedNarrativeBlock(
-  blocks: ProcessingBlock[],
-): boolean {
-  const lastBlock = blocks.at(-1);
-  return (
-    (lastBlock?.type === "text" ||
-      (lastBlock?.type === "tool" && isGuidanceToolName(lastBlock.toolName))) &&
-    (lastBlock.status === "done" || lastBlock.status === "error")
-  );
-}
-
 export function shouldShowAssistantThinkingIndicator({
   isStreaming,
-  hasProcessingDisplayBlock,
+  blocks,
   hasVisibleContent,
-  hasTrailingCompletedNarrativeBlock,
 }: {
   isStreaming: boolean;
-  hasProcessingDisplayBlock: boolean;
+  blocks: ProcessingBlock[];
   hasVisibleContent: boolean;
-  hasTrailingCompletedNarrativeBlock: boolean;
 }): boolean {
+  // Completed guidance has no live indicator of its own.
+  const pendingBlocks = blocks.filter(
+    (block) =>
+      block.type !== "tool" ||
+      !isGuidanceToolName(block.toolName) ||
+      (block.status !== "done" && block.status !== "error"),
+  );
+  const lastBlock = pendingBlocks.at(-1);
+  const hasTrailingCompletedText =
+    lastBlock?.type === "text" &&
+    (lastBlock.status === "done" || lastBlock.status === "error");
   return (
     isStreaming &&
     !hasVisibleContent &&
-    (!hasProcessingDisplayBlock || hasTrailingCompletedNarrativeBlock)
+    (buildProcessingDisplayRows(pendingBlocks).length === 0 ||
+      hasTrailingCompletedText)
   );
 }

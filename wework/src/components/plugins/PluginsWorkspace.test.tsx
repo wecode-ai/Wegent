@@ -10170,6 +10170,7 @@ describe('PluginsWorkspace', () => {
 
   const personalVersionScenarios = [
     'success',
+    'stale-catalog',
     'normalized-name',
     'normalized-name-reference',
     'scan-failure',
@@ -10264,6 +10265,19 @@ describe('PluginsWorkspace', () => {
         return previousFetch(input, init)
       })
       const localApi = createLocalCodexPluginApi()
+      let releaseStaleCatalog: (() => void) | undefined
+      const staleRead =
+        outcome === 'stale-catalog'
+          ? vi.spyOn(localApi, 'readState').mockImplementationOnce(async () => {
+              const snapshot = await createLocalCodexPluginApi().readState({
+                mergeAllMarketplaces: true,
+              })
+              await new Promise<void>(resolve => {
+                releaseStaleCatalog = resolve
+              })
+              return { ...snapshot, installedPlugins: [] }
+            })
+          : undefined
       const packagePlugin = vi
         .spyOn(localApi, 'packageCreatedPlugin')
         .mockResolvedValue(new File(['new package'], 'dev-tools.zip'))
@@ -10295,6 +10309,28 @@ describe('PluginsWorkspace', () => {
         expect(await screen.findByTestId('plugin-version-submit-notice')).toHaveTextContent(
           '本地 v2.0.0 · 已分享 v1.0.0'
         )
+        if (outcome === 'stale-catalog') {
+          await waitFor(() => expect(releaseStaleCatalog).toBeTypeOf('function'))
+          const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+          const current = getPluginMarketplaceCache(cacheKey)!
+          await act(async () => {
+            writePluginInventory(cacheKey, current.deviceId, {
+              installedPlugins: current.installedPlugins.map(plugin => ({
+                ...plugin,
+                spec: { ...plugin.spec, version: '2.1.0' },
+              })),
+              installedPluginsFetchedAt: Date.now(),
+            })
+          })
+          expect(screen.getByTestId('plugin-version-submit-notice')).toHaveTextContent(
+            '本地 v2.1.0 · 已分享 v1.0.0'
+          )
+          await act(async () => releaseStaleCatalog!())
+          expect(screen.getByTestId('plugin-version-submit-notice')).toHaveTextContent(
+            '本地 v2.1.0 · 已分享 v1.0.0'
+          )
+          return
+        }
         await userEvent.click(screen.getByTestId('plugin-version-submit-open'))
         expect(await screen.findByTestId('plugin-version-submit-current')).toHaveTextContent(
           'v1.0.0'
@@ -10362,6 +10398,8 @@ describe('PluginsWorkspace', () => {
         packagePlugin.mockRestore()
         hash.mockRestore()
         createApi.mockRestore()
+        releaseStaleCatalog?.()
+        staleRead?.mockRestore()
       }
     }
   )

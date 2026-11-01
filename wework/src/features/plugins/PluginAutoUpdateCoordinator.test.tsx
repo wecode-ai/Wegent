@@ -1,6 +1,9 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { clearPluginDeviceAutoSyncAttempts } from './pluginDeviceAutoSync'
+import {
+  clearPluginDeviceAutoSyncAttempts,
+  hasInFlightPluginDeviceSync,
+} from './pluginDeviceAutoSync'
 import {
   PLUGIN_RELEASE_AVAILABLE_EVENT,
   PluginAutoUpdateCoordinator,
@@ -29,6 +32,8 @@ const mocks = vi.hoisted(() => {
     notifyLocalPluginSkillsChanged: vi.fn(),
     track: vi.fn(),
     runtimeConnected: true,
+    token: 'cloud-token',
+    httpOptions: null as { signal?: AbortSignal } | null,
   }
 })
 
@@ -49,7 +54,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
     apiBaseUrl: 'https://cloud.example.com/api',
     socketBaseUrl: 'https://cloud.example.com',
     socketPath: '/socket.io',
-    token: 'cloud-token',
+    token: mocks.token,
   }),
 }))
 
@@ -67,7 +72,12 @@ vi.mock('@/api/local/codexPlugins', () => ({
   }),
 }))
 
-vi.mock('@/api/http', () => ({ createHttpClient: vi.fn(() => ({})) }))
+vi.mock('@/api/http', () => ({
+  createHttpClient: vi.fn(options => {
+    mocks.httpOptions = options
+    return {}
+  }),
+}))
 vi.mock('@/api/plugins', () => ({
   createPluginApi: () => ({
     listMarketplacePlugins: mocks.listMarketplacePlugins,
@@ -96,6 +106,7 @@ describe('PluginAutoUpdateCoordinator', () => {
     vi.clearAllMocks()
     mocks.handlers.clear()
     mocks.runtimeConnected = true
+    mocks.token = 'cloud-token'
     clearPluginDeviceAutoSyncAttempts()
     mocks.autoUpdateInstalledPlugins.mockResolvedValue({
       updated: [
@@ -144,6 +155,54 @@ describe('PluginAutoUpdateCoordinator', () => {
         results: [],
       },
     })
+  })
+
+  test('releases an old account pending sync on account change without publishing stale results', async () => {
+    mocks.autoUpdateInstalledPlugins.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          mocks.httpOptions?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Account changed', 'AbortError'))
+          )
+        })
+    )
+    const view = render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+    const previousSignal = mocks.httpOptions?.signal
+
+    mocks.token = 'next-account-token'
+    view.rerender(<PluginAutoUpdateCoordinator />)
+
+    expect(previousSignal?.aborted).toBe(true)
+    await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.syncInstalledPluginToDevice).not.toHaveBeenCalled()
+    expect(mocks.clearLocalCache).not.toHaveBeenCalled()
+    expect(mocks.track).not.toHaveBeenCalled()
+  })
+
+  test('does not publish a sync response that settled after its account disconnected', async () => {
+    let finishSync!: () => void
+    const response = {
+      deviceId: 'device-1',
+      pendingCount: 0,
+      sync: { success: true, plugins: [{ id: 1, status: 'synced' }], errors: [] },
+    }
+    mocks.syncInstalledPluginToDevice.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishSync = () => resolve(response)
+        })
+    )
+    const view = render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
+
+    view.unmount()
+    await act(async () => finishSync())
+
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(false)
+    expect(mocks.clearLocalCache).not.toHaveBeenCalled()
+    expect(mocks.notifyLocalPluginSkillsChanged).not.toHaveBeenCalled()
   })
 
   test('checks on startup and when a published release event arrives', async () => {

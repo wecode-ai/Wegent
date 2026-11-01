@@ -24,6 +24,7 @@ import {
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
 import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
 
 const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
@@ -348,7 +349,11 @@ export class DesktopRuntime {
         environment: managedRuntime.environment,
       })
       if (this.options.readWorkbenchMode) {
-        await applyWorkbenchModeToCorePlugins(await this.options.readWorkbenchMode(), plugins)
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
+        const mode = await this.options.readWorkbenchMode()
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-start' }, true)
+        await applyWorkbenchModeToCorePlugins(mode, plugins)
+        recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-finish' }, true)
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()

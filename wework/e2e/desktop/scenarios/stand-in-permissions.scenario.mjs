@@ -64,7 +64,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
     )
     await control.command(
-      'click',
+      'clickWhenEnabled',
       `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
     await control.command('waitFor', `${CONTENT} [data-testid="collaboration-tab-board"]`)
