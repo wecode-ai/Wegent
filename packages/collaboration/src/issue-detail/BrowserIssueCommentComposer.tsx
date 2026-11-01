@@ -19,7 +19,7 @@ import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ProjectWorkBar } from '../controls/ProjectWorkBar'
 import { resolveAutomaticModel } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
-import { startTaskAiRun } from '../execution/taskAiExecution'
+import { refreshTaskAfterComment, startTaskAiRun } from '../execution/taskAiExecution'
 import { commentAgentMentions } from '../execution/taskCardReply'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
@@ -208,17 +208,13 @@ export function BrowserIssueCommentComposer({
       reportError(cause)
       return persisted
     } finally {
-      if (persisted && onTaskUpdated) {
-        try {
-          onTaskUpdated(await api.issues.get(issue.id))
-        } catch (cause) {
-          console.warn('[collaboration] Failed to refresh Issue after saving comment', {
-            projectId: project.id,
-            issueId: issue.id,
-            error: cause,
-          })
-        }
-      }
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: issue.id,
+          getTask: api.issues.get,
+          onTaskUpdated,
+        })
       draft.endOperation()
     }
   }
