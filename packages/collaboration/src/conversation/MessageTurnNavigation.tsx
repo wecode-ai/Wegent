@@ -218,7 +218,7 @@ export function MessageTurnNavigation({
     }
     const nav = navRef.current
     const preview = previewNodesRef.current.get(hoveredMarkerId)
-    const parent = nav?.parentElement ?? null
+    const parent = portalTarget ?? nav?.parentElement ?? null
     if (!nav || !preview || !parent) return
 
     const measure = () => {
@@ -258,7 +258,7 @@ export function MessageTurnNavigation({
       window.removeEventListener('resize', measure)
       observer?.disconnect()
     }
-  }, [hoveredMarkerId, insetPx, scrollRef, userTurnsSignature])
+  }, [hoveredMarkerId, insetPx, portalTarget, scrollRef, userTurnsSignature])
 
   const updateActiveMarkers = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
