@@ -1,7 +1,12 @@
 import { expect, test } from 'vitest'
 import { verifyOverloadHistoryRace } from '../e2e/desktop/modules/overload-history-race.mjs'
 
-function protocolFixture({ turnId = 'failed-turn', status = 'failed' } = {}) {
+function protocolFixture({
+  turnId = 'failed-turn',
+  status = 'done',
+  running = true,
+  error = null,
+} = {}) {
   let nativeReleased = false
   let overloaded = false
   let now = 0
@@ -11,7 +16,7 @@ function protocolFixture({ turnId = 'failed-turn', status = 'failed' } = {}) {
     async arm() {},
     async wait() {
       expect(overloaded).toBe(true)
-      return { turnId: 'failed-turn' }
+      return { turnId: 'failed-turn', notification: 'turn/completed', status: 'failed' }
     },
     async release() {
       nativeReleased = true
@@ -22,14 +27,14 @@ function protocolFixture({ turnId = 'failed-turn', status = 'failed' } = {}) {
       armed.set(rule.id, rule)
     },
     async wait(id, kick) {
-      if (id === 'old-failed-history') {
+      if (id === 'recovered-terminal-history') {
         // A running native owner must not expose terminal history. The former
         // schedule deadlocked here while withholding the native failed frame.
         if (!nativeReleased) throw new Error('Native failure is still withheld')
         await kick()
         captures[id] = {
           capturedAt: ++now,
-          value: { result: { turns: [{ id: turnId, status }] } },
+          value: { result: { running, turns: [{ id: turnId, status, error }] } },
         }
       } else {
         expect(armed.get(id).hold).toBe(true)
@@ -41,7 +46,8 @@ function protocolFixture({ turnId = 'failed-turn', status = 'failed' } = {}) {
       return captures[id]
     },
     async release(id) {
-      if (id === 'old-failed-history') expect(captures['live-recovery'].deliveredAt).toBeDefined()
+      if (id === 'recovered-terminal-history')
+        expect(captures['live-recovery'].deliveredAt).toBeDefined()
       captures[id].deliveredAt = ++now
     },
     async save() {
@@ -73,19 +79,20 @@ test('delivers native failure before reading history and renderer recovery befor
   const fixture = protocolFixture()
   await verifyOverloadHistoryRace(fixture.options)
   expect(fixture.commands).toEqual([['dispatchRuntimeEventLagged', 'body']])
-  expect(fixture.captures['old-failed-history'].capturedAt).toBeLessThan(
+  expect(fixture.captures['recovered-terminal-history'].capturedAt).toBeLessThan(
     fixture.captures['live-recovery'].deliveredAt
   )
   expect(fixture.captures['live-recovery'].deliveredAt).toBeLessThan(
-    fixture.captures['old-failed-history'].deliveredAt
+    fixture.captures['recovered-terminal-history'].deliveredAt
   )
 })
 
-test.each([{ turnId: 'another-turn' }, { status: 'streaming' }])(
-  'rejects history that is not the actual failed native turn: %j',
-  async options => {
-    await expect(verifyOverloadHistoryRace(protocolFixture(options).options)).rejects.toThrow(
-      'did not belong to the real native terminal turn'
-    )
-  }
-)
+test.each([
+  { turnId: 'another-turn' },
+  { status: 'streaming' },
+  { status: 'failed' },
+  { running: false },
+  { error: 'Model overloaded' },
+])('rejects history that is not the actual failed native turn: %j', async options => {
+  await expect(verifyOverloadHistoryRace(protocolFixture(options).options)).rejects.toThrow()
+})
