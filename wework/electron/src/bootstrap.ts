@@ -67,16 +67,16 @@ async function routeRelease(): Promise<boolean> {
   const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
   delete process.env.WEWORK_RELEASE_SUPERVISED
   const bridge = await optionalText(join(root, 'bridge'))
-  const installedHealthyHost =
-    active?.macosInstallation &&
-    resolve(active.executable) === resolve(process.execPath) &&
-    metadata.version === active.version &&
-    !(await store.activation())
+  // The installed entry owns restoring physical Contents even when activation
+  // failed or rollback selected an older payload. A delivered recovery bridge
+  // may not contain a native installer capable of restoring that application.
+  const installedMacosEntry =
+    active?.macosInstallation && resolve(active.executable) === resolve(process.execPath)
   if (
     !supervisedId &&
     bridge &&
     resolve(bridge) !== resolve(process.execPath) &&
-    !installedHealthyHost
+    !installedMacosEntry
   ) {
     if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
     if (!existsSync(bridge)) throw new Error('The healthy Wework recovery executable is missing')

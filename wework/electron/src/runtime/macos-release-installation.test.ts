@@ -163,32 +163,23 @@ if (process.platform === 'darwin') {
 
   test('preparation does not remove a stage owned by another store', async () => {
     const { store, source, target, installed } = await fixture()
-    await prepareMacosReleaseInstallation(store, target, 'io.wecode.wework.installation-test')
-    const prepared = await store.read(target.id)
-    const rollback = await store.read(prepared.macosInstallation!.rollbackReleaseId!)
-    const stage = macosInstallationStage(rollback.executable, rollback.id)
+    const before = await readFile(join(installed, 'Contents/Info.plist'))
+    const stage = macosInstallationStage(join(installed, 'Contents/MacOS/WeWork'), target.id)
+    await mkdir(stage, { recursive: true })
+    await writeFile(join(stage, 'foreign-owner'), 'retain this directory')
     await atomicReleaseWrite(
       join(dirname(stage), 'release-owner.json'),
       JSON.stringify({
         schemaVersion: 1,
         storeRoot: '/another/store',
-        releaseId: rollback.id,
+        releaseId: target.id,
       })
     )
     await expect(
       prepareMacosReleaseInstallation(store, target, 'io.wecode.wework.installation-test')
     ).rejects.toThrow('another owner')
-    await stat(join(stage, 'Contents/Info.plist'))
+    expect(await readFile(join(stage, 'foreign-owner'), 'utf8')).toBe('retain this directory')
     expect(await store.active()).toEqual(source)
-    expect(
-      (
-        await execute('/usr/bin/plutil', [
-          '-extract',
-          'CFBundleShortVersionString',
-          'raw',
-          join(installed, 'Contents/Info.plist'),
-        ])
-      ).stdout.trim()
-    ).toBe(source.version)
+    expect(await readFile(join(installed, 'Contents/Info.plist'))).toEqual(before)
   })
 }

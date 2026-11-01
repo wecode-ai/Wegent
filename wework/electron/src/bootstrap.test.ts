@@ -1,10 +1,14 @@
 import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import type { DesktopRelease, ReleaseActivation } from './runtime/release-store.js'
 
 const startup = vi.hoisted(() => ({
   roots: [] as string[],
-  metadata: {} as { weworkExecutorNamespace?: string },
+  metadata: {} as { weworkExecutorNamespace?: string; version?: string },
+  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease>,
+  activation: null as Partial<ReleaseActivation> | null,
+  bridgeHandoff: vi.fn(),
   showErrorBox: vi.fn(),
   bridge: null as string | null,
   legacyUserData: null as string | null,
@@ -29,7 +33,7 @@ vi.mock('electron', () => ({
 vi.mock('node:fs', () => ({ existsSync: () => true }))
 vi.mock('./runtime/release-diagnostics.js', () => ({ recordReleaseDiagnostic: vi.fn() }))
 vi.mock('./runtime/release-handoff.js', () => ({
-  releaseBridgeUserData: async () => startup.legacyUserData,
+  releaseBridgeUserData: startup.bridgeHandoff,
 }))
 
 vi.mock('node:fs/promises', () => ({
@@ -46,7 +50,10 @@ vi.mock('./runtime/release-store.js', () => ({
     }
 
     async active() {
-      return { id: 'pending-target' }
+      return startup.activeRelease
+    }
+    async activation() {
+      return startup.activation
     }
   },
 }))
@@ -55,6 +62,9 @@ beforeEach(() => {
   vi.resetModules()
   startup.roots.length = 0
   startup.metadata = {}
+  startup.activeRelease = { id: 'pending-target' }
+  startup.activation = null
+  startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
   startup.showErrorBox.mockClear()
   startup.bridge = null
   startup.legacyUserData = null
@@ -133,3 +143,22 @@ test('passes the owned userData directory before relaunching a legacy recovery b
   expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
   expect(startup.showErrorBox).not.toHaveBeenCalled()
 })
+
+test.each(['pending', 'rollback-selected'])(
+  'the installed macOS entry retains its native installer during %s recovery',
+  async phase => {
+    startup.metadata.version = '2.0.0'
+    startup.bridge = join(startup.home, 'old-payload/WeWork')
+    startup.activeRelease = {
+      id: 'selected',
+      executable: process.execPath,
+      version: phase === 'pending' ? '2.0.0' : '1.0.0',
+      macosInstallation: { payloadExecutable: startup.bridge, bootstrapFromPayload: true },
+    }
+    startup.activation = { token: 'trial', to: 'selected', from: 'source' }
+    await import('./bootstrap.js')
+    expect(startup.showErrorBox).not.toHaveBeenCalled()
+    expect(startup.bridgeHandoff).not.toHaveBeenCalled()
+    expect(startup.ready).toHaveBeenCalledOnce()
+  }
+)

@@ -1,4 +1,6 @@
-import { basename, dirname, join, resolve } from 'node:path'
+import { posix } from 'node:path'
+
+const { basename, dirname, join, resolve } = posix
 
 export function macosApplication(executable: string): string {
   const application = resolve(executable, '..', '..', '..')
