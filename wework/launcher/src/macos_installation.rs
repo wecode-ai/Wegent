@@ -13,7 +13,7 @@ use std::{
 unsafe extern "C" {
     fn LSCopyApplicationURLsForBundleIdentifier(
         identifier: *const c_void,
-        error: *mut i32,
+        error: *mut *const c_void,
     ) -> *const c_void;
 }
 
@@ -51,13 +51,16 @@ pub fn applications(identifier: OsString) -> io::Result<()> {
     if string.is_null() {
         return Err(invalid("Invalid macOS application identifier"));
     }
-    let mut error = 0;
+    let mut error = std::ptr::null();
     let array = unsafe { LSCopyApplicationURLsForBundleIdentifier(string, &mut error) };
     unsafe { CFRelease(string) };
+    if !error.is_null() {
+        unsafe { CFRelease(error) };
+    }
     if array.is_null() {
-        return Err(io::Error::other(format!(
-            "Launch Services application lookup failed: {error}"
-        )));
+        return Err(io::Error::other(
+            "Launch Services application lookup failed",
+        ));
     }
     let result = (|| {
         for index in 0..unsafe { CFArrayGetCount(array) } {
@@ -294,6 +297,18 @@ mod tests {
             payload,
             stage,
         }
+    }
+
+    #[test]
+    fn an_unknown_application_identifier_returns_a_lookup_error() {
+        let identifier = OsString::from(format!(
+            "io.wecode.wework.missing-installation.{}",
+            std::process::id()
+        ));
+        assert_eq!(
+            applications(identifier).unwrap_err().to_string(),
+            "Launch Services application lookup failed"
+        );
     }
 
     #[test]
