@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
-import { cp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -51,7 +51,11 @@ describe('CoreDshPluginManager', () => {
         const pnpmEntry = process.env.npm_execpath
         expect(pnpmEntry).toBeTruthy()
         const patchedPnpm = join(fixture.root, 'pnpm')
-        await cp(dirname(dirname(pnpmEntry!)), patchedPnpm, { recursive: true })
+        await cp(dirname(dirname(pnpmEntry!)), patchedPnpm, {
+          recursive: true,
+          dereference: true,
+        })
+        expect((await lstat(patchedPnpm)).isSymbolicLink()).toBe(false)
         await promisify(execFile)(
           'git',
           [
