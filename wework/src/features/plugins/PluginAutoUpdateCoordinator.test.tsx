@@ -157,6 +157,44 @@ describe('PluginAutoUpdateCoordinator', () => {
     })
   })
 
+  test('keeps an accepted device sync locked across runtime disconnect and reconnect', async () => {
+    let finishSync!: () => void
+    mocks.syncInstalledPluginToDevice.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finishSync = () =>
+            resolve({
+              deviceId: 'device-1',
+              pendingCount: 0,
+              sync: { success: true, plugins: [{ id: 1, status: 'synced' }], errors: [] },
+            })
+          mocks.httpOptions?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Request cancelled', 'AbortError'))
+          )
+        })
+    )
+    const view = render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
+    const signal = mocks.httpOptions?.signal
+
+    mocks.runtimeConnected = false
+    view.rerender(<PluginAutoUpdateCoordinator />)
+    await act(async () => {})
+    expect(signal?.aborted).toBe(false)
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+
+    mocks.runtimeConnected = true
+    view.rerender(<PluginAutoUpdateCoordinator />)
+    await act(async () => {})
+    expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+
+    await act(async () => finishSync())
+    await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.clearLocalCache).not.toHaveBeenCalled()
+    expect(mocks.notifyLocalPluginSkillsChanged).not.toHaveBeenCalled()
+  })
+
   test('releases an old account pending sync on account change without publishing stale results', async () => {
     mocks.autoUpdateInstalledPlugins.mockImplementationOnce(
       () =>
