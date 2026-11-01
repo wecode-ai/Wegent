@@ -447,9 +447,7 @@ export function hasTrailingCompletedNarrativeBlock(
   const lastBlock = blocks.at(-1);
   return (
     (lastBlock?.type === "text" ||
-      (lastBlock?.type === "tool" &&
-        (isGuidanceToolName(lastBlock.toolName) ||
-          isContextCompactionToolName(lastBlock.toolName)))) &&
+      (lastBlock?.type === "tool" && isGuidanceToolName(lastBlock.toolName))) &&
     (lastBlock.status === "done" || lastBlock.status === "error")
   );
 }

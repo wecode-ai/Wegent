@@ -5749,7 +5749,7 @@ describe('MessageList', () => {
         blockStatus: 'done' as const,
         status: 'streaming' as const,
         content: '',
-        waiting: true,
+        waiting: toolName !== 'context_compaction',
       },
       {
         toolName,
