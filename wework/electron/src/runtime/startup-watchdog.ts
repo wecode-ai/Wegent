@@ -4,9 +4,8 @@ import { redactLog } from './rotating-log.js'
 // Inspect only stack locations: never capture scopes, arguments or source text.
 export const STARTUP_WATCHDOG_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads')
-const { appendFileSync, openSync, closeSync } = require('node:fs')
+const { appendFileSync } = require('node:fs')
 const { Session } = require('node:inspector')
-const { spawn } = require('node:child_process')
 const redact = ${redactLog.toString()}
 const heartbeat = new BigInt64Array(workerData.heartbeat)
 const write = (event, details) => {
@@ -31,37 +30,6 @@ setInterval(() => {
   if (captured || ageMs < workerData.stallMs) return
   captured = true
   write('startup-main-thread-stalled', { ageMs })
-  if (workerData.nativeStack) {
-    let descriptor
-    try {
-      // The debugger suspends this worker too. Write directly to disk so its
-      // output cannot deadlock on a pipe drained by the suspended process.
-      descriptor = openSync(workerData.path, 'a', 0o600)
-      const debuggerProcess = spawn('gdb', [
-      '-nx', '-q', '-batch',
-      '-iex', 'set auto-load off',
-      '-iex', 'set debuginfod enabled off',
-      '-iex', 'set print frame-arguments none',
-      '-iex', 'set print entry-values no',
-      '-iex', 'set print frame-info location-and-address',
-      '-p', String(process.pid),
-      '-ex', 'thread apply all bt 10', '-ex', 'detach',
-      ], { stdio: ['ignore', descriptor, descriptor], windowsHide: true })
-      const deadline = setTimeout(() => debuggerProcess.kill(), 10000)
-      debuggerProcess.once('error', error => {
-        clearTimeout(deadline)
-        write('startup-native-stack-unavailable', { code: error.code ?? null })
-      })
-      debuggerProcess.once('exit', code => {
-        clearTimeout(deadline)
-        write('startup-native-stack-finished', { code })
-      })
-    } catch (error) {
-      write('startup-native-stack-unavailable', { code: error.code ?? null })
-    } finally {
-      if (descriptor !== undefined) closeSync(descriptor)
-    }
-  }
   const session = new Session()
   try {
     session.connectToMainThread()
@@ -103,7 +71,6 @@ export function startStartupWatchdog(path: string, releaseId: string | undefined
       releaseId,
       intervalMs: 1000,
       stallMs: 5000,
-      nativeStack: process.platform === 'win32',
     },
   })
   const timer = setInterval(beat, 1000)

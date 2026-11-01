@@ -118,8 +118,7 @@ through the shared runner. PRs and default manual runs execute the complete upgr
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
 captures stack locations once and resumes execution, without reading scopes, arguments, or
 source text. Monitoring stops when startup completes.
-On Windows stalls, the runner's preinstalled GDB also captures native frames with argument
-and source display disabled. An uncaught-exception monitor retains errors synchronously
+An uncaught-exception monitor retains errors synchronously
 without taking over exception handling or exit behavior.
 Cleanup must retain `electron-logs` and `release-logs` so the target executor's original logs
 distinguish startup failure, health-check timeout, and rollback. Missing logs are not a basis

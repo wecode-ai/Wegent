@@ -1,5 +1,11 @@
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
+import { mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
+import { PassThrough } from 'node:stream'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CoreDshPluginManager,
@@ -7,8 +13,135 @@ import {
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
 import { temporaryDirectory } from './test-helpers.js'
+import { prepareElectronNodeRuntime } from './electron-node-runtime.js'
+
+vi.mock('node:child_process', { spy: true })
 
 describe('CoreDshPluginManager', () => {
+  test.runIf(process.platform === 'win32')(
+    'validates a profile from a real Electron parent in a runtime directory beyond MAX_PATH',
+    async () => {
+      const fixture = await createFixture()
+      try {
+        const require = createRequire(import.meta.url)
+        const compiled = join(fixture.root, 'compiled')
+        await promisify(execFile)(
+          process.execPath,
+          [
+            require.resolve('typescript/bin/tsc'),
+            '-p',
+            fileURLToPath(new URL('../../tsconfig.json', import.meta.url)),
+            '--outDir',
+            compiled,
+          ],
+          { timeout: 30000 }
+        )
+        await writeJson(join(compiled, 'package.json'), { type: 'module' })
+        let runtimeRoot = fixture.runtimeRoot
+        while (runtimeRoot.length < 320)
+          runtimeRoot = join(runtimeRoot, 'versioned-runtime-directory')
+        await mkdir(runtimeRoot, { recursive: true })
+        const observed = join(fixture.root, 'observed.json')
+        const dshEntry = join(runtimeRoot, 'dsh.cjs')
+        await writeFile(
+          dshEntry,
+          `require('node:fs').writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ cwd: process.cwd() }))`
+        )
+        const electron = require('electron') as string
+        const runtime = await prepareElectronNodeRuntime({
+          dataDirectory: fixture.root,
+          environment: {
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+          },
+          helperExecPath: electron,
+          nodeVersion: 'test',
+          platform: process.platform,
+        })
+        const harness = join(fixture.root, 'parent.mjs')
+        await writeFile(
+          harness,
+          `
+import { CoreDshPluginManager } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/core-dsh-plugin-manager.js')).href)}
+const manager = new CoreDshPluginManager(${JSON.stringify({
+            dshHome: join(fixture.root, 'home'),
+            runtimeRoot,
+            dshEntry,
+            nodeCommand: runtime.environment.WEWORK_NODE_PATH,
+            environment: runtime.environment,
+          })})
+await manager.setEnabled('dsh-alpha', false)
+`
+        )
+        await promisify(execFile)(electron, [harness], {
+          env: { ...runtime.environment, ELECTRON_RUN_AS_NODE: '1' },
+          timeout: 10000,
+        })
+        const result = JSON.parse(await readFile(observed, 'utf8')) as { cwd: string }
+        expect(await realpath(result.cwd)).toBe(await realpath(runtimeRoot))
+      } finally {
+        await fixture.remove()
+      }
+    },
+    45000
+  )
+
+  test.each(['stdout', 'stderr'] as const)(
+    'retains the spawn error when its disconnected %s pipe also fails',
+    async stream => {
+      const fixture = await createFixture({ realCommands: true })
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(),
+        pid: undefined,
+      })
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          child[stream].emit(
+            'error',
+            Object.assign(new Error('read ENOTCONN'), { code: 'ENOTCONN' })
+          )
+          child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+        })
+        return child as unknown as ReturnType<typeof spawn>
+      })
+      try {
+        await expect(fixture.manager().setEnabled('dsh-alpha', false)).rejects.toThrow(
+          'spawn ENOENT'
+        )
+      } finally {
+        await fixture.remove()
+      }
+    }
+  )
+
+  test('rejects a pipe failure even when the process exited successfully before stdio closed', async () => {
+    const fixture = await createFixture({ realCommands: true })
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(),
+      pid: 123,
+      exitCode: 0,
+      signalCode: null,
+    })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.emit('exit', 0)
+        child.stderr.emit('error', new Error('read EIO'))
+        child.emit('close', 0)
+      })
+      return child as unknown as ReturnType<typeof spawn>
+    })
+    try {
+      await expect(fixture.manager().setEnabled('dsh-alpha', false)).rejects.toThrow('read EIO')
+    } finally {
+      await fixture.remove()
+    }
+  })
+
   test.each([undefined, { '.': './index.js' }])(
     'preserves installation-owned bundles with exports %j while toggling a workspace plugin',
     async exports => {

@@ -1,5 +1,6 @@
 import {
   spawn,
+  type ChildProcess,
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
@@ -283,10 +284,7 @@ function waitForSpawn(child: ChildProcessWithoutNullStreams): Promise<void> {
   })
 }
 
-export async function terminateProcessTree(
-  child: ChildProcessWithoutNullStreams,
-  timeoutMs: number
-): Promise<void> {
+export async function terminateProcessTree(child: ChildProcess, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
   const processGroupId = process.platform === 'win32' ? null : child.pid
   const exited = once(child, 'exit').then(() => true)
@@ -372,7 +370,7 @@ async function inspectProcessGroup(processGroupId: number): Promise<'absent' | '
   return 'dead'
 }
 
-function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   try {
     if (process.platform === 'win32') {
       // Console runtimes cannot receive taskkill's non-forced window-close request.
