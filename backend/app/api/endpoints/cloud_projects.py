@@ -346,7 +346,7 @@ def update_project_chat_agent(
     "/{project_id}/loop-items/{item_id}/assign",
     response_model=LoopItemResponse,
 )
-def assign_loop_item(
+async def assign_loop_item(
     project_id: int,
     item_id: str,
     values: LoopItemAssign,

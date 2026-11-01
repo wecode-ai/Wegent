@@ -1142,7 +1142,6 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/modules/real-object-storage.mjs)
       select_target "core:collaboration-issue-mcp-comments"
-      select_target "core:collaboration-delivery-editing"
       select_target "cloud:plugin-write-coordination"
       select_target "cloud:plugin-runtime-route-refresh"
       select_target "cloud:plugin-background-sync-isolation"

@@ -271,32 +271,3 @@ it.each(['agents', 'members', 'collaboration-participants', 'collaboration-group
     expect(api.workspaces!.listCollaborationGroups).not.toHaveBeenCalled()
   }
 )
-
-it.each([false, true])(
-  'reports the failed navigation collection for a project location=%s',
-  async openProject => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    try {
-      const localApi = apiFor(localWorkspace, [])
-      vi.mocked(localApi.workspaces!.list).mockRejectedValue(new Error('Local catalog unavailable'))
-      const cloudApi = apiFor(cloudWorkspace, [project])
-      await render(
-        [localApi, cloudApi],
-        openProject ? location : { ...location, workspaceId: null, projectId: null }
-      )
-      expect(log).toHaveBeenCalledExactlyOnceWith(
-        '[Collaboration] Navigation collection failed',
-        JSON.stringify({
-          sourceIndex: 0,
-          collection: 'workspaces',
-          error: 'Error',
-          message: 'Local catalog unavailable',
-        })
-      )
-      expect(currentState().workspaces).toContainEqual(cloudWorkspace)
-      expect(currentState().navigationIncomplete).toBe(true)
-    } finally {
-      log.mockRestore()
-    }
-  }
-)

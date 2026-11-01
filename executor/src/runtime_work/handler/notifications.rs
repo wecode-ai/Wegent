@@ -549,14 +549,15 @@ impl RuntimeWorkRpcHandler {
                 crate::runtime_work::lifecycle::native_execution_state,
             )
             .flatten();
-        let admitted = state.as_ref().is_some_and(|state| {
-            state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
-        });
         let owned_turn_id = state
             .as_ref()
             .and_then(|state| state.turn_id.clone())
             .or_else(|| {
-                admitted
+                state
+                    .is_some_and(|state| {
+                        state.phase
+                            == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+                    })
                     .then(|| self.active_codex_turn(local_task_id))
                     .flatten()
                     .map(|turn| turn.turn_id)
@@ -588,31 +589,7 @@ impl RuntimeWorkRpcHandler {
             // Turn-list status can synthesize interruption without a terminal boundary.
             // Execution identity remains authoritative for this open turn even when
             // every observed item has already been persisted.
-            let native_open = admitted
-                || state
-                    .as_ref()
-                    .is_some_and(|state| state.turn_id.as_deref() == Some(turn_id.as_str()));
-            if native_open
-                && positioned
-                && turn["timelineCompleted"] == true
-                && matches!(
-                    turn["status"].as_str(),
-                    Some("interrupted" | "cancelled" | "failed" | "completed")
-                )
-            {
-                log_executor_event(
-                    "runtime open turn overrides terminal timeline",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("turn_id", turn_id.clone()),
-                        (
-                            "history_status",
-                            string_field(turn, "status").unwrap_or_default(),
-                        ),
-                    ],
-                );
-            }
-            if native_open || !positioned || turn["timelineCompleted"] != true {
+            if !positioned || turn["timelineCompleted"] != true {
                 turn["status"] = json!("inProgress");
                 turn["completedAt"] = Value::Null;
                 turn["durationMs"] = Value::Null;

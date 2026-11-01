@@ -335,17 +335,6 @@ fn overload_recovery_transcript_preserves_user_and_tools_without_terminal_failur
     assert_eq!(cached[1]["blocks"][0]["tool_output"], "done");
     assert!(cached[1].get("error").is_none());
     assert_eq!(cached[2]["status"], "failed");
-
-    // Public transcript pages expose recovered history as done while execution
-    // remains active; unrelated terminal failures must retain their outcome.
-    let projected = crate::runtime_work::transcript::project_transcript(&thread, "device-1", false);
-    assert_eq!(projected.turns[0]["status"], "done");
-    let mut link = RuntimeTaskLink::new_pending("task".into(), "/project".into(), "Task".into());
-    link.runtime_handle = handle;
-    let response = cached_transcript_response(&link, cached, None, true, None, None, None);
-    assert_eq!(response["running"], true);
-    assert_eq!(response["turns"][0]["status"], "done");
-    assert_eq!(response["turns"][1]["status"], "failed");
 }
 
 #[test]

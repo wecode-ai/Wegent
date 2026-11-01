@@ -675,12 +675,8 @@ impl CodexNotificationEventMapper {
                 // Reset in native event order, before any item in the new turn.
                 // A later turn/start response must preserve already observed phases.
                 let root_thread_id = self.root_thread_id.clone();
-                // Proxy waits own their HTTP request lifetime, not native turn ordering.
-                let proxy_retry_wait_ids = std::mem::take(&mut self.proxy_retry_wait_ids);
                 *self = Self::default();
                 self.root_thread_id = root_thread_id;
-                self.proxy_retry_wait_ids = proxy_retry_wait_ids;
-                self.refresh_reconnecting(&emit_context);
             }
             "turn/started" | "turn/completed" | "thread/status/changed" => {}
             "thread/goal/updated" => {

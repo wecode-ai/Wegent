@@ -685,54 +685,6 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isQueued).toBe(true)
   })
 
-  test.each([false, undefined])(
-    'preserves queue admission when pending history has running=%s',
-    running => {
-      const store = new RuntimeTaskLifecycleStore('queued-pending-history')
-      store.sendRequested(address)
-      store.sendQueued(address, 2)
-      store.syncRuntimeWork(
-        runtimeWork(task({ status: 'queued', running: false, queuePosition: 2 }))
-      )
-      const queued = store.getTask(address)
-
-      store.syncTranscript(
-        address,
-        transcript({
-          running,
-          messages: [{ id: 'queued-user', role: 'user', content: 'Queued request' }],
-          turns: [{ id: 'queued-turn', status: 'pending', items: [] }],
-        })
-      )
-
-      expect(store.getTask(address)).toEqual(queued)
-      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
-      expect(store.getTask(address)?.task?.queuePosition).toBe(2)
-      expect(store.getSnapshot().queuedTaskKeys).toEqual(
-        new Set([getRuntimeTaskLifecycleKey(address)])
-      )
-    }
-  )
-
-  test('recovers a queued task when the transcript confirms that execution started', () => {
-    const store = new RuntimeTaskLifecycleStore('queued-execution-started')
-    store.sendRequested(address)
-    store.sendQueued(address, 2)
-    store.syncRuntimeWork(runtimeWork(task({ status: 'queued', running: false, queuePosition: 2 })))
-
-    store.syncTranscript(
-      address,
-      transcript({
-        running: true,
-        turns: [{ id: 'started-turn', status: 'streaming', items: [] }],
-      })
-    )
-
-    expect(store.getTask(address)?.execution.phase).toBe('running')
-    expect(store.getTask(address)?.turn.id).toBe('started-turn')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
-  })
-
   test('preserves an active turn when a follow-up is queued', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))

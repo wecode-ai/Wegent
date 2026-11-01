@@ -7,7 +7,6 @@ import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
-import { verifyOverloadHistoryRace } from '../modules/overload-history-race.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -228,14 +227,47 @@ export function createDesktopScenario({
       const gates = runtimeTransportGates(control)
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
-      await verifyOverloadHistoryRace({
-        gates,
-        nativeGate,
-        control,
-        address,
-        releaseOverload,
-        resultDir,
+      await gates.arm({
+        id: 'old-failed-history',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [
+          { path: 'params.taskId', equals: address.taskId },
+          { path: 'result.turns.*.status', equals: 'failed' },
+        ],
       })
+      await gates.arm({
+        id: 'live-recovery',
+        kind: 'event',
+        name: 'response.block.created',
+        hold: false,
+        where: [
+          { path: 'payload.taskId', equals: address.taskId },
+          { path: 'payload.data.block.tool_name', equals: 'runtime_reconnecting' },
+        ],
+      })
+      await nativeGate.arm()
+      releaseOverload()
+      const nativeFailure = await nativeGate.wait()
+      await gates.wait('old-failed-history', () =>
+        control.command('dispatchRuntimeEventLagged', 'body')
+      )
+      const failedHistory = await gates.read('old-failed-history')
+      assert.ok(
+        failedHistory.value.result.turns.some(
+          turn => turn.id === nativeFailure.turnId && turn.status === 'failed'
+        ),
+        'The held failed snapshot did not belong to the real native terminal turn'
+      )
+      await nativeGate.release()
+      await gates.wait('live-recovery')
+      await gates.release('old-failed-history')
+      const ordering = await gates.save(resultDir, 'overload-history-race.json', [
+        'old-failed-history',
+        'live-recovery',
+      ])
+      assert.ok(ordering['old-failed-history'].capturedAt < ordering['live-recovery'].deliveredAt)
+      assert.ok(ordering['live-recovery'].deliveredAt < ordering['old-failed-history'].deliveredAt)
       await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,

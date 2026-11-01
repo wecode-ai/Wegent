@@ -92,31 +92,6 @@ interface NavigationCollections {
   successfulLoads: number;
 }
 
-function reportNavigationFailures(
-  sources: SharedWorkspaceApi[],
-  results: PromiseSettledResult<void>[],
-) {
-  const operations = sources.flatMap((source, sourceIndex) => [
-    { sourceIndex, collection: "projects" },
-    ...(source.workspaces ? [{ sourceIndex, collection: "workspaces" }] : []),
-  ]);
-  results.forEach((result, index) => {
-    if (result.status !== "rejected") return;
-    console.error(
-      "[Collaboration] Navigation collection failed",
-      JSON.stringify({
-        ...operations[index],
-        error:
-          result.reason instanceof Error ? result.reason.name : "UnknownError",
-        message:
-          result.reason instanceof Error
-            ? result.reason.message
-            : String(result.reason),
-      }),
-    );
-  });
-}
-
 function mergeByKey<T>(collections: T[][], keyFor: (item: T) => string): T[] {
   const merged = new Map<string, T>();
   for (const collection of collections) {
@@ -208,7 +183,6 @@ async function loadNavigationCollections(
       return loads;
     }),
   );
-  reportNavigationFailures(sources, results);
   return snapshot(results.every((result) => result.status === "fulfilled"));
 }
 
@@ -480,7 +454,6 @@ export function useCollaborationPlatformController({
             return loads;
           }),
         );
-        reportNavigationFailures(sources, results);
         primaryNavigationSettled = true;
         navigationComplete = results.every(
           (result) => result.status === "fulfilled",
