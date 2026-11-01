@@ -75,6 +75,20 @@ interface PersistedMarketplaceCacheStore {
 }
 
 let snapshot: PluginMarketplaceCacheSnapshot | null = null
+let scopeRevision = 0
+
+function adoptSnapshot(next: PluginMarketplaceCacheSnapshot | null): void {
+  if (!next || snapshot?.cacheKey !== next.cacheKey || snapshot?.deviceId !== next.deviceId)
+    scopeRevision += 1
+  snapshot = next
+}
+
+/** A settings mutation belongs to the inventory scope, including across page navigation. */
+export function capturePluginMarketplaceScope(cacheKey: string, deviceId: string) {
+  const revision = scopeRevision
+  return () =>
+    revision === scopeRevision && snapshot?.cacheKey === cacheKey && snapshot.deviceId === deviceId
+}
 type MarketplaceCacheListener = (next: PluginMarketplaceCacheSnapshot | null) => void
 const listeners = new Set<MarketplaceCacheListener>()
 const PERSIST_DEBOUNCE_MS = 300
@@ -402,7 +416,7 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
 
   const exact = readPersistedSnapshot(cacheKey)
   if (exact) {
-    snapshot = exact
+    adoptSnapshot(exact)
     return snapshot
   }
 
@@ -506,7 +520,7 @@ export function setPluginMarketplaceCache(
       ])
     )
   }
-  snapshot = { ...next, logosStripped: false }
+  adoptSnapshot({ ...next, logosStripped: false })
   if (options?.persistImmediately) {
     clearPersistTimer()
     pendingPersist = null
@@ -632,7 +646,7 @@ export function clearPluginMarketplaceCache(): void {
   clearPersistTimer()
   pendingPersist = null
   lastPersistedSignature = ''
-  snapshot = null
+  adoptSnapshot(null)
   forgotLegacyCache = false
   if (typeof window !== 'undefined') {
     try {
@@ -656,7 +670,7 @@ export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListen
 /** Test helper: drop memory without clearing durable storage. */
 export function resetPluginMarketplaceCacheMemory(): void {
   flushPluginMarketplaceCachePersist()
-  snapshot = null
+  adoptSnapshot(null)
 }
 
 function pluginComponentsSignature(components: PluginMarketplaceItem['components']): string {

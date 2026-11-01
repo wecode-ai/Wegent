@@ -4,6 +4,7 @@ import type { InstalledPluginItem } from '@/components/plugins/PluginManagementR
 import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
   clearPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   flushPluginMarketplaceCachePersist,
   getPluginMarketplaceCache,
   marketplaceItemsSignature,
@@ -105,6 +106,26 @@ describe('pluginMarketplaceCache', () => {
     vi.restoreAllMocks()
     clearPluginMarketplaceCache()
   })
+
+  test.each(['account', 'device', 'clear'] as const)(
+    'expires a settings scope after %s changes even when the original scope returns',
+    change => {
+      publishGithub([acceptedGithub()])
+      const isCurrent = capturePluginMarketplaceScope('receipt-account', 'receipt-device')
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(true)
+      if (change === 'clear') clearPluginMarketplaceCache()
+      else
+        publishGithub(
+          [],
+          change === 'account' ? 'other-account' : 'receipt-account',
+          change === 'device' ? 'other-device' : 'receipt-device'
+        )
+      expect(isCurrent()).toBe(false)
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(false)
+    }
+  )
 
   function acceptedGithub() {
     const plugin = installedItem(

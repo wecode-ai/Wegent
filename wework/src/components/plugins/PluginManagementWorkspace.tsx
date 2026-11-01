@@ -29,6 +29,7 @@ import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plu
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
   getPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   pluginMarketplaceCacheKey,
   removePluginMarketplaceInstallation,
   sameInstalledPlugins,
@@ -240,16 +241,16 @@ function PluginManagementWorkspaceContent({
     [installedPlugins, selectedPluginId]
   )
 
-  const beginSettingsUpdate = (id: string | number, request: PluginSettingsUpdate) =>
-    beginPluginSettingsRequest(
+  const beginSettingsUpdate = (id: string | number, request: PluginSettingsUpdate) => {
+    const scopeIsCurrent = capturePluginMarketplaceScope(marketplaceCacheKeyValue, currentDeviceId)
+    return beginPluginSettingsRequest(
       JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
       id,
       request,
       () =>
-        mounted.current &&
-        (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId) &&
-        getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId === currentDeviceId
+        scopeIsCurrent() && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId)
     )
+  }
 
   const updateInstalledPlugin = (
     id: string | number,

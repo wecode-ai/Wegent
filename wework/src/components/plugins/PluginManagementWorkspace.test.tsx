@@ -176,6 +176,31 @@ describe('PluginManagementWorkspace cache', () => {
     expect(String(vi.mocked(fetch).mock.calls[0][0])).not.toContain('marketplace')
   })
 
+  test('commits an accepted setting after navigating away from management', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    let complete!: (response: Response) => void
+    const response = new Promise<Response>(resolve => {
+      complete = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+        init?.method === 'PUT' ? response : Response.json({ items: [installed] })
+      )
+    )
+    const { unmount } = render(
+      <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+    )
+    await userEvent.click(await screen.findByTestId('installed-plugin-toggle-cached-1'))
+    unmount()
+
+    await act(async () =>
+      complete(Response.json({ ...installed, spec: { ...installed.spec, enabled: false } }))
+    )
+
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(false)
+  })
+
   test.each(['success', 'failure'] as const)(
     'shows cold cloud inventory before a pending local read ends in %s',
     async localOutcome => {

@@ -100,6 +100,7 @@ import {
 } from '@/features/plugins/waitForLocalConnectorAuthAvailability'
 import {
   getPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   pluginMarketplaceCacheKey,
   sameInstalledPlugins,
   sameMarketplaceItems,
@@ -591,14 +592,6 @@ export function PluginsWorkspace({
   const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
   const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
   const publicationLifetime = useRef<symbol | null>(null)
-  const settingsLifetime = useRef<symbol | null>(null)
-  useLayoutEffect(() => {
-    const lifetime = Symbol('plugin-settings-scope')
-    settingsLifetime.current = lifetime
-    return () => {
-      settingsLifetime.current = null
-    }
-  }, [marketplaceCacheKeyValue, knownExecutorDeviceId])
   useLayoutEffect(() => {
     const lifetime = Symbol('plugin-publication-scope')
     publicationLifetime.current = lifetime
@@ -1628,17 +1621,16 @@ export function PluginsWorkspace({
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return
 
-    const lifetime = settingsLifetime.current
     const deviceId = currentDeviceIdRef.current
+    const scopeIsCurrent = capturePluginMarketplaceScope(marketplaceCacheKeyValue, deviceId)
     const request = { componentStates: { [componentKey]: enabled } }
     const operation = beginPluginSettingsRequest(
       JSON.stringify([marketplaceCacheKeyValue, deviceId]),
       id,
       request,
       () =>
-        lifetime !== null &&
-        settingsLifetime.current === lifetime &&
-        currentDeviceIdRef.current === deviceId
+        scopeIsCurrent() &&
+        (!knownExecutorDeviceId || getKnownLocalExecutorDeviceId() === knownExecutorDeviceId)
     )
 
     const previousStates = plugin.raw.spec.componentStates || {}

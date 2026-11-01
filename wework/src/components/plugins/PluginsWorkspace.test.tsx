@@ -9232,8 +9232,8 @@ describe('PluginsWorkspace', () => {
     }
   })
 
-  test.each(['success', 'failure', 'account switch', 'device switch'] as const)(
-    'ignores an older component save after its late %s',
+  test.each(['success', 'failure', 'account switch', 'device switch', 'page navigation'] as const)(
+    'keeps component settings current after %s',
     async outcome => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
       mockSystemSkillsFetch({
@@ -9266,13 +9266,29 @@ describe('PluginsWorkspace', () => {
         }
         return originalFetch(...args)
       })
-      const { rerender } = render(
+      const { rerender, unmount } = render(
         <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
       )
       await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
       const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
       await userEvent.click(toggle)
       expect(toggle).toHaveAttribute('aria-checked', 'false')
+      if (outcome === 'page navigation') {
+        unmount()
+        await act(async () =>
+          releaseOld(
+            Response.json({
+              ...installed,
+              spec: { ...installed.spec, componentStates: { 'skill:documents': false } },
+            })
+          )
+        )
+        expect(
+          getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+            ?.installedPlugins[0].spec.componentStates['skill:documents']
+        ).toBe(false)
+        return
+      }
       const token = outcome === 'account switch' ? 'other-account' : 'cloud-token'
       const deviceId = outcome === 'device switch' ? 'other-device' : 'current-device'
       if (outcome === 'account switch' || outcome === 'device switch') {
