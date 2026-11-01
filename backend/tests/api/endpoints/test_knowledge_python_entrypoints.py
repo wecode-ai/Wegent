@@ -28,8 +28,18 @@ def test_restored_entrypoint_requires_authentication(test_client, path):
 
 
 @pytest.mark.parametrize("allowed", [True, False])
+@pytest.mark.parametrize(
+    ("employee_id", "expected_suffix"),
+    [("220750", " 220750"), (220750, " 220750"), (True, "")],
+)
 def test_document_protection_is_private_and_includes_watermark(
-    test_client, test_db, test_user, test_token, allowed
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+    allowed,
+    employee_id,
+    expected_suffix,
 ):
     from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseUpdate
     from app.services.knowledge.knowledge_service import KnowledgeService
@@ -43,7 +53,7 @@ def test_document_protection_is_private_and_includes_watermark(
         test_user.id,
         KnowledgeBaseUpdate(allow_document_download=allowed),
     )
-    test_user.preferences = json.dumps({"employee_id": "220750"})
+    test_user.preferences = json.dumps({"employee_id": employee_id})
     test_db.commit()
     response = test_client.get(
         f"/api/knowledge-bases/{kb_id}/document-protection",
@@ -53,7 +63,7 @@ def test_document_protection_is_private_and_includes_watermark(
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == {
         "original_download_allowed": allowed,
-        "watermark_text": f"{test_user.user_name} 220750",
+        "watermark_text": f"{test_user.user_name}{expected_suffix}",
     }
 
 

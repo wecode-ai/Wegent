@@ -598,6 +598,8 @@ def _document_watermark_text(user: User) -> str:
     if not isinstance(preferences, dict):
         preferences = {}
     employee_id = preferences.get("employee_id")
+    if isinstance(employee_id, (int, float)) and not isinstance(employee_id, bool):
+        employee_id = str(employee_id)
     if not isinstance(employee_id, str) or not employee_id.strip():
         return user.user_name
     employee_id = employee_id.strip()
