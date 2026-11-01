@@ -192,8 +192,7 @@ describe('browser main comment with the PC execution pipeline', () => {
     vi.unstubAllGlobals()
   })
   const element = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
-  const input = () =>
-    element('collaboration-issue-comment') as HTMLElement & { value: string }
+  const input = () => element('collaboration-issue-comment') as HTMLElement & { value: string }
   async function mount(
     members: {
       id: number
@@ -232,9 +231,7 @@ describe('browser main comment with the PC execution pipeline', () => {
   async function type(text: string) {
     await act(async () => {
       input().value = text
-      input().dispatchEvent(
-        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true })
-      )
+      input().dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
     })
   }
   async function click(id: string) {
@@ -307,9 +304,7 @@ describe('browser main comment with the PC execution pipeline', () => {
     expect(input().value).toBe('')
   })
   it('sends the structured target for a project member mention', async () => {
-    await mount([
-      { id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' },
-    ])
+    await mount([{ id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' }])
     await type('@')
     const option = element('collaboration-issue-mention-member-8')
     expect(option).not.toBeNull()
@@ -353,20 +348,44 @@ describe('browser main comment with the PC execution pipeline', () => {
     expect(container.textContent).toContain('Comment save failed')
     expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
   })
-  it('closes a rejected execution without duplicating the persisted comment', async () => {
-    vi.mocked(runtime.work.createRuntimeTask).mockResolvedValueOnce({
-      accepted: false,
-      error: 'Device went offline',
-    } as never)
-    await mount()
-    await type('Run pwd')
-    await click('collaboration-issue-comment-submit')
-    expect(input().value).toBe('')
-    expect(container.textContent).toContain('Device went offline')
-    expect(client.send).toHaveBeenCalledOnce()
-    expect(client.failAgentResponse).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'Device went offline' })
-    )
-    expect(api.taskBindings.unbindTask).toHaveBeenCalledOnce()
-  })
+  it.each([false, true])(
+    'closes a rejected execution without duplicating the persisted comment (refresh fails=%s)',
+    async refreshFails => {
+      if (refreshFails)
+        vi.mocked(api.issues.get)
+          .mockResolvedValueOnce(issue)
+          .mockRejectedValue(new Error('Refresh failed'))
+      vi.mocked(runtime.work.createRuntimeTask).mockResolvedValueOnce({
+        accepted: false,
+        error: 'Device went offline',
+      } as never)
+      await mount()
+      await type('Run pwd')
+      await click('collaboration-issue-comment-submit')
+      expect(runtime.work.createRuntimeTask).toHaveBeenCalledOnce()
+      expect(input().value).toBe('')
+      expect(container.textContent).toContain('Device went offline')
+      expect(client.send).toHaveBeenCalledOnce()
+      expect(client.failAgentResponse).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'Device went offline' })
+      )
+      expect(api.taskBindings.unbindTask).toHaveBeenCalledOnce()
+    }
+  )
+  it.each([false, true])(
+    'refreshes a saved comment after server execution rejects (refresh fails=%s)',
+    async refreshFails => {
+      client.executeTaskComment = vi.fn().mockRejectedValue(new Error('Execution failed'))
+      if (refreshFails) vi.mocked(api.issues.get).mockRejectedValue(new Error('Refresh failed'))
+      await mount([], [])
+      await type('Saved review link')
+      await click('collaboration-issue-comment-submit')
+      expect(client.send).toHaveBeenCalledOnce()
+      expect(api.issues.get).toHaveBeenCalledExactlyOnceWith(issue.id)
+      expect(container.textContent).toContain('Execution failed')
+      expect(container.textContent).not.toContain('Refresh failed')
+      expect(input().value).toBe('')
+      if (!refreshFails) expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(issue)
+    }
+  )
 })

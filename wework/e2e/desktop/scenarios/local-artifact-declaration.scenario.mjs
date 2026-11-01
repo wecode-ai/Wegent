@@ -21,7 +21,7 @@ import {
 const PROMPT = 'WEWORK_LOCAL_ARTIFACT_DECLARATION'
 const COMPLETE = 'LOCAL_ARTIFACT_DECLARATION_COMPLETE'
 const CONTENT = '# Local deliverable\nGenerated without a Backend Task.\n'
-const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`local report\2026.md`
+const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`\local report\2026.md`
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CARD = `${PANE} [data-testid="codex-reference-card"]`
 
@@ -86,7 +86,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         assert.equal(artifact.file_size, Buffer.byteLength(CONTENT))
         assert.match(artifact.sha256, /^[a-f0-9]{64}$/)
         assert.equal(await readFile(artifact.local_path, 'utf8'), CONTENT)
-        events = [assistantMessage(`${COMPLETE}\n\n[${NAME}](<${artifact.local_path}>)`)]
+        events = [
+          assistantMessage(
+            `${COMPLETE}\n\n[${NAME}](<${artifact.local_path}>)\n\n[Relative file](<${artifact.relative_path}>)`
+          ),
+        ]
       }
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       res.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
@@ -108,6 +112,16 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       })
       assert.ok(requested && artifact, 'The real CLI must have returned local metadata')
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+      await control.command(
+        'click',
+        `${PANE} [data-testid="assistant-markdown-link"][aria-label=${JSON.stringify(artifact.relative_path)}]`
+      )
+      await control.command('waitFor', '[data-testid="workspace-file-path"]', {
+        text: artifact.local_path,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        text: 'Generated without a Backend Task.',
+      })
       await verifyPreview(control)
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')

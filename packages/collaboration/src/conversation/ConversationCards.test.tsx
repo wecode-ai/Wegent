@@ -9,6 +9,7 @@ import { ConversationTranslationProvider } from "./ConversationTranslation";
 import { FileChangesCard } from "./FileChangesCard";
 import { RequestUserInputCard } from "./RequestUserInputCard";
 import { CodexReferenceList } from "./CodexTurnArtifacts";
+import { getAssistantReferences } from "./codexReferences";
 import { SelectionActionsPopover } from "./SelectionActionsPopover";
 
 let container: HTMLDivElement;
@@ -147,6 +148,23 @@ describe("shared conversation cards without Electron", () => {
         ? String.raw`report\2026.md`
         : "notes.md",
     );
+  });
+
+  it.each([
+    [String.raw`/workspace/report\2026.md`, String.raw`report\2026.md`],
+    [String.raw`C:\workspace\notes.md`, String.raw`docs\..\notes.md`],
+  ])("merges absolute and relative references for %s", (absolute, relative) => {
+    for (const paths of [
+      [absolute, relative],
+      [relative, absolute],
+    ]) {
+      const references = getAssistantReferences(
+        paths.map((path) => ({ path })),
+        "",
+      );
+      expect(references).toHaveLength(1);
+      expect(references[0].path).toBe(absolute);
+    }
   });
 
   it("keeps selection actions themed, localized and bound to real callbacks", () => {

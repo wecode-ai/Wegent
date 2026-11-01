@@ -153,8 +153,8 @@ function isMoreSpecificReferencePath(
   candidatePath: string,
   currentPath: string,
 ): boolean {
-  const candidate = normalizeReferencePath(candidatePath);
-  const current = normalizeReferencePath(currentPath);
+  const candidate = normalizeReferencePath(candidatePath, currentPath);
+  const current = normalizeReferencePath(currentPath, candidatePath);
   const candidateAbsolute = isAbsoluteReferencePath(candidate);
   const currentAbsolute = isAbsoluteReferencePath(current);
   if (candidateAbsolute !== currentAbsolute) return candidateAbsolute;
@@ -162,12 +162,12 @@ function isMoreSpecificReferencePath(
 }
 
 function isAbsoluteReferencePath(path: string): boolean {
-  return path.startsWith("/") || /^[a-zA-Z]:\//.test(path);
+  return path.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(path);
 }
 
 function referencePathsMatch(left: string, right: string): boolean {
-  const normalizedLeft = normalizeReferencePath(left);
-  const normalizedRight = normalizeReferencePath(right);
+  const normalizedLeft = normalizeReferencePath(left, right);
+  const normalizedRight = normalizeReferencePath(right, left);
   return (
     normalizedLeft === normalizedRight ||
     normalizedLeft.endsWith(`/${normalizedRight}`) ||
@@ -175,8 +175,9 @@ function referencePathsMatch(left: string, right: string): boolean {
   );
 }
 
-function normalizeReferencePath(path: string): string {
-  const normalized = normalizeWorkspaceSeparators(path.trim()).replace(
+function normalizeReferencePath(path: string, relatedPath: string): string {
+  const style = isAbsoluteReferencePath(path) ? path : relatedPath;
+  const normalized = normalizeWorkspaceSeparators(path.trim(), style).replace(
     /\/+/g,
     "/",
   );

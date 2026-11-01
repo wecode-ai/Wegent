@@ -23,9 +23,11 @@ type WorkspacePathRoot =
   | { kind: 'drive'; prefix: string }
   | { kind: 'unc'; prefix: string }
 
-export function normalizeWorkspaceSeparators(path: string): string {
+export function normalizeWorkspaceSeparators(path: string, pathStyleSource = path): string {
+  // Relative paths inherit the known workspace or absolute reference's syntax.
   const trimmed = path.trim()
-  const posixAbsolute = trimmed.startsWith('/') && !trimmed.startsWith('//')
+  const style = pathStyleSource.trim()
+  const posixAbsolute = style.startsWith('/') && !style.startsWith('//')
   const normalized = posixAbsolute ? trimmed : trimmed.replace(/\\/g, '/')
   if (/^\/\/\?\/UNC\//i.test(normalized)) {
     return `//${normalized.slice(8)}`
@@ -92,8 +94,8 @@ function appendWorkspacePathSuffix(rootPath: string, suffix: string): string {
   )
 }
 
-export function isAbsoluteWorkspacePath(path: string): boolean {
-  return workspacePathRoot(normalizeWorkspaceSeparators(path)) !== null
+export function isAbsoluteWorkspacePath(path: string, pathStyleSource = path): boolean {
+  return workspacePathRoot(normalizeWorkspaceSeparators(path, pathStyleSource)) !== null
 }
 
 export function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): string {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   isAbsoluteWorkspacePath,
   normalizeAbsoluteWorkspacePath,
+  normalizeWorkspaceSeparators,
   normalizeWorkspaceFileChunk,
   normalizeWorkspaceTextFile,
   normalizeWorkspaceTree,
@@ -9,6 +10,14 @@ import {
 } from './workspace-file-contract'
 
 describe('workspace file contract', () => {
+  test('uses the workspace style for relative names with a leading backslash', () => {
+    const path = String.raw`\report.md`
+    expect(isAbsoluteWorkspacePath(path, '/workspace')).toBe(false)
+    expect(normalizeWorkspaceSeparators(path, '/workspace')).toBe(path)
+    expect(normalizeWorkspaceSeparators(String.raw`docs\report.md`, 'C:/workspace')).toBe(
+      'docs/report.md'
+    )
+  })
   test('preserves POSIX backslashes across file paths and native read responses', () => {
     const path = String.raw`/workspace/local report\2026.md`
     const name = String.raw`local report\2026.md`

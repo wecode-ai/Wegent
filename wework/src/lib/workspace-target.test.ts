@@ -55,6 +55,13 @@ describe('resolveWorkspaceTarget', () => {
       })
     ).toEqual(worktree)
   })
+  test('leaves a POSIX filename with a leading backslash relative to the active workspace', () => {
+    expect(
+      createLocalFileWorkspaceTarget(String.raw`\report.md`, localDevices, {
+        workspaceTargets: [root],
+      })
+    ).toBeNull()
+  })
 
   test('skips invalid candidate roots before matching a local file target', () => {
     expect(

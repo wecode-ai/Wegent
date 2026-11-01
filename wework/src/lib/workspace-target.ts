@@ -57,7 +57,8 @@ export function createLocalFileWorkspaceTarget(
   devices: DeviceInfo[],
   options: { workspaceTargets?: WorkspaceTarget[]; isDirectory?: boolean } = {}
 ): WorkspaceTarget | null {
-  if (!isAbsoluteWorkspacePath(filePath.trim().replace(/\\/g, '/'))) return null
+  const trimmedPath = filePath.trim()
+  if (!isAbsoluteWorkspacePath(trimmedPath) && !trimmedPath.startsWith('\\\\')) return null
   const normalizedPath = normalizeAbsoluteWorkspacePath(
     filePath,
     'Workspace file path must be absolute'

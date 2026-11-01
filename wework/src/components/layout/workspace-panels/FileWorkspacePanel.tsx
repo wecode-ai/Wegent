@@ -126,9 +126,9 @@ function mimeTypeForFileName(name: string): string {
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
-  const normalizedPath = path.trim()
+  const normalizedPath = normalizeWorkspaceSeparators(path, target.path)
   if (!normalizedPath) return null
-  if (isAbsoluteWorkspacePath(normalizedPath)) {
+  if (isAbsoluteWorkspacePath(normalizedPath, target.path)) {
     try {
       return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
     } catch {

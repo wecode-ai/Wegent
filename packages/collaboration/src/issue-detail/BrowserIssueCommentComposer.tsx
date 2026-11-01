@@ -119,6 +119,12 @@ export function BrowserIssueCommentComposer({
       return false
     const attachments = draft.attachments.attachments
     let persisted = false
+    let executionFailed = false
+    const reportError = (cause: unknown) => {
+      if (!executionFailed)
+        draft.setError(cause instanceof Error ? cause.message : String(cause))
+      executionFailed = true
+    }
     try {
       if (!serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
@@ -193,17 +199,23 @@ export function BrowserIssueCommentComposer({
           attachments,
           selectedModel: model,
           selectedModelOptions: options,
-          onError: draft.setError,
+          onError: reportError,
           onMessages,
           onTaskUpdated,
           startFailedText: t('workbench.project_chat_agent_start_failed'),
         })
-      if (onTaskUpdated) onTaskUpdated(await api.issues.get(issue.id))
       return true
     } catch (cause) {
-      draft.setError(cause instanceof Error ? cause.message : String(cause))
+      reportError(cause)
       return persisted
     } finally {
+      if (persisted && onTaskUpdated) {
+        try {
+          onTaskUpdated(await api.issues.get(issue.id))
+        } catch (cause) {
+          reportError(cause)
+        }
+      }
       draft.endOperation()
     }
   }
