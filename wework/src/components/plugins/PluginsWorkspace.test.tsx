@@ -4757,11 +4757,16 @@ describe('PluginsWorkspace', () => {
     }
   })
 
-  test.each(['same account', 'different account', 'returned account'] as const)(
+  test.each([
+    'same account',
+    'different account',
+    'returned account',
+    'changed inventory',
+  ] as const)(
     'keeps a pending manual reconciliation within its account scope: %s',
     async accountScope => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-      mockSystemSkillsFetch()
+      mockSystemSkillsFetch({ marketplaceInstalled: accountScope === 'changed inventory' })
       mockCodexAppServerInvoke({ deviceId: 'current-device' })
       writePluginInventory(pluginMarketplaceCacheKey('/api', 'cloud-token'), 'current-device', {
         installedPlugins: [],
@@ -4769,6 +4774,9 @@ describe('PluginsWorkspace', () => {
       const reconcile = vi
         .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
         .mockResolvedValue(undefined)
+      if (accountScope === 'changed inventory') {
+        reconcile.mockRejectedValue(new Error('PLUGIN_RUNTIME_METADATA_FAILED'))
+      }
       let finishRefresh!: () => void
       const refreshGate = new Promise<void>(resolve => {
         finishRefresh = resolve
@@ -4803,7 +4811,22 @@ describe('PluginsWorkspace', () => {
         })
         await userEvent.click(screen.getByTestId('plugins-refresh-button'))
         await waitFor(() => expect(refreshStarted).toBe(true))
-        if (accountScope !== 'same account') {
+        if (accountScope === 'changed inventory') {
+          const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+          const installed = getPluginMarketplaceCache(cacheKey)!.installedPlugins
+          expect(installed.length).toBeGreaterThan(0)
+          writePluginInventory(
+            cacheKey,
+            'current-device',
+            {
+              installedPlugins: installed.map(plugin => ({
+                ...plugin,
+                spec: { ...plugin.spec, enabled: false },
+              })),
+            },
+            { mutation: true }
+          )
+        } else if (accountScope !== 'same account') {
           holdAccountLoad = true
           view.rerender(
             <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="different-account-token" />
@@ -4820,7 +4843,17 @@ describe('PluginsWorkspace', () => {
           await Promise.all([refreshGate, accountGate])
         })
         await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
-        if (accountScope === 'same account') {
+        if (accountScope === 'changed inventory') {
+          await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
+            'PLUGIN_RUNTIME_METADATA_FAILED'
+          )
+          expect(
+            getPluginMarketplaceCache(
+              pluginMarketplaceCacheKey('/api', 'cloud-token')
+            )!.installedPlugins.every(plugin => !plugin.spec.enabled)
+          ).toBe(true)
+        } else if (accountScope === 'same account') {
           await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
           expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
             'data-reconciliation-revision',

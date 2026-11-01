@@ -4008,7 +4008,8 @@ export function PluginsWorkspace({
       }
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(false)
-      if (!inventoryReadIsCurrent()) return
+      // Manual reconciliation reads current inventory itself. A newer cache
+      // publication invalidates this snapshot, not the user's scoped request.
       if (
         manualRequest &&
         manualRequest.tick <= marketplaceRefreshTick &&
@@ -4041,6 +4042,7 @@ export function PluginsWorkspace({
           })
         }
       }
+      if (!inventoryReadIsCurrent()) return
       if (diskResult.status === 'fulfilled' && diskResult.value !== null) {
         diskPersonalItemsForMerge = diskResult.value
       }
