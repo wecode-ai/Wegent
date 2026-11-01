@@ -10,7 +10,10 @@ import {
   pluginApi,
   until,
 } from '../modules/plugin-regression-fixture.mjs'
-import { observePluginSyncTransport } from '../modules/plugin-sync-observer.mjs'
+import {
+  acknowledgedPluginGeneration,
+  observePluginSyncTransport,
+} from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
@@ -150,16 +153,16 @@ export async function createDesktopScenario({
               `${target.kind} retried an older setup generation`
             )
             const request = requests.at(-1)
+            const plugin = await materializedPlugin(target.home, fixture.installedId)
             return {
               request,
-              acknowledgement: target.observation.acknowledgements.find(
-                value =>
-                  value.at >= request.at &&
-                  value.id === request.id &&
-                  value.namespace === request.namespace &&
-                  value.pluginSync?.generation === request.pluginSync.generation
+              acknowledgement: acknowledgedPluginGeneration(
+                target.observation,
+                plugin,
+                fixture.installedId,
+                request
               ),
-              plugin: await materializedPlugin(target.home, fixture.installedId),
+              plugin,
               rows: await cloud.queryDatabase(
                 'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
                 [1, fixture.installedId, target.persistedDeviceId]
@@ -185,6 +188,8 @@ export async function createDesktopScenario({
           installedId: fixture.installedId,
           generation: settled.request.pluginSync.generation,
           scope: settled.request.scope,
+          currentGeneration: settled.plugin.plugin_sync_generation,
+          currentGenerationAcknowledgement: settled.acknowledgement,
           persisted: settled.rows,
         })
       })
