@@ -47,6 +47,16 @@ async function installedApplication(
   const saved = await optionalText(join(store.root, 'macos-application'))
   let application = !contains(root, sourceBundle) ? sourceBundle : saved
   if (!application) {
+    // Delivered upgrades retained the original installation in previousHealthy.
+    // Prefer that transaction-owned URL over unrelated Launch Services copies.
+    const previousId = await optionalText(join(store.root, 'previousHealthy'))
+    if (previousId) {
+      const previous = await store.read(previousId)
+      const previousBundle = await realpath(macosApplication(previous.executable))
+      if (!contains(root, previousBundle)) application = previousBundle
+    }
+  }
+  if (!application) {
     // Already-delivered clients only recorded their versioned host. Ask Launch
     // Services for this product's installation; never guess an Applications path.
     const { stdout } = await execute(join(release.resources, 'wework-launcher'), [
@@ -86,11 +96,7 @@ async function retainLegacySource(
 ): Promise<DesktopRelease> {
   const id = `macos-source-${createHash('sha256').update(releaseId).digest('hex').slice(0, 40)}`
   const retained = join(store.slot(id), 'host', basename(application))
-  const sourceBundle = macosApplication(source.executable)
-  if (!existsSync(retained)) await copyPhysicalRelease(sourceBundle, retained)
-  const executable = join(retained, 'Contents', 'MacOS', basename(source.executable))
-  await verifyReleaseSignature(source.executable, executable)
-  await execute('/usr/bin/cmp', ['-s', source.executable, executable])
+  const executable = await retainProgram(source.executable, retained)
   const installedExecutable = join(application, 'Contents', 'MacOS', basename(source.executable))
   const retainedSource: DesktopRelease = {
     ...source,
@@ -110,6 +116,37 @@ async function retainLegacySource(
   await store.save(retainedSource)
   await atomicReleaseWrite(join(store.slot(id), 'prepared.json'), JSON.stringify(prepared))
   return retainedSource
+}
+
+async function retainProgram(source: string, application: string): Promise<string> {
+  if (!existsSync(application)) await copyPhysicalRelease(macosApplication(source), application)
+  const executable = join(application, 'Contents', 'MacOS', basename(source))
+  await verifyReleaseSignature(source, executable)
+  await execute('/usr/bin/cmp', ['-s', source, executable])
+  return executable
+}
+
+async function retainPreviousInstallation(
+  store: ReleaseStore,
+  activeId: string,
+  application: string
+): Promise<void> {
+  const previousId = await optionalText(join(store.root, 'previousHealthy'))
+  if (!previousId || previousId === activeId) return
+  const previous = await store.read(previousId)
+  if (
+    previous.macosInstallation ||
+    (await realpath(macosApplication(previous.executable))) !== application
+  )
+    return
+  const retained = join(store.slot(previous.id), 'macos-installed-host', basename(application))
+  const executable = await retainProgram(previous.executable, retained)
+  const resources = join(retained, 'Contents', 'Resources')
+  const preparedPath = join(store.slot(previous.id), 'prepared.json')
+  const prepared = JSON.parse(await readFile(preparedPath, 'utf8'))
+  prepared.components = relocateComponents(prepared.components, previous.resources, resources)
+  await atomicReleaseWrite(preparedPath, JSON.stringify(prepared))
+  await store.save({ ...previous, executable, resources })
 }
 
 async function stageApplication(store: ReleaseStore, release: DesktopRelease): Promise<void> {
@@ -203,7 +240,9 @@ export async function prepareMacosReleaseInstallation(
     throw new Error('The macOS update cannot change the installed executable name')
   const application = await installedApplication(store, source, release, identifier)
   const executable = join(application, 'Contents', 'MacOS', basename(release.executable))
+  await atomicReleaseWrite(join(store.root, 'macos-application'), application)
   await pruneAbandonedStages(store, executable)
+  await retainPreviousInstallation(store, source.id, application)
   const installedSource = source.macosInstallation
     ? source
     : await retainLegacySource(store, source, application, release.id)
@@ -222,17 +261,8 @@ export async function prepareMacosReleaseInstallation(
     },
   }
   await stageApplication(store, installedSource)
-  // Repair a stale outer installation to the CURRENT source only. Its running
-  // versioned bundle is immutable; a source already running here is unchanged.
-  await execute(
-    join(release.resources, 'wework-launcher'),
-    ['--macos-install', store.root, installedSource.id],
-    { timeout: 45_000 }
-  )
-  await stageApplication(store, installedSource)
   await stageApplication(store, installedTarget)
   await store.save(installedTarget)
-  await atomicReleaseWrite(join(store.root, 'macos-application'), application)
 }
 
 /** Preserve the supervised PID while a legacy launcher enters the installed host. */

@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterAll, afterEach, beforeAll, expect, test } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
 import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
 import { macosApplication, macosInstallationStage } from './macos-installation-paths.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
@@ -21,21 +21,6 @@ test('macOS installation paths keep the public bundle separate from per-release 
 
 if (process.platform === 'darwin') {
   const roots: string[] = []
-  let tools: string
-  let launcher: string
-
-  beforeAll(async () => {
-    tools = await mkdtemp(join(tmpdir(), 'wework-macos-installation-tools-'))
-    launcher = join(tools, 'wework-launcher')
-    await execute(
-      'rustc',
-      ['--edition', '2021', resolve('..', 'launcher', 'src', 'main.rs'), '-o', launcher],
-      { timeout: 30_000 }
-    )
-  })
-  afterAll(async () => {
-    await rm(tools, { recursive: true, force: true })
-  })
   afterEach(async () => {
     for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
   })
@@ -48,7 +33,6 @@ if (process.platform === 'darwin') {
     await mkdir(join(application, 'Contents/MacOS'), { recursive: true })
     await mkdir(join(application, 'Contents/Resources'), { recursive: true })
     await copyFile('/usr/bin/true', join(application, 'Contents/MacOS/WeWork'))
-    await copyFile(launcher, join(application, 'Contents/Resources/wework-launcher'))
     await writeFile(
       join(application, 'Contents/Info.plist'),
       `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${identifier}</string><key>CFBundleExecutable</key><string>WeWork</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
@@ -56,7 +40,7 @@ if (process.platform === 'darwin') {
     await execute('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', application])
   }
 
-  async function fixture(versioned = false) {
+  async function fixture(versioned = false, binding: 'saved' | 'previous' = 'saved') {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'wework-installed-app-test-')))
     roots.push(directory)
     const store = new ReleaseStore(join(directory, 'data/releases'))
@@ -94,25 +78,51 @@ if (process.platform === 'darwin') {
         },
       })
     )
-    if (versioned) await atomicReleaseWrite(join(store.root, 'macos-application'), installed)
+    if (versioned) {
+      if (binding === 'saved')
+        await atomicReleaseWrite(join(store.root, 'macos-application'), installed)
+      else {
+        await store.save(release('previous', installed, '1.0.0'))
+        await atomicReleaseWrite(
+          join(store.slot('previous'), 'prepared.json'),
+          JSON.stringify({
+            components: {
+              coreDsh: join(installed, 'Contents/Resources/harness-runtime'),
+            },
+          })
+        )
+        await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'previous')
+      }
+    }
     return { store, source, target, installed }
   }
 
-  test.each([false, true])(
+  test.each(['installed', 'mapped', 'history'] as const)(
     'prepares signed replacement and rollback without changing the live source (%s)',
-    async versioned => {
-      const { store, source, target, installed } = await fixture(versioned)
+    async mode => {
+      const { store, source, target, installed } = await fixture(
+        mode !== 'installed',
+        mode === 'history' ? 'previous' : 'saved'
+      )
       const inode = (await stat(installed)).ino
+      const installedInfo = await readFile(join(installed, 'Contents/Info.plist'))
       await prepareMacosReleaseInstallation(store, target, 'io.wecode.wework.installation-test')
       expect(await store.active()).toEqual(source)
       expect((await stat(installed)).ino).toBe(inode)
-      const { stdout } = await execute('/usr/bin/plutil', [
-        '-extract',
-        'CFBundleShortVersionString',
-        'raw',
-        join(installed, 'Contents/Info.plist'),
-      ])
-      expect(stdout.trim()).toBe(source.version)
+      expect(await readFile(join(installed, 'Contents/Info.plist'))).toEqual(installedInfo)
+      if (mode === 'history') {
+        const previous = await store.read('previous')
+        expect(previous.executable).toContain(join(store.slot('previous'), 'macos-installed-host'))
+        expect(
+          await readFile(join(macosApplication(previous.executable), 'Contents/Info.plist'))
+        ).toEqual(installedInfo)
+        await execute('/usr/bin/codesign', [
+          '--verify',
+          '--deep',
+          '--strict',
+          macosApplication(previous.executable),
+        ])
+      }
       const prepared = await store.read(target.id)
       expect(prepared.executable).toBe(join(installed, 'Contents/MacOS/WeWork'))
       expect(prepared.macosInstallation).toMatchObject({

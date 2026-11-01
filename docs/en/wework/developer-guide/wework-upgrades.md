@@ -70,6 +70,10 @@ verifies it on the installation volume; supervised startup atomically exchanges 
 `Contents` directories after writers stop, then runs the installed executable. Application or
 `Contents` symlinks cannot replace this operation. Never edit Dock preferences. An ambiguous
 installation, mismatched identity, or unwritable installation volume blocks preparation.
+For delivered clients running from a slot, prefer the original URL recorded by the previous
+healthy release over unrelated application copies. If that URL still holds an earlier healthy
+host, retain its signed program and update that inactive release's program references first.
+Preparation replaces no installed program files and preserves both current and prior rollback.
 
 Delivered launchers enter the new payload bootstrap first. Its native helper installs the
 selected host, then the bootstrap executes the installed application with the same PID.
