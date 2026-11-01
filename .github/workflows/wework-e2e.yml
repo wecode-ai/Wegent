@@ -3,31 +3,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  actions: read
 jobs:
-  pnpm-paths:
+  native-package-commands:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: '11.7.0'
-          dest: ${{ runner.temp }}/pnpm-diagnostic
-      - uses: actions/download-artifact@v6
-        with:
-          name: wework-desktop-windows-core-e2e-build
-          run-id: 41260943329
-          github-token: ${{ github.token }}
-          path: wework/electron/release/WeWork-win32-x64
-      - name: Inspect pnpm native working directories
-        shell: pwsh
-        run: |
-          node .github/scripts/wework-pnpm-path-diagnostic.mjs (Join-Path $env:RUNNER_TEMP 'pnpm-diagnostic/node_modules/pnpm/bin/pnpm.cjs') (Join-Path $env:GITHUB_WORKSPACE 'wework/electron/release/WeWork-win32-x64/WeWork.exe')
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pnpm-native-path-diagnostics
-          path: .ci-artifacts/pnpm-native-paths.json
+      - uses: ./.github/actions/setup-node-workspace
+      - run: pnpm --dir wework/electron install --frozen-lockfile
+      - run: pnpm --filter wework prepare:electron
+      - run: pnpm --dir wework/electron test src/runtime/core-dsh-plugin-manager.test.ts
