@@ -35,6 +35,129 @@ async function fixture() {
   await atomicReleaseWrite(join(root, 'active'), before.id)
   return { store, before, after, root }
 }
+
+async function macosFixture() {
+  const f = await fixture()
+  const executable = join(f.root, 'Installed.app/Contents/MacOS/WeWork')
+  const before = {
+    ...f.before,
+    profileRoot: join(f.store.slot(f.before.id), 'profile'),
+    runtimeRoot: join(f.store.slot(f.before.id), 'runtimes'),
+  }
+  await mkdir(before.profileRoot, { recursive: true })
+  await mkdir(before.runtimeRoot, { recursive: true })
+  await writeFile(join(before.profileRoot, 'package.json'), '{"source":true}')
+  await f.store.save(before)
+  const retained: DesktopRelease = {
+    ...before,
+    id: 'macos-source-retained',
+    executable,
+    retainedRelease: before.id,
+    macosInstallation: {
+      payloadExecutable: join(
+        f.store.slot('macos-source-retained'),
+        'host/WeWork.app/Contents/MacOS/WeWork'
+      ),
+      bootstrapFromPayload: false,
+    },
+  }
+  const after: DesktopRelease = {
+    ...f.after,
+    executable,
+    macosInstallation: {
+      payloadExecutable: join(f.store.slot(f.after.id), 'host/WeWork.app/Contents/MacOS/WeWork'),
+      bootstrapFromPayload: true,
+      sourceReleaseId: before.id,
+      rollbackReleaseId: retained.id,
+    },
+  }
+  await f.store.save(retained)
+  await f.store.save(after)
+  return { ...f, before, retained, after }
+}
+
+test('macOS keeps an immutable bootstrap while exposing the installed executable', async () => {
+  const { store, root, after } = await macosFixture()
+  expect(await readFile(join(store.slot(after.id), 'executable'), 'utf8')).toBe(
+    after.macosInstallation!.payloadExecutable
+  )
+  expect(await readFile(join(store.slot(after.id), 'installed-executable'), 'utf8')).toBe(
+    after.executable
+  )
+  await store.activate(after, 'snapshot')
+  await store.confirm(after.id)
+  expect(await optionalText(join(root, 'bridge'))).toBe(after.macosInstallation!.payloadExecutable)
+})
+
+test('macOS activation binds the stopped source profile and retains its owner', async () => {
+  const { store, before, after, retained } = await macosFixture()
+  const stopped = { ...before, profileRoot: join(store.slot(before.id), 'retained-profile') }
+  await store.save(stopped)
+  await store.activate(after, 'real-snapshot')
+  expect(await store.activation()).toMatchObject({
+    from: retained.id,
+    to: after.id,
+    snapshot: 'real-snapshot',
+  })
+  expect((await store.read(retained.id)).profileRoot).toBe(stopped.profileRoot)
+  expect((await store.read(before.id)).executable).toBe(before.executable)
+  for (const id of [before.id, retained.id])
+    expect(
+      JSON.parse((await optionalText(join(store.slot(id), 'preserved-data-snapshot')))!)
+    ).toEqual({ kind: 'macos-source-owner', owner: retained.id, snapshot: 'real-snapshot' })
+})
+
+test.each([false, true])(
+  'a delivered activation can bind its source only before data opens (%s)',
+  async opened => {
+    const { store, before, after, retained, root } = await macosFixture()
+    await store.save({ ...after, macosInstallation: undefined })
+    await store.activate(after, 'snapshot')
+    const original = (await store.activation())!
+    await store.save(after)
+    await atomicReleaseWrite(join(root, 'attempted'), original.token)
+    if (opened) await atomicReleaseWrite(join(root, 'data-opened'), original.token)
+    if (opened) {
+      await expect(store.repairMacosActivationSource(after)).rejects.toThrow('after data opens')
+      expect((await store.activation())!.from).toBe(before.id)
+    } else {
+      await store.repairMacosActivationSource(after)
+      expect(await store.activation()).toEqual({ ...original, from: retained.id })
+      await store.repairMacosActivationSource(after)
+      expect(await store.activation()).toEqual({ ...original, from: retained.id })
+    }
+  }
+)
+
+test('macOS refuses a retained source with a different version or owner', async () => {
+  const { store, after, retained } = await macosFixture()
+  await store.save({ ...retained, version: '9.0.0' })
+  await expect(store.activate(after, 'snapshot')).rejects.toThrow('does not match')
+  expect(await store.activation()).toBeNull()
+  await store.save({ ...retained, retainedRelease: after.id })
+  await expect(store.activate(after, 'snapshot')).rejects.toThrow('does not match')
+  expect(await store.activation()).toBeNull()
+})
+
+test('source profile ownership survives rollback and expires only after its alias is unreferenced', async () => {
+  const { store, before, after, retained, root } = await macosFixture()
+  await store.activate(after, 'snapshot')
+  await store.confirm(after.id)
+  await store.requestRollback()
+  await store.rollback()
+  await store.prune()
+  expect(await readFile(join(before.profileRoot, 'package.json'), 'utf8')).toBe('{"source":true}')
+  expect(await store.read(retained.id)).toMatchObject({ retainedRelease: before.id })
+  const current = { ...before, id: 'new-current', retainedRelease: undefined }
+  await store.save(current)
+  await atomicReleaseWrite(join(root, 'active'), current.id)
+  await atomicReleaseWrite(join(root, 'bridge'), current.executable)
+  await store.prune()
+  await expect(readFile(join(before.profileRoot, 'package.json'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
+  await expect(store.read(retained.id)).rejects.toMatchObject({ code: 'ENOENT' })
+})
 test('activation retains its source until runtime and renderer confirmation', async () => {
   const { store, before, after, root } = await fixture()
   await store.activate(after, 'snapshot')

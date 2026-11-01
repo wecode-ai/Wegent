@@ -62,6 +62,27 @@ A minimum version never proves compatibility. The client follows tested edges to
 
 ## Release lifecycle
 
+### macOS installation and Dock identity
+
+Updates retain the outer `.app` directory and inode at the user's installation URL.
+The complete signed payload remains immutable in its release slot. Preparation copies and
+verifies it on the installation volume; supervised startup atomically exchanges physical
+`Contents` directories after writers stop, then runs the installed executable. Application or
+`Contents` symlinks cannot replace this operation. Never edit Dock preferences. An ambiguous
+installation, mismatched identity, or unwritable installation volume blocks preparation.
+
+Delivered launchers enter the new payload bootstrap first. Its native helper installs the
+selected host, then the bootstrap executes the installed application with the same PID.
+A retained legacy program copy references the original source's data owner. Activation uses
+the existing snapshot-preservation protocol so delivered cleaners also retain that profile.
+Preparation leaves the active source record unchanged; cancellation removes only owned stages.
+
+Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
+outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
+continuing the original task after rollback. Source fixtures retain snapshots of the delivered
+bootstrap, release store, and native launcher rather than reimplementing their behavior.
+Mechanism evidence still cannot authorize production edges bound to different package hashes.
+
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.
 
 After confirmation, stop writers, finalize a consistent snapshot, exit, and switch. Both runtime and renderer readiness confirm health. Exit or failure to become ready within 60 seconds enters recovery without an automatic restart loop.

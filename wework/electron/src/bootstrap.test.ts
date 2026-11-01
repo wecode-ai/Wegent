@@ -21,6 +21,7 @@ vi.mock('electron', () => ({
     whenReady: startup.ready,
     relaunch: startup.relaunch,
     exit: vi.fn(),
+    setActivationPolicy: vi.fn(),
   },
   dialog: { showErrorBox: startup.showErrorBox },
 }))
