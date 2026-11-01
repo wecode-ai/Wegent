@@ -74,9 +74,20 @@ def report(**overrides):
     return RuntimeExecutionSnapshot.model_validate(data)
 
 
-@pytest.mark.parametrize("event_name", ["runtime.goal.cleared", "runtime.goal.updated"])
-def test_previous_goal_event_cannot_bind_a_continuation_to_an_old_turn(
-    test_db, test_user, run, event_name, monkeypatch
+@pytest.mark.parametrize(
+    "event_name,data",
+    [
+        ("runtime.goal.cleared", {}),
+        ("runtime.goal.updated", {}),
+        ("runtime.turn.updated", {"status": "settled", "turnId": "previous-turn"}),
+        (
+            "thread/tokenUsage/updated",
+            {"turnId": "previous-turn", "tokenUsage": {"total": {"totalTokens": 100}}},
+        ),
+    ],
+)
+def test_previous_thread_event_cannot_bind_a_continuation_to_an_old_turn(
+    test_db, test_user, run, event_name, data, monkeypatch
 ):
     from app.models.loop_item_execution import LoopItemExecution
     from app.services.loop_item_executions.service import loop_item_execution_service
@@ -113,7 +124,11 @@ def test_previous_goal_event_cannot_bind_a_continuation_to_an_old_turn(
         runtime_task_id="runtime-1",
         owner_user_id=test_user.id,
         event_name=event_name,
-        payload={"subtaskId": "previous-turn", "eventSeq": 11, "data": {}},
+        payload={
+            "subtaskId": "previous-turn",
+            "eventSeq": 11,
+            "data": data,
+        },
     )
     snapshot = report(
         running=True,

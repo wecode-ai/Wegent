@@ -627,7 +627,7 @@ export function mergeRuntimeConversationItem(
     return { ...snapshot, message: { ...local.message, ...snapshot.message } };
   }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  let snapshotBlock = preserveToolOutput(
+  let snapshotBlock = preserveProcessingBlockOutput(
     local.block,
     preserveRequestUserInputResponse(local.block, snapshot.block),
   );
@@ -669,10 +669,19 @@ export function mergeRuntimeConversationItem(
   };
 }
 
-function preserveToolOutput(
+function preserveProcessingBlockOutput(
   local: ProcessingBlock,
   snapshot: ProcessingBlock,
 ): ProcessingBlock {
+  // Active plan snapshots can predate observed deltas; completed plans may rewrite them.
+  if (
+    local.type === "plan" &&
+    snapshot.type === "plan" &&
+    !isTerminalProcessingBlockStatus(snapshot.status) &&
+    local.content &&
+    local.content.startsWith(snapshot.content ?? "")
+  )
+    return { ...snapshot, content: local.content };
   if (
     local.type !== "tool" ||
     snapshot.type !== "tool" ||
