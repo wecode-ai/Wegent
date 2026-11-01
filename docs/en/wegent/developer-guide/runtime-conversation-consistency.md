@@ -28,6 +28,8 @@ User messages must use their containing turn's canonical identity instead of ret
 
 ## Ownership and synchronization
 
+Goal notifications belong to the thread and can retain the previous request's turn identity while a continuation starts. They must not update the current execution's turn binding, lease, or running state. Current-turn response events advance execution lifecycle so an older turn snapshot cannot prematurely complete a new execution.
+
 Native normalization produces turns/items and presentation messages in one pass. Native positions order items; explicit user boundaries group their presentation. The initial ordinary prompt owns the same reply as pre-prompt context compaction, while runtimeGuidance establishes another display segment. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
 
 Source-position registration visits only identities not yet registered in the current display segment, without constructing or copying their body JSON. Each identity is registered at most once; the first positioned event also supplies positions for preceding unpositioned items, and duplicate identities retain their first position. Emitting a segment clears registration progress. Full runtimeItems are materialized only when emitting the segment, avoiding quadratic reconstruction of accumulated history in long turns. A unit regression covers 4,000 positioned events with 2 KiB bodies and a generous debug-build time budget.
