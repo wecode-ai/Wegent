@@ -17,6 +17,7 @@ import {
   clearPluginMarketplaceCache,
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
@@ -4146,6 +4147,55 @@ describe('WorkbenchProvider runtime tasks', () => {
       'executor.codex_home.config.read'
     )
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
+  test('revalidates account membership after uninstall while device cleanup is pending', async () => {
+    setElectronRuntime()
+    mockComposerDirectoryRoute(() => 'runtime-record-70')
+    const original = localExecutorMocks.requestLocalExecutor.getMockImplementation()!
+    localExecutorMocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list')
+        return {
+          storePath: '/store',
+          plugins: [
+            {
+              name: 'documents',
+              packageId: 'documents-package',
+              installedPluginId: 101,
+              cloudPluginId: 101,
+              marketplace: 'wegent',
+              enabled: true,
+              pluginPath: '/store/documents-package',
+            },
+          ],
+        }
+      return original(method, params)
+    })
+    pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [createCloudComposerPlugin('runtime-record-70')],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    removePluginMarketplaceInstallation(cacheKey, {
+      installedIds: [101],
+      marketplaceItemIds: [101],
+      pluginKeys: ['documents'],
+    })
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
+
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+    )
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
+    expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual([])
+    expect(getComposerApps()).toEqual([])
   })
 
   test('routes composer inventory through the current Runtime while retaining stable cache identity', async () => {

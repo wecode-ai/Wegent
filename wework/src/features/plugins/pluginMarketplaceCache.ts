@@ -636,6 +636,8 @@ export function removePluginMarketplaceInstallation(
     ...current,
     installedPlugins,
     marketplaceItems,
+    // Revalidate account membership before disk reads can expose pending cleanup.
+    installedPluginsFetchedAt: 0,
     fetchedAt: Date.now(),
   }
   setPluginMarketplaceCache(next, { persistImmediately: true, mutation: true })
