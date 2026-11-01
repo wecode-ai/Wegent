@@ -32,7 +32,13 @@ try {
       while (!read.get(thread.thread.id)) { if (Date.now() > deadline) throw new Error('Native thread metadata was not persisted'); await new Promise(resolve=>setTimeout(resolve,25)) }
       for(let update=0;update<64;update++) database.prepare('UPDATE threads SET title = ? WHERE id = ?').run('diagnostic '+update+' '+ 'x'.repeat(8192), thread.thread.id)
       const initialMmap = database.prepare('PRAGMA mmap_size').get(); await writeFile(join(home,'mmap.json'), JSON.stringify(initialMmap)); database.close();database=null
+      const fullyClosed = new Promise(resolve => client.child.once('close', resolve))
       await client.close()
+      const rootStopped = { exitCode: client.child.exitCode, stdoutEnded: client.child.stdout.readableEnded, stderrEnded: client.child.stderr.readableEnded }
+      client.child.stdout.resume();client.child.stderr.resume()
+      let closeTimer
+      try { await Promise.race([fullyClosed, new Promise((_, reject) => {closeTimer=setTimeout(()=>reject(new Error('Native process pipes did not close')),10000)})]) } finally {clearTimeout(closeTimer)}
+      await writeFile(join(home,'closure.json'),JSON.stringify({rootStopped,afterClose:{exitCode:client.child.exitCode,stdoutEnded:client.child.stdout.readableEnded,stderrEnded:client.child.stderr.readableEnded}}))
       database = new DatabaseSync(join(home,'state_5.sqlite'))
       const changed=database.prepare("UPDATE threads SET history_mode = 'legacy' WHERE id = ?").run(thread.thread.id)
       assert.equal(Number(changed.changes),1)
