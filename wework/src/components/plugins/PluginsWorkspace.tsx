@@ -5576,16 +5576,14 @@ export function PluginsWorkspace({
     const isDeviceSyncing =
       !isFailed &&
       !isInstalled &&
-      (deviceState === 'pending' ||
-        deviceState === 'downloading' ||
-        deviceState === 'installing' ||
-        deviceState === 'uninstalling')
+      (deviceState === 'pending' || deviceState === 'downloading' || deviceState === 'installing')
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
     const detailUninstallId = installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
     const isUninstalling =
-      detailUninstallId !== null &&
-      detailUninstallId !== undefined &&
-      uninstallingPluginIds.has(detailUninstallId)
+      deviceState === 'uninstalling' ||
+      (detailUninstallId !== null &&
+        detailUninstallId !== undefined &&
+        uninstallingPluginIds.has(detailUninstallId))
     const isActionPending = isInstalling || isUninstalling || isDeviceSyncing
     const canUpdate =
       marketplaceItemCanRetryPluginUpdate(selectedMarketplacePlugin) &&

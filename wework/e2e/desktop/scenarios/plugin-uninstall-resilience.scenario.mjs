@@ -226,11 +226,29 @@ export async function createDesktopScenario({
     )
     assert.ok(await pathExists(runtimePath), 'Fault did not actually delay device cleanup')
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
+    // Exercise the Rust listing while this exact device still has a real
+    // removal awaiting delivery. Account removal must hide its cleanup state.
+    const market = await pluginApi(
+      cloud,
+      `/plugins/marketplace?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`
+    )
+    const removedListing = market.items.find(plugin => plugin.id === item.pluginId)
+    assert.ok(removedListing, 'Uninstalled plugin disappeared from the marketplace')
+    assert.equal(removedListing.installed, false)
+    assert.equal(removedListing.installedPluginId, null)
+    assert.equal(removedListing.currentDeviceInstallation, null)
     await assertSurfaces(control, item, false)
     await openPlugin(control, item)
     await control.command('click', testId('plugins-refresh-button'))
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', testId(`plugin-detail-toggle-${item.pluginId}`), {
+      text: '安装插件',
+      enabled: true,
+    })
+    await control.command('click', testId('plugin-detail-back-button'))
+    await assertInstallButton(control, item)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
     assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })

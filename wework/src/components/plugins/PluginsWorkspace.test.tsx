@@ -542,7 +542,7 @@ function mockSystemSkillsFetch(
     installedSkillId: number | null
     marketplaceInstalled: boolean
     deviceId: string
-    marketplaceDeviceState: 'installed' | 'failed' | 'pending'
+    marketplaceDeviceState: 'installed' | 'failed' | 'pending' | 'uninstalling'
     marketplaceInstallError: string
     marketplaceLogo: string
     marketplaceBrandColor: string
@@ -582,7 +582,7 @@ function mockSystemSkillsFetch(
   let autoUpdateBatchCalls = 0
   let nextAutoUpdateInstalledPluginId = 101
   let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
-  let marketplaceDeviceState: 'installed' | 'failed' | 'pending' =
+  let marketplaceDeviceState: 'installed' | 'failed' | 'pending' | 'uninstalling' =
     overrides.marketplaceDeviceState ?? 'installed'
   let syncDeviceCalls = 0
   let reportDeviceCalls = 0
@@ -9829,6 +9829,27 @@ describe('PluginsWorkspace', () => {
     } finally {
       historyBack.mockRestore()
     }
+  })
+
+  test('keeps server-reported uninstalling consistent between the row and detail', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'uninstalling',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    const row = await screen.findByTestId('plugin-marketplace-row-101')
+    await waitFor(() => expect(row).toHaveTextContent('正在卸载'))
+    await userEvent.click(row)
+    const actions = await screen.findByTestId('plugin-detail-actions-bar')
+    expect(within(actions).getByRole('button', { name: '正在卸载' })).toBeDisabled()
+    expect(actions).not.toHaveTextContent('同步中')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+    expect(screen.getByTestId('plugin-marketplace-row-101')).toHaveTextContent('正在卸载')
   })
 
   test('keeps the resolved marketplace logo on installed plugin details', async () => {

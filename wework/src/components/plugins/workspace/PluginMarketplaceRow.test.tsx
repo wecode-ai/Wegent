@@ -33,6 +33,35 @@ function makeItem(overrides: Partial<PluginMarketplaceItem> = {}): PluginMarketp
 }
 
 describe('PluginMarketplaceRow', () => {
+  test('keeps a server-reported uninstall pending without offering installation', () => {
+    render(
+      <PluginMarketplaceRow
+        item={makeItem({
+          currentDeviceInstallation: {
+            deviceId: 'current-device',
+            state: 'uninstalling',
+            desiredReleaseId: 1,
+            actualReleaseId: 1,
+            errorCode: null,
+            errorMessage: null,
+            attemptCount: 0,
+            lastSyncAt: null,
+            updatedAt: '2026-11-01T12:00:00',
+          },
+        })}
+        isLoggedIn
+        isReconciling={false}
+        isInstalling={false}
+        isUninstalling={false}
+        allowPendingRetry
+        labels={labels}
+        onAction={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('正在卸载')
+    expect(screen.queryByRole('button', { name: '安装' })).not.toBeInTheDocument()
+  })
+
   test('treats identical row props as equal for memo', () => {
     const onAction = vi.fn()
     const item = makeItem()
