@@ -1,21 +1,14 @@
+// @ts-check
+
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im;
 const APPLICATION_CONTEXT_OPEN = "<application_context>";
 const APPLICATION_CONTEXT_CLOSE = "</application_context>";
 
-export interface RuntimeUserMessageParts {
-  prefix: string;
-  request: string;
-}
-
-export interface RuntimeUserTextProjection {
-  content: string;
-  sourceStart: number;
-  sourceEnd: number;
-}
-
-export function splitRuntimeUserMessage(
-  content: string,
-): RuntimeUserMessageParts | null {
+/**
+ * @param {string} content
+ * @returns {import('./runtime-user-message.js').RuntimeUserMessageParts | null}
+ */
+export function splitRuntimeUserMessage(content) {
   const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN);
   if (requestMarker?.index === undefined) return null;
 
@@ -25,14 +18,17 @@ export function splitRuntimeUserMessage(
   };
 }
 
-export function visibleRuntimeUserMessage(content: string): string {
+/** @param {string} content */
+export function visibleRuntimeUserMessage(content) {
   return projectRuntimeUserText(content).content;
 }
 
-/** Keep the actual request slice so display and search share its provenance. */
-export function projectRuntimeUserText(
-  content: string,
-): RuntimeUserTextProjection {
+/**
+ * Keep the actual request slice so display and search share its provenance.
+ * @param {string} content
+ * @returns {import('./runtime-user-message.js').RuntimeUserTextProjection}
+ */
+export function projectRuntimeUserText(content) {
   const marker = content.match(CODEX_REQUEST_MARKER_PATTERN);
   let sourceStart =
     marker?.index === undefined ? 0 : marker.index + marker[0].length;
@@ -56,7 +52,8 @@ export function projectRuntimeUserText(
   };
 }
 
-function matchingApplicationContextCloseIndex(content: string): number {
+/** @param {string} content */
+function matchingApplicationContextCloseIndex(content) {
   let depth = 1;
   let offset = APPLICATION_CONTEXT_OPEN.length;
 

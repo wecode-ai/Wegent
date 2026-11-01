@@ -291,17 +291,17 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates component archives from immutable prepared resources', async () => {
+  test('creates component archives from the delivered application', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
-    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
-    expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
-    expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
-    expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
-    expect(source).toContain('releaseScope: componentReleaseScope(id)')
+    expect(source).toContain('deliveredPackagePaths(installerRoot, platform, arch)')
+    expect(source).toContain(
+      'preparePackagedComponentAssets({ resourcesRoot, version, platform, arch, output })'
+    )
+    expect(source).not.toContain("'electron', 'resources'")
     expect(source).not.toContain('async function findDirectory')
   })
 

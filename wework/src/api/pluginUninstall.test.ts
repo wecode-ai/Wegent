@@ -11,6 +11,23 @@ function setup() {
 afterEach(() => vi.useRealTimers())
 
 describe('cloud plugin uninstall', () => {
+  test('bounds and aborts the account preflight without sending DELETE', async () => {
+    vi.useFakeTimers()
+    const { client, api } = setup()
+    client.get.mockImplementation(() => new Promise(() => {}))
+    const result = expect(api.readInstalledPluginsForUninstall()).rejects.toThrow('timed out')
+
+    await vi.advanceTimersByTimeAsync(PLUGIN_UNINSTALL_CHECK_TIMEOUT_MS)
+    await result
+
+    expect(client.get).toHaveBeenCalledWith('/plugins/installed', {
+      signal: expect.any(AbortSignal),
+    })
+    expect(client.get.mock.calls[0][1].signal.aborted).toBe(true)
+    expect(client.delete).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test('accepts 204 without creating another inventory read', async () => {
     const { client, api } = setup()
     client.delete.mockResolvedValue(null)

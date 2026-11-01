@@ -134,6 +134,9 @@ describe('mergeMarketplaceCatalog', () => {
         pluginName: 'dev-tools',
       },
     })
+    expect(merged[0].sharedVersion).toBe(cloudPlugin().version)
+    const mergedAgain = mergeMarketplaceCatalog(merged, [localSource], [])
+    expect(mergedAgain[0].sharedVersion).toBe(cloudPlugin().version)
   })
 
   test('preserves a legacy public owners local personal source', () => {

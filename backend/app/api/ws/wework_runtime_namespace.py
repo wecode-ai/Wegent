@@ -15,6 +15,7 @@ from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
+from app.api.ws.mcp_app_ownership import McpAppOwnership
 from app.core.config import settings
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
@@ -136,6 +137,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
 
     def __init__(self, namespace: str = WEWORK_RUNTIME_NAMESPACE):
         super().__init__(namespace)
+        self._mcp_app_ownership = McpAppOwnership(self._release_mcp_app)
         self._event_handlers: dict[str, str] = {
             WEWORK_RUNTIME_REQUEST_EVENT: "on_runtime_request",
             PROJECT_CHAT_SUBSCRIBE_EVENT: "on_project_chat_subscribe",
@@ -206,6 +208,21 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         )
         logger.info("[Wework Runtime WS] Connected user=%s sid=%s", user.id, sid)
 
+    async def _release_mcp_app(
+        self, user_id: int, device_id: str, payload: dict[str, Any]
+    ) -> None:
+        await relay_ipc_request(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.mcp_apps.request",
+            params=payload,
+            timeout_seconds=DEFAULT_IPC_TIMEOUT_SECONDS,
+        )
+
+    async def on_disconnect(self, sid: str, reason: Any = None) -> None:
+        """Revoke retained app sessions when their authenticated owner disappears."""
+        await self._mcp_app_ownership.disconnect(sid)
+
     async def on_runtime_request(self, sid: str, data: dict) -> dict:
         """Relay one app IPC-style runtime request to an online executor."""
 
@@ -246,13 +263,22 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 user_email=string_field(session, "user_email") or "",
             )
 
-        try:
-            result = await relay_ipc_request(
+        async def invoke() -> dict[str, Any]:
+            return await relay_ipc_request(
                 user_id=int(user_id),
                 device_id=device_id,
                 method=method,
                 params=params,
                 timeout_seconds=timeout_seconds_from(data),
+            )
+
+        try:
+            result = (
+                await self._mcp_app_ownership.request(
+                    sid, int(user_id), device_id, params, invoke
+                )
+                if method == "runtime.mcp_apps.request"
+                else await invoke()
             )
         except RuntimeRpcError as exc:
             return ipc_error(

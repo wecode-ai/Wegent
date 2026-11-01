@@ -20,6 +20,6 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export declare const BASE_PATH: '/wework/plugins/v1/rpc'
-export declare const inject: readonly ['webServer']
+export declare const inject: readonly ['webServer', 'weworkRequestSecurity']
 export declare const name: 'wework-plugin-runtime'
 export declare function apply(ctx: Context): void

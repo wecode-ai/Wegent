@@ -6,20 +6,69 @@ import { expect, it } from 'vitest'
 import { ISOLATED_XVFB_SERVER_ARGUMENTS } from '../e2e/desktop/checkpoint-environment.mjs'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-openbox.sh')
-const runningWindowManager = `#!/bin/sh
+const fixtureTimeoutMs = 10_000
+// The synchronous child can consume its full deadline. Keep setup and cleanup
+// within the usual 5-second test budget without changing readiness assertions.
+const processTestTimeoutMs = fixtureTimeoutMs + 5_000
+
+const runningOpenbox = `#!/bin/sh
 echo $$ > "$OPENBOX_TEST_DIR/pid"
-echo ready > "$OPENBOX_TEST_DIR/window-manager-ready"
-exec /bin/sleep 1000
+touch "$OPENBOX_TEST_DIR/openbox-started"
+exec node -e 'setInterval(() => {}, 1000)'
 `
 
-function runFixture(openbox, xprop) {
+const windowManagerProperties = `#!/bin/sh
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/queries"
+if [ "$queries" -lt 2 ] || [ ! -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
+  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
+else
+  echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+fi
+`
+
+const delayedXDisplay = `#!/bin/sh
+if [ -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
+  echo 'Openbox started before the X connection was ready' >&2
+  exit 1
+fi
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
+if [ "$queries" -lt 3 ]; then
+  echo "X connection unavailable probe=$queries" >&2
+  exit 1
+fi
+`
+
+function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
   try {
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
-    writeFileSync(join(directory, 'xprop'), xprop, { mode: 0o755 })
+    writeFileSync(join(directory, 'xprop-window-manager'), xprop, { mode: 0o755 })
+    writeFileSync(join(directory, 'xprop-display'), display, { mode: 0o755 })
+    writeFileSync(
+      join(directory, 'xprop'),
+      `#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = '-root' ]; then
+  exec "$OPENBOX_TEST_DIR/xprop-display"
+fi
+exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
+`,
+      { mode: 0o755 }
+    )
+    writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     const result = spawnSync(
       'sh',
-      [launcher, 'sh', '-c', 'echo started > "$OPENBOX_TEST_DIR/application"'],
+      [
+        launcher,
+        'sh',
+        '-c',
+        'touch "$OPENBOX_TEST_DIR/application-launched"; test "$(cat "$OPENBOX_TEST_DIR/queries")" -ge 2',
+      ],
       {
         env: {
           ...process.env,
@@ -28,11 +77,17 @@ function runFixture(openbox, xprop) {
           OPENBOX_TEST_DIR: directory,
         },
         encoding: 'utf8',
-        timeout: 10_000,
+        timeout: fixtureTimeoutMs,
       }
     )
     expect(result.error).toBeUndefined()
-    return { ...result, applicationStarted: existsSync(join(directory, 'application')) }
+    const displayQueries = join(directory, 'display-queries')
+    return {
+      ...result,
+      openboxStarted: existsSync(join(directory, 'openbox-started')),
+      applicationLaunched: existsSync(join(directory, 'application-launched')),
+      displayQueries: existsSync(displayQueries) ? Number(readFileSync(displayQueries, 'utf8')) : 0,
+    }
   } finally {
     try {
       process.kill(Number(readFileSync(join(directory, 'pid'), 'utf8')))
@@ -43,40 +98,128 @@ function runFixture(openbox, xprop) {
   }
 }
 
-it('waits for a registered window id after xprop reports a missing atom', () => {
-  const result = runFixture(
-    runningWindowManager,
-    `#!/bin/sh
+it(
+  'waits for a registered window id after xprop reports a missing atom',
+  () => {
+    const result = runFixture(runningOpenbox, windowManagerProperties)
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.applicationLaunched).toBe(true)
+  },
+  processTestTimeoutMs
+)
+
+it(
+  'fails before launching the application when the window manager exits',
+  () => {
+    const result = runFixture(
+      `#!/bin/sh
+echo 'window manager fixture failed' >&2
+exit 1
+`,
+      `#!/bin/sh
+echo 2 > "$OPENBOX_TEST_DIR/queries"
+echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
+`
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('window manager fixture failed')
+    expect(result.stderr).toContain('Openbox exited before registering')
+    expect(result.applicationLaunched).toBe(false)
+  },
+  processTestTimeoutMs
+)
+
+it(
+  'waits for the X connection before starting Openbox',
+  () => {
+    const result = runFixture(runningOpenbox, windowManagerProperties, delayedXDisplay)
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.displayQueries).toBe(3)
+    expect(result.openboxStarted).toBe(true)
+    expect(result.applicationLaunched).toBe(true)
+  },
+  processTestTimeoutMs
+)
+
+it(
+  'rejects an unavailable X display before launching Openbox or the application',
+  () => {
+    const result = runFixture(
+      runningOpenbox,
+      windowManagerProperties,
+      `#!/bin/sh
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
+echo "X connection unavailable probe=$queries" >&2
+exit 1
+`
+    )
+    expect(result.status).toBe(1)
+    expect(result.displayQueries).toBe(100)
+    expect(result.openboxStarted).toBe(false)
+    expect(result.applicationLaunched).toBe(false)
+    expect(result.stderr).toContain('display=:1234')
+    expect(result.stderr).toContain('Xvfb display did not become reachable')
+    expect(result.stderr).toContain('X connection unavailable probe=100')
+  },
+  processTestTimeoutMs
+)
+
+it(
+  'starts the window manager only after the display accepts connections',
+  () => {
+    const xprop = `#!/bin/sh
 queries=0
 if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
-if [ "$queries" -lt 2 ] || [ ! -f "$OPENBOX_TEST_DIR/window-manager-ready" ]; then
-  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
-else
+if [ "$queries" -lt 3 ]; then exit 1; fi
+if [ -f "$OPENBOX_TEST_DIR/registered" ]; then
   echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+else
+  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
 fi
 `
-  )
-  expect(result.status, result.stderr).toBe(0)
-  expect(result.applicationStarted).toBe(true)
-})
+    const result = runFixture(
+      `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+fs.writeFileSync(directory + '/pid', String(process.pid))
+// Display probes have finished; window-manager probes must not rewrite this counter.
+if (Number(fs.readFileSync(directory + '/display-queries', 'utf8')) < 3) process.exit(1)
+fs.writeFileSync(directory + '/registered', '')
+setInterval(() => {}, 1000)
+`,
+      xprop,
+      delayedXDisplay
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.displayQueries).toBe(3)
+    expect(result.applicationLaunched).toBe(true)
+  },
+  processTestTimeoutMs
+)
 
-it('fails before launching the application when the window manager exits', () => {
-  const result = runFixture(
-    `#!/bin/sh
-echo 'window manager fixture failed' >&2
+it(
+  'fails without launching the window manager when the display never connects',
+  () => {
+    const xprop = '#!/bin/sh\nexit 1\n'
+    const result = runFixture(
+      `#!/bin/sh
+echo 'The window manager must not start' >&2
 exit 1
 `,
-    `#!/bin/sh
-echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
-`
-  )
-  expect(result.status).toBe(1)
-  expect(result.applicationStarted).toBe(false)
-  expect(result.stderr).toContain('window manager fixture failed')
-  expect(result.stderr).toContain('Openbox exited before registering')
-})
+      xprop,
+      xprop
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Xvfb display did not become reachable: display=:1234')
+    expect(result.stderr).not.toContain('The window manager must not start')
+  },
+  processTestTimeoutMs
+)
 
 function readRootPropertyAfterDisconnect(serverArguments) {
   const result = spawnSync(
@@ -105,52 +248,17 @@ console.log(value.includes('"retained"') ? 'retained' : 'reset')
   return result.stdout.trim()
 }
 
-it.runIf(process.platform === 'linux')('keeps the real display alive between client connections', () => {
-  expect(readRootPropertyAfterDisconnect(ISOLATED_XVFB_SERVER_ARGUMENTS)).toBe('retained')
-})
+it.runIf(process.platform === 'linux')(
+  'keeps the real display alive between client connections',
+  () => {
+    expect(readRootPropertyAfterDisconnect(ISOLATED_XVFB_SERVER_ARGUMENTS)).toBe('retained')
+  }
+)
 
-it.runIf(process.platform === 'linux')('reproduces the root-property reset without the lifecycle fix', () => {
-  const resetArguments = ISOLATED_XVFB_SERVER_ARGUMENTS.replace(' -noreset', '')
-  expect(readRootPropertyAfterDisconnect(resetArguments)).toBe('reset')
-})
-
-it('starts the window manager only after the display accepts connections', () => {
-  const result = runFixture(
-    `#!/usr/bin/env node
-const fs = require('node:fs')
-const directory = process.env.OPENBOX_TEST_DIR
-fs.writeFileSync(directory + '/pid', String(process.pid))
-if (Number(fs.readFileSync(directory + '/queries', 'utf8')) < 3) process.exit(1)
-fs.writeFileSync(directory + '/registered', '')
-setInterval(() => {}, 1000)
-`,
-    `#!/bin/sh
-queries=0
-if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
-queries=$((queries + 1))
-echo "$queries" > "$OPENBOX_TEST_DIR/queries"
-if [ "$queries" -lt 3 ]; then exit 1; fi
-if [ -f "$OPENBOX_TEST_DIR/registered" ]; then
-  echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
-else
-  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
-fi
-`
-  )
-  expect(result.status, result.stderr).toBe(0)
-})
-
-it('fails without launching the window manager when the display never connects', () => {
-  const result = runFixture(
-    `#!/bin/sh
-echo 'The window manager must not start' >&2
-exit 1
-`,
-    `#!/bin/sh
-exit 1
-`
-  )
-  expect(result.status).toBe(1)
-  expect(result.stderr).toContain('Xvfb did not accept connections on :1234')
-  expect(result.stderr).not.toContain('The window manager must not start')
-}, 10_000)
+it.runIf(process.platform === 'linux')(
+  'reproduces the root-property reset without the lifecycle fix',
+  () => {
+    const resetArguments = ISOLATED_XVFB_SERVER_ARGUMENTS.replace(' -noreset', '')
+    expect(readRootPropertyAfterDisconnect(resetArguments)).toBe('reset')
+  }
+)

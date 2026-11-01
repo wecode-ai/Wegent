@@ -34,6 +34,7 @@ export function ProcessingSummaryHeader({
   rows,
   onToggle,
   title,
+  announceTitle = false,
   labels,
 }: {
   canToggle: boolean;
@@ -43,6 +44,7 @@ export function ProcessingSummaryHeader({
   rows: ProcessingDisplayRow[];
   onToggle: () => void;
   title: string;
+  announceTitle?: boolean;
   labels: ToolActivityLabels;
 }) {
   const titleContent = (
@@ -55,7 +57,14 @@ export function ProcessingSummaryHeader({
           aria-hidden="true"
         />
       ) : null}
-      <span className="font-medium text-text-secondary">{title}</span>
+      <span
+        className="font-medium text-text-secondary"
+        role={announceTitle ? "status" : undefined}
+        aria-live={announceTitle ? "polite" : undefined}
+        aria-atomic={announceTitle ? true : undefined}
+      >
+        {title}
+      </span>
     </>
   );
 

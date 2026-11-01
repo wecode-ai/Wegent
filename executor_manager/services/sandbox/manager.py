@@ -1722,8 +1722,7 @@ class SandboxManager(metaclass=SingletonMeta):
             )
         except Exception as exc:
             logger.warning(
-                "[SandboxManager] Failed to delete orphaned executor "
-                "task_id=%s: %s",
+                "[SandboxManager] Failed to delete orphaned executor " "task_id=%s: %s",
                 task_id,
                 exc,
             )

@@ -11,8 +11,10 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { EventEmitter } from 'node:events'
+import chokidar from 'chokidar'
 import { test, expect, vi, onTestFailed, onTestFinished } from 'vitest'
-import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
+import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
 
 async function publishSource(temporary, source, contents) {
   // Publish complete inputs; writeFile on the watched source exposes a truncated file.
@@ -176,3 +178,175 @@ test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fr
     await rm(root, { recursive: true, force: true })
   }
 }, 30000)
+
+test('starts the initial build only after directory subscriptions are ready', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-ready-'))
+  const readiness = Promise.withResolvers()
+  const build = vi.fn()
+  const close = vi.fn()
+  const onError = vi.fn()
+  let notify
+  const starting = watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError,
+    watchDirectory: (_directory, _options, callback) => {
+      notify = callback
+      return { ready: readiness.promise, on: vi.fn(), close }
+    },
+  })
+  notify('change', 'entry.js')
+  notify('change', undefined)
+  expect(build).not.toHaveBeenCalled()
+  expect(onError).not.toHaveBeenCalled()
+  readiness.resolve()
+  const watcher = await starting
+  try {
+    expect(build).toHaveBeenCalledTimes(1)
+  } finally {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  }
+  expect(close).toHaveBeenCalledTimes(1)
+})
+
+test.each(['directory', 'file', 'fsevents'])(
+  'preserves a rapid recovery edit omitted by normalized events from a watched %s',
+  async watchedKind => {
+    const root = await mkdtemp(path.join(tmpdir(), 'development-build-raw-'))
+    const source = path.join(root, 'entry.js')
+    await writeFile(source, 'one')
+    const native = new EventEmitter()
+    native.close = vi.fn()
+    const failed = Promise.withResolvers()
+    let published
+    const onError = vi.fn(error => failed.resolve(error))
+    const build = vi.fn(async () => {
+      const value = await readFile(source, 'utf8')
+      if (value === 'invalid') throw new Error('compile failed')
+      published = value
+    })
+    const watcher = await watchDevelopmentBuild({
+      directories: [root],
+      files: [],
+      build,
+      onError,
+      debounceMs: 0,
+      watchDirectory: (directory, options, notify) =>
+        watchDevelopmentDirectory(directory, options, notify, () => {
+          queueMicrotask(() => native.emit('ready'))
+          return native
+        }),
+    })
+    onTestFinished(async () => {
+      await watcher.close()
+      await rm(root, { recursive: true, force: true })
+    })
+    const details =
+      watchedKind === 'fsevents' ? {} : { watchedPath: watchedKind === 'file' ? source : root }
+    const filename = watchedKind === 'fsevents' ? await realpath(source) : 'entry.js'
+    await writeFile(source, 'invalid')
+    native.emit('all', 'change', source)
+    native.emit('raw', 'change', filename, details)
+    expect(await failed.promise).toEqual(new Error('compile failed'))
+    await writeFile(source, 'two')
+    // The second normalized change is suppressed by the Node backend's throttle.
+    native.emit('raw', 'change', filename, details)
+    native.emit('raw', 'change', filename, details)
+    await expect.poll(() => published).toBe('two')
+    expect(build).toHaveBeenCalledTimes(3)
+    expect(onError).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('rebuilds a subscribed file when a raw directory notification omits its filename', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-unknown-'))
+  const source = path.join(root, 'config.json')
+  await writeFile(source, 'one')
+  const native = new EventEmitter()
+  native.close = vi.fn()
+  let published
+  const onError = vi.fn()
+  const watcher = await watchDevelopmentBuild({
+    directories: [],
+    files: [source],
+    build: async () => {
+      published = await readFile(source, 'utf8')
+    },
+    onError,
+    debounceMs: 0,
+    watchDirectory: (directory, options, notify) =>
+      watchDevelopmentDirectory(directory, options, notify, () => {
+        queueMicrotask(() => native.emit('ready'))
+        return native
+      }),
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  await writeFile(source, 'two')
+  native.emit('raw', 'change', undefined, { watchedPath: root })
+  await expect.poll(() => published).toBe('two')
+  expect(onError).not.toHaveBeenCalled()
+})
+
+test('accepts canonical raw paths only inside the subscribed directory', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-boundary-'))
+  const native = new EventEmitter()
+  native.close = vi.fn()
+  const notify = vi.fn()
+  const watcher = watchDevelopmentDirectory(root, { recursive: true }, notify, () => native)
+  native.emit('ready')
+  await watcher.ready
+  try {
+    const outside = path.join(`${root}-outside`, 'entry.js')
+    native.emit('raw', 'change', outside, {})
+    native.emit('raw', 'change', 'entry.js', { watchedPath: path.dirname(outside) })
+    native.emit('raw', 'change', 'entry.js', {})
+    native.emit('raw', 'change', undefined, { watchedPath: path.dirname(outside) })
+    expect(notify).not.toHaveBeenCalled()
+    native.emit('raw', 'change', path.join(await realpath(root), 'entry.js'), {})
+    expect(notify).toHaveBeenCalledExactlyOnceWith('change', 'entry.js')
+  } finally {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('rebuilds input edits reported only as a directory-self notification', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
+  const source = path.join(root, 'entry.js')
+  await writeFile(source, 'one')
+  let notify
+  const close = vi.fn()
+  const watchDirectory = vi.fn((_directory, _options, callback) => {
+    notify = callback
+    return { on: vi.fn(), close }
+  })
+  let published
+  const onError = vi.fn()
+  const build = vi.fn(async () => {
+    published = await readFile(source, 'utf8')
+  })
+  const watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError,
+    debounceMs: 20,
+    watchDirectory,
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  expect(published).toBe('one')
+  await writeFile(source, 'two')
+  notify('rename', path.basename(root))
+  await expect.poll(() => published).toBe('two')
+  expect(build).toHaveBeenCalledTimes(2)
+  expect(watchDirectory).toHaveBeenCalledTimes(1)
+  expect(onError).not.toHaveBeenCalled()
+})

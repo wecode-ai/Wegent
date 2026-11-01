@@ -14,10 +14,8 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
-import {
-  checkpointScenarioEnv,
-  ISOLATED_XVFB_SERVER_ARGUMENTS,
-} from './checkpoint-environment.mjs'
+import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
+import { checkpointScenarioEnv } from './checkpoint-environment.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -38,15 +36,21 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'board-transcript-followup': './scenarios/board-transcript-followup.scenario.mjs',
   'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
   'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
   'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'project-space-tool-discovery': './scenarios/project-space-tool-discovery.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
+  'human-interactions': './scenarios/human-interactions.scenario.mjs',
+  'human-interactions-browser': './scenarios/human-interactions.scenario.mjs',
+  'human-interactions-hidden': './scenarios/human-interactions.scenario.mjs',
+  'human-interactions-issue': './scenarios/human-interactions.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
+  'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
@@ -121,10 +125,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
   ...Object.fromEntries(
-    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/app-upgrade.scenario.mjs'])
+    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
+  'startup-network-change': './scenarios/startup-network-change.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'window-background-policy': './scenarios/window-background-policy.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
@@ -151,7 +156,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
-  'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
+  'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
@@ -192,6 +197,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
+  'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'python-runtime': './scenarios/python-runtime.scenario.mjs',
@@ -210,11 +216,16 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
   'mcp-apps',
   'project-space-tool-discovery',
   'notification-tab-navigation',
+  'human-interactions',
+  'human-interactions-browser',
+  'human-interactions-hidden',
+  'human-interactions-issue',
   'voice-input',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
@@ -226,6 +237,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'streaming-conversation-switching',
   'streaming-subagents',
 
+  'native-lifecycle',
   'goal-state-sync',
   'model-settings',
   'codex-native-catalog',
@@ -316,6 +328,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'collaboration-board-sorting',
+  'collaboration-board-backlog',
   'collaboration-board-move-recovery',
   'plugin-development',
   'python-runtime',
@@ -343,6 +356,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
+  'startup-network-change',
   'native-window-chrome',
   'window-background-policy',
   'renderer-storage',
@@ -389,9 +403,11 @@ const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
-const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
+const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
+const openboxPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
+const allocateXvfbDisplay = createXvfbDisplayAllocator()
 
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -400,6 +416,7 @@ function formatDuration(durationMs) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
+/** Run one checkpoint with an isolated display and retain fully drained failure evidence. */
 function runTaskFlow(args, env, label) {
   return new Promise((resolvePromise, reject) => {
     const startedAt = Date.now()
@@ -408,20 +425,14 @@ function runTaskFlow(args, env, label) {
     let outputTail = ''
     let stderrTail = ''
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
-    const command = isolateDisplay ? 'xvfb-run' : process.execPath
+    const command = isolateDisplay ? 'sh' : process.execPath
     const commandArgs = isolateDisplay
-      ? [
-          '-a',
-          `--server-args=${ISOLATED_XVFB_SERVER_ARGUMENTS}`,
-          'sh',
-          isolatedXvfbPath,
-          process.execPath,
-          taskFlowPath,
-          ...args,
-        ]
+      ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
-      env,
+      env: isolateDisplay
+        ? { ...env, WEWORK_E2E_XVFB_SERVER_NUM: String(allocateXvfbDisplay()) }
+        : env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -448,7 +459,7 @@ function runTaskFlow(args, env, label) {
       clearInterval(heartbeat)
       reject(error)
     })
-    // Classify the result after the diagnostic streams have drained.
+    // Drain startup stderr before capturing failure details; exit can precede it.
     child.once('close', (code, signal) => {
       clearInterval(heartbeat)
       rejectRecordedCheckpointFailure({
@@ -557,6 +568,16 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
+    }
+  }
+  if (upgradeRequested && nextEnvironment.WEWORK_E2E_UPGRADE_PAIR) {
+    const pair = JSON.parse(await readFile(nextEnvironment.WEWORK_E2E_UPGRADE_PAIR, 'utf8'))
+    if (pair.kind === 'regression' && pair.thinPairFile && pair.thinSource?.executable) {
+      nextEnvironment = {
+        ...nextEnvironment,
+        WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
+        WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource.executable,
+      }
     }
   }
   const [build, codexBinary] = await Promise.all([

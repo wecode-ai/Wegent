@@ -110,6 +110,13 @@ sequenceDiagram
 
 ## 界面入口
 
+云端 Runtime 历史读取的每个设备分块都在独立短事务中检查当前项目权限、Issue
+可见性和持久会话绑定，遵循 CP14 与 CP15。鉴权 Session 在设备 RPC 前关闭，
+不修改调用方事务；不能依靠重复 SELECT 或刷新 ORM 对象推进 MySQL REPEATABLE
+READ 的旧快照。其他 Session 提交撤权或将无关联 Issue 收紧为 related 后，下一块
+返回 404，且不再调用设备。现有 CI MySQL 权限套件用独立请求、写入和观察 Session
+验证省略版本和 v1，断言旧请求快照仍存在、最新权限已拒绝以及 RPC 只调用一次。
+
 Issue 关联的个人 Runtime 任务仅向任务所有者返回，变更请求关联也必须验证任务所有者。看板快照、分页关联任务和单 Issue 关联任务列表均按当前用户过滤；项目管理员身份不授予读取其他人个人任务的权限。仅有手动关联记录时，对话详情与搜索也必须验证所有者，不能以 Issue 可读权限替代个人任务权限。正式派发执行和协作成员活动继续使用各自的持久化执行授权。`test_project_board_snapshot_queries.py`、`test_runtime_session_device_identity.py` 和 Rust 关联任务查询测试保护这些边界。打开已归档任务前读取 Runtime 的明确归档状态，提示用户先恢复任务。
 
 看板批量排序的 HTTP 与 MCP 入口共同遵守 CP07、CP13、CP14：Viewer 不能排序，其他成员只能提交和接收其可见的 Issue。可见卡片的重排只交换它们在全局同级顺序中的位置，保留不可见成员的位置；普通成员提交不可见或不存在的请求目标时，在写入前统一返回 404。项目管理员仍按既有规则查看全部 Issue。`test_loop_item_reorder_permissions.py` 覆盖角色、默认安全级别、同状态和跨状态排序，以及拒绝请求不改变持久化状态。

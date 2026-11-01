@@ -23,7 +23,8 @@ test.each(['cli', 'mcp'])(
       source,
       /const recovered = await requestExecutor\(\s*control,\s*'runtime.connections.catalog',\s*\{\},\s*uiTimeoutMs\s*\)/
     )
-    assert.match(source, /signal: AbortSignal.timeout\(uiTimeoutMs\)/)
+    assert.match(source, /fetchLocalRuntime\(control,/)
+    assert.match(source, /timeoutMs: uiTimeoutMs/)
   }
 )
 

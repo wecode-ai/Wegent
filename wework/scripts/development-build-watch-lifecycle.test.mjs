@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, expect, onTestFailed, onTestFinished, test, vi } from 'vitest'
 
 const { watch } = vi.hoisted(() => ({ watch: vi.fn() }))
-vi.mock('chokidar', () => ({ watch }))
+vi.mock('chokidar', () => ({ default: { watch } }))
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
 let temporary

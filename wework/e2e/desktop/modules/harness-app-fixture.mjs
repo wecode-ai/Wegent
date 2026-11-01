@@ -9,6 +9,7 @@ import {
 
 export const INSTALLATION_ID = 'dsh-e2e-smoke'
 export const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
+export const LEGACY_INSTALLATION_ID = 'dsh-e2e-legacy'
 export const CREATED_INSTALLATION_ID = 'dsh-e2e-created'
 export const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 export const MODEL_LABEL = 'Desktop E2E Chat'

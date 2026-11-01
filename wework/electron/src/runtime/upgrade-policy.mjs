@@ -78,12 +78,23 @@ export function validateUpgradeCatalog(input) {
     ) {
       throw new Error('Invalid or unverified Wework upgrade edge')
     }
+    if (
+      edge.verification &&
+      (input.platform !== 'macos' ||
+        input.arch !== 'x64' ||
+        edge.verification.kind !== 'architecture-equivalence' ||
+        edge.verification.platform !== 'macos' ||
+        edge.verification.arch !== 'arm64' ||
+        !HASH.test(edge.verification.fromSha256) ||
+        !HASH.test(edge.verification.toSha256))
+    )
+      throw new Error('Invalid macOS architecture equivalence evidence')
     edges.add(key)
   }
   return input
 }
 
-/** Only exact tested edges grant upgrade permission. A version range never does. */
+/** Explicit edges grant permission, including declared macOS architecture equivalence. */
 export function planUpgrade(catalog, currentVersion) {
   validateUpgradeCatalog(catalog)
   compareVersions(currentVersion, currentVersion)

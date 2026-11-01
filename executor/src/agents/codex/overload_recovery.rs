@@ -17,6 +17,8 @@ pub(super) struct OverloadRecovery {
     pending_error: Option<Value>,
     stopped_goal: Option<(String, Value)>,
     goal_invalidated: bool,
+    source: Option<super::local_notifications::LocalNotificationSource>,
+    recovery_exit: Option<Value>,
 }
 
 pub(super) enum RecoveryAction {
@@ -30,6 +32,22 @@ pub(super) enum RecoveryAction {
 }
 
 impl OverloadRecovery {
+    pub(super) fn new(
+        runtime: Option<super::CodexNotificationHub>,
+        observer: Option<super::CodexNotificationSender>,
+    ) -> Self {
+        Self {
+            retries: 0,
+            pending_error: None,
+            stopped_goal: None,
+            goal_invalidated: false,
+            source: Some(super::local_notifications::LocalNotificationSource::new(
+                runtime, observer,
+            )),
+            recovery_exit: None,
+        }
+    }
+
     pub(super) fn observe(&mut self, message: &Value, state: &CodexRunState) -> RecoveryAction {
         let params = message_params(message);
         if state.is_subagent_message(params)
@@ -40,6 +58,7 @@ impl OverloadRecovery {
             return RecoveryAction::Forward;
         }
         match message.get("method").and_then(Value::as_str) {
+            Some("turn/started") => self.recovery_exit = None,
             Some("thread/goal/updated") => {
                 self.goal_invalidated |= self.stopped_goal.is_some();
                 // Only a turn-owned stop can belong to this error. User mutations
@@ -98,6 +117,12 @@ impl OverloadRecovery {
                 let delay = Duration::from_secs(RETRY_DELAYS[self.retries]);
                 self.retries += 1;
                 notification["params"]["willRetry"] = json!(true);
+                self.recovery_exit = Some(
+                    json!({"method": "runtime/overloadRecoverySettled", "params": {
+                        "threadId": notification["params"]["threadId"],
+                        "turnId": notification["params"]["turnId"],
+                    }}),
+                );
                 notification["params"]["error"]["additionalDetails"] = json!(format!(
                     "Retrying overloaded model in {}s ({}/{}).",
                     delay.as_secs(),
@@ -130,6 +155,14 @@ impl OverloadRecovery {
                 }
             }
             _ => RecoveryAction::Forward,
+        }
+    }
+}
+
+impl Drop for OverloadRecovery {
+    fn drop(&mut self) {
+        if let (Some(source), Some(message)) = (&self.source, self.recovery_exit.take()) {
+            let _ = source.sender.send(message.into());
         }
     }
 }
@@ -171,8 +204,9 @@ pub(super) async fn resume_goal(
     }
 }
 
-pub(super) fn sync_goal_snapshot(
+pub(super) async fn sync_goal_snapshot(
     state: &mut CodexRunState,
+    runtime: Option<&super::CodexNotificationHub>,
     notifications: Option<&super::CodexNotificationSender>,
     thread_id: &str,
     response: &Value,
@@ -180,20 +214,20 @@ pub(super) fn sync_goal_snapshot(
     super::sync_goal_status_from_response(state, response);
     // A changed Goal ends recovery before queued notifications can be drained.
     // Publish the authoritative snapshot so the task and composer settle together.
-    if let Some(sender) = notifications {
-        let goal = response.get("goal").cloned().unwrap_or(Value::Null);
-        let method = if goal.is_null() {
-            "thread/goal/cleared"
-        } else {
-            "thread/goal/updated"
-        };
-        let _ = sender.send(
-            json!({"method": method, "params": {
-                "threadId": thread_id, "turnId": null, "goal": goal,
-            }})
-            .into(),
-        );
-    }
+    let goal = response.get("goal").cloned().unwrap_or(Value::Null);
+    let method = if goal.is_null() {
+        "thread/goal/cleared"
+    } else {
+        "thread/goal/updated"
+    };
+    super::local_notifications::publish(
+        runtime,
+        notifications,
+        json!({"method": method, "params": {
+            "threadId": thread_id, "turnId": null, "goal": goal,
+        }}),
+    )
+    .await;
 }
 
 #[cfg(test)]

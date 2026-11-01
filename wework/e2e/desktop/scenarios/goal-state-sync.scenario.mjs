@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -52,11 +53,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
       let address
       const origin = await control.command('getLocationOrigin', 'body')
       const rpc = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `goal-state-sync-${method}`, method, params }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+          timeoutMs: uiTimeoutMs,
         })
         const payload = await response.json()
         assert.equal(response.ok, true)

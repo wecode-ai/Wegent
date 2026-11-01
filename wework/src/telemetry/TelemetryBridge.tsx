@@ -6,7 +6,7 @@ import { updateAppPreferences } from '@/desktop/appPreferences'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TelemetryConsentDialog } from './TelemetryConsentDialog'
-import { getTelemetryConfig, isOfficialReleaseBuild } from './config'
+import { isOfficialReleaseBuild } from './config'
 
 function appSurface(): 'main' | 'popout' | 'workspace' {
   const label = isElectronRuntime() ? getDesktopWindowLabel() : 'main'
@@ -33,7 +33,6 @@ export function TelemetryBridge() {
   const latestConsentChoiceRef = useRef(false)
   const consentAsked = appPreferences?.preferences.telemetryConsentAsked
   const telemetryEnabled = appPreferences?.preferences.telemetryEnabled
-  const distribution = getTelemetryConfig().distribution
   const officialRelease = isOfficialReleaseBuild()
   const effectiveTelemetryEnabled =
     !officialRelease && consentAsked !== true ? true : telemetryEnabled === true
@@ -43,11 +42,6 @@ export function TelemetryBridge() {
     if (!appPreferences?.loaded || initializedRef.current) {
       return
     }
-    if (distribution === 'internal') {
-      initializedRef.current = true
-      void installTelemetry(false)
-      return
-    }
     if (officialRelease && !consentAsked) return
     initializedRef.current = true
     void installTelemetry(effectiveTelemetryEnabled).then(() => {
@@ -55,21 +49,10 @@ export function TelemetryBridge() {
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [
-    appPreferences?.loaded,
-    consentAsked,
-    distribution,
-    effectiveTelemetryEnabled,
-    officialRelease,
-    surface,
-  ])
+  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
 
   useEffect(() => {
-    if (
-      distribution === 'internal' ||
-      !appPreferences?.loaded ||
-      (officialRelease && !consentAsked)
-    ) {
+    if (!appPreferences?.loaded || (officialRelease && !consentAsked)) {
       return
     }
     void setTelemetryEnabled(effectiveTelemetryEnabled).then(() => {
@@ -79,18 +62,10 @@ export function TelemetryBridge() {
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [
-    appPreferences?.loaded,
-    consentAsked,
-    distribution,
-    effectiveTelemetryEnabled,
-    officialRelease,
-    surface,
-  ])
+  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
 
   useEffect(() => {
     if (
-      distribution === 'internal' ||
       officialRelease ||
       !isElectronRuntime() ||
       !appPreferences?.loaded ||
@@ -102,15 +77,9 @@ export function TelemetryBridge() {
       telemetryConsentAsked: true,
       telemetryEnabled: true,
     })
-  }, [appPreferences?.loaded, consentAsked, distribution, officialRelease])
+  }, [appPreferences?.loaded, consentAsked, officialRelease])
 
-  if (
-    distribution === 'internal' ||
-    !appPreferences?.loaded ||
-    !officialRelease ||
-    consentAsked ||
-    surface !== 'main'
-  ) {
+  if (!appPreferences?.loaded || !officialRelease || consentAsked || surface !== 'main') {
     return null
   }
 

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const { readFile } = vi.hoisted(() => ({ readFile: vi.fn() }))
+const { readFile, requestRuntime } = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  requestRuntime: vi.fn(),
+}))
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal()
   return { ...actual, readFile, default: { ...actual.default, readFile } }
@@ -21,8 +24,15 @@ const newProtocol =
 function readiness(logContent, { pid = NEW_PID, timeoutMs = 500 } = {}) {
   readFile.mockImplementation(async () => logContent())
   const control = {
-    command: vi.fn(async action => {
-      if (action === 'getLocationOrigin') return 'http://desktop.test'
+    command: vi.fn(async (action, _selector, options) => {
+      if (action === 'getLocationOrigin') return 'http://127.0.0.1:12345'
+      if (action === 'fetchLocalRuntime') {
+        const request = JSON.parse(options.value)
+        expect(options.timeoutMs).toBe(request.timeoutMs)
+        expect(request.timeoutMs).toBeGreaterThan(0)
+        expect(request.timeoutMs).toBeLessThanOrEqual(timeoutMs)
+        return JSON.stringify(await requestRuntime(request))
+      }
       expect(action).toBe('getDesktopRuntimeDiagnostics')
       return JSON.stringify({ executorPid: pid })
     }),
@@ -38,10 +48,13 @@ function readiness(logContent, { pid = NEW_PID, timeoutMs = 500 } = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers()
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+  vi.stubGlobal('fetch', vi.fn())
+  requestRuntime.mockReset()
+  requestRuntime.mockResolvedValue({ status: 200, headers: {}, body: '{}' })
 })
 
 afterEach(() => {
+  expect(fetch).not.toHaveBeenCalled()
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
@@ -57,7 +70,7 @@ test('a new PID and successful old-process logs do not make the restarted execut
 
   await vi.advanceTimersByTimeAsync(100)
   expect(settled).toBe(false)
-  expect(fetch).not.toHaveBeenCalled()
+  expect(requestRuntime).not.toHaveBeenCalled()
 
   logContent += newProtocol
   await vi.advanceTimersByTimeAsync(100)
@@ -65,7 +78,9 @@ test('a new PID and successful old-process logs do not make the restarted execut
 })
 
 test('fresh protocol success waits for the cached DSH bridge description to become ready', async () => {
-  fetch.mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ ok: false })
+  requestRuntime
+    .mockResolvedValueOnce({ status: 503, headers: {}, body: '{}' })
+    .mockResolvedValueOnce({ status: 503, headers: {}, body: '{}' })
   let settled = false
   const pending = readiness(() => newSpawn + newProtocol).then(pid => {
     settled = true
@@ -74,19 +89,22 @@ test('fresh protocol success waits for the cached DSH bridge description to beco
 
   await vi.advanceTimersByTimeAsync(100)
   expect(settled).toBe(false)
-  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(requestRuntime).toHaveBeenCalledTimes(2)
 
   await vi.advanceTimersByTimeAsync(100)
   await expect(pending).resolves.toBe(NEW_PID)
-  expect(fetch).toHaveBeenLastCalledWith(
-    'http://desktop.test/wework/executor/v1',
-    expect.objectContaining({ headers: { accept: 'application/json' } })
+  expect(requestRuntime).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: 'http://127.0.0.1:12345/wework/executor/v1',
+      headers: { accept: 'application/json' },
+      timeoutMs: expect.any(Number),
+    })
   )
 })
 
 test('the current restarted process and ready bridge complete without another polling delay', async () => {
   await expect(readiness(() => oldProtocol + newSpawn + newProtocol)).resolves.toBe(NEW_PID)
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(requestRuntime).toHaveBeenCalledTimes(1)
 })
 
 test.each([
@@ -108,15 +126,15 @@ test.each([
   )
   await vi.advanceTimersByTimeAsync(500)
   await rejected
-  expect(fetch).not.toHaveBeenCalled()
+  expect(requestRuntime).not.toHaveBeenCalled()
 })
 
 test('bridge recovery must finish within the same readiness timeout', async () => {
-  fetch.mockResolvedValue({ ok: false })
+  requestRuntime.mockResolvedValue({ status: 503, headers: {}, body: '{}' })
   const rejected = expect(readiness(() => newSpawn + newProtocol)).rejects.toThrow(
     'The restarted executor did not become protocol-ready through the DSH bridge'
   )
   await vi.advanceTimersByTimeAsync(500)
   await rejected
-  expect(fetch).toHaveBeenCalledTimes(5)
+  expect(requestRuntime).toHaveBeenCalledTimes(5)
 })

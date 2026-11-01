@@ -7,6 +7,10 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   notification-tab-navigation
+  human-interactions
+  human-interactions-browser
+  human-interactions-hidden
+  human-interactions-issue
   collaboration-shared-core
   project-space-tool-discovery
   collaboration-deliveries
@@ -16,8 +20,10 @@ core_segments=(
   collaboration-runtime-reconciliation
   collaboration-issue-archive
   collaboration-board-sorting
+  collaboration-board-backlog
   collaboration-board-move-recovery
   collaboration-home-preload
+  board-transcript-followup
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -84,6 +90,7 @@ core_segments=(
   window-lifecycle
   goal-lifecycle
   goal-state-sync
+  native-lifecycle
   supervisor-lifecycle
   resilience
   runtime-task-queue
@@ -101,6 +108,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  startup-network-change
   renderer-crash-recovery
   native-window-chrome
   window-background-policy
@@ -232,14 +240,14 @@ cloud_shards=(
 # Preserve the exclusive latency benchmark groups without extending the 40-minute step budget.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
+  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,native-lifecycle,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
-  stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use,board-transcript-followup
   harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
-  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
+  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,startup-network-change,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence
   python-runtime,plugin-development
@@ -247,6 +255,11 @@ core_shards=(
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
+core_shards[1]+=',human-interactions'
+# Keep new unmeasured checks off the heaviest measured shard so Windows can rebalance it.
+core_shards[2]+=',human-interactions-browser'
+core_shards[2]+=',human-interactions-hidden'
+core_shards[4]+=',human-interactions-issue'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -460,8 +473,34 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/plugins/PluginDetailView* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/src/components/plugins/pluginOwnerActions.ts | \
+      wework/src/components/plugins/pluginOwnerLocalPackage.ts | \
+      wework/src/components/plugins/pluginUninstall.ts | \
+      wework/src/api/local/codexPlugins.ts | \
+      wework/src/features/plugins/pluginMarketplaceCache.ts | \
+      wework/src/components/plugins/findMarketplaceItemForInstalled.ts | \
+      wework/src/components/plugins/marketplaceCatalogMerge.ts | \
+      wework/src/components/plugins/plugin-dialogs/InstallPluginDialog.tsx | \
+      wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx | \
+      wework/src/components/plugins/PluginVersionSubmit* | \
+      wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginDetailSelection* | \
+      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
+      select_target "cloud:plugin-workspace-publication"
+      select_target "cloud:plugin-toggle-persistence"
+      ;;
+  esac
+
+  case "$path" in
     wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
       select_target "core:project-space-tool-discovery"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs | \
+      wework/src/features/todo/useBoardRuntimeConversations*)
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
@@ -470,6 +509,14 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-installation.scenario.mjs | \
+      wework/scripts/plugin-personal-runtime.test.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
+      select_target "cloud:plugin-toggle-persistence"
       return
       ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
@@ -507,6 +554,7 @@ classify_wework_path() {
       wework/src/features/workbench/WorkbenchProvider* | \
       wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator*)
       select_target "core:goal-state-sync"
+      select_target "core:native-lifecycle"
       ;;
   esac
 
@@ -595,6 +643,14 @@ classify_wework_path() {
     wework/electron/src/host/startup-splash* | \
       wework/electron/src/shell/startup-splash/*)
       select_target "core:native-window-startup"
+      return
+      ;;
+
+    # Keep startup interruption recovery covered when its host implementation changes.
+    wework/electron/src/host/renderer-startup-loader* | \
+      wework/electron/src/host/e2e-startup-network-fault* | \
+      wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs)
+      select_target "core:startup-network-change"
       return
       ;;
 
@@ -821,6 +877,10 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs)
+      select_target "core:native-lifecycle"
+      return
+      ;;
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
     wework/e2e/desktop/scenarios/goal-stream-order.scenario.mjs | \
       wework/e2e/desktop/scenarios/goal-output-identity.scenario.mjs | \
@@ -834,13 +894,19 @@ classify_wework_path() {
       return
       ;;
 
-    wework/src/features/notifications/* | \
+    wework/e2e/desktop/scenarios/human-interactions.scenario.mjs | \
+      wework/e2e/desktop/modules/human-interaction-*.mjs | \
+      wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
       select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
       select_target "core:notification-tab-navigation"
+      select_target "core:human-interactions"
+      select_target "core:human-interactions-browser"
+      select_target "core:human-interactions-hidden"
+      select_target "core:human-interactions-issue"
       if [[ "$path" == wework/src/features/notifications/WeworkSchemeBridge* || \
         "$path" == wework/src/features/notifications/scheme* ]]; then
         select_target "core:collaboration-issue-comment-notification"
@@ -910,6 +976,10 @@ classify_wework_path() {
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs)
+      select_target "core:collaboration-board-backlog"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
       select_target "core:collaboration-board-sorting"
       return
@@ -920,6 +990,7 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
       select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
@@ -962,6 +1033,10 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/telemetry-policy.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-telemetry.scenario.mjs)
+      select_target "core:stand-in-telemetry"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
@@ -1110,6 +1185,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
         select_target "core:collaboration-board-sorting"
+        select_target "core:collaboration-board-backlog"
         select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
@@ -1195,6 +1271,7 @@ classify_wework_path() {
     wework/src/features/workbench/runtimeConversationCache*)
       select_target "core:core-task-flow"
       select_target "core:conversation-state"
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/src/features/workbench/runtimePaneMessages* | \
@@ -1824,8 +1901,10 @@ classify_path() {
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
+      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
+      select_target "core:board-transcript-followup"
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then

@@ -242,6 +242,45 @@ describe('managed executor runtime', () => {
     }
   })
 
+  test('retries an early authentication close without outliving its deadline', async () => {
+    const directory = await temporaryDirectory('exec-closed-')
+    const endpoint =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\executor-closed-${process.pid}-${Date.now()}`
+        : `${directory.path}/executor.sock`
+    let connections = 0
+    const server = createServer(socket => {
+      const attempt = ++connections
+      socket.once('data', () => {
+        if (attempt === 1) socket.end()
+        else socket.end('{"type":"authenticated","ok":true,"protocol_version":1}\n')
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(endpoint, resolve)
+    })
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await expect(
+        Promise.race([
+          waitForEndpointAuthentication(endpoint, 'test-token', AbortSignal.timeout(1_000)),
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error('Authentication promise stayed pending')),
+              2_000
+            )
+          }),
+        ])
+      ).resolves.toBeUndefined()
+      expect(connections).toBe(2)
+    } finally {
+      clearTimeout(deadline)
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await directory.remove()
+    }
+  })
+
   test('reconnects the owner stream after the executor restarts', async () => {
     const directory = await temporaryDirectory('managed-executor-restart-')
     const ownerConnectionsPath = join(directory.path, 'owner-connections')

@@ -58,6 +58,7 @@ export async function pathExists(path) {
 
 export async function openPlugin(control, fixture) {
   await control.command('click', testId('plugins-button'))
+  await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-all'))
   await control.command('fill', testId('plugins-search-input'), { value: fixture.slug })
@@ -127,7 +128,7 @@ export async function assertSurfaces(control, fixture, present, timeoutMs = 10_0
     'Manager disagrees with account membership'
   )
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
   await control.command('waitFor', testId('composer-plugin-picker'))
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })
   const picker = JSON.parse(await control.command('snapshot', testId('composer-plugin-picker')))
@@ -160,7 +161,7 @@ export async function installFixture(cloud, control, slug, deviceId, timeoutMs) 
   // Composer plugin catalogs load on demand. Exercise the real picker path
   // before asserting that the installed plugin reached the composer projection.
   await control.command('click', testId('new-chat-button'))
-  await control.command('click', testId('composer-plugin-picker-button'))
+  await control.command('clickWhenEnabled', testId('composer-plugin-picker-button'))
   await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
   await until(
     () => inventory(control),

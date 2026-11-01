@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { verifyWorkbenchBackgroundSurfaces } from '../modules/appearance-flows.mjs'
+
 const STORAGE_ENTRIES = {
   'wework.e2e.renderer-storage.model': 'model-config',
   'wework.e2e.renderer-storage.draft': 'unsaved-draft',
@@ -14,6 +16,8 @@ export async function createDesktopScenario({ electronUserDataDirectory, uiTimeo
   return {
     async verify(control) {
       await control.command('snapshot', 'body')
+      await verifyWorkbenchBackgroundSurfaces({ control })
+
       const originBeforeRestart = await control.command('getLocationOrigin', 'body')
       for (const [key, value] of Object.entries(STORAGE_ENTRIES)) {
         assert.equal(

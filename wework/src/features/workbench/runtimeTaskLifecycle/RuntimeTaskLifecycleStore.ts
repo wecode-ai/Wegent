@@ -141,6 +141,19 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  invalidateNativeExecutions(): RuntimeTaskAddress[] {
+    let changed = false
+    const addresses: RuntimeTaskAddress[] = []
+    for (const machine of this.machines.values()) {
+      if (machine.getState().task?.executionState) {
+        addresses.push(machine.getState().address)
+        changed = machine.dispatch({ type: 'executor_replaced' }) || changed
+      }
+    }
+    if (changed) this.publish()
+    return addresses
+  }
+
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
@@ -191,6 +204,7 @@ export class RuntimeTaskLifecycleStore {
       }>
     }
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     if (transcript.running === true) {
       const current = this.getTask(address)
       if (shouldIgnoreStaleRunningTranscript(current)) return
@@ -328,6 +342,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     logRuntimeTaskCreateStage('lifecycle-transcript-received', {
       taskId: address.taskId,
       deviceId: address.deviceId,

@@ -47,6 +47,15 @@ export async function cloneReleaseProfile(source: string, target: string): Promi
   return before
 }
 
+/** Preserve the running profile only after its writers have stopped. */
+export async function retainReleaseProfile(dataDirectory: string, target: string): Promise<void> {
+  const pointer = currentCoreProfile(dataDirectory)
+  const source = await realpath(pointer)
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+  await rename(source, target)
+  await selectReleaseProfile(dataDirectory, target, join(dirname(target), 'legacy-profile'))
+}
+
 /** Called by the stable entry before either version opens its profile. */
 export async function selectReleaseProfile(
   dataDirectory: string,

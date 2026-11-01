@@ -4,7 +4,6 @@ import { StandInTelemetryAgent } from './StandInTelemetryAgent'
 
 const mocks = vi.hoisted(() => ({
   enabled: true,
-  distribution: 'public',
   asked: true,
   loaded: true,
   source: null as unknown,
@@ -24,13 +23,11 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
     preferences: { telemetryConsentAsked: mocks.asked, telemetryEnabled: mocks.enabled },
   }),
 }))
-vi.mock('@/features/dsh-runtime/dshExtensions', () => ({ getDshTelemetrySinks: () => [] }))
 vi.mock('@/lib/runtime-environment', () => ({ getDesktopWindowLabel: () => 'main' }))
 vi.mock('./client', () => ({
   useTelemetryEnabled: () => mocks.enabled,
   standInCollectionSince: () => 1234,
 }))
-vi.mock('./config', () => ({ getTelemetryConfig: () => ({ distribution: mocks.distribution }) }))
 vi.mock('./standInDelivery', () => ({
   queuedStandInDevices: () => ['local'],
   clearStandInDeliveries: mocks.clearAll,
@@ -39,7 +36,6 @@ vi.mock('./standInDelivery', () => ({
 
 beforeEach(() => {
   mocks.enabled = true
-  mocks.distribution = 'public'
   mocks.asked = true
   mocks.loaded = true
   for (const fn of [
@@ -91,11 +87,12 @@ describe('stand-in telemetry main-window lifecycle', () => {
     expect(mocks.configure).not.toHaveBeenCalled()
     expect(mocks.clearAll).not.toHaveBeenCalled()
   })
-  test('keeps internal collection separate from the public consent boundary', async () => {
-    mocks.distribution = 'internal'
+  test('propagates a saved refusal to all connected Executors', async () => {
     mocks.enabled = false
     render(<StandInTelemetryAgent />)
-    await waitFor(() => expect(mocks.collect).toHaveBeenCalledTimes(2))
-    expect(mocks.configure).toHaveBeenCalledWith(7, 'local', true, undefined)
+    await waitFor(() => expect(mocks.configure).toHaveBeenCalledTimes(2))
+    expect(mocks.configure).toHaveBeenCalledWith(7, 'local', false, 1234)
+    expect(mocks.collect).not.toHaveBeenCalled()
+    expect(mocks.flush).not.toHaveBeenCalled()
   })
 })

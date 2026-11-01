@@ -606,6 +606,9 @@ export type AnalyticsEvent = {
 }[AnalyticsEventName]
 
 export interface CommonTelemetryProperties {
+  platform: 'mac' | 'win' | 'linux'
+  event_schema_version: number
+  telemetry_source: string
   $geoip_disable: boolean
   app_version: string
   arch: 'arm64' | 'x64' | 'unknown'

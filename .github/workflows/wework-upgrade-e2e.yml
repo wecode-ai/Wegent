@@ -15,6 +15,13 @@ on:
           - macos-15
           - macos-15-intel
           - windows-latest
+      checkpoint:
+        description: "Run the complete upgrade suite or diagnose the default-user upgrade"
+        type: choice
+        default: all
+        options:
+          - all
+          - app-upgrade
 
 permissions:
   contents: read
@@ -48,14 +55,21 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - name: Verify policy and transaction tests
         run: |
-          node --test wework/scripts/build-launcher.test.mjs wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/component-update-scenario.test.mjs
+          node --test wework/e2e/desktop/upgrade-user-home.test.mjs wework/e2e/desktop/upgrade-user-environment.test.mjs wework/e2e/desktop/checkpoints.test.mjs wework/scripts/build-launcher.test.mjs wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/component-update-scenario.test.mjs
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --filter wework prepare:electron
-          pnpm --dir wework/electron test src/host/app-update-service.test.ts src/host/preferences-store.test.ts src/host/renderer-storage-store.test.ts src/runtime/core-dsh-runtime.test.ts src/runtime/release-store.test.ts src/runtime/release-snapshot.test.ts src/runtime/release-profile.test.ts src/runtime/release-preparation.test.ts scripts/physical-release-files.test.mjs
+          pnpm --dir wework/electron test src/bootstrap.test.ts src/runtime/immutable-directory.test.ts src/runtime/managed-executor-runtime.test.ts src/runtime/startup-watchdog.test.ts src/runtime/release-parent-process.test.ts src/runtime/release-layout-recovery.test.ts src/host/app-update-service.test.ts src/host/preferences-store.test.ts src/host/renderer-storage-store.test.ts src/runtime/core-dsh-runtime.test.ts src/runtime/core-dsh-plugin-manager.test.ts src/runtime/release-store.test.ts src/runtime/release-snapshot.test.ts src/runtime/release-profile.test.ts src/runtime/release-preparation.test.ts scripts/physical-release-files.test.mjs
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
       - name: Verify real packaged upgrade, snapshot restore, and failed activation recovery
-        run: pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full
+        env:
+          UPGRADE_CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'all' }}
+        run: |
+          if [[ "$UPGRADE_CHECKPOINT" == "app-upgrade" ]]; then
+            pnpm --filter wework e2e:desktop -- --segment app-upgrade
+          else
+            pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full,startup-network-change
+          fi
       - name: Retain reproducible diagnostics and results
         if: always()
         uses: actions/upload-artifact@v4

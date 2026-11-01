@@ -1,8 +1,4 @@
-import type {
-  RuntimeGoal,
-  RuntimeGoalContinuationPayload,
-  RuntimeGoalCreateInput,
-} from '@/types/api'
+import type { RuntimeGoal, RuntimeTaskSummary, RuntimeGoalCreateInput } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 export function runtimeGoalCreateInput(
@@ -42,62 +38,31 @@ export function reconcileRuntimeGoal(
   return next.updatedAt < current.updatedAt ? current : next
 }
 
-export function updateRuntimeGoalContinuation(
-  current: RuntimeGoalContinuationPayload | null,
-  event:
-    | { type: 'assistant_started' }
-    | { type: 'goal_inactive' }
-    | { type: 'turn_lifecycle'; payload: RuntimeGoalContinuationPayload }
-): RuntimeGoalContinuationPayload | null {
-  if (event.type === 'assistant_started') return current
-  if (event.type === 'goal_inactive') return null
-  return event.payload.status === 'started' ? event.payload : null
-}
-
-export function isRuntimeGoalContinuationTurn(
-  messages: WorkbenchMessage[],
-  activeAssistantMessage: WorkbenchMessage | null
-): boolean {
-  const activeTurnId =
-    activeAssistantMessage?.turnId?.trim() || activeAssistantMessage?.subtaskId?.trim()
-  if (!activeTurnId) return false
-
-  return !messages.some(message => {
-    if (message.role !== 'user') return false
-    const messageTurnId = message.turnId?.trim() || message.subtaskId?.trim()
-    return messageTurnId === activeTurnId
-  })
-}
-
 export function projectRuntimeGoalContinuationActive({
   goal,
-  continuation,
-  taskRunning,
-  messages,
-  activeAssistantMessage,
+  execution,
 }: {
   goal: RuntimeGoal | null
-  continuation: RuntimeGoalContinuationPayload | null
-  taskRunning: boolean
-  messages: WorkbenchMessage[]
-  activeAssistantMessage: WorkbenchMessage | null
+  execution: RuntimeTaskSummary['executionState']
 }): boolean {
-  if (goal?.status !== 'active' || !taskRunning) return false
-  if (continuation?.status === 'started') return true
-  return taskRunning && isRuntimeGoalContinuationTurn(messages, activeAssistantMessage)
+  return (
+    goal?.status === 'active' &&
+    execution?.phase !== 'idle' &&
+    (execution?.phase === 'continuing' || execution?.continuation === true)
+  )
 }
 
-export function projectRuntimeGoalContinuing(
-  input: Parameters<typeof projectRuntimeGoalContinuationActive>[0]
-): boolean {
+export function projectRuntimeGoalContinuing(input: {
+  goal: RuntimeGoal | null
+  execution: RuntimeTaskSummary['executionState']
+  activeAssistantMessage: WorkbenchMessage | null
+}): boolean {
   if (!projectRuntimeGoalContinuationActive(input)) return false
-  const assistant = input.activeAssistantMessage
-  const activeTurnId = assistant?.turnId?.trim() || assistant?.subtaskId?.trim()
-  const matchesContinuation =
-    input.continuation?.status === 'started'
-      ? activeTurnId === input.continuation.turnId
-      : isRuntimeGoalContinuationTurn(input.messages, assistant)
-  return !(assistant && matchesContinuation && hasVisibleAssistantProjection(assistant))
+  return (
+    input.execution?.phase === 'continuing' ||
+    !input.activeAssistantMessage ||
+    !hasVisibleAssistantProjection(input.activeAssistantMessage)
+  )
 }
 
 function hasVisibleAssistantProjection(message: WorkbenchMessage): boolean {

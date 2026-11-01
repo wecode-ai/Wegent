@@ -1,3 +1,5 @@
+import { visibleRuntimeUserMessage } from '../../../../packages/chat-core/src/runtime-user-message.js'
+
 import {
   DIAGRAM_REGRESSION_MARKER,
   DIAGRAM_REGRESSION_RESPONSE,
@@ -312,7 +314,14 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'decodeImage',
   'getAttribute',
+  'getBundledPluginUpdates',
+  'getComposerPluginInventoryDiagnostics',
+  'getConversationDiagnosticsSnapshot',
   'getElementCount',
+  'getLocalExecutorStatus',
+  'getLocalStorageItem',
+  'getLocationOrigin',
+  'getPluginSyncDiagnostics',
   'getTerminalText',
   'getText',
   'metrics',
@@ -376,26 +385,28 @@ function requestContainsSkillLocator(body, skillPath) {
   )
 }
 
-/** Text of the user-authored turns codex forwarded to the model, in order. */
+/** Text of top-level user messages, excluding quoted messages inside tool output. */
 function inputUserMessageTexts(request) {
-  const texts = []
-  const visit = value => {
-    if (Array.isArray(value)) {
-      value.forEach(visit)
-      return
-    }
-    if (!value || typeof value !== 'object') return
-    if (value.type === 'message' && value.role === 'user') {
-      const content = Array.isArray(value.content) ? value.content : [value.content]
-      for (const part of content) {
-        const text = typeof part === 'string' ? part : part?.text
-        if (typeof text === 'string' && text.trim()) texts.push(text)
-      }
-    }
-    Object.values(value).forEach(visit)
-  }
-  visit(request.input)
-  return texts
+  const input = Array.isArray(request.input) ? request.input : []
+  return input
+    .filter(item => item.type === 'message' && item.role === 'user')
+    .map(item => {
+      const content = Array.isArray(item.content) ? item.content : [item.content]
+      return content.map(part => (typeof part === 'string' ? part : part?.text) ?? '').join('')
+    })
+    .filter(text => text.trim())
+}
+
+/** Match the actual reply after this question's acknowledgement, not injected context. */
+function hasUserReplyAfterToolOutput(request, callId, answer) {
+  const input = Array.isArray(request.input) ? request.input : []
+  const outputIndex = input.findIndex(
+    item => item.type === 'function_call_output' && item.call_id === callId
+  )
+  if (outputIndex === -1) return false
+  return inputUserMessageTexts({ input: input.slice(outputIndex + 1) }).some(
+    text => visibleRuntimeUserMessage(text) === answer
+  )
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -1235,6 +1246,7 @@ class DesktopE2EServer {
     const result = new Promise((resolvePromise, reject) => {
       this.commandResults.set(id, {
         clientId,
+        action,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -1268,6 +1280,7 @@ class DesktopE2EServer {
     const { command } = this.commandQueue[commandIndex]
     this.commandHistory.push({
       ...command,
+      ...(command.action === 'setCloudSessionToken' ? { value: '[redacted]' } : {}),
       clientId,
       deliveredAt: new Date().toISOString(),
     })
@@ -2131,10 +2144,14 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
-      this.controlCommandAvailableAt.set(
-        result.clientId,
-        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
-      )
+      // Observations may check readiness during an input cooldown, but must
+      // neither extend nor shorten the interval between state-changing actions.
+      if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        this.controlCommandAvailableAt.set(
+          result.clientId,
+          Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+        )
+      }
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
@@ -3958,8 +3975,10 @@ class DesktopE2EServer {
         const toolOutput = toolOutputText(body, callId)
         if (toolOutput !== null) {
           assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
-          const answered = inputUserMessageTexts(body).some(text =>
-            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
+          const answered = hasUserReplyAfterToolOutput(
+            body,
+            callId,
+            REQUEST_USER_INPUT_FREE_TEXT_ANSWER
           )
           this.writeSse(response, [
             responseCreated(responseId),
@@ -4008,9 +4027,7 @@ class DesktopE2EServer {
           ])
           return
         }
-        const answered = inputUserMessageTexts(body).some(text =>
-          text.includes(REQUEST_USER_INPUT_ASYNC_ANSWER)
-        )
+        const answered = hasUserReplyAfterToolOutput(body, callId, REQUEST_USER_INPUT_ASYNC_ANSWER)
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(

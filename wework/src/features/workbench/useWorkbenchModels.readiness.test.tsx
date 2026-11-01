@@ -43,12 +43,41 @@ test('does not advertise send readiness before a deferred catalog has loaded', a
   )
 
   expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isCatalogReady).toBe(false)
   expect(api.listModels).not.toHaveBeenCalled()
   hook.rerender({ enabled: true })
   await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
   expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isCatalogReady).toBe(false)
 
   await act(async () => finishLoad({ data: [model] }))
   await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
   expect(hook.result.current.selectedModel).toEqual(model)
+  expect(hook.result.current.isCatalogReady).toBe(true)
+})
+
+test('finishes catalog loading even when the configured model is unavailable', async () => {
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      selectionConfig: { modelName: 'deleted-model', modelType: 'runtime' },
+      fallbackWhenConfiguredModelUnavailable: false,
+    })
+  )
+
+  await waitFor(() => expect(hook.result.current.isCatalogReady).toBe(true))
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(hook.result.current.isConfiguredModelUnavailable).toBe(true)
+})
+
+test('finishes a failed catalog attempt so the launcher can report an unavailable model', async () => {
+  const error = new Error('catalog unavailable')
+  const api = { listModels: vi.fn().mockRejectedValue(error) }
+  const hook = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+  await waitFor(() => expect(hook.result.current.isCatalogReady).toBe(true))
+  expect(hook.result.current.models).toEqual([])
+  expect(hook.result.current.error).toBe(error)
 })

@@ -1,8 +1,49 @@
-import { watch } from 'chokidar'
+import { existsSync, realpathSync } from 'node:fs'
 import { once } from 'node:events'
-import { existsSync } from 'node:fs'
 import path from 'node:path'
+import chokidar from 'chokidar'
 import { developmentBuildInputs } from './development-build-inputs.mjs'
+
+export function watchDevelopmentDirectory(
+  directory,
+  { recursive, ignored },
+  notify,
+  createWatcher = chokidar.watch
+) {
+  const roots = [directory, realpathSync(directory)]
+  const watcher = createWatcher(directory, {
+    ignoreInitial: true,
+    disableGlobbing: true,
+    depth: recursive ? undefined : 0,
+    ignored,
+  })
+  watcher.on('all', (event, filename) => notify(event, path.relative(directory, filename)))
+  // Node-backed normalized change events are throttled for 50 ms. Preserve
+  // raw edits as well; the input snapshot deduplicates repeated notifications.
+  watcher.on('raw', (event, filename, details) => {
+    const changed = rawNotificationPath(filename, details?.watchedPath)
+    if (!changed) return
+    const relative = roots
+      .map(root => path.relative(root, changed))
+      .find(
+        value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value)
+      )
+    if (relative !== undefined)
+      notify(event, filename ? relative || path.basename(directory) : undefined)
+  })
+  return {
+    ready: once(watcher, 'ready'),
+    on: (...args) => watcher.on(...args),
+    close: () => watcher.close(),
+  }
+}
+
+function rawNotificationPath(filename, watched) {
+  const name = filename == null ? undefined : String(filename)
+  if (!watched) return name && path.isAbsolute(name) ? name : undefined
+  if (!name || path.basename(watched) === name) return watched
+  return path.resolve(watched, name)
+}
 
 /** Serialize fresh builds so emitted asset references never cross build generations. */
 export async function watchDevelopmentBuild({
@@ -12,9 +53,9 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
+  watchDirectory = watchDevelopmentDirectory,
 }) {
   const watchers = []
-  const readiness = []
   let closed = false
   let pending = false
   let timer
@@ -51,32 +92,29 @@ export async function watchDevelopmentBuild({
   }
   const observe = (directory, recursive, accept) => {
     if (!existsSync(directory)) return
-    // Chokidar rearms replaced inodes after atomic editor saves on Linux.
-    const watcher = watch(directory, {
-      ignoreInitial: true,
-      disableGlobbing: true,
-      // Stabilize complete inputs before the cross-file build debounce.
-      awaitWriteFinish: {
-        stabilityThreshold: debounceMs,
-        pollInterval: Math.max(1, Math.min(debounceMs, 100)),
+    const watcher = watchDirectory(
+      directory,
+      {
+        recursive,
+        ignored: filename => excluded(path.resolve(filename), directory),
       },
-      ...(recursive ? {} : { depth: 0 }),
-      ignored: filename => excluded(path.resolve(filename), directory),
-    })
-    watcher.on('all', (_event, filename) => {
-      const resolved = path.resolve(filename)
-      if (excluded(resolved, directory) || !accept(resolved)) return
-      // The initial build reads edits observed before the startup snapshot.
-      if (!inputChanged) return
-      try {
-        if (inputChanged(resolved, directory)) schedule()
-      } catch (error) {
-        onError(error)
+      (_event, filename) => {
+        // The initial build reads all inputs after subscriptions become ready.
+        if (!inputChanged) return
+        if (!filename) return schedule()
+        const name = String(filename)
+        const resolved =
+          recursive && name === path.basename(directory) ? directory : path.resolve(directory, name)
+        if (excluded(resolved, directory) || !accept(resolved)) return
+        try {
+          if (inputChanged(resolved, directory)) schedule()
+        } catch (error) {
+          onError(error)
+        }
       }
-    })
+    )
     watcher.on('error', onError)
     watchers.push(watcher)
-    readiness.push(once(watcher, 'ready'))
   }
   try {
     for (const directory of directories) observe(directory, true, () => true)
@@ -88,7 +126,7 @@ export async function watchDevelopmentBuild({
       parents.set(parent, names)
     }
     for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
-    await Promise.all(readiness)
+    await Promise.all(watchers.map(watcher => watcher.ready))
     inputChanged = developmentBuildInputs({ directories, files, excluded })
     running = build()
     await running

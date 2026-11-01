@@ -37,7 +37,8 @@ export async function verifyIssueAssignmentReceipts(
   control,
   projectId,
   uiTimeoutMs,
-  captureScreenshot
+  captureScreenshot,
+  userId
 ) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const dismissInbox = async () => {
@@ -56,12 +57,13 @@ export async function verifyIssueAssignmentReceipts(
     )
     await captureScreenshot(control, name, CONTENT)
   }
-  const params = { projectId, userId: 9001, projectStore: 'local' }
+  const params = { projectId, userId, projectStore: 'local' }
+  const peerUserId = userId + 1
   const settings = await rpc('runtime.stand_in.get', params)
   await rpc('runtime.stand_in.save', { ...params, settings: { ...settings, enabled: false } })
   let issue = await rpc('todos.create', {
     project_id: projectId,
-    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: 9002 },
+    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: peerUserId },
   })
   const load = () => rpc('todos.assignment_receipts', { project_id: projectId, task_id: issue.id })
   const open = async () => {
@@ -86,7 +88,7 @@ export async function verifyIssueAssignmentReceipts(
   issue = await rpc('todos.update', {
     project_id: projectId,
     task_id: issue.id,
-    todo: { version: issue.version, assignee_user_id: 9001 },
+    todo: { version: issue.version, assignee_user_id: userId },
   })
   await open()
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
@@ -145,7 +147,7 @@ export async function verifyIssueAssignmentReceipts(
   issue = await rpc('todos.update', {
     project_id: projectId,
     task_id: issue.id,
-    todo: { version: issue.version, assignee_user_id: 9002 },
+    todo: { version: issue.version, assignee_user_id: peerUserId },
   })
   await open()
   await control.command('waitFor', RECEIPTS, { text: '未读' })
