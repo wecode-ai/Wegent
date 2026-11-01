@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
 import { Transform } from 'node:stream'
 
@@ -106,6 +107,7 @@ export class TransportFaultProxy {
     this.requests = []
     this.sockets = new Set()
     this.upstreams = new Set()
+    this.pausedRequests = new Set()
     this.websockets = new Set()
     this.deviceSockets = new Set()
     this.rule = () => null
@@ -114,6 +116,7 @@ export class TransportFaultProxy {
     this.preserveHost = preserveHost
     this.webSocketsDisconnected = false
     this.capabilitySyncGate = null
+    this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
@@ -142,30 +145,90 @@ export class TransportFaultProxy {
     const url = new URL(request.url, this.target)
     // Retain no headers, tokens, request bodies or device query strings.
     const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
+    const requestId = request.headers['x-request-id']
+    if (typeof requestId === 'string') {
+      entry.requestIdFingerprint = createHash('sha256').update(requestId).digest('hex')
+    }
     this.requests.push(entry)
+    response.once('finish', () => {
+      entry.responseCompleted = true
+    })
     const fault = this.rule(entry, request)
     entry.fault = fault
+    if (fault === 'disconnect') {
+      request.resume()
+      response.destroy()
+      return
+    }
     if (fault === 'hold-request') {
       request.resume()
       // A canceled destructive request must never be replayed when the fault is lifted.
       return
     }
+    if (fault === 'pause-request') {
+      // Hold the untouched request stream, then forward it exactly once on release.
+      // Unlike hold-request, a paused request is resumable because the real client
+      // is still waiting for a real reply.
+      let forwarded = false
+      this.pausedRequests.add(entry)
+      response.once('close', () => {
+        this.pausedRequests.delete(entry)
+        // A transport that closed without delivering a full reply was cancelled.
+        if (!entry.responseCompleted) entry.cancelled = true
+      })
+      entry.release = () => {
+        if (forwarded || entry.cancelled || response.destroyed || response.writableEnded)
+          return false
+        forwarded = true
+        entry.released = true
+        this.pausedRequests.delete(entry)
+        this.forwardUpstream(request, response, entry, null)
+        return true
+      }
+      entry.cancel = () => {
+        if (entry.cancelled || response.destroyed || response.writableEnded) return false
+        entry.cancelled = true
+        this.pausedRequests.delete(entry)
+        request.resume()
+        response.destroy()
+        return true
+      }
+      // Leave the original request stream paused; release forwards it once unchanged.
+      return
+    }
+    this.forwardUpstream(request, response, entry, fault)
+  }
+
+  forwardUpstream(request, response, entry, fault) {
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
       if (fault === 'hold-response') {
         const chunks = []
         incoming.on('data', chunk => chunks.push(chunk))
         incoming.once('end', () => {
+          if (response.destroyed) return
+          let held = {
+            status: incoming.statusCode,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks),
+          }
+          // Functions keep the real reply inspectable without serializing its bytes or headers.
+          entry.readHeldResponse = () => held
+          response.once('close', () => {
+            held = null
+          })
           entry.release = () =>
             new Promise(resolve => {
-              if (response.destroyed || response.writableEnded) {
-                resolve()
+              const reply = held
+              held = null
+              if (!reply || response.destroyed || response.writableEnded) {
+                resolve(false)
                 return
               }
-              response.once('finish', resolve)
-              response.once('close', resolve)
-              response.writeHead(incoming.statusCode, incoming.headers)
-              response.end(Buffer.concat(chunks))
+              response.once('finish', () => resolve(true))
+              response.once('close', () => resolve(entry.responseCompleted === true))
+              response.writeHead(reply.status, reply.headers)
+              response.end(reply.body)
               entry.released = true
             })
           entry.committedResponseHeld = true
@@ -339,11 +402,16 @@ export class TransportFaultProxy {
   }
 
   async stop() {
-    this.capabilitySyncGate?.release()
-    for (const request of this.upstreams) request.destroy()
-    for (const socket of this.sockets) socket.destroy()
-    await new Promise((resolve, reject) =>
-      this.server.close(error => (error ? reject(error) : resolve()))
-    )
+    this.stopPromise ??= (async () => {
+      this.capabilitySyncGate?.release()
+      // Paused requests have no upstream yet; cancel them so clients settle.
+      for (const entry of [...this.pausedRequests]) entry.cancel?.()
+      for (const request of this.upstreams) request.destroy()
+      for (const socket of this.sockets) socket.destroy()
+      await new Promise((resolve, reject) =>
+        this.server.close(error => (error ? reject(error) : resolve()))
+      )
+    })()
+    return this.stopPromise
   }
 }

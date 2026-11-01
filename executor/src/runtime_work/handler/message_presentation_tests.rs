@@ -1,5 +1,108 @@
 use super::*;
 
+#[test]
+fn assistant_phase_resets_at_the_root_turn_boundary_only() {
+    let (event_tx, mut event_rx) = broadcast::channel(16);
+    let mut mapper = CodexNotificationEventMapper::default();
+    mapper.observe_root_thread_id("root-thread");
+    let request = ExecutionRequest::default();
+    for (method, params) in [
+        (
+            "turn/started",
+            json!({"threadId":"root-thread", "turn":{"id":"first"}}),
+        ),
+        (
+            "item/started",
+            json!({"threadId":"root-thread", "item":{
+                "id":"answer", "type":"agentMessage", "phase":"final_answer", "text":""
+            }}),
+        ),
+        (
+            "turn/started",
+            json!({"threadId":"child-thread", "turn":{"id":"child"}}),
+        ),
+        (
+            "item/agentMessage/delta",
+            json!({"threadId":"root-thread", "itemId":"answer", "delta":"First"}),
+        ),
+        (
+            "turn/started",
+            json!({"threadId":"root-thread", "turn":{"id":"second"}}),
+        ),
+        (
+            "item/agentMessage/delta",
+            json!({"threadId":"root-thread", "itemId":"answer", "delta":"Second"}),
+        ),
+    ] {
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &request,
+            json!({"method":method, "params":params}),
+        );
+    }
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["event"] == "response.output_text.delta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["event"] == "response.block.created")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn turn_start_response_preserves_an_already_started_assistant_phase() {
+    let (mut handler, root) = isolated_runtime_work_handler("late-turn-start-response-phase");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "turn-1".into(),
+        ..ExecutionRequest::default()
+    };
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
+    handler.route_codex_notification(json!({"method":"turn/started", "params":{
+        "threadId":"thread-1", "turn":{"id":"turn-1", "status":"inProgress"}
+    }}));
+    handler.route_codex_notification(json!({"method":"item/started", "params":{
+        "threadId":"thread-1", "turnId":"turn-1",
+        "item":{"id":"answer-1", "type":"agentMessage", "phase":"final_answer", "text":""}
+    }}));
+    // The native reader may deliver item/started before turn/start returns.
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+    handler.route_codex_notification(json!({"method":"item/agentMessage/delta", "params":{
+        "threadId":"thread-1", "turnId":"turn-1", "itemId":"answer-1", "delta":"Live answer"
+    }}));
+    let mut output = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        output.push(event);
+    }
+    assert!(
+        output
+            .iter()
+            .any(|event| event["event"] == "response.output_text.delta"),
+        "{output:?}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status() {
     for error in [
@@ -57,7 +160,7 @@ fn active_codex_text_without_phase_stays_process_text_until_completion() {
             }}
         }),
     );
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     let completed = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(completed[0]["content"], "Live answer");
     assert!(completed[0]["blocks"].as_array().unwrap().is_empty());
@@ -135,7 +238,7 @@ fn active_codex_text_deltas_survive_interruption() {
     assert_eq!(thread["turns"][0]["items"][0]["text"], "Partial answer");
     assert_eq!(thread["turns"][0]["items"][0]["phase"], "final_answer");
 
-    handler.persist_and_clear_active_codex_transcript("task-1", "cancelled");
+    handler.persist_and_clear_active_codex_transcript("task-1", "cancelled", None);
     let link = handler.local_task_link("task-1").unwrap();
     let messages = completed_transcript_messages(&link);
     assert_eq!(messages.len(), 1);
@@ -380,28 +483,36 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         thread_id: "thread-1".to_owned(),
         turn_id: "turn-next".to_owned(),
     };
+    handler
+        .store
+        .update_task("task-1", |link| link.thread_id = Some("thread-1".into()));
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), true);
+    handler.route_codex_notification(json!({"method": "turn/started", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-next", "status": "inProgress"}
+    }}));
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-next");
-    let mut mapper = CodexNotificationEventMapper::default();
-    handler.map_execution_codex_notification(
-        "task-1", execution_id, &request, Some(active.clone()), &mut mapper,
+    handler.deliver_native_notification_for_execution(
+        "task-1", execution_id, &request, Some(active.clone()),
         json!({"method": "item/started", "params": {
             "threadId": "thread-1", "turnId": "turn-next",
             "item": {"id": "message-next", "type": "agentMessage", "phase": "final_answer", "text": ""},
         }}),
     ).await;
     handler
-        .map_execution_codex_notification(
+        .deliver_native_notification_for_execution(
             "task-1",
             execution_id,
             &request,
             Some(active.clone()),
-            &mut mapper,
             json!({"method": "item/agentMessage/delta", "params": {
                 "threadId": "thread-1", "turnId": "turn-next", "itemId": "message-next",
                 "delta": "Continuation output",
             }}),
         )
         .await;
+    handler.route_codex_notification(json!({"method": "turn/completed", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-next", "status": "completed", "items": []}
+    }}));
     handler.handle_turn_result(
         "task-1",
         execution_id,

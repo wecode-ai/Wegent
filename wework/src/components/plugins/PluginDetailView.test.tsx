@@ -55,6 +55,32 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test('shows the new version action only to a personal owner and reflects preparation', () => {
+    const onSubmit = vi.fn()
+    const view = (accessRole: 'owner' | 'recipient', busy = false) => (
+      <PluginDetailView
+        plugin={createDetailPlugin()}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        accessRole={accessRole}
+        pluginVisibility="personal"
+        versionSubmission={{ currentVersion: '1.1.0', nextVersion: '1.2.0', busy, onSubmit }}
+      />
+    )
+    const { rerender } = render(view('owner'))
+    expect(screen.getByTestId('plugin-version-submit-notice')).toHaveTextContent(
+      '本地 v1.2.0 · 已分享 v1.1.0'
+    )
+    fireEvent.click(screen.getByTestId('plugin-version-submit-open'))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    rerender(view('owner', true))
+    expect(screen.getByTestId('plugin-version-submit-open')).toBeDisabled()
+    rerender(view('recipient'))
+    expect(screen.queryByTestId('plugin-version-submit-notice')).not.toBeInTheDocument()
+  })
+
   test.each([
     { readyToTry: false, updateAvailable: false },
     { readyToTry: true, updateAvailable: true },

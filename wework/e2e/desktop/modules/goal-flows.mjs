@@ -57,6 +57,7 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -105,25 +106,49 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.goal.cleared',
   })
-  const clearResponse = JSON.parse(
-    await control.command('clearRuntimeGoalDirectly', 'body', {
-      value: JSON.stringify({ address }),
-    })
-  )
-  assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
-  const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    staleSnapshot.testIds.includes('goal-status-bar'),
-    true,
-    'The dropped Goal clear event did not preserve the stale Goal bar fixture'
-  )
-  assert.equal(
-    staleSnapshot.testIds.includes(goalDotTestId),
-    true,
-    'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
-  )
+  const gates = runtimeTransportGates(control)
+  // Match the cleared snapshot rather than consuming an unrelated in-flight update.
+  await gates.arm({
+    id: 'missing-goal-cleared-snapshot',
+    kind: 'event',
+    name: 'runtime.turn.updated',
+    holdFollowing: true,
+    where: [
+      { path: 'payload.taskId', equals: goalTaskId },
+      { path: 'payload.data.task.goalStatus', equals: null },
+    ],
+  })
+  // A refreshed task list can independently repair the sidebar from the same snapshot.
+  await gates.arm({
+    id: 'missing-goal-task-list',
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    holdFollowing: true,
+  })
+  try {
+    const clearResponse = JSON.parse(
+      await control.command('clearRuntimeGoalDirectly', 'body', {
+        value: JSON.stringify({ address }),
+      })
+    )
+    assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+    await gates.wait('missing-goal-cleared-snapshot')
+    const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      staleSnapshot.testIds.includes('goal-status-bar'),
+      true,
+      'The dropped Goal clear event did not preserve the stale Goal bar fixture'
+    )
+    assert.equal(
+      staleSnapshot.testIds.includes(goalDotTestId),
+      true,
+      'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
+    )
 
-  await control.command('dispatchRuntimeEventLagged', 'body')
+    await control.command('dispatchRuntimeEventLagged', 'body')
+  } finally {
+    await gates.reset()
+  }
   await waitForSnapshot(
     control,
     snapshot =>

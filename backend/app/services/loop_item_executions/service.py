@@ -2774,7 +2774,7 @@ class LoopItemExecutionService:
                 error=error,
             )
             metadata = dict(activity.metadata_json or {})
-            if reconciled and isinstance(metadata.get("runtime_turn_id"), str):
+            if reconciled:
                 # Outcome-only observations must retain eligibility for the
                 # matching final event to supply text after this transaction.
                 metadata.setdefault("runtime_completed_at", completed_at.isoformat())
@@ -3167,6 +3167,12 @@ class LoopItemExecutionService:
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
+
+        # Thread-level Goal notifications can retain the previous request's
+        # turn identity while a continuation starts. They cannot establish
+        # the current execution's turn binding or renew its lease.
+        if event_name.startswith("runtime.goal."):
+            return None
 
         row = self.execution_for_runtime(
             db,

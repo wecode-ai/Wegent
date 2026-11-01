@@ -6,6 +6,16 @@ sidebar_position: 24
 
 The Wework desktop app follows the Codex App sidebar state model. Project and live task content comes from the Codex app-server, while sidebar metadata comes from `.codex-global-state.json` in the target device's `CODEX_HOME`. While a remote device is online, Wework also stores a local task-list summary for startup recovery after that device goes offline.
 
+## Hover detail lifetime
+
+Sidebar project and task details follow pointer hover. They close after the pointer leaves both the row and the popup, even if a popup button retains focus. `HoverCard.interactive` only enables actions inside the popup; callers that need focus-driven visibility must explicitly enable `openOnFocus`. Project pinning is independent of popup visibility.
+
+The desktop `running-sidebar-state` checkpoint covers entering project details from the row, focusing a popup button and moving outside, dismissal, reopening, and Escape dismissal. The scenario retains button focus in the background renderer and verifies that subsequent pointer movement cannot cancel dismissal, without letting native window blur hide the defect.
+
+Pointer transfers use the `target` option on `pointerLeave` to dispatch exit and entry events within one renderer turn, preventing control transport gaps from exceeding the actual dismissal delay. The production 120ms dismissal delay remains unchanged; longer waits and retries must not hide the defect.
+
+The shared `focus` control command establishes the focus prerequisite. In a background Electron window, DOM `focus()` updates `activeElement` without emitting `focusin`; the command also dispatches that event while the window is inactive, so React observes the focus transition without native window activation.
+
 ## State ownership
 
 | Data                                       | Source of truth                                | Notes                                                                              |

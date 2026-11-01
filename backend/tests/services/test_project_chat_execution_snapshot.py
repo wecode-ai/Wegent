@@ -74,6 +74,73 @@ def report(**overrides):
     return RuntimeExecutionSnapshot.model_validate(data)
 
 
+@pytest.mark.parametrize("event_name", ["runtime.goal.cleared", "runtime.goal.updated"])
+def test_previous_goal_event_cannot_bind_a_continuation_to_an_old_turn(
+    test_db, test_user, run, event_name, monkeypatch
+):
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message",
+        lambda *args, **kwargs: None,
+    )
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.metadata_json = {**row.metadata_json, "execution_id": execution.id}
+    test_db.commit()
+
+    loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        owner_user_id=test_user.id,
+        event_name=event_name,
+        payload={"subtaskId": "previous-turn", "eventSeq": 11, "data": {}},
+    )
+    snapshot = report(
+        running=True,
+        turns=[
+            {
+                "id": "previous-turn",
+                "userMessageIds": ["previous-trigger"],
+                "status": "done",
+            },
+            {
+                "id": "current-turn",
+                "userMessageIds": ["trigger-1"],
+                "status": "running",
+            },
+        ],
+    )
+    assert (
+        reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=snapshot)
+        == []
+    )
+    test_db.expire_all()
+    assert execution.status == "running"
+    assert execution.last_event_seq == 10
+    assert row.status == "streaming"
+    assert "runtime_turn_id" not in row.metadata_json
+
+
 @pytest.mark.parametrize(
     "outcome,expected",
     [("done", "completed"), ("failed", "failed"), ("cancelled", "cancelled")],
@@ -512,6 +579,86 @@ def test_final_content_after_runtime_status_reconciliation(
         assert execution.last_event_seq == 10
 
 
+@pytest.mark.parametrize(
+    "identity", ["matching", "wrong", "missing", "bound_other", "retry"]
+)
+def test_status_reconciliation_retains_client_message_completion_identity(
+    test_db, test_user, run, monkeypatch, identity
+):
+    from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+    from app.models.delivery import ProjectChatAgent
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    project, task, row = run
+    test_db.get(ProjectChatAgent, "12").created_by_user_id = test_user.id
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message",
+        lambda *args, **kwargs: None,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    if identity == "retry":
+        execution.attempt_no = 2
+    row.metadata_json = {**row.metadata_json, "execution_id": execution.id}
+    if identity == "bound_other":
+        row.metadata_json = {**row.metadata_json, "runtime_turn_id": "older-turn"}
+    test_db.commit()
+    loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db, execution_id=execution.id, runtime_status="completed", running=False
+    )
+    previous = (execution.version, task.version, row.content)
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    payload = {
+        "taskId": "runtime-1",
+        "subtaskId": "native-turn-after-reconciliation",
+        "eventSeq": 12,
+        "data": {"text": "Reply from the continued member conversation"},
+    }
+    if identity != "missing":
+        payload["clientUserMessageId"] = (
+            "other-trigger" if identity == "wrong" else row.trigger_message_id
+        )
+    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+        projected = _project_chat_runtime_event_sync(
+            "snapshot-device",
+            {"event": "response.completed", "payload": payload},
+            user_id=test_user.id,
+        )
+        advance.assert_not_called()
+    test_db.expire_all()
+    assert (execution.version, task.version) == previous[:2]
+    assert execution.status == row.status == "completed"
+    if identity == "matching":
+        assert projected["message"]["content"] == payload["data"]["text"]
+        assert row.content == payload["data"]["text"]
+        assert row.metadata_json["runtime_turn_id"] == payload["subtaskId"]
+        assert execution.last_event_seq == 12
+    else:
+        assert projected is None or projected["message"] is None
+        assert row.content == previous[2]
+        assert execution.last_event_seq == 10
+
+
 def test_conflicting_terminal_report_cannot_replace_durable_outcome(
     test_db, test_user, run
 ):
@@ -627,6 +774,7 @@ def test_managed_final_event_restores_content_during_outcome_snapshot(
         "sequence",
         "missing_sequence",
         "no_snapshot",
+        "deleted",
     ],
 )
 def test_reconciled_content_rejects_conflicting_execution_evidence(
@@ -664,6 +812,8 @@ def test_reconciled_content_rejects_conflicting_execution_evidence(
             for key, value in row.metadata_json.items()
             if key != "runtime_completed_at"
         }
+    if mismatch == "deleted":
+        row.deleted_at = datetime.now(UTC).replace(tzinfo=None)
     test_db.commit()
     event = {
         "subtaskId": "another-turn" if mismatch == "turn" else "turn-1",
@@ -678,6 +828,7 @@ def test_reconciled_content_rejects_conflicting_execution_evidence(
             execution=execution,
             event_name="response.completed",
             payload=event,
+            activity=row if mismatch == "deleted" else None,
         )
         is False
     )

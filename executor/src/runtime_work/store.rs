@@ -60,6 +60,8 @@ pub(crate) struct RuntimeWorkStore {
     last_written_payload: Arc<Mutex<Option<Vec<u8>>>>,
     #[cfg(test)]
     write_attempts: Arc<AtomicU64>,
+    #[cfg(test)]
+    full_task_reads: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -232,6 +234,7 @@ impl PersistedRuntimeTask {
             recency_at,
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
+            execution_state: None,
             parent: self.parent,
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,
@@ -379,6 +382,8 @@ impl RuntimeWorkStore {
             last_written_payload: Arc::new(Mutex::new(last_written_payload)),
             #[cfg(test)]
             write_attempts: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_task_reads: Arc::new(AtomicU64::new(0)),
         };
         if migration_required {
             store.persist_current_index();
@@ -422,18 +427,28 @@ impl RuntimeWorkStore {
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
-        self.refresh_index_from_disk_if_changed();
-        self.index.lock().ok()?.tasks.get(local_task_id).cloned()
+        #[cfg(test)]
+        self.full_task_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_task(local_task_id, Clone::clone)
+    }
+
+    #[cfg(test)]
+    pub fn full_task_read_count(&self) -> u64 {
+        self.full_task_reads.load(Ordering::Relaxed)
     }
 
     pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.read_task(local_task_id, RuntimeTaskLink::list_summary)
+    }
+
+    /// Read task metadata without copying its buffered transcript.
+    pub fn read_task<T>(
+        &self,
+        local_task_id: &str,
+        read: impl FnOnce(&RuntimeTaskLink) -> T,
+    ) -> Option<T> {
         self.refresh_index_from_disk_if_changed();
-        self.index
-            .lock()
-            .ok()?
-            .tasks
-            .get(local_task_id)
-            .map(RuntimeTaskLink::list_summary)
+        self.index.lock().ok()?.tasks.get(local_task_id).map(read)
     }
 
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
@@ -541,29 +556,47 @@ impl RuntimeWorkStore {
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let before = persisted_task_fingerprint(task);
+        let revision_before = task
+            .execution_state
+            .as_ref()
+            .map(|state| state.revision.clone());
+        let updated_at_before = task.updated_at;
         let lifecycle_before = (
             task.running,
             task.status.clone(),
+            task.thread_status.clone(),
             task.turn_status.clone(),
             task.interaction_status.clone(),
+            task.completed_at,
             task.runtime_handle["lastTurnId"].clone(),
             task.runtime_handle["origin"].clone(),
         );
         updater(task);
-        if lifecycle_before
+        let lifecycle_changed = lifecycle_before
             != (
                 task.running,
                 task.status.clone(),
+                task.thread_status.clone(),
                 task.turn_status.clone(),
                 task.interaction_status.clone(),
+                task.completed_at,
                 task.runtime_handle["lastTurnId"].clone(),
                 task.runtime_handle["origin"].clone(),
-            )
-        {
+            );
+        let metadata_changed = before != persisted_task_fingerprint(task);
+        if lifecycle_changed || metadata_changed || task.updated_at != updated_at_before {
+            if let Some(state) = task.execution_state.as_mut() {
+                // The revision versions the whole snapshot, not only native turn progress.
+                if Some(&state.revision) == revision_before.as_ref() {
+                    state.revision = super::events::next_runtime_event_sequence().to_string();
+                }
+            }
+        }
+        if lifecycle_changed {
             self.observe_stand_in(task);
         }
         let updated = task.clone();
-        let should_persist = persist && before != persisted_task_fingerprint(task);
+        let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
             self.persist_current_index();

@@ -3,6 +3,7 @@ import {
   MODEL_LABEL,
   setExperimentalFeatures,
   waitForElementCount,
+  ZIP_BACKPRESSURE_CONTENT,
 } from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { telemetryEvents } from './response-protocol.mjs'
@@ -124,6 +125,19 @@ export async function prepareHarnessAppUi(
   await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
     timeoutMs: uiTimeoutMs,
   })
+  const downloadedInstallations = JSON.parse(
+    await readFile(join(electronUserDataDirectory, 'harness-apps/installations.json'), 'utf8')
+  )
+  const installed = downloadedInstallations.find(item => item.id === 'market-1')
+  assert.ok(installed, 'Downloaded Smart App was not registered')
+  assert.equal(
+    await readFile(
+      join(installed.packagePath, 'packages/bundle/smoke-app/lib/zip-backpressure.txt'),
+      'utf8'
+    ),
+    ZIP_BACKPRESSURE_CONTENT,
+    'Electron truncated the downloaded Smart App asset during extraction'
+  )
   const officialManagementTabId = await control.command(
     'getAttribute',
     '[data-workspace-tab-content][aria-hidden="false"]',

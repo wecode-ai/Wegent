@@ -23,7 +23,7 @@ export async function createDesktopScenario(options) {
       let installed
       try {
         process.env.WEWORK_E2E_UPGRADE_PAIR = installedPairFile
-        installed = await createUpgradeScenario(options)
+        installed = await createUpgradeScenario({ ...options, preparationOnly: true })
       } finally {
         process.env.WEWORK_E2E_UPGRADE_PAIR = pairFile
       }

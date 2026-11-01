@@ -24,9 +24,15 @@ Turn lifecycle is independent of unpersisted items. Native `turns/list` can synt
 
 Turns and items share the same position and neighboring-identity ordering rules. Cached turns outside the newest history page that have no native position remain before their observed next native turn; appending all of them to the conversation tail would displace current Goal output and select an old reply as active. A new live turn without an observed native successor remains at the tail. Page merges must not invent adjacency for old cached turns from the merged array.
 
+User messages must use their containing turn's canonical identity instead of retaining an earlier request alias. When editing or retrying replaces a turn, the executor records supersession for both the request alias and native ID using the persisted native mapping, so optimistic caches, native history, and reloaded history remove the same old turn.
+
 ## Ownership and synchronization
 
+Goal notifications belong to the thread and can retain the previous request's turn identity while a continuation starts. They must not update the current execution's turn binding, lease, or running state. Current-turn response events advance execution lifecycle so an older turn snapshot cannot prematurely complete a new execution.
+
 Native normalization produces turns/items and presentation messages in one pass. Native positions order items; explicit user boundaries group their presentation. The initial ordinary prompt owns the same reply as pre-prompt context compaction, while runtimeGuidance establishes another display segment. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
+
+Source-position registration visits only identities not yet registered in the current display segment, without constructing or copying their body JSON. Each identity is registered at most once; the first positioned event also supplies positions for preceding unpositioned items, and duplicate identities retain their first position. Emitting a segment clears registration progress. Full runtimeItems are materialized only when emitting the segment, avoiding quadratic reconstruction of accumulated history in long turns. A unit regression covers 4,000 positioned events with 2 KiB bodies and a generous debug-build time budget.
 
 Edit/retry supersession markers filter native turns before normalization so both projections agree. Metadata reads reuse the existing startup retry only for explicit not-ready protocol errors; permanent errors still propagate to the caller.
 
@@ -37,6 +43,8 @@ Task navigation, reconnection, and lifecycle reconciliation use `synchronizeRunt
 Live updates continue publishing during a history read. Their observed state is retained for the commit. Append-only tool deltas are materialized against that state before reconciliation, avoiding duplicate appends when native history already contains them. Text reconciliation uses stable item identity and preserves complete prefixes already included in native history. This contract does not claim that the upstream protocol exposes an atomic revision or watermark.
 
 Child-thread views are read-only projections: they neither adopt the child as the parent task thread nor update parent context usage. The cache applies updates immediately; React subscriptions coalesce view notifications per animation frame without holding another message state.
+
+Skill catalog readers for sent messages bind to the actual workspace directory. Unrelated task snapshots must not change the reader callback identity and clear an already loaded catalog; workspace changes and plugin catalog updates still invalidate the corresponding read.
 
 History snapshots, live block creation and block updates share one block reconciliation entry. Late blocks cannot replace observed command output with a shorter prefix or remove observed children of the same subthread. Append-only deltas are materialized before that reconciliation.
 

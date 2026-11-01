@@ -695,27 +695,7 @@ export function useWorkbenchRuntimeMessaging({
 
   const compactRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
-      const subtaskId = `${address.taskId}-context-compact`
-      const blockId = `context-compaction-${Date.now()}`
-      const createdAt = Date.now()
       lifecycleStore.sendRequested(address)
-      applyRuntimeConversationAction(address, {
-        type: 'assistant_started',
-        taskId: address.taskId,
-        subtaskId,
-      })
-      applyRuntimeConversationAction(address, {
-        type: 'block_created',
-        subtaskId,
-        block: {
-          id: blockId,
-          type: 'tool',
-          toolName: 'context_compaction',
-          status: 'pending',
-          subtaskId,
-          createdAt,
-        },
-      })
       try {
         const continuation = await prepareRuntimeContinuationModel(
           { address, message: '' },
@@ -729,21 +709,6 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '压缩上下文失败')
         }
-        lifecycleStore.sendAccepted(address)
-        applyRuntimeConversationAction(address, {
-          type: 'block_updated',
-          subtaskId,
-          blockId,
-          updates: {
-            status: 'done',
-            completedAt: Date.now(),
-          },
-        })
-        applyRuntimeConversationAction(address, {
-          type: 'assistant_done',
-          subtaskId,
-        })
-        lifecycleStore.executorSettled(address)
         try {
           await refreshWorkLists()
         } catch (error) {
@@ -755,20 +720,6 @@ export function useWorkbenchRuntimeMessaging({
         return true
       } catch (error) {
         const message = error instanceof Error ? error.message : '压缩上下文失败'
-        applyRuntimeConversationAction(address, {
-          type: 'block_updated',
-          subtaskId,
-          blockId,
-          updates: {
-            status: 'error',
-            completedAt: Date.now(),
-          },
-        })
-        applyRuntimeConversationAction(address, {
-          type: 'assistant_error',
-          subtaskId,
-          error: message,
-        })
         lifecycleStore.sendRejected(address)
         console.warn('[Wework] Runtime compact failed', {
           taskId: address.taskId,

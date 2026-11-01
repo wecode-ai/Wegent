@@ -135,8 +135,14 @@ pub async fn run_with_shell_environment(
         return Ok(());
     }
 
+    if local_endpoint_enabled() {
+        eprintln!("executor startup: migrating default home");
+    }
     crate::config::paths::migrate_default_home()
         .map_err(|error| AppError::Server(format!("Executor Home migration failed: {error}")))?;
+    if local_endpoint_enabled() {
+        eprintln!("executor startup: default home ready");
+    }
 
     if args.upgrade {
         let config = load_device_config(args.config_path.as_deref())?;

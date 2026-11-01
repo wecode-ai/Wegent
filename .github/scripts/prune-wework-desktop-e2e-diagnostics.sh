@@ -14,6 +14,8 @@ find "$diagnostics_root" \
   -type d \
   ! -name 'electron-user-data' \
   ! -name 'backend-rs-logs' \
+  ! -name 'electron-logs' \
+  ! -name 'release-logs' \
   -prune \
   -exec rm -rf {} +
 

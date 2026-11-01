@@ -44,6 +44,7 @@ use crate::{
         list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
         ReadPluginManifestRequest, SavePluginExampleRequest,
     },
+    local::plugin_images::{read_plugin_image, ReadPluginImageRequest},
     local::plugin_import::{
         cleanup_personal_plugin_package, delete_personal_plugin, ensure_personal_plugin,
         finalize_plugin_import, import_personal_plugin_copy, import_plugin_package,
@@ -156,6 +157,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugins.personal.rollback_copy",
     "executor.plugins.store.list",
     "executor.plugins.manifest.read",
+    "executor.plugins.image.read",
     "executor.plugins.example.save",
     "external_attachments.*",
     "external_projects.*",
@@ -787,6 +789,19 @@ impl AppIpcServer {
                 })?
                 .map_err(|error| AppIpcError::new("plugin_manifest_read_failed", error))?;
             return Ok(manifest);
+        }
+
+        if method == "executor.plugins.image.read" {
+            let request = serde_json::from_value::<ReadPluginImageRequest>(params)
+                .map_err(|_| AppIpcError::new("bad_request", "Invalid plugin image request"))?;
+            return tokio::task::spawn_blocking(move || read_plugin_image(request))
+                .await
+                .map_err(|_| {
+                    AppIpcError::new("plugin_image_read_failed", "Plugin image is unavailable")
+                })?
+                .map_err(|_| {
+                    AppIpcError::new("plugin_image_read_failed", "Plugin image is unavailable")
+                });
         }
 
         if method == "executor.plugins.example.save" {

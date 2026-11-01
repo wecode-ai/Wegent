@@ -405,6 +405,15 @@ export function createDesktopScenario({
         { value: 'src' }
       )
       assert.notEqual(frameUrl, oldDocumentUrl)
+      // The restored iframe can be ready before catalog synchronization restarts Codex.
+      // Wait for the same model-readiness gate as a real message submission.
+      await control.command('fill', composer, { value: 'MCP reload readiness' })
+      await control.command(
+        'waitFor',
+        '[data-active-workbench-pane="true"] [data-testid="send-message-button"]',
+        { enabled: true }
+      )
+      await control.command('fill', composer, { value: '' })
       await frameAction('click', '#refresh')
       // Startup model synchronization may restart this process-local fixture.
       const counterDeadline = Date.now() + uiTimeoutMs

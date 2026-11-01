@@ -373,11 +373,13 @@ def delete_device_workspace(
     )
 
 
+@trace_async("runtime_work.list", tracer_name="backend")
 async def list_runtime_work(
     *,
     db: Session,
     user_id: int,
     device_id: str | None = None,
+    pending_only: bool = False,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
@@ -388,6 +390,7 @@ async def list_runtime_work(
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
         devices=devices,
+        pending_only=pending_only,
     )
     device_order = _runtime_device_order(devices)
 
@@ -3131,6 +3134,7 @@ async def _list_online_runtime_workspaces(
     *,
     user_id: int,
     devices: list[dict[str, Any]],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     online_devices = [
@@ -3141,7 +3145,9 @@ async def _list_online_runtime_workspaces(
     ]
     results = await asyncio.gather(
         *[
-            _list_runtime_workspaces_for_device(user_id=user_id, device=device)
+            _list_runtime_workspaces_for_device(
+                user_id=user_id, device=device, pending_only=pending_only
+            )
             for device in online_devices
         ],
         return_exceptions=True,
@@ -3150,6 +3156,11 @@ async def _list_online_runtime_workspaces(
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for result in results:
         if isinstance(result, Exception):
+            if pending_only:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to read pending runtime work",
+                ) from result
             logger.warning(
                 "[RuntimeWork] Failed to list runtime workspaces from device: user_id=%s error_type=%s",
                 user_id,
@@ -3175,10 +3186,12 @@ async def _list_online_runtime_workspaces(
     return grouped
 
 
+@trace_async("runtime_work.list_device", tracer_name="backend")
 async def _list_runtime_workspaces_for_device(
     *,
     user_id: int,
     device: dict[str, Any],
+    pending_only: bool = False,
 ) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
     started_at = time.perf_counter()
     device_id = str(device.get("device_id") or "")
@@ -3190,10 +3203,12 @@ async def _list_runtime_workspaces_for_device(
             user_id=user_id,
             device_id=device_id,
             method="runtime.tasks.list",
-            payload={},
+            payload={"pendingOnly": True} if pending_only else {},
             timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        if pending_only:
+            raise
         logger.warning(
             "[RuntimeWork] Runtime workspace list failed: user_id=%s device_id=%s elapsed_ms=%s error=%s",
             user_id,
@@ -3203,6 +3218,8 @@ async def _list_runtime_workspaces_for_device(
         )
         return {}
 
+    if pending_only:
+        _raise_runtime_rpc_failure(result)
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for order_index, workspace in enumerate(_iter_runtime_workspaces(result)):
         workspace_path = normalize_workspace_path(workspace["workspacePath"])

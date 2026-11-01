@@ -557,6 +557,14 @@ export function createDesktopScenario({
 
       await control.command('fill', COMPOSER_SELECTOR, { value: FIRST_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.activeTask?.title === FIRST_PROMPT &&
+          Boolean(snapshot.workbench.activeLifecycle?.turn.latestId),
+        'The first native history turn did not start',
+        WORKBENCH_READY_TIMEOUT_MS
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,

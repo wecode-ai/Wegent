@@ -107,7 +107,9 @@ export function BoardViewEditor({
       setError(t('todo.tag_name_too_long'))
       return
     }
-    const bindings = draft.columns.map(column => JSON.stringify([column.type, column.value]))
+    const bindings = draft.columns.map(column =>
+      JSON.stringify([column.type, column.type === 'unmatched' ? '' : column.value])
+    )
     if (
       !remove &&
       !builtIn &&
@@ -260,8 +262,9 @@ export function BoardViewEditor({
                               candidate.id === column.id
                                 ? {
                                     ...candidate,
-                                    type: event.target.value as 'status' | 'tag',
-                                    value: '',
+                                    type: event.target
+                                      .value as SavedBoardView['columns'][number]['type'],
+                                    value: event.target.value === 'unmatched' ? 'Backlog' : '',
                                   }
                                 : candidate
                             ),
@@ -270,6 +273,15 @@ export function BoardViewEditor({
                       >
                         <option value="status">{t('todo.board_view_status')}</option>
                         <option value="tag">{t('todo.board_view_tag')}</option>
+                        <option
+                          value="unmatched"
+                          disabled={draft.columns.some(
+                            candidate =>
+                              candidate.id !== column.id && candidate.type === 'unmatched'
+                          )}
+                        >
+                          {t('todo.board_view_unmatched')}
+                        </option>
                       </AlignedSelect>
                       {column.type === 'status' ? (
                         <AlignedSelect
@@ -301,6 +313,33 @@ export function BoardViewEditor({
                             </option>
                           ))}
                         </AlignedSelect>
+                      ) : column.type === 'unmatched' ? (
+                        <label className="flex min-w-0 flex-col gap-1">
+                          <input
+                            aria-label={t('todo.board_view_unmatched_name')}
+                            data-testid={`board-view-lane-value-${index}`}
+                            className={control}
+                            required
+                            maxLength={80}
+                            value={column.value}
+                            onChange={event =>
+                              setDraft({
+                                ...draft,
+                                columns: draft.columns.map(candidate =>
+                                  candidate.id === column.id
+                                    ? {
+                                        ...candidate,
+                                        value: event.target.value,
+                                      }
+                                    : candidate
+                                ),
+                              })
+                            }
+                          />
+                          <span className="text-xs text-text-muted">
+                            {t('todo.board_view_unmatched_hint')}
+                          </span>
+                        </label>
                       ) : (
                         <BoardViewTagPicker
                           value={column.value}
@@ -459,7 +498,7 @@ export function BoardViewEditor({
                     : draft.columns.map(column => ({
                         id: column.id,
                         name:
-                          column.type === 'tag'
+                          column.type !== 'status'
                             ? column.value || t('todo.board_view_tag')
                             : (statuses.find(status => status.id === column.value)?.name ??
                               column.value),

@@ -21,7 +21,24 @@ export interface RuntimeAdditionalContextEntry {
 
 export type RuntimeAdditionalContext = Record<string, RuntimeAdditionalContextEntry>
 
+export interface RuntimeExecutionState {
+  epoch?: string
+  revision: string
+  phase: 'queued' | 'starting' | 'running' | 'continuing' | 'idle' | 'recovering' | 'stopping'
+  turnId: string | null
+  continuation?: boolean
+  latestTurnId: string | null
+  startedAt?: number | null
+  completedAt?: number | null
+  durationMs?: number | null
+  error?: string | null
+  outcome: 'succeeded' | 'failed' | 'cancelled' | null
+  executionOutcome?: 'succeeded' | 'failed' | 'cancelled' | null
+}
+
 export interface RuntimeTaskSummary {
+  executionState?: RuntimeExecutionState
+
   taskId: string
   threadId?: string | null
   workspacePath: string

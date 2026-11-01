@@ -121,6 +121,7 @@ describe('runtime pane debug snapshot', () => {
     const lifecycle = getWorkbenchDebugSnapshot().workbench?.activeLifecycle
     expect(lifecycle?.task).toEqual({
       taskId: 'active-task',
+      executionState: null,
       status: 'done',
       running: false,
       threadStatus: 'idle',

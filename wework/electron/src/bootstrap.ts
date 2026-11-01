@@ -1,11 +1,13 @@
 import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { resolveWorkbenchPaths } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
+import { releaseBridgeUserData } from './runtime/release-handoff.js'
+import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 
 const pendingUrls: string[] = []
 const captureUrl = (event: Electron.Event, url: string): void => {
@@ -29,6 +31,11 @@ try {
 }
 
 function failStartup(error: unknown): void {
+  recordReleaseDiagnostic(
+    'bootstrap-failed',
+    { message: error instanceof Error ? error.message : 'Startup failed' },
+    true
+  )
   console.error('[release-bootstrap]', error instanceof Error ? error.message : 'Startup failed')
   dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Startup failed')
   app.exit(1)
@@ -38,15 +45,19 @@ async function routeRelease(): Promise<boolean> {
   if (!packaged) return true
   const dataDirectory =
     process.env.WEWORK_USER_DATA_DIR?.trim() ||
-    resolveWorkbenchPaths({
-      environment: process.env,
-      metadata,
-      homeDirectory: app.getPath('home'),
-    }).desktop
+    join(
+      resolveWorkbenchPaths({
+        environment: process.env,
+        metadata,
+        homeDirectory: app.getPath('home'),
+      }).desktop,
+      'user-data'
+    )
   const root = join(dataDirectory, 'releases')
   if (
     process.env.WEWORK_RELEASE_ROOT &&
-    resolve(process.env.WEWORK_RELEASE_ROOT) !== resolve(root)
+    resolve(process.env.WEWORK_RELEASE_ROOT) !== resolve(root) &&
+    (await realpath(process.env.WEWORK_RELEASE_ROOT)) !== (await realpath(root))
   ) {
     throw new Error('Release root does not match the application data directory')
   }
@@ -56,11 +67,21 @@ async function routeRelease(): Promise<boolean> {
   const bridge = await optionalText(join(root, 'bridge'))
   if (!supervisedId && bridge && resolve(bridge) !== resolve(process.execPath)) {
     if (!existsSync(bridge)) throw new Error('The healthy Wework recovery executable is missing')
+    const bridgeUserData = await releaseBridgeUserData(store, bridge, dataDirectory)
     // An old installed entry only forwards. Recovery must use the latest healthy
     // release, which understands snapshots created by that release's updater.
     void app
       .whenReady()
       .then(() => {
+        if (bridgeUserData) {
+          process.env.WEWORK_USER_DATA_DIR = bridgeUserData
+          process.env.WEWORK_RELEASE_ROOT = root
+          recordReleaseDiagnostic(
+            'release-bridge-handoff',
+            { bridge, dataDirectory: bridgeUserData },
+            true
+          )
+        }
         app.relaunch({ execPath: bridge, args: forwardedArguments() })
         app.exit(0)
       })
