@@ -1,5 +1,5 @@
 import { ArrowDown } from 'lucide-react'
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useLayoutEffect, useMemo, useState } from 'react'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -117,6 +117,20 @@ function ScrollableMessagePaneContent({
     autoScrollSuspended,
     initialScrollPosition,
   })
+  // The composer is a sticky overlay inside the scroller, so its height is part of
+  // the viewport that the turn navigation must stay out of.
+  const hasStickyFooter = Boolean(stickyFooter)
+  const [composerOverlayHeight, setComposerOverlayHeight] = useState(0)
+  useLayoutEffect(() => {
+    const footer = stickyFooterRef.current
+    const measure = () => setComposerOverlayHeight(footer?.offsetHeight ?? 0)
+    measure()
+    if (!footer || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(footer)
+    return () => observer.disconnect()
+  }, [hasStickyFooter, stickyFooterRef])
+
   const hasMessages = messages.length > 0
   const firstMessage = messages[0]
   const firstAssistantMessage = messages.find(message => message.role === 'assistant')
@@ -341,6 +355,7 @@ function ScrollableMessagePaneContent({
         onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
         onNavigationScrollTargetChange={handleTurnNavigationScrollTargetChange}
         portalTarget={turnNavigationPortalTarget}
+        bottomInsetPx={composerOverlayHeight}
       />
       {!stickyFooter ? scrollToBottomButton : null}
     </div>
