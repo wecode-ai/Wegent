@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { SEARCH_CONTRACT_CASES, SEARCH_CONTRACT_QUERIES } from './conversation-search-contract.mjs'
+import { waitForTranscriptState } from './transcript-restoration.mjs'
 import {
   getSingleElementMetrics,
   SCROLLER_SELECTOR,
@@ -308,6 +309,15 @@ export async function verifyCachedHistorySearch(
     { timeoutMs }
   )
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
+  // The cached tail can render before its initial automatic pagination settles.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.pane?.transcript?.loading === false &&
+      snapshot.pane.transcript.loadingMoreBefore === false,
+    'The cached history did not finish its initial pagination',
+    timeoutMs
+  )
   await waitForBottom(control, 'The initial cached conversation', timeoutMs)
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|WEWORK_E2E_CACHED_/)
