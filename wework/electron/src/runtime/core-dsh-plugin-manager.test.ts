@@ -60,6 +60,7 @@ describe('CoreDshPluginManager', () => {
           name: 'deep-import-dependency',
           version: '1.0.0',
           main: 'index.js',
+          scripts: { postinstall: 'node -e "process.exit(0)"' },
         })
         await writeFile(join(dependencyRoot, 'index.js'), 'module.exports = 42\n')
         const dependencyArchive = join(fixture.root, 'dependency.tgz')
