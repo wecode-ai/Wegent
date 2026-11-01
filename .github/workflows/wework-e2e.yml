@@ -5,7 +5,7 @@ on:
       mode:
         type: choice
         default: unit
-        options: [unit, sqlite]
+        options: [unit, sqlite, pnpm]
 permissions:
   contents: read
   actions: read
@@ -18,7 +18,15 @@ jobs:
       - uses: ./.github/actions/setup-node-workspace
       - run: pnpm --dir wework/electron install --frozen-lockfile
       - run: pnpm --filter wework prepare:electron
-      - run: pnpm --dir wework/electron test src/runtime/core-dsh-plugin-manager.test.ts
+      - if: inputs.mode != 'pnpm'
+        run: pnpm --dir wework/electron test src/runtime/core-dsh-plugin-manager.test.ts
+      - if: inputs.mode == 'pnpm'
+        run: pnpm --filter wework exec node ../.github/scripts/wework-pnpm-clone-diagnostic.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mode == 'pnpm'
+        with:
+          name: pnpm-clone-diagnostics
+          path: .ci-artifacts/pnpm-clone
   sqlite-interruption:
     if: inputs.mode == 'sqlite'
     runs-on: windows-latest
