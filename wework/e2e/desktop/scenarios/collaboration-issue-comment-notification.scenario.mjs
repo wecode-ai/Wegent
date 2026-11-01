@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { observeCommentNavigation } from '../modules/comment-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
@@ -493,6 +494,14 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      // The card remains mounted while the drawer finishes its deferred close.
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('issue-conversation-drawers'),
+        'Issue drawer did not finish closing',
+        undefined,
+        activeSurface
+      )
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
@@ -504,6 +513,13 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
         false
       )
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('issue-conversation-drawers'),
+        'Issue drawer did not finish closing',
+        undefined,
+        activeSurface
+      )
       await control.command('waitFor', unreadDot, { visible: false })
 
       const message = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-${Date.now()}`)
