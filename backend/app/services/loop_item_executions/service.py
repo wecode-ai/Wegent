@@ -2027,22 +2027,6 @@ class LoopItemExecutionService:
         executions = query.order_by(LoopItemExecution.id.desc()).all()
         for execution in executions:
             activity = self._linked_activity(db, execution)
-            logger.info(
-                "[LoopItemExecution] Delayed completion candidate execution=%s "
-                "activity=%s status=%s content_chars=%s turn=%s "
-                "bound_turn=%s request_turn=%s",
-                execution.id,
-                activity.message_id if activity is not None else None,
-                activity.status if activity is not None else None,
-                len(activity.content or "") if activity is not None else None,
-                turn_id,
-                (
-                    (activity.metadata_json or {}).get("runtime_turn_id")
-                    if activity is not None
-                    else None
-                ),
-                execution_runtime_turn_id(execution),
-            )
             if activity is None or activity.status != "completed":
                 continue
             if (activity.content or "").strip() not in {"", "Runtime reconciled"}:
