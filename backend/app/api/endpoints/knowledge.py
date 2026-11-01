@@ -9,6 +9,7 @@ REST API endpoints delegate business logic to KnowledgeOrchestrator,
 which provides a unified interface for both REST API and MCP tools.
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -584,8 +585,25 @@ def get_document_protection(
     response.headers["Cache-Control"] = "private, no-store"
     return DocumentProtectionResponse(
         original_download_allowed=download_allowed,
-        watermark_text=None if download_allowed else current_user.user_name,
+        watermark_text=_document_watermark_text(current_user),
     )
+
+
+def _document_watermark_text(user: User) -> str:
+    """Build the reader identity watermark from the stored employee profile."""
+    try:
+        preferences = json.loads(user.preferences or "{}")
+    except (TypeError, json.JSONDecodeError):
+        preferences = {}
+    if not isinstance(preferences, dict):
+        preferences = {}
+    employee_id = preferences.get("employee_id")
+    if not isinstance(employee_id, str) or not employee_id.strip():
+        return user.user_name
+    employee_id = employee_id.strip()
+    if employee_id == user.user_name:
+        return user.user_name
+    return f"{user.user_name} {employee_id}"
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)

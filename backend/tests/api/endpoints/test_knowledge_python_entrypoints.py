@@ -4,6 +4,8 @@
 
 """HTTP authentication contract for the restored Python knowledge entrypoints."""
 
+import json
+
 import pytest
 
 
@@ -41,6 +43,8 @@ def test_document_protection_is_private_and_includes_watermark(
         test_user.id,
         KnowledgeBaseUpdate(allow_document_download=allowed),
     )
+    test_user.preferences = json.dumps({"employee_id": "220750"})
+    test_db.commit()
     response = test_client.get(
         f"/api/knowledge-bases/{kb_id}/document-protection",
         headers={"Authorization": f"Bearer {test_token}"},
@@ -49,7 +53,7 @@ def test_document_protection_is_private_and_includes_watermark(
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == {
         "original_download_allowed": allowed,
-        "watermark_text": None if allowed else test_user.user_name,
+        "watermark_text": f"{test_user.user_name} 220750",
     }
 
 

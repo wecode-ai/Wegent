@@ -276,9 +276,7 @@ class KnowledgePythonGateway(unittest.TestCase):
                         response.json(),
                         {
                             "original_download_allowed": allowed,
-                            "watermark_text": (
-                                None if allowed else self.users[1].user_name
-                            ),
+                            "watermark_text": self.users[1].user_name,
                         },
                     )
                 finally:

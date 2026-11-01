@@ -24,6 +24,7 @@ export function VideoPreview({ url, restricted = false, onError }: VideoPreviewP
           className="block h-full w-full object-contain"
           controlsList={restricted ? 'nodownload noremoteplayback' : 'nodownload'}
           disablePictureInPicture={restricted}
+          playsInline={restricted}
           onContextMenu={restricted ? event => event.preventDefault() : undefined}
           onError={onError}
         >
