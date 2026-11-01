@@ -61,8 +61,10 @@ async fn declare(args: &[String]) -> Result<(), String> {
         }
         Err(env::VarError::NotPresent) => {
             let mut result = payload;
-            result["local_path"] =
-                json!(Path::new(&artifact.workspace_root).join(&artifact.relative_path));
+            result["local_path"] = json!(local_reference_path(
+                &artifact.workspace_root,
+                &artifact.relative_path,
+            ));
             result
         }
         Err(error) => return Err(format!("read WEGENT_BACKEND_TASK_ID failed: {error}")),
@@ -73,6 +75,16 @@ async fn declare(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("serialize artifact result failed: {error}"))?
     );
     Ok(())
+}
+
+fn local_reference_path(workspace_root: &str, relative_path: &str) -> String {
+    let path = Path::new(workspace_root).join(relative_path);
+    let readable = crate::path_compat::strip_windows_verbatim_prefix(&path);
+    if cfg!(windows) || readable != path {
+        readable.to_string_lossy().replace('\\', "/")
+    } else {
+        readable.to_string_lossy().into_owned()
+    }
 }
 
 async fn declare_backend(task_id: &str, payload: &Value) -> Result<Value, String> {
@@ -286,6 +298,27 @@ fn ensure_success(status: StatusCode, body: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn local_references_use_markdown_safe_windows_drive_and_unc_paths() {
+        assert_eq!(
+            local_reference_path(r"\\?\C:\Users\test\.wegent\workspace", "local report.md"),
+            "C:/Users/test/.wegent/workspace/local report.md",
+        );
+        assert_eq!(
+            local_reference_path(r"\\?\UNC\server\share\workspace", "local report.md"),
+            "//server/share/workspace/local report.md",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_references_preserve_posix_backslashes() {
+        assert_eq!(
+            local_reference_path(r"/tmp/back\slash", "local report.md"),
+            r"/tmp/back\slash/local report.md",
+        );
+    }
 
     #[test]
     fn metadata_keeps_file_inside_workspace_and_hashes_without_uploading() {
