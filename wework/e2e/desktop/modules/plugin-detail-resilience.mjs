@@ -257,7 +257,7 @@ export async function verifyPluginDetailResilience({
   async function openDetail(item) {
     await backToList()
     const row = await rowFor(item)
-    await control.command('click', row)
+    await control.command('clickWhenEnabled', row)
     await control.command('waitFor', testId('plugin-detail-back-button'))
     const heading = await control.command(
       'getText',
