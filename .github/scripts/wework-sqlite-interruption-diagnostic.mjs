@@ -21,6 +21,7 @@ try {
     Object.assign(environment, { HOME: home, USERPROFILE: home, CODEX_HOME: home, CODEX_SQLITE_HOME: home, TMP: home, TEMP: home })
     const client = startNativeClient({ binary: join(process.cwd(), 'wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'), args, cwd: home, env: environment, root: home, phase: 'native' })
     let database
+    let nativeExitState
     try {
       await client.call('initialize', {clientInfo:{name:'sqlite_interruption_diagnostic',version:'1'},capabilities:{experimentalApi:true}}); client.notify('initialized')
       const thread = await client.call('thread/start', {cwd:home,model:'gpt-5.4',modelProvider:'synthetic',approvalPolicy:'never',sandbox:'danger-full-access',ephemeral:false})
@@ -32,19 +33,14 @@ try {
       while (!read.get(thread.thread.id)) { if (Date.now() > deadline) throw new Error('Native thread metadata was not persisted'); await new Promise(resolve=>setTimeout(resolve,25)) }
       for(let update=0;update<64;update++) database.prepare('UPDATE threads SET title = ? WHERE id = ?').run('diagnostic '+update+' '+ 'x'.repeat(8192), thread.thread.id)
       const initialMmap = database.prepare('PRAGMA mmap_size').get(); await writeFile(join(home,'mmap.json'), JSON.stringify(initialMmap)); database.close();database=null
-      const fullyClosed = new Promise(resolve => client.child.once('close', resolve))
       await client.close()
-      const rootStopped = { exitCode: client.child.exitCode, stdoutEnded: client.child.stdout.readableEnded, stderrEnded: client.child.stderr.readableEnded }
-      client.child.stdout.resume();client.child.stderr.resume()
-      let closeTimer
-      try { await Promise.race([fullyClosed, new Promise((_, reject) => {closeTimer=setTimeout(()=>reject(new Error('Native process pipes did not close')),10000)})]) } finally {clearTimeout(closeTimer)}
-      await writeFile(join(home,'closure.json'),JSON.stringify({rootStopped,afterClose:{exitCode:client.child.exitCode,stdoutEnded:client.child.stdout.readableEnded,stderrEnded:client.child.stderr.readableEnded}}))
+      nativeExitState = { exitCode: client.child.exitCode, signalCode: client.child.signalCode, stdoutEnded: client.child.stdout.readableEnded, stderrEnded: client.child.stderr.readableEnded }
       database = new DatabaseSync(join(home,'state_5.sqlite'))
       const changed=database.prepare("UPDATE threads SET history_mode = 'legacy' WHERE id = ?").run(thread.thread.id)
       assert.equal(Number(changed.changes),1)
-      const record={index,threadId:thread.thread.id,integrity:database.prepare('PRAGMA quick_check').all(),afterStopUpdate:'passed'};records.push(record);console.log(JSON.stringify(record))
+      const record={index,nativeExitState,threadId:thread.thread.id,integrity:database.prepare('PRAGMA quick_check').all(),afterStopUpdate:'passed'};records.push(record);console.log(JSON.stringify(record))
     } catch(error) {
-      records.push({index,error:error.stack,code:error.code,errcode:error.errcode,errstr:error.errstr}); const probe = await promisify(execFile)('pwsh.exe',['-NoProfile','-NonInteractive','-File',join(process.cwd(),'.github/scripts/wework-sqlite-lock-diagnostic.ps1'),home],{timeout:30000}); await writeFile(join(home,'windows-file-probe.json'),probe.stdout); console.log(probe.stdout); throw error
+      records.push({index,nativeExitState,error:error.stack,code:error.code,errcode:error.errcode,errstr:error.errstr}); const probe = await promisify(execFile)('pwsh.exe',['-NoProfile','-NonInteractive','-File',join(process.cwd(),'.github/scripts/wework-sqlite-lock-diagnostic.ps1'),home],{timeout:30000}); await writeFile(join(home,'windows-file-probe.json'),probe.stdout); console.log(probe.stdout); throw error
     } finally {database?.close();await client.close().catch(()=>{});await writeFile(join(root,'results.json'),JSON.stringify(records,null,2))}
   }
 } finally {server.closeAllConnections();server.close()}
