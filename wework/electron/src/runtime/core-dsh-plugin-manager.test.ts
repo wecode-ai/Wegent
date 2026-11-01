@@ -94,7 +94,7 @@ describe('CoreDshPluginManager', () => {
         })
         await writeFile(
           join(packageProfile, 'pnpm-workspace.yaml'),
-          `packages:\n  - .\nallowBuilds:\n  ${JSON.stringify(`deep-import-dependency@${dependencySpec}`)}: true\n`
+          `packages:\n  - .\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  ${JSON.stringify(`deep-import-dependency@${dependencySpec}`)}: true\n`
         )
         const pluginRoot = join(fixture.root, 'local-bundle')
         await mkdir(pluginRoot)
