@@ -198,6 +198,7 @@ export function BrowserIssueCommentComposer({
           onTaskUpdated,
           startFailedText: t('workbench.project_chat_agent_start_failed'),
         })
+      if (onTaskUpdated) onTaskUpdated(await api.issues.get(issue.id))
       return true
     } catch (cause) {
       draft.setError(cause instanceof Error ? cause.message : String(cause))

@@ -200,7 +200,8 @@ describe('browser main comment with the PC execution pipeline', () => {
       email: null
       role: 'Developer'
     }[] = [],
-    agents = [agent]
+    agents = [agent],
+    onTaskUpdated?: (issue: CollaborationIssue) => void
   ) {
     await act(async () =>
       root.render(
@@ -220,6 +221,7 @@ describe('browser main comment with the PC execution pipeline', () => {
               loading={false}
               translate={createCollaborationTranslator('en')}
               onMessages={onMessages}
+              onTaskUpdated={onTaskUpdated}
             />
           </BrowserIssueExecution>
         </BrowserTaskDrafts>
@@ -237,6 +239,23 @@ describe('browser main comment with the PC execution pipeline', () => {
   async function click(id: string) {
     await act(async () => element(id).click())
   }
+  it('publishes persisted comment badges without a socket invalidation or agent execution', async () => {
+    client.executeTaskComment = vi.fn().mockResolvedValue([])
+    const updated = {
+      ...issue,
+      version: 2,
+      metadata: { badges: [{ id: 'mr-7', label: '!7' }] },
+    }
+    vi.mocked(api.issues.get).mockResolvedValue(updated)
+    const onTaskUpdated = vi.fn()
+    await mount([], [], onTaskUpdated)
+    await type('Review https://gitlab.example/group/repo/-/merge_requests/7')
+    await click('collaboration-issue-comment-submit')
+
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(onTaskUpdated).toHaveBeenCalledWith(updated)
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+  })
   it('executes an assigned hidden agent without requiring the members own runtime catalog', async () => {
     client.executeTaskComment = vi.fn().mockResolvedValue([message])
     vi.mocked(runtime.listDevices).mockResolvedValue([])
