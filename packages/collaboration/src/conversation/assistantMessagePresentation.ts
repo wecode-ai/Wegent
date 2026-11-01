@@ -441,12 +441,15 @@ export function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
   return buildProcessingDisplayRows(blocks).length > 0;
 }
 
-export function hasTrailingCompletedProcessText(
+export function hasTrailingCompletedNarrativeBlock(
   blocks: ProcessingBlock[],
 ): boolean {
   const lastBlock = blocks.at(-1);
   return (
-    lastBlock?.type === "text" &&
+    (lastBlock?.type === "text" ||
+      (lastBlock?.type === "tool" &&
+        (isGuidanceToolName(lastBlock.toolName) ||
+          isContextCompactionToolName(lastBlock.toolName)))) &&
     (lastBlock.status === "done" || lastBlock.status === "error")
   );
 }
@@ -455,16 +458,16 @@ export function shouldShowAssistantThinkingIndicator({
   isStreaming,
   hasProcessingDisplayBlock,
   hasVisibleContent,
-  hasTrailingCompletedProcessText,
+  hasTrailingCompletedNarrativeBlock,
 }: {
   isStreaming: boolean;
   hasProcessingDisplayBlock: boolean;
   hasVisibleContent: boolean;
-  hasTrailingCompletedProcessText: boolean;
+  hasTrailingCompletedNarrativeBlock: boolean;
 }): boolean {
   return (
     isStreaming &&
     !hasVisibleContent &&
-    (!hasProcessingDisplayBlock || hasTrailingCompletedProcessText)
+    (!hasProcessingDisplayBlock || hasTrailingCompletedNarrativeBlock)
   );
 }

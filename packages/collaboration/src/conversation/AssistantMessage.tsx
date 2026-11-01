@@ -54,7 +54,7 @@ import {
   getProcessingPhase,
   splitProcessingBlocks,
   hasProcessingDisplayBlock,
-  hasTrailingCompletedProcessText,
+  hasTrailingCompletedNarrativeBlock,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
 
@@ -210,8 +210,8 @@ export function AssistantMessage({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
     hasVisibleContent,
-    hasTrailingCompletedProcessText:
-      hasTrailingCompletedProcessText(displayBlocks),
+    hasTrailingCompletedNarrativeBlock:
+      hasTrailingCompletedNarrativeBlock(displayBlocks),
   });
   const webSearchSources = isStreaming
     ? []
