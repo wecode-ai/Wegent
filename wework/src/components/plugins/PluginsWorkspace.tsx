@@ -53,6 +53,7 @@ import {
 import {
   isLocalBrowserConnector,
   isLocalConnector,
+  isPythonRuntimeUnavailableError,
   localConnectorAuthHealth,
   localConnectorAuthLogout,
   LocalConnectorAuthLogoutError,
@@ -2998,6 +2999,7 @@ export function PluginsWorkspace({
         if (health.status === 'ok') continue
       } catch (error) {
         if (!isCurrent()) return
+        if (isPythonRuntimeUnavailableError(error)) return
         if (error instanceof LocalConnectorPluginSyncTimeoutError) throw error
         // Fall through to local login when health or tool discovery fails.
       }
@@ -3097,6 +3099,10 @@ export function PluginsWorkspace({
           }))
         } catch (error) {
           if (!detailIsCurrent()) return
+          if (isPythonRuntimeUnavailableError(error)) {
+            reportDetailError(t('workbench.plugin_python_failed'))
+            return
+          }
           if (githubCli) {
             reportDetailError(getErrorMessage(error, t('workbench.gh_health_failed')))
             return

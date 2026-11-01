@@ -489,7 +489,24 @@ export async function createDesktopScenario({
             await invokeCloud('cloud-account-updated')
             await verifyNativeAccountRuntimeIsolation({
               api,
-              control,
+              requestPython: async () => {
+                await control.command('navigate', 'body', { value: '/plugins' })
+                await control.command(
+                  'clickWhenEnabled',
+                  `[data-testid="plugins-installed-strip-item-${installedId}"]`,
+                  {
+                    timeoutMs: workbenchReadyTimeoutMs,
+                  }
+                )
+                await control.command(
+                  'click',
+                  '[data-testid="plugin-connection-manage-connector:conversation-qr"]'
+                )
+                await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
+                  text: '插件 Python 环境准备失败',
+                  timeoutMs: PYTHON_BOOTSTRAP_TIMEOUT_MS,
+                })
+              },
               connectionFor,
               electronUserDataDirectory,
               homePath,

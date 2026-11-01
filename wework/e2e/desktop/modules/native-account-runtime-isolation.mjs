@@ -51,7 +51,7 @@ export async function createNativeAccountFixture(resultDir, pluginRoot) {
 
 export async function verifyNativeAccountRuntimeIsolation({
   api,
-  control,
+  requestPython,
   connectionFor,
   electronUserDataDirectory,
   homePath,
@@ -80,11 +80,7 @@ export async function verifyNativeAccountRuntimeIsolation({
       !(await readFile(appLog, 'utf8')).slice(logOffset).includes('python-runtime-install-started'),
       'Background maintenance attempted to install Python'
     )
-    await control.command('navigate', 'body', { value: '/settings/execution-environments' })
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="execution-environment-python-install"]'
-    )
+    await requestPython()
     await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
     await writeFile(
       source,
@@ -114,6 +110,12 @@ export async function verifyNativeAccountRuntimeIsolation({
       'An unrelated Python installation failure blocked the native provider revocation'
     )
     assert.equal(await readFile(join(homePath, 'native-account-revoked'), 'utf8'), 'revoked')
+    assert.equal(
+      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+        .length - 1,
+      1,
+      'A failed foreground Python preparation was automatically retried through login'
+    )
     await writeFile(
       join(resultDir, 'mixed-runtime-isolation.json'),
       JSON.stringify(

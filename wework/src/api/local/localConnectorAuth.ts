@@ -80,6 +80,10 @@ interface LocalConnectorAuthHealthOptions {
   prepareRuntime?: boolean
 }
 
+export function isPythonRuntimeUnavailableError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'python_runtime_unavailable'
+}
+
 /** Reuse recent success for management views; runtime authorization recovery bypasses it. */
 const OK_HEALTH_TTL_MS = 120_000
 const okHealthCache = new Map<string, number>()

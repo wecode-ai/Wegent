@@ -5376,6 +5376,47 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test.each(['install', 'manage'] as const)(
+    'does not restart Python preparation through login after a %s failure',
+    async action => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceName: 'wiki',
+        marketplaceDisplayName: 'Wiki',
+        marketplaceConnectorSlug: 'wiki',
+        marketplaceConnectorLocal: true,
+        marketplaceInstalled: action === 'manage',
+      })
+      mockCodexAppServerInvoke({
+        deviceId: 'current-device',
+        localConnectorAuthHealth: async () => {
+          throw Object.assign(new Error('Managed Python preparation failed'), {
+            code: 'python_runtime_unavailable',
+          })
+        },
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      if (action === 'install') {
+        await screen.findByTestId('plugin-marketplace-install-101')
+        await installPluginFromMarketCard('plugin-marketplace-install-101')
+        await waitFor(() =>
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Wiki 已安装')
+        )
+      } else {
+        await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+        await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:wiki'))
+        expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+          '插件 Python 环境准备失败'
+        )
+      }
+      expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+      expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+        'runtime.local_connector_auth.start',
+        expect.anything()
+      )
+    }
+  )
+
   test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({
