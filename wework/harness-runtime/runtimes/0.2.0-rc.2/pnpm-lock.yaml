@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  pnpm@11.7.0: bf1cb410117a9074a555f9a6b15212e24bfac192eb218d0b57988e17cd3a059a
+  pnpm@11.7.0: cd0c8041005285019b61914695ab17d3e6cf7ff9fb8f77ede8ad6c373869f8a2
 
 importers:
 
@@ -16,7 +16,7 @@ importers:
         version: 0.2.0-rc.2(bbd6561d6318560b41147fd0e778bca7)
       pnpm:
         specifier: 11.7.0
-        version: 11.7.0(patch_hash=bf1cb410117a9074a555f9a6b15212e24bfac192eb218d0b57988e17cd3a059a)
+        version: 11.7.0(patch_hash=cd0c8041005285019b61914695ab17d3e6cf7ff9fb8f77ede8ad6c373869f8a2)
 
 packages:
 
@@ -8675,7 +8675,7 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
-  pnpm@11.7.0(patch_hash=bf1cb410117a9074a555f9a6b15212e24bfac192eb218d0b57988e17cd3a059a): {}
+  pnpm@11.7.0(patch_hash=cd0c8041005285019b61914695ab17d3e6cf7ff9fb8f77ede8ad6c373869f8a2): {}
 
   powershell-utils@0.1.0: {}
 
