@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, stat, symlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, toNamespacedPath } from 'node:path'
 
 const publications = new Map<string, Promise<string>>()
 
@@ -35,7 +35,7 @@ async function publish(
 ): Promise<string> {
   if (await isReady(target)) return target
   await mkdir(dirname(target), { recursive: true, mode: 0o700 })
-  const content = await mkdtemp(join(dirname(target), '.content-'))
+  const content = await mkdtemp(toNamespacedPath(join(dirname(target), '.content-')))
   let published = false
   try {
     await populate(content)
