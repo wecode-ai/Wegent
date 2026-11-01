@@ -975,6 +975,7 @@ impl RuntimeWorkRpcHandler {
         });
         if route.local_task_id != local_task_id {
             route.generation = next_thread_event_route_generation(&mut routing);
+            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
             routing.replaying_route_generations.remove(thread_id);
             routing
                 .pending_notifications
@@ -984,9 +985,6 @@ impl RuntimeWorkRpcHandler {
             && !active
             && !is_context_compaction_request(&route.request)
             && is_context_compaction_request(&request);
-        if active {
-            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
-        }
         route
             .event_mapper
             .lock()

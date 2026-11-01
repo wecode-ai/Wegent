@@ -4731,7 +4731,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     await writeFile(
       join(resultDir, 'failure.txt'),
-      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n${JSON.stringify(
+        {
+          code: error?.code,
+          errno: error?.errno,
+          syscall: error?.syscall,
+          errcode: error?.errcode,
+          errstr: error?.errstr,
+        }
+      )}\n`,
       'utf8'
     )
     throw error
