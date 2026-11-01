@@ -518,23 +518,12 @@ export interface LocalWorkspaceOpenerAvailability {
   label?: string
 }
 
-// Share pending discovery across controls without retaining completed results.
-let workspaceOpenersRequest: Promise<LocalWorkspaceOpenerAvailability[]> | null = null
-
 export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerAvailability[]> {
   if (!isLocalTerminalAvailable()) {
     return []
   }
 
-  if (!workspaceOpenersRequest) {
-    const request: Promise<LocalWorkspaceOpenerAvailability[]> = invokeDesktopHost<
-      LocalWorkspaceOpenerAvailability[]
-    >('workspace.listOpeners').finally(() => {
-      if (workspaceOpenersRequest === request) workspaceOpenersRequest = null
-    })
-    workspaceOpenersRequest = request
-  }
-  return workspaceOpenersRequest
+  return invokeDesktopHost<LocalWorkspaceOpenerAvailability[]>('workspace.listOpeners')
 }
 
 export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
@@ -542,9 +531,7 @@ export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
     return null
   }
 
-  const selected = await invokeDesktopHost<string | null>('workspace.pickOpener')
-  if (selected) workspaceOpenersRequest = null
-  return selected
+  return invokeDesktopHost<string | null>('workspace.pickOpener')
 }
 
 export async function openLocalFile(path?: string): Promise<void> {

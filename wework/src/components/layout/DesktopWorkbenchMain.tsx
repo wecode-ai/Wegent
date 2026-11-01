@@ -944,14 +944,9 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const resolveBrowserOpenRequestPaneKey = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
-      const activeTaskId = props.activePane.currentRuntimeTask?.taskId
-      const activePaneBrowserLabel = activeTaskId
-        ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activeTaskId)}`
-        : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(activePaneKey)}`
       if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
         return props.visible === false ? null : activePaneKey
       }
-      if (requestBaseLabel === activePaneBrowserLabel) return activePaneKey
       return (
         Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
           const pane = resolvePane(paneKey)
@@ -964,16 +959,12 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         }) ?? null
       )
     },
-    [
-      activePaneKey,
-      props.activePane.currentRuntimeTask?.taskId,
-      props.visible,
-      resolvePane,
-      runtimePaneKeys,
-    ]
+    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
   )
   useEffect(() => {
-    const unlisten = listenEmbeddedBrowserOpenRequests(request => {
+    let disposed = false
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
+      if (disposed) return
       const paneKey = resolveBrowserOpenRequestPaneKey(request)
       if (!paneKey) return
       setPendingBrowserOpenRequests(current => ({
@@ -981,7 +972,10 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         [paneKey]: request,
       }))
     })
-    return () => unlisten?.()
+    return () => {
+      disposed = true
+      void listener?.then(unlisten => unlisten())
+    }
   }, [resolveBrowserOpenRequestPaneKey])
   const markBrowserOpenRequestHandled = useCallback((paneKey: string, requestId: string) => {
     setPendingBrowserOpenRequests(current => {

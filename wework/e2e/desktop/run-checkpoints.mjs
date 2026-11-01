@@ -15,7 +15,6 @@ import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
-import { checkpointScenarioEnv } from './checkpoint-environment.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -373,10 +372,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'workbench-mode',
   'task-board-bulk-actions',
 ])
-const CHECKPOINT_ENVIRONMENT = {
-  scenarioModules: CHECKPOINT_SCENARIO_MODULES,
-  scenarioOnlyCheckpoints: SCENARIO_ONLY_CHECKPOINTS,
-}
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-device-lifecycle',
   'plugin-auto-update',
@@ -490,6 +485,54 @@ async function readFailureSummary(result) {
       .filter(Boolean)
       .at(-1) ?? 'No failure details were emitted'
   )
+}
+
+function checkpointScenarioEnv(env, checkpoint) {
+  const nextEnv = { ...env }
+  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
+    nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN =
+      env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
+    nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+    if (
+      ['app-upgrade', 'app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
+      env.WEWORK_E2E_UPGRADE_THIN_PAIR
+    ) {
+      nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR
+      nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN
+    }
+  }
+  if (checkpoint === 'collaboration-shared-core') {
+    // Exercise timezone-less UTC API timestamps outside the UTC timezone.
+    nextEnv.TZ = 'Asia/Shanghai'
+  }
+  if (
+    checkpoint === 'application-menu' ||
+    checkpoint === 'native-window-chrome' ||
+    checkpoint === 'window-lifecycle' ||
+    checkpoint === 'window-background-policy' ||
+    checkpoint === 'browser-multi-tabs' ||
+    checkpoint === 'core-task-flow' ||
+    checkpoint === 'project-assignment-notification' ||
+    checkpoint.startsWith('human-interactions')
+  ) {
+    // These checks present native auxiliary windows and must observe them as
+    // visible. macOS background mode prohibits activation and hides the app.
+    // Assignment notification also verifies tag commits through native focus loss.
+    nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
+  }
+  const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
+  if (module) {
+    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module
+  } else {
+    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE
+  }
+  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) {
+    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY = 'true'
+  } else {
+    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY
+  }
+  return nextEnv
 }
 
 async function runDesktopBuild({
@@ -730,10 +773,7 @@ async function runRequestedArgs() {
   const sharedEnv = await sharedBuildEnvironment()
   const segmentIndex = requestedArgs.indexOf('--segment')
   const checkpoint = segmentIndex >= 0 ? requestedArgs[segmentIndex + 1] : undefined
-  const env =
-    segmentIndex >= 0
-      ? checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
-      : sharedEnv
+  const env = segmentIndex >= 0 ? checkpointScenarioEnv(sharedEnv, checkpoint) : sharedEnv
   const args = SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
     ? requestedArgs.filter(argument => argument !== '--cloud-only')
     : requestedArgs
@@ -796,7 +836,7 @@ async function runParallelCheckpoints(checkpoints) {
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
       exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
       run: async checkpoint => {
-        const env = checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
+        const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
         delete env.WEWORK_E2E_MODEL_SERVER_PORT
         console.log(`\n[desktop-e2e] START ${checkpoint}`)
@@ -844,7 +884,7 @@ async function runCheckpoints(checkpoints) {
   const failures = []
 
   for (const checkpoint of checkpoints) {
-    const env = checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
+    const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
     const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
       ? ['--cloud-only', '--segment', checkpoint]

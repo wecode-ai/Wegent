@@ -929,12 +929,10 @@ describe('durable stand-in transport', () => {
         sanitizeAnalyticsProperties(event.name, { ...event.properties, duration_ms })
       ).not.toHaveProperty('duration_ms')
     }
-    localStorage.setItem('unrelated-preference', 'preserved')
-    localStorage.setItem('wework.stand-in-telemetry:public:old-account', 'pending')
+    localStorage.setItem('wework.stand-in-telemetry:old-account', 'pending')
     localStorage.setItem('wework.stand-in-telemetry:offline-device', 'pending')
     await setTelemetryEnabled(false)
-    expect(localStorage.getItem('wework.stand-in-telemetry:public:old-account')).toBeNull()
-    expect(localStorage.getItem('unrelated-preference')).toBe('preserved')
+    expect(localStorage.getItem('wework.stand-in-telemetry:old-account')).toBeNull()
     expect(localStorage.getItem('wework.stand-in-telemetry:offline-device')).toBeNull()
   })
 

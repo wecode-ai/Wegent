@@ -2,27 +2,17 @@ import { createServer } from 'node:http'
 import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { loopbackFetch } from '../../test/fixtures/loopback-fetch.mjs'
 import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
-const { browserFetch, netFetch } = vi.hoisted(() => ({
-  browserFetch: vi.fn(),
-  netFetch: vi.fn(),
-}))
-vi.mock('electron', () => ({
-  net: { fetch: netFetch },
-  session: { defaultSession: { fetch: browserFetch } },
-}))
+const { browserFetch } = vi.hoisted(() => ({ browserFetch: vi.fn() }))
+vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch } } }))
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
-  vi.useRealTimers()
   vi.unstubAllGlobals()
-  netFetch.mockReset()
-  browserFetch.mockReset()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -34,38 +24,10 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
-  test('probes anonymously without depending on Electron or Node fetch', async () => {
-    const nodeFetch = vi.fn(() => {
-      throw new Error('Anonymous readiness must not use Node fetch')
-    })
-    vi.stubGlobal('fetch', nodeFetch)
-    let observedHeaders: Record<string, unknown> | undefined
-    let observedPath: string | undefined
-    const server = createServer((request, response) => {
-      observedHeaders = request.headers
-      observedPath = request.url
-      response.end('ready')
-    })
-    servers.push(server)
-    await listen(server)
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
-    const url = `http://127.0.0.1:${address.port}/health?generation=2`
-
-    await new DshRuntime({ url }).start()
-
-    expect(observedPath).toBe('/health?generation=2')
-    expect(observedHeaders?.cookie).toBeUndefined()
-    expect(observedHeaders?.authorization).toBeUndefined()
-    expect(netFetch).not.toHaveBeenCalled()
-    expect(browserFetch).not.toHaveBeenCalled()
-    expect(nodeFetch).not.toHaveBeenCalled()
-  })
-
   test.each(['before', 'after'])(
     'authenticates a dynamically bound port with credentials sent %s its announcement',
     async order => {
-      browserFetch.mockImplementation(loopbackFetch)
+      browserFetch.mockImplementation((url, init) => fetch(url, init))
       const runtime = new DshRuntime({
         url: 'http://127.0.0.1:0/',
         command: process.execPath,
@@ -103,7 +65,6 @@ describe('DSH runtime readiness', () => {
           origin + '/executor',
         ])
         expect(runtime.url()).not.toContain('token')
-        expect(netFetch).not.toHaveBeenCalled()
       } finally {
         await runtime.stop()
         browserFetch.mockReset()
@@ -185,7 +146,7 @@ describe('DSH runtime readiness', () => {
       expect(runtimes[0].url()).not.toBe(runtimes[1].url())
       for (const runtime of runtimes) {
         expect(Number(new URL(runtime.url()).port)).toBeGreaterThan(0)
-        const response = await loopbackFetch(`${runtime.url()}/requests`)
+        const response = await fetch(`${runtime.url()}/requests`)
         expect(await response.json()).toEqual(['/host', '/executor', '/requests'])
       }
     } finally {
@@ -238,7 +199,7 @@ describe('DSH runtime readiness', () => {
       process.kill(firstPid, 'SIGKILL')
       await vi.waitFor(
         async () => {
-          const response = await loopbackFetch(origin)
+          const response = await fetch(origin)
           expect(Number(await response.text())).not.toBe(firstPid)
         },
         { timeout: 3_000 }
@@ -250,21 +211,19 @@ describe('DSH runtime readiness', () => {
   })
 
   test('preserves the timeout reason while a probe request is still in flight', async () => {
-    let requestArrived!: () => void
-    const inFlight = new Promise<void>(resolve => {
-      requestArrived = resolve
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) throw new Error('Probe request has no abort signal')
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
     })
-    const server = createServer(() => requestArrived())
-    servers.push(server)
-    await listen(server)
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const started = new DshRuntime({ url: `http://127.0.0.1:${address.port}/pending` }).start(10)
-    const rejected = expect(started).rejects.toThrow('DSH startup timed out')
-    await inFlight
-    await vi.advanceTimersByTimeAsync(10)
-    await rejected
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(new DshRuntime({ url: 'http://127.0.0.1/pending' }).start(10)).rejects.toThrow(
+      'DSH startup timed out'
+    )
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   test('does not treat a missing route as ready', async () => {

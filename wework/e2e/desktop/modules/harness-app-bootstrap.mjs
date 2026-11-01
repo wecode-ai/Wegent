@@ -13,13 +13,7 @@ import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 
 export async function prepareHarnessAppUi(
   control,
-  {
-    uiTimeoutMs,
-    captureScreenshot,
-    electronUserDataDirectory,
-    harnessRuntimeRoot,
-    legacyPackagePath,
-  }
+  { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir, legacyPackagePath }
 ) {
   await setExperimentalFeatures(control, false, uiTimeoutMs)
   await control.command('navigate', 'body', { value: '/' })
@@ -188,7 +182,10 @@ export async function prepareHarnessAppUi(
     electronUserDataDirectory,
     uiTimeoutMs,
   })
-  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(harnessRuntimeRoot, '0.1.0-rc.8')
+  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
+    join(resultDir, 'harness-runtime'),
+    '0.1.0-rc.8'
+  )
 
   return { legacyRuntimeCache }
 }

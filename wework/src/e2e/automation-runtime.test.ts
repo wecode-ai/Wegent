@@ -15,7 +15,6 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import * as codexPlugins from '@/api/local/codexPlugins'
-import * as pluginDeviceAutoSync from '@/features/plugins/pluginDeviceAutoSync'
 import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 
 afterEach(() => {
@@ -43,56 +42,6 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
-  test.each([undefined, 'diagnostic-device'])(
-    'preserves network timings and optional plugin synchronization diagnostics for %s',
-    async deviceId => {
-      const pressure = { cpuLoadRatio: 0.25, freeMemoryRatio: 0.5, userIdleSeconds: 5 }
-      const host = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(pressure)
-      const sync = vi
-        .spyOn(pluginDeviceAutoSync, 'hasInFlightPluginDeviceSync')
-        .mockReturnValue(true)
-      const results: Array<{ ok: boolean; value?: string }> = []
-      let polls = 0
-      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
-        if (url.includes('/commands?')) {
-          if (++polls > 1) return Promise.resolve(new Response(null, { status: 410 }))
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                id: 'workbench-diagnostics',
-                action: 'getWorkbenchDebugSnapshot',
-                selector: 'body',
-                value: deviceId,
-              })
-            )
-          )
-        }
-        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
-        return Promise.resolve(new Response('{}'))
-      })
-
-      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
-
-      expect(results).toHaveLength(1)
-      expect(results[0].ok).toBe(true)
-      const snapshot = JSON.parse(results[0].value!)
-      expect(Number.isFinite(snapshot.timeOrigin)).toBe(true)
-      expect(snapshot.networkTimingCapture.timeOrigin).toBe(snapshot.timeOrigin)
-      expect(snapshot.network).toEqual(expect.any(Array))
-      if (deviceId) {
-        expect(sync).toHaveBeenCalledWith(deviceId)
-        expect(host).toHaveBeenCalledWith('maintenance.getSystemPressure')
-        expect(snapshot.pluginDeviceSyncInFlight).toBe(true)
-        expect(snapshot.systemPressure).toEqual(pressure)
-      } else {
-        expect(sync).not.toHaveBeenCalled()
-        expect(host).not.toHaveBeenCalled()
-        expect(snapshot).not.toHaveProperty('pluginDeviceSyncInFlight')
-        expect(snapshot).not.toHaveProperty('systemPressure')
-      }
-    }
-  )
-
   test.each([
     'no-catalog',
     'local-only',

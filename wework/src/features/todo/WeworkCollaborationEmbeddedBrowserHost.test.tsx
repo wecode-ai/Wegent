@@ -13,7 +13,6 @@ import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmb
 const hostMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   listenOpen: vi.fn(),
-  unlistenOpen: vi.fn(),
   listenClose: vi.fn(),
   listenPopup: vi.fn(),
 }))
@@ -67,7 +66,6 @@ let popupHandler: ((request: EmbeddedBrowserPopupRequest) => void) | null = null
 beforeEach(() => {
   hostMocks.closeEmbeddedBrowser.mockClear()
   hostMocks.listenOpen.mockClear()
-  hostMocks.unlistenOpen.mockClear()
   hostMocks.listenClose.mockClear()
   hostMocks.listenPopup.mockClear()
   openHandler = null
@@ -76,7 +74,7 @@ beforeEach(() => {
   hostMocks.listenOpen.mockImplementation(
     (handler: (request: EmbeddedBrowserOpenRequest) => void) => {
       openHandler = handler
-      return hostMocks.unlistenOpen
+      return Promise.resolve(() => {})
     }
   )
   hostMocks.listenClose.mockImplementation(
@@ -204,7 +202,6 @@ test('keeps the browser inactive when its workspace is hidden', () => {
   })
 
   rerender(<WeworkCollaborationEmbeddedBrowserHost workspaceActive={false} />)
-  expect(hostMocks.unlistenOpen).toHaveBeenCalledOnce()
   act(() => {
     openHandler?.({
       id: 'background-link',
@@ -352,7 +349,6 @@ test('closes only its own native browser when the collaboration workspace unmoun
 
   unmount()
 
-  expect(hostMocks.unlistenOpen).toHaveBeenCalledOnce()
   await waitFor(() => {
     expect(hostMocks.closeEmbeddedBrowser).toHaveBeenCalledExactlyOnceWith(
       label,

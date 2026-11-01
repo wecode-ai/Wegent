@@ -29,7 +29,6 @@ export async function verifyHarnessLifecycle(
     ownerRequest,
     downloadsPath,
     resultDir,
-    harnessRuntimeRoot,
     legacyRuntimeCache,
   }
 ) {
@@ -469,7 +468,7 @@ export async function verifyHarnessLifecycle(
   })
   await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
   assert.deepEqual(
-    await verifyDownloadedDshRuntimeCache(harnessRuntimeRoot, '0.1.0-rc.8'),
+    await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
     legacyRuntimeCache,
     'Reopening an authenticated app must preserve the verified legacy runtime archive'
   )

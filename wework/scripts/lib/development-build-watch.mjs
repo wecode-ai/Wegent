@@ -13,7 +13,6 @@ export function watchDevelopmentDirectory(
   const roots = [directory, realpathSync(directory)]
   const watcher = createWatcher(directory, {
     ignoreInitial: true,
-    disableGlobbing: true,
     depth: recursive ? undefined : 0,
     ignored,
   })
@@ -116,23 +115,21 @@ export async function watchDevelopmentBuild({
     watcher.on('error', onError)
     watchers.push(watcher)
   }
+  for (const directory of directories) observe(directory, true, () => true)
+  const parents = new Map()
+  for (const file of files) {
+    const parent = path.dirname(file)
+    const names = parents.get(parent) ?? new Set()
+    names.add(file)
+    parents.set(parent, names)
+  }
+  for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
   try {
-    for (const directory of directories) observe(directory, true, () => true)
-    const parents = new Map()
-    for (const file of files) {
-      const parent = path.dirname(file)
-      const names = parents.get(parent) ?? new Set()
-      names.add(file)
-      parents.set(parent, names)
-    }
-    for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
     await Promise.all(watchers.map(watcher => watcher.ready))
     inputChanged = developmentBuildInputs({ directories, files, excluded })
     running = build()
     await running
   } catch (error) {
-    closed = true
-    clearTimeout(timer)
     await Promise.all(watchers.map(watcher => watcher.close()))
     throw error
   } finally {

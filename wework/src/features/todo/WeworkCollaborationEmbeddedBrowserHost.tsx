@@ -41,7 +41,7 @@ export function WeworkCollaborationEmbeddedBrowserHost({
 
   useEffect(() => {
     if (!isElectronRuntime() || !workspaceActive) return
-    const unlisten = listenEmbeddedBrowserOpenRequests(request => {
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
       if (!workspaceActiveRef.current) return
       const baseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
       const defaultUserRequest =
@@ -53,7 +53,9 @@ export function WeworkCollaborationEmbeddedBrowserHost({
         (baseLabel === label && (!request.targetLabel || request.targetLabel === label))
       if (defaultUserRequest || ownedRequest) open(request)
     })
-    return () => unlisten?.()
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
   }, [label, open, workspaceActive])
 
   useEffect(() => {

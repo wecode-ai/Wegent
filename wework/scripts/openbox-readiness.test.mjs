@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
-import { ISOLATED_XVFB_SERVER_ARGUMENTS } from '../e2e/desktop/checkpoint-environment.mjs'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-openbox.sh')
 const fixtureTimeoutMs = 10_000
@@ -219,46 +218,4 @@ exit 1
     expect(result.stderr).not.toContain('The window manager must not start')
   },
   processTestTimeoutMs
-)
-
-function readRootPropertyAfterDisconnect(serverArguments) {
-  const result = spawnSync(
-    'xvfb-run',
-    [
-      '-a',
-      `--server-args=${serverArguments}`,
-      process.execPath,
-      '--input-type=module',
-      '-e',
-      `
-import { execFileSync } from 'node:child_process'
-import { setTimeout } from 'node:timers/promises'
-const property = '_WEWORK_E2E_DISPLAY_LIFECYCLE'
-execFileSync('xprop', ['-root', '-f', property, '8s', '-set', property, 'retained'])
-// A deliberate client-free interval exercises the server's reset lifecycle.
-await setTimeout(1_000)
-const value = execFileSync('xprop', ['-root', property], { encoding: 'utf8' })
-console.log(value.includes('"retained"') ? 'retained' : 'reset')
-`,
-    ],
-    { encoding: 'utf8', timeout: 10_000 }
-  )
-  expect(result.error).toBeUndefined()
-  expect(result.status, result.stderr).toBe(0)
-  return result.stdout.trim()
-}
-
-it.runIf(process.platform === 'linux')(
-  'keeps the real display alive between client connections',
-  () => {
-    expect(readRootPropertyAfterDisconnect(ISOLATED_XVFB_SERVER_ARGUMENTS)).toBe('retained')
-  }
-)
-
-it.runIf(process.platform === 'linux')(
-  'reproduces the root-property reset without the lifecycle fix',
-  () => {
-    const resetArguments = ISOLATED_XVFB_SERVER_ARGUMENTS.replace(' -noreset', '')
-    expect(readRootPropertyAfterDisconnect(resetArguments)).toBe('reset')
-  }
 )

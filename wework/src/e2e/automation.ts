@@ -4,7 +4,6 @@ import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnos
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
-import { createNetworkTimingCapture, type NetworkTimingCapture } from './network-timing-capture'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -1953,10 +1952,7 @@ async function dispatchDesktopControlPaths(
   return descriptors.map(descriptor => descriptor.name).join(',')
 }
 
-async function executeDesktopControlCommand(
-  command: DesktopControlCommand,
-  networkTimings: NetworkTimingCapture
-): Promise<string> {
+async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   const getWindowFocusSnapshot = () =>
     invokeDesktopHost<Record<string, unknown>>('e2e.getWindowFocusSnapshot').then(snapshot =>
       JSON.stringify(snapshot)
@@ -3302,13 +3298,27 @@ async function executeDesktopControlCommand(
       }
       return String(finishedCount)
     }
-    case 'getWorkbenchDebugSnapshot': {
-      const { entries, ...networkTimingCapture } = networkTimings.snapshot()
+    case 'getWorkbenchDebugSnapshot':
+      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
-        timeOrigin: networkTimingCapture.timeOrigin,
-        network: entries,
-        networkTimingCapture,
+        timeOrigin: performance.timeOrigin,
+        network: performance.getEntriesByType('resource').map(entry => {
+          const timing = entry as PerformanceResourceTiming
+          return {
+            path: new URL(timing.name, location.href).pathname,
+            initiatorType: timing.initiatorType,
+            startTime: timing.startTime,
+            duration: timing.duration,
+            fetchStart: timing.fetchStart,
+            connectStart: timing.connectStart,
+            connectEnd: timing.connectEnd,
+            requestStart: timing.requestStart,
+            responseStart: timing.responseStart,
+            responseEnd: timing.responseEnd,
+            nextHopProtocol: timing.nextHopProtocol,
+          }
+        }),
         ...(command.value
           ? {
               pluginDeviceSyncInFlight: hasInFlightPluginDeviceSync(command.value),
@@ -3316,7 +3326,6 @@ async function executeDesktopControlCommand(
             }
           : {}),
       })
-    }
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':
@@ -3737,19 +3746,6 @@ async function postDesktopControlStarted(
 }
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
-  const networkTimings = createNetworkTimingCapture(window.location.href, url)
-  try {
-    await runDesktopControlSession(url, windowLabel, networkTimings)
-  } finally {
-    networkTimings.stop()
-  }
-}
-
-async function runDesktopControlSession(
-  url: string,
-  windowLabel: string,
-  networkTimings: NetworkTimingCapture
-): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3786,7 +3782,7 @@ async function runDesktopControlSession(
       const completion = completeDesktopControlCommand(
         command,
         clientId,
-        command => executeDesktopControlCommand(command, networkTimings),
+        executeDesktopControlCommand,
         result => postDesktopControlResult(url, result)
       )
       if (command.action === 'fetchLocalRuntime') {
