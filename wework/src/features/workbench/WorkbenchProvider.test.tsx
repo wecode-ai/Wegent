@@ -4152,22 +4152,25 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('revalidates account membership after uninstall while device cleanup is pending', async () => {
     setElectronRuntime()
     mockComposerDirectoryRoute(() => 'runtime-record-70')
+    let cleanupPending = true
     const original = localExecutorMocks.requestLocalExecutor.getMockImplementation()!
     localExecutorMocks.requestLocalExecutor.mockImplementation(async (method, params) => {
       if (method === 'executor.plugins.store.list')
         return {
           storePath: '/store',
-          plugins: [
-            {
-              name: 'documents',
-              packageId: 'documents-package',
-              installedPluginId: 101,
-              cloudPluginId: 101,
-              marketplace: 'wegent',
-              enabled: true,
-              pluginPath: '/store/documents-package',
-            },
-          ],
+          plugins: cleanupPending
+            ? [
+                {
+                  name: 'documents',
+                  packageId: 'documents-package',
+                  installedPluginId: 101,
+                  cloudPluginId: 101,
+                  marketplace: 'wegent',
+                  enabled: true,
+                  pluginPath: '/store/documents-package',
+                },
+              ]
+            : [],
         }
       return original(method, params)
     })
@@ -4196,6 +4199,20 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
     expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual([])
     expect(getComposerApps()).toEqual([])
+
+    // Complete enrichment can refresh the timestamp before device cleanup finishes.
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPluginsFetchedAt).toBeGreaterThan(0)
+    )
+    await userEvent.click(screen.getByText('list local apps'))
+    expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual([])
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
+
+    cleanupPending = false
+    await userEvent.click(screen.getByText('list local apps'))
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
   })
 
   test('routes composer inventory through the current Runtime while retaining stable cache identity', async () => {
