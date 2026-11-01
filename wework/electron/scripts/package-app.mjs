@@ -155,7 +155,7 @@ try {
     name: identity.productName,
     electronVersion: sourcePackage.devDependencies.electron,
     electronZipDir,
-    appBundleId: identity.identifier,
+    appBundleId: fixtureVersion ? fixtureApplicationId : identity.identifier,
     ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: packageVersion,
