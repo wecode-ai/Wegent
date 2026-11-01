@@ -2505,10 +2505,14 @@ fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<Stri
             .get("turnIdsBySubtask")
             .and_then(Value::as_object)
         {
-            identities.extend(mappings.iter().filter_map(|(alias, native)| {
-                (native.as_str() == Some(native_id.as_str()) && alias != turn_id)
-                    .then(|| alias.clone())
-            }));
+            identities.extend(
+                mappings
+                    .iter()
+                    .filter(|(alias, native)| {
+                        native.as_str() == Some(native_id.as_str()) && alias.as_str() != turn_id
+                    })
+                    .map(|(alias, _)| alias.clone()),
+            );
         }
     }
     identities
