@@ -443,7 +443,14 @@ export async function verifyCachedHistorySearch(
   await waitForBottom(control, 'The restored cached conversation', timeoutMs)
   const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
-    assert.deepEqual(restored.transcript[field], original.transcript[field])
+    assert.deepEqual(
+      restored.transcript[field],
+      original.transcript[field],
+      `Cached history restoration changed ${field}: ${JSON.stringify({
+        original: original.transcript,
+        restored: restored.transcript,
+      })}`
+    )
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
   assert.equal(Number(await control.command('getElementCount', NEWER)), 0)
