@@ -66,6 +66,30 @@ fn admitted_turn_history_cannot_synthesize_interruption_before_native_start() {
 }
 
 #[test]
+fn started_turn_history_stays_running_before_its_transcript_buffer_is_created() {
+    let (handler, root, request) = setup("native-start-history-publication");
+    handler.apply_native_lifecycle("task-1", &request, &notification("turn/started", "turn-1"));
+    let before = handler.local_task_link("task-1").unwrap().execution_state;
+    let mut thread = json!({"id": "thread-1", "timeline": true, "turns": [{
+        "id": "turn-1", "status": "interrupted", "items": []
+    }]});
+
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+
+    assert_eq!(thread["turns"][0]["status"], "inProgress");
+    assert_eq!(
+        handler.local_task_link("task-1").unwrap().execution_state,
+        before
+    );
+    assert!(handler
+        .active_codex_transcript_items
+        .lock()
+        .unwrap()
+        .is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn recovery_exit_settles_only_its_own_failed_turn() {
     for next_turn in [false, true] {
         let (handler, root, _) = setup("native-recovery-exit");
@@ -453,6 +477,76 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
     handler.upsert_local_task(link);
     handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
     (handler, root, request)
+}
+
+#[tokio::test]
+async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
+    let (handler, root, request) = setup("native-completed-send-cleanup");
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = None);
+    let execution = start_test_execution(&handler, "task-1");
+    {
+        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+        scheduler.active_task_ids.insert("task-1".into());
+        scheduler.active_tasks = 1;
+    }
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    let payload = json!({
+        "taskId": "task-1",
+        "message": "continue",
+        "executionRequest": request,
+    });
+    let running = handler.send_message(payload.clone()).await.unwrap();
+    assert_eq!(running["success"], false);
+    assert_eq!(running["error"], "runtime task is already running");
+
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    assert!(!handler.local_task_link("task-1").unwrap().running);
+    assert!(handler.is_current_local_task_execution("task-1", execution));
+    let continuation = handler.send_message(payload.clone()).await.unwrap();
+    assert_eq!(continuation["accepted"], true);
+    assert_eq!(continuation["status"], "queued");
+    assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
+    assert!(handler.is_current_local_task_execution("task-1", execution));
+    assert_eq!(handler.turn_scheduler.lock().unwrap().active_tasks, 1);
+
+    let duplicate = handler.send_message(payload).await.unwrap();
+    assert_eq!(duplicate["success"], false);
+    assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn native_goal_continuation_and_failed_turn_do_not_admit_unrequested_sends() {
+    for goal_active in [false, true] {
+        let (handler, root, request) = setup("native-send-still-owned");
+        if !goal_active {
+            handler
+                .store
+                .update_task("task-1", |link| link.goal_status = None);
+        }
+        let execution = start_test_execution(&handler, "task-1");
+        handler.route_codex_notification(notification("turn/started", "turn-1"));
+        let mut terminal = notification("turn/completed", "turn-1");
+        if !goal_active {
+            terminal["params"]["turn"]["status"] = json!("failed");
+        }
+        handler.route_codex_notification(terminal);
+        let result = handler
+            .send_message(json!({
+                "taskId": "task-1", "message": "continue", "executionRequest": request,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], false);
+        assert_eq!(result["error"], "runtime task is already running");
+        assert_eq!(handler.queued_local_task_position("task-1"), None);
+        assert!(handler.finish_local_task_execution("task-1", execution));
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[tokio::test]

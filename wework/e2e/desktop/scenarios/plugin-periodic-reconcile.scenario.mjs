@@ -10,7 +10,10 @@ import {
   pluginApi,
   until,
 } from '../modules/plugin-regression-fixture.mjs'
-import { observePluginSyncTransport } from '../modules/plugin-sync-observer.mjs'
+import {
+  acknowledgedPluginGeneration,
+  observePluginSyncTransport,
+} from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
@@ -134,23 +137,32 @@ export async function createDesktopScenario({
         const [request] = requests
         const before = previous.find(row => row.device_id === target.persistedDeviceId)
         const settled = await until(
-          async () => ({
-            acknowledgement: target.observation.acknowledgements.find(
-              value =>
-                value.at >= request.at &&
-                value.id === request.id &&
-                value.namespace === request.namespace &&
-                value.pluginSync?.generation === request.pluginSync.generation
-            ),
-            plugin: await materializedPlugin(target.home, fixture.installedId),
-            rows: await cloud.queryDatabase(
-              'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
-              [1, fixture.installedId, target.persistedDeviceId]
-            ),
-          }),
+          async () => {
+            const plugin = await materializedPlugin(target.home, fixture.installedId)
+            return {
+              currentGenerationAcknowledgement: acknowledgedPluginGeneration(
+                target.observation,
+                plugin,
+                fixture.installedId,
+                request
+              ),
+              acknowledgement: target.observation.acknowledgements.find(
+                value =>
+                  value.at >= request.at &&
+                  value.id === request.id &&
+                  value.namespace === request.namespace &&
+                  value.pluginSync?.generation === request.pluginSync.generation
+              ),
+              plugin,
+              rows: await cloud.queryDatabase(
+                'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+                [1, fixture.installedId, target.persistedDeviceId]
+              ),
+            }
+          },
           value =>
             value.acknowledgement?.success === true &&
-            value.plugin?.plugin_sync_generation === request.pluginSync.generation &&
+            value.currentGenerationAcknowledgement !== null &&
             value.rows.length === 1 &&
             value.rows[0].state === 'installed' &&
             value.rows[0].desired_release_id === fixture.releaseId &&
@@ -166,6 +178,8 @@ export async function createDesktopScenario({
           target: target.kind,
           installedId: fixture.installedId,
           generation: request.pluginSync.generation,
+          currentGeneration: settled.plugin.plugin_sync_generation,
+          currentGenerationAcknowledgement: settled.currentGenerationAcknowledgement,
           persisted: settled.rows,
         })
       })

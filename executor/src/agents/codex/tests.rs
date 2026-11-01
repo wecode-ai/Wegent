@@ -1067,6 +1067,35 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
     );
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn codex_app_server_starts_beyond_windows_max_path() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let mut directory = crate::path_compat::strip_windows_verbatim_prefix(root.path());
+    while directory.as_os_str().encode_wide().count() < 280 {
+        directory.push("codex-long-path-component");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("codex.exe");
+    fs::copy(env::current_exe().unwrap(), &binary).unwrap();
+    assert!(binary.as_os_str().encode_wide().count() > 260);
+
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        CODEX_HOME_ENV.to_owned(),
+        root.path().join("codex-home").display().to_string(),
+    );
+    // The test binary treats app-server as a filter with no matching tests.
+    let mut child = spawn_codex_app_server(binary.to_str().unwrap(), &config).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+}
+
 #[test]
 fn codex_app_server_uses_native_desktop_http_identity() {
     let mut config = CodexLaunchConfig::default();

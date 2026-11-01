@@ -7,6 +7,7 @@ import { cloneReleaseProfile, profileRevision } from './release-profile.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { RotatingLog } from './rotating-log.js'
+import { recoverReleaseLayout } from './release-layout-recovery.js'
 
 export interface ReleasePreparationRequest {
   release: DesktopRelease
@@ -121,4 +122,7 @@ export async function prepareReleaseEnvironment(
     JSON.stringify({ sourceRevision, components })
   )
   await store.save(release)
+  await step('source-layout-recovery', () =>
+    recoverReleaseLayout(store, request.sourceProfile, release.dataSchema)
+  )
 }

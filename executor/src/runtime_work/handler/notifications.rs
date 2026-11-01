@@ -510,35 +510,35 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
-        // Native start is published before the transcript buffer is initialized.
-        // Keep that running identity authoritative during the publication window.
-        let native = self
+        // The lifecycle is published before its transcript buffer is created.
+        // Preserve that native identity across a concurrent historical read.
+        let state = self
             .store
-            .read_task(local_task_id, |link| {
-                crate::runtime_work::lifecycle::native_execution_state(link)
-            })
+            .read_task(
+                local_task_id,
+                crate::runtime_work::lifecycle::native_execution_state,
+            )
             .flatten();
-        let owned_turn = match native {
-            Some(state)
-                if state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Running =>
-            {
-                state.turn_id
-            }
-            Some(state)
-                if state.phase
-                    == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting =>
-            {
-                self.active_codex_turn(local_task_id)
+        let owned_turn_id = state
+            .as_ref()
+            .and_then(|state| state.turn_id.clone())
+            .or_else(|| {
+                state
+                    .is_some_and(|state| {
+                        state.phase
+                            == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+                    })
+                    .then(|| self.active_codex_turn(local_task_id))
+                    .flatten()
                     .map(|turn| turn.turn_id)
-            }
-            _ => None,
-        };
+            });
         let active = self
             .active_codex_transcript_items
             .lock()
             .ok()
             .and_then(|items| items.get(local_task_id).cloned());
-        let Some(turn_id) = owned_turn.or_else(|| active.as_ref().map(|turn| turn.turn_id.clone()))
+        let Some(turn_id) =
+            owned_turn_id.or_else(|| active.as_ref().map(|turn| turn.turn_id.clone()))
         else {
             return;
         };
@@ -945,6 +945,7 @@ impl RuntimeWorkRpcHandler {
         });
         if route.local_task_id != local_task_id {
             route.generation = next_thread_event_route_generation(&mut routing);
+            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
             routing.replaying_route_generations.remove(thread_id);
             routing
                 .pending_notifications
@@ -954,9 +955,6 @@ impl RuntimeWorkRpcHandler {
             && !active
             && !is_context_compaction_request(&route.request)
             && is_context_compaction_request(&request);
-        if active {
-            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
-        }
         route
             .event_mapper
             .lock()
