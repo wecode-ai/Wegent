@@ -349,6 +349,8 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    // Pending history does not admit a queued task into executor capacity.
+    if (this.getTask(address)?.derived.isQueued && transcript.running !== true) return
     const recoveredTurn = this.getTask(address)?.turn
     const completedRecoveredTurn =
       transcript.running === false && recoveredTurn?.phase === 'streaming'
