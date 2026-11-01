@@ -251,7 +251,10 @@ export async function verifyPluginDetailResilience({
       },
       values => values.length === 1,
       `A unique real catalog row for ${item.name} was not available`
-    ).then(values => testId(values[0]))
+    ).then(
+      // A source read can replace a disk row with its Codex catalog identity.
+      () => `[data-testid^="plugin-marketplace-row-"][data-testid*="${item.name}"]`
+    )
   }
 
   async function openDetail(item) {
@@ -816,12 +819,13 @@ export async function verifyPluginDetailResilience({
     report.failures = failures.map(error => String(error?.message ?? error))
     report.passed =
       report.preconditions.completed &&
-      report.phases.length === 7 &&
+      report.phases.length === 8 &&
+      report.phases.every(phase => phase.passed) &&
       report.blocked.length === 0 &&
       failures.length === 0
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
   }
-  if (failures.length)
+  if (!report.passed)
     throw new AggregateError(failures, 'Plugin detail resilience assertions failed')
   return {
     reportPath,
