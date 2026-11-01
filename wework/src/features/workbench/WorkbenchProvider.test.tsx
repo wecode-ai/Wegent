@@ -21602,6 +21602,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     const skillSources: unknown[] = []
+    let refreshPromise: Promise<void> | undefined
     function SkillsSourceProbe() {
       const workbench = useWorkbench()
       useEffect(() => {
@@ -21611,7 +21612,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         <button
           type="button"
           data-testid="refresh-skills-work-lists"
-          onClick={() => void workbench.refreshWorkLists()}
+          onClick={() => {
+            refreshPromise = workbench.refreshWorkLists()
+          }}
         >
           refresh skill work lists
         </button>
@@ -21654,6 +21657,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     const previousRuntimeReads = vi.mocked(services.runtimeWorkApi!.listRuntimeWork!).mock.calls
       .length
     await userEvent.click(screen.getByTestId('refresh-skills-work-lists'))
+    await act(async () => {
+      await refreshPromise
+    })
     await waitFor(() =>
       expect(services.runtimeWorkApi!.listRuntimeWork).toHaveBeenCalledTimes(
         previousRuntimeReads + 1

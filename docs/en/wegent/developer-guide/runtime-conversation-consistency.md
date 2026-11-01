@@ -24,6 +24,8 @@ Turn lifecycle is independent of unpersisted items. Native `turns/list` can synt
 
 Turns and items share the same position and neighboring-identity ordering rules. Cached turns outside the newest history page that have no native position remain before their observed next native turn; appending all of them to the conversation tail would displace current Goal output and select an old reply as active. A new live turn without an observed native successor remains at the tail. Page merges must not invent adjacency for old cached turns from the merged array.
 
+User messages must use their containing turn's canonical identity instead of retaining an earlier request alias. When editing or retrying replaces a turn, the executor records supersession for both the request alias and native ID using the persisted native mapping, so optimistic caches, native history, and reloaded history remove the same old turn.
+
 ## Ownership and synchronization
 
 Native normalization produces turns/items and presentation messages in one pass. Native positions order items; explicit user boundaries group their presentation. The initial ordinary prompt owns the same reply as pre-prompt context compaction, while runtimeGuidance establishes another display segment. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.

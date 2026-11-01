@@ -934,9 +934,10 @@ impl RuntimeWorkRpcHandler {
         turn_id: &str,
     ) {
         self.store.update_task(local_task_id, |link| {
+            let identities = superseded_turn_identities(link, turn_id);
             let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
                 link.runtime_handle = json!({
-                    "supersededTranscriptTurnIds": [turn_id],
+                    "supersededTranscriptTurnIds": identities,
                 });
                 return;
             };
@@ -944,14 +945,16 @@ impl RuntimeWorkRpcHandler {
                 .entry("supersededTranscriptTurnIds")
                 .or_insert_with(|| json!([]));
             let Some(turn_ids) = turn_ids.as_array_mut() else {
-                *turn_ids = json!([turn_id]);
+                *turn_ids = json!(identities);
                 return;
             };
-            if !turn_ids
-                .iter()
-                .any(|existing| existing.as_str() == Some(turn_id))
-            {
-                turn_ids.push(Value::String(turn_id.to_owned()));
+            for identity in identities {
+                if !turn_ids
+                    .iter()
+                    .any(|existing| existing.as_str() == Some(&identity))
+                {
+                    turn_ids.push(Value::String(identity));
+                }
             }
         });
     }
@@ -2489,6 +2492,26 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<String> {
+    let mut identities = vec![turn_id.to_owned()];
+    if let Some(native_id) = resolve_codex_turn_id(link, turn_id) {
+        if native_id != turn_id {
+            identities.push(native_id.clone());
+        }
+        if let Some(mappings) = link
+            .runtime_handle
+            .get("turnIdsBySubtask")
+            .and_then(Value::as_object)
+        {
+            identities.extend(mappings.iter().filter_map(|(alias, native)| {
+                (native.as_str() == Some(native_id.as_str()) && alias != turn_id)
+                    .then(|| alias.clone())
+            }));
+        }
+    }
+    identities
 }
 
 fn retry_source_turn_id(payload: &Value) -> Option<String> {
