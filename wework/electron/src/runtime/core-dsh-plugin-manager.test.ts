@@ -89,7 +89,9 @@ describe('CoreDshPluginManager', () => {
           `
 import { CoreDshPluginManager } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/core-dsh-plugin-manager.js')).href)}
 import { RuntimeSupervisor } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/runtime-supervisor.js')).href)}
+import { stopProcess } from ${JSON.stringify(new URL('../../../e2e/desktop/process-lifecycle.mjs', import.meta.url).href)}
 import { once } from 'node:events'
+import { spawn } from 'node:child_process'
 import { rename } from 'node:fs/promises'
 const manager = new CoreDshPluginManager(${JSON.stringify({
             dshHome: join(fixture.root, 'home'),
@@ -124,6 +126,22 @@ const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
 if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
 const removed = await packageManager.uninstall('deep-runtime-plugin')
 if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin remained installed')
+const nativeChild = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume()'], { env: process.env })
+const childClosed = once(nativeChild, 'close')
+await once(nativeChild.stdout, 'data')
+const originalKill = process.kill
+process.kill = function(pid, signal) {
+  if (pid === nativeChild.pid && signal === 0) throw Object.assign(new Error('PID is no longer visible'), { code: 'ESRCH' })
+  return originalKill.call(process, pid, signal)
+}
+try {
+  await stopProcess(nativeChild)
+  if (nativeChild.exitCode === null && nativeChild.signalCode === null) throw new Error('Shutdown returned before the native exit event')
+} finally {
+  process.kill = originalKill
+  if (nativeChild.exitCode === null && nativeChild.signalCode === null) nativeChild.kill('SIGKILL')
+  await childClosed
+}
 `
         )
         await promisify(execFile)(electron, [harness], {
