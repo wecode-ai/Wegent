@@ -14,6 +14,15 @@ impl RuntimeWorkRpcHandler {
         let Some(schedule) = request.extra.get("standInSchedule") else {
             return Ok(());
         };
+        if let Some(at) = schedule.get("scheduledFor") {
+            if !at
+                .as_str()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .is_some_and(|at| at <= chrono::Utc::now())
+            {
+                return Err("The arrangement deadline has not arrived".into());
+            }
+        }
         let id = schedule["id"]
             .as_str()
             .ok_or("Missing arrangement identity")?;
@@ -298,6 +307,25 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_queued_arrangement_cannot_start_before_its_deadline() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        for at in [json!("2099-01-01T00:00:00Z"), json!("invalid"), Value::Null] {
+            let mut request = ExecutionRequest::default();
+            request
+                .extra
+                .insert("standInSchedule".into(), json!({"scheduledFor":at}));
+            assert_eq!(
+                handler
+                    .validate_stand_in_schedule_start(&request, "work")
+                    .unwrap_err(),
+                "The arrangement deadline has not arrived"
+            );
+        }
+        assert!(handler.store.list_task_summaries(true).is_empty());
+    }
 
     fn fixture(root: &Path) -> RuntimeWorkRpcHandler {
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

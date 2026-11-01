@@ -7,7 +7,13 @@ function fixture(overrides = {}) {
   const calls = []
   const contexts = [{ id: 'personal:7', revision: 'v1', enabled: true, needsProcessing: true }]
   const executor = {
-    describe: () => ({ capabilities: ['runtime.command-receipts-v1', 'runtime.coordination-v1'] }),
+    describe: () => ({
+      capabilities: [
+        'runtime.command-receipts-v1',
+        'runtime.coordination-v1',
+        'runtime.coordination-arrangements-v1',
+      ],
+    }),
     async request(method, params) {
       calls.push({ method, params })
       if (overrides.request) return overrides.request(method, params)

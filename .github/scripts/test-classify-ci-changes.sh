@@ -2967,6 +2967,10 @@ for coordination_path in \
   "wework/dsh/coordination-runtime/instructions.js" \
   "wework/dsh/coordination-runtime/router.test.mjs" \
   "executor/src/runtime_work/handler/coordination_rpc.rs" \
+  "executor/src/runtime_work/handler/stand_in_arrangements.rs" \
+  "executor/src/runtime_work/handler/stand_in_arrangements_tests.rs" \
+  "executor/src/task_runtime/coordination_arrangements.rs" \
+  "wework/e2e/desktop/scenarios/coordination-arrangements.scenario.mjs" \
   "wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs"; do
   assert_desktop_case "Coordination routing retains dispatch and permission coverage: $coordination_path" \
     "$coordination_router_expected" "$coordination_path"

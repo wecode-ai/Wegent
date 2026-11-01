@@ -18,12 +18,17 @@ fn enabled(settings: &Value) -> bool {
 
 fn context_user(payload: &Value) -> Result<i64, AppIpcError> {
     let id = required(payload, "contextId")?;
+    let prefix = if id.starts_with("arrangements:") {
+        "arrangements:"
+    } else {
+        "personal:"
+    };
     let user = id
-        .strip_prefix("personal:")
+        .strip_prefix(prefix)
         .and_then(|id| id.parse::<i64>().ok())
         .filter(|user| *user >= 0)
         .ok_or_else(|| AppIpcError::new("bad_request", "Unknown coordination context"))?;
-    if id != format!("personal:{user}") {
+    if id != format!("{prefix}{user}") {
         return Err(AppIpcError::new(
             "bad_request",
             "Invalid coordination context identity",
@@ -47,7 +52,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if method == "runtime.coordination.contexts" {
-            let contexts = store
+            let mut contexts = store
                 .all_personal_stand_ins(&self.device_id)
                 .map_err(settings_error)?
                 .into_iter()
@@ -57,6 +62,7 @@ impl RuntimeWorkRpcHandler {
                         "enabled":enabled(&settings),"needsProcessing":true})
                 })
                 .collect::<Vec<_>>();
+            contexts.extend(self.arrangement_contexts(&store)?);
             return Ok(json!({"contexts":contexts}));
         }
         let user = context_user(&payload)?;
@@ -66,6 +72,14 @@ impl RuntimeWorkRpcHandler {
         let settings = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
+        if payload["contextId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("arrangements:"))
+        {
+            return self
+                .arrangement_rpc(&store, user, &settings, method, &payload)
+                .await;
+        }
         match method {
             "runtime.coordination.status" => {
                 self.stand_in_processing_status(json!({"userId":user}))
@@ -457,7 +471,20 @@ impl RuntimeWorkRpcHandler {
                 Err(error) if error.code == "not_found" => continue,
                 Err(error) => return Err(error),
             };
-            if matches!(receipt["state"].as_str(), Some("failed" | "cancelled")) {
+            if receipt["state"] == "awaiting_user" {
+                let link = self.local_task_link(&task_id(user));
+                if self.is_busy_local_task(&task_id(user))
+                    || link.as_ref().map_or(true, waits_for_user)
+                {
+                    return Err(AppIpcError::new("work_awaiting_user", "Answer the question or approval in the original coordinator task before checking again"));
+                }
+                action["status"] = json!("cancelled");
+                action["result"] = receipt;
+                action["resolution"] = json!("explicit_retry_after_user_reply");
+                store
+                    .save_stand_in_action(user, &action)
+                    .map_err(settings_error)?;
+            } else if matches!(receipt["state"].as_str(), Some("failed" | "cancelled")) {
                 action["status"] = json!("cancelled");
                 action["result"] = receipt;
                 action["resolution"] = json!("explicit_retry");
@@ -491,7 +518,7 @@ impl RuntimeWorkRpcHandler {
             Ok(receipt) => {
                 if matches!(
                     receipt["state"].as_str(),
-                    Some("failed" | "cancelled" | "recovery_required")
+                    Some("failed" | "cancelled" | "recovery_required" | "awaiting_user")
                 ) {
                     let mut state = store
                         .stand_in_processing_state(user)

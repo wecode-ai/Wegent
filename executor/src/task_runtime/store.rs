@@ -72,6 +72,9 @@ mod stand_in_processing;
 #[path = "coordination_store.rs"]
 mod coordination_store;
 
+#[path = "coordination_arrangements.rs"]
+mod coordination_arrangements;
+
 #[path = "stand_in_telemetry.rs"]
 pub(crate) mod stand_in_telemetry;
 

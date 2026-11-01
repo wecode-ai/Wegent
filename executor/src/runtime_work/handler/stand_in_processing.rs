@@ -121,7 +121,10 @@ impl RuntimeWorkRpcHandler {
             .stand_in_actions(user)
             .map_err(settings_error)?
             .iter()
-            .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
+            .filter(|action| {
+                action["kind"] != "run_arrangement"
+                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
+            })
             .flat_map(|action| {
                 action["arguments"]["eventIds"]
                     .as_array()
@@ -276,7 +279,10 @@ impl RuntimeWorkRpcHandler {
             .stand_in_actions(user)
             .map_err(settings_error)?
             .into_iter()
-            .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
+            .filter(|action| {
+                action["kind"] != "run_arrangement"
+                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
+            })
         {
             action["status"] = json!("sending");
             store

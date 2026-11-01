@@ -13,6 +13,26 @@ const event = (id, extra = {}) => ({
 })
 const snapshot = events => ({ context: { enabled: true }, events })
 
+test('authorized arrangements dispatch exactly the due run without semantic assessment', () => {
+  const result = planIntake(
+    snapshot([
+      event('due', {
+        kind: 'schedule_due',
+        arrangement: true,
+        notBefore: new Date(now).toISOString(),
+      }),
+      event('future', {
+        kind: 'schedule_due',
+        arrangement: true,
+        notBefore: new Date(now + 1000).toISOString(),
+      }),
+    ]),
+    { now, force: true }
+  )
+  assert.deepEqual(result.actions, [{ kind: 'dispatch_arrangement', eventIds: ['due'] }])
+  assert.equal(Date.parse(result.nextWakeAt), now + 1000)
+})
+
 test('immediate input assesses now while a silent source waits', () => {
   const result = planIntake(
     snapshot([event('silent'), event('immediate', { processingMode: 'immediate' })]),

@@ -165,10 +165,18 @@ Linux 桌面 E2E 容器必须允许原生 Codex 创建用户和挂载命名空�
 
 支持 `runtime.command-receipts-v1` 能力的 Executor 为 `runtime.tasks.create` 和 `runtime.tasks.send` 提供显式 `commandId`。同一任务内重复提交同一命令及相同输入，返回原接收回执；同一 ID 改变输入或执行身份返回 `command_conflict`。普通查询和命令重放都校验所属用户；连接云端时还校验当前登录账号。未携带 `commandId` 的旧调用不获得这一幂等保证。
 
-使用 `runtime.tasks.commands.get` 查询 `{ taskId, commandId, userId }`。`accepted` 表示 Runtime 已持久接收，不表示模型已经读取，更不表示业务工作完成。状态区分 `queued`、`dispatching`、`started`、`settled`、`failed`、`cancelled` 和 `recovery_required`。`settled` 可以表示这一轮已经提出用户问题；原工作仍按自身状态等待回答。
+使用 `runtime.tasks.commands.get` 查询 `{ taskId, commandId, userId }`。`accepted` 表示 Runtime 已持久接收，不表示模型已经读取，更不表示业务工作完成。状态区分 `queued`、`dispatching`、`started`、`settled`、`awaiting_user`、`failed`、`cancelled` 和 `recovery_required`。`awaiting_user` 记录该命令因等待用户回答或审批而停止；后续回答是新命令，不会把原回执改写成成功。
 
 待执行请求、命令身份和队列变更一起写入现有加密 Runtime 队列文件，不用 transcript 是否可见来猜测消息是否已接收。业务事件、评估快照及业务动作继续使用现有分身存储；它们与 Runtime 投递回执承担不同职责。确认终态后删除命令记录中的启动凭据和完整请求，只保留回执所需身份与原生关联。
 
 重启后按具体 thread 和 turn 核对原生 timeline 的真实完成边界。`thread/turns/list` 可能合成 `interrupted`，单独这一状态不足以证明已取消。无法确认执行事实时返回 `recovery_required`，保留待核对请求，要求在原工作检查状态，不自动重发。Goal 的自主恢复不重新提交原用户命令；真实执行结果和 generation 决定命令收尾，迟到回调不得结算后续命令。
 
 新协调调用方必须先检查能力标记，不能在缺少该能力时降级为不带命令 ID 的发送。接收回执不替代来源、角色、项目权限或原生操作确认，也不能用于替用户回答问题或批准操作。
+
+## 已安排的持久恢复
+
+分身所属安排继续使用现有 Automation 存储保存日程和运行记录。到期记录冻结所属用户、角色、安排版本和目标任务。内置协调插件通过 `arrangements:<user>` 上下文发现这些记录，并直接路由 `schedule_due` 事件，不必等待繁忙的主分身语义会话。调用方除协调和回执能力外，还须检查 `runtime.coordination-arrangements-v1`。
+
+现有 SQLite 事务保存派发意图及不可变路由回执；Executor 加密命令日志保存 `arrangement-run:<run-id>` 的实际接收回执。恢复时先查询这一命令，再决定是否准备输入。因此，到期记录、派发意图或命令接收落盘后退出，都能继续核对，避免重复执行。清理历史不会删除 Pending 或 Running 记录。分身所属周期安排恢复后补处理一次错过的运行，再按正常周期继续。
+
+安排被修改、暂停或取消后，不能启动新命令。已排队的命令启动前仍检查当前身份、安排版本和原工作中的原生问题及审批。即使安排随后被编辑或删除，已接收命令的原回执仍是执行事实。等待用户或执行结果不确定时，在原工作中处理，不自动重发。旧版所属安排缺少持久回执的未结束记录需要人工核对；非分身安排保留现有执行路径。

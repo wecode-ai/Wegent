@@ -1,5 +1,30 @@
 use super::*;
 
+#[test]
+fn waiting_outcome_is_durable_and_cannot_be_requeued_as_a_successful_command() {
+    let state = CommandState::from_execution(&ExecutionOutcome::WaitingForUserInput {
+        stop_reason: "tool_deferred".into(),
+    });
+    assert_eq!(state, CommandState::AwaitingUser);
+    let input = turn("task", json!("question"), "Original question input");
+    let mut command = RuntimeCommand::from_turn(&input, CommandState::Dispatching)
+        .unwrap()
+        .unwrap();
+    assert!(command.finish(None, state));
+    let restored: RuntimeCommand =
+        serde_json::from_value(serde_json::to_value(&command).unwrap()).unwrap();
+    assert_eq!(restored.receipt()["state"], "awaiting_user");
+    assert_eq!(restored.receipt()["requiresUserReview"], true);
+    assert_eq!(restored.turn.request.prompt, json!(""));
+    let mut journal = CommandJournal::from([(restored.key(), restored)]);
+    assert_eq!(
+        project_queue(&mut journal, &VecDeque::from([input]), &[])
+            .unwrap_err()
+            .code,
+        "command_not_dispatchable"
+    );
+}
+
 fn turn(task: &str, id: Value, prompt: &str) -> SpawnTurnRequest {
     let payload =
         json!({"taskId":task,"commandId":id,"message":prompt,"workspacePath":"/tmp/command-test"});

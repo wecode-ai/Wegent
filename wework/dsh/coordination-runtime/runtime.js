@@ -15,7 +15,11 @@ export class CoordinationRuntime {
 
   async start() {
     const capabilities = this.executor.describe().capabilities
-    for (const capability of ['runtime.command-receipts-v1', 'runtime.coordination-v1']) {
+    for (const capability of [
+      'runtime.command-receipts-v1',
+      'runtime.coordination-v1',
+      'runtime.coordination-arrangements-v1',
+    ]) {
       if (!capabilities.includes(capability)) {
         throw new Error(`Executor does not support ${capability}`)
       }

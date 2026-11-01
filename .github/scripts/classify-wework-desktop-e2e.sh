@@ -1561,7 +1561,7 @@ classify_path() {
       select_target "core:stand-in-permissions"
       return
       ;;
-    wework/dsh/coordination-runtime/*|executor/src/runtime_work/handler/coordination_rpc.rs|wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs)
+    wework/dsh/coordination-runtime/*|executor/src/runtime_work/handler/coordination_rpc.rs|executor/src/runtime_work/handler/stand_in_arrangements*|executor/src/task_runtime/coordination_arrangements.rs|wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs|wework/e2e/desktop/scenarios/coordination-arrangements.scenario.mjs)
       select_target "core:stand-in-permissions"
       select_collaboration_dispatch_checkpoints
       case "$path" in

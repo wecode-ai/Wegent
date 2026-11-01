@@ -10,6 +10,7 @@ pub(super) enum CommandState {
     Started,
     Failed,
     Settled,
+    AwaitingUser,
     Cancelled,
     RecoveryRequired,
 }
@@ -134,7 +135,10 @@ impl RuntimeCommand {
         self.state = state;
         if matches!(
             self.state,
-            CommandState::Settled | CommandState::Failed | CommandState::Cancelled
+            CommandState::Settled
+                | CommandState::AwaitingUser
+                | CommandState::Failed
+                | CommandState::Cancelled
         ) {
             self.retire_request();
         }
@@ -143,7 +147,7 @@ impl RuntimeCommand {
 
     pub(super) fn receipt(&self) -> Value {
         json!({"success":true,"accepted":true,"taskId":self.turn.local_task_id,"commandId":self.id,
-            "state":self.state,"acceptedAt":self.accepted_at,"runtime":self.turn.runtime,"native":self.native,"requiresUserReview":self.state == CommandState::RecoveryRequired})
+            "state":self.state,"acceptedAt":self.accepted_at,"runtime":self.turn.runtime,"native":self.native,"requiresUserReview":matches!(self.state, CommandState::RecoveryRequired | CommandState::AwaitingUser)})
     }
 }
 
@@ -170,6 +174,7 @@ pub(super) fn project_queue(
                 if matches!(
                     existing.state,
                     CommandState::Settled
+                        | CommandState::AwaitingUser
                         | CommandState::Cancelled
                         | CommandState::Failed
                         | CommandState::RecoveryRequired
@@ -649,9 +654,8 @@ impl RuntimeWorkRpcHandler {
 impl CommandState {
     pub(super) fn from_execution(outcome: &ExecutionOutcome) -> Self {
         match outcome {
-            ExecutionOutcome::Completed { .. } | ExecutionOutcome::WaitingForUserInput { .. } => {
-                Self::Settled
-            }
+            ExecutionOutcome::Completed { .. } => Self::Settled,
+            ExecutionOutcome::WaitingForUserInput { .. } => Self::AwaitingUser,
             ExecutionOutcome::Cancelled { .. } => Self::Cancelled,
             ExecutionOutcome::Failed { .. } => Self::Failed,
             ExecutionOutcome::Running => Self::RecoveryRequired,

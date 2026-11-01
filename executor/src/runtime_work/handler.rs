@@ -152,6 +152,7 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_arrangements;
 mod stand_in_assignment_intake;
 mod stand_in_conversations;
 mod stand_in_diagnostics;

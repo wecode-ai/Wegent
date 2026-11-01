@@ -18,6 +18,93 @@ fn connection_event() -> Value {
 }
 
 #[tokio::test]
+async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolved() {
+    use super::super::command_journal::{CommandState, RuntimeCommand};
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let event = store
+        .enqueue_stand_in_event(7, json!("waiting-batch"), connection_event())
+        .unwrap();
+    store
+        .save_stand_in_processing_state(7, &json!({"batchId":"batch"}))
+        .unwrap();
+    let mut action = store
+        .queue_stand_in_action(
+            7,
+            "mac",
+            "batch",
+            "create_work",
+            json!({"eventIds":[event["id"]]}),
+        )
+        .unwrap();
+    action["kind"] = json!("assess");
+    action["status"] = json!("sending");
+    store.save_stand_in_action(7, &action).unwrap();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("user_id".into(), json!(7));
+    let command = RuntimeCommand {
+        id: action["id"].as_str().unwrap().into(),
+        fingerprint: "original-assessment".into(),
+        state: CommandState::AwaitingUser,
+        accepted_at: 1,
+        turn: SpawnTurnRequest {
+            local_task_id: task_id(7),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        },
+        native: None,
+    };
+    handler
+        .command_journal
+        .lock()
+        .unwrap()
+        .insert(command.key(), command);
+    let mut link = RuntimeTaskLink {
+        local_task_id: task_id(7),
+        status: "active".into(),
+        interaction_status: Some("waitingForUserInput".into()),
+        ..Default::default()
+    };
+    handler.upsert_local_task(link.clone());
+    let wake = json!({"contextId":"personal:7"});
+    assert_eq!(
+        handler
+            .coordination_rpc("runtime.coordination.wake", wake.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "work_awaiting_user"
+    );
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "sending");
+    // Native completion of an explicit answer clears the original interaction.
+    link.interaction_status = None;
+    link.status = "done".into();
+    handler.upsert_local_task(link);
+    handler
+        .coordination_rpc("runtime.coordination.wake", wake)
+        .await
+        .unwrap();
+    assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "cancelled");
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["id"], event["id"]);
+    let journal = handler.command_journal.lock().unwrap();
+    assert_eq!(journal.len(), 1);
+    assert_eq!(
+        journal.values().next().unwrap().state,
+        CommandState::AwaitingUser
+    );
+}
+
+#[tokio::test]
 async fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());

@@ -81,7 +81,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(automation_store_error)?;
         let run_id = run.id.clone();
         if run.status == AutomationRunStatus::Pending {
-            self.execute_automation(automation, run).await;
+            self.handoff_automation(automation, run).await;
         }
         let updated = self
             .automation_store
@@ -121,49 +121,39 @@ impl RuntimeWorkRpcHandler {
                 for (automation, run) in due {
                     let run_handler = handler.clone();
                     tokio::spawn(async move {
-                        run_handler.execute_automation(automation, run).await;
+                        run_handler.handoff_automation(automation, run).await;
                     });
                 }
             }
         });
     }
 
-    async fn execute_automation(
+    async fn handoff_automation(
         &self,
         automation: Automation,
         run: crate::runtime_work::automations::AutomationRun,
     ) {
-        let owner = &automation.task_request["standInOwner"];
-        let gate = self.task_send_gate(&format!("stand-in-processing:{}", owner["userId"]));
-        let _stand_in_guard = if owner.is_object() {
-            Some(gate.lock().await)
-        } else {
-            None
-        };
-        let operation_gate =
-            self.task_send_gate(&format!("automation-operation:{}", automation.id));
-        let _operation_guard = operation_gate.lock().await;
-        if owner.is_object()
-            && !self
-                .automation_store
-                .get(&automation.id)
-                .is_some_and(|current| {
-                    (current.enabled
-                        || run.trigger == "manual"
-                        || matches!(
-                            current.schedule,
-                            crate::runtime_work::automations::AutomationSchedule::OneTime { .. }
-                        ))
-                        && current.version == automation.version
-                })
-        {
-            let _ = self.automation_store.mark_failed(
-                &run.id,
-                "The arrangement was changed or cancelled before execution".into(),
-            );
+        if automation.task_request["standInOwner"].is_object() {
+            if run.coordination.is_none() {
+                let _ = self.automation_store.mark_needs_attention(
+                    &run.id,
+                    "The arrangement has no valid execution identity".into(),
+                );
+            }
             self.emit_automation_runs_changed(&automation.id, &run.id);
             return;
         }
+        self.execute_unowned_automation(automation, run).await;
+    }
+
+    async fn execute_unowned_automation(
+        &self,
+        automation: Automation,
+        run: crate::runtime_work::automations::AutomationRun,
+    ) {
+        let operation_gate =
+            self.task_send_gate(&format!("automation-operation:{}", automation.id));
+        let _operation_guard = operation_gate.lock().await;
         let mut payload = match automation.conversation_mode {
             ConversationMode::Independent => automation.task_payload.clone(),
             ConversationMode::ContinueThread => automation
@@ -186,19 +176,6 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| format!("automation-{}", automation.id)),
         };
         set_payload_string(&mut payload, "message", &automation.prompt);
-        if owner.is_object() {
-            payload = match self.prepare_stand_in_schedule(&automation, payload).await {
-                Ok(payload) => payload,
-                Err(error) => {
-                    let _ = self
-                        .automation_store
-                        .mark_needs_attention(&run.id, error.message);
-                    self.emit_automation_runs_changed(&automation.id, &run.id);
-                    return;
-                }
-            };
-            payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"userId":owner["userId"],"roleId":owner["roleId"],"runId":run.id,"manual":run.trigger == "manual","claimedOneTime":run.trigger != "manual" && matches!(automation.schedule,crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread),"settingsVersion":LocalTaskStore::open(self.task_store_path.as_ref()).and_then(|store|store.personal_stand_in(owner["userId"].as_i64().unwrap_or_default(),&self.device_id)).ok().map(|settings|settings["version"].clone())});
-        }
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
         let _ = self.automation_store.mark_running(&run.id, task_id.clone());
 
@@ -221,13 +198,9 @@ impl RuntimeWorkRpcHandler {
                 self.emit_automation_runs_changed(&automation.id, &run.id);
             }
             Err(error) => {
-                let _ = if owner.is_object() {
-                    self.automation_store
-                        .mark_needs_attention(&run.id, error.message.clone())
-                } else {
-                    self.automation_store
-                        .mark_failed(&run.id, error.message.clone())
-                };
+                let _ = self
+                    .automation_store
+                    .mark_failed(&run.id, error.message.clone());
                 self.emit_automation_runs_changed(&automation.id, &run.id);
             }
         }
@@ -313,7 +286,7 @@ fn set_payload_string(payload: &mut Value, key: &str, value: &str) {
     }
 }
 
-fn add_automation_context(
+pub(super) fn add_automation_context(
     payload: &mut Value,
     automation_id: &str,
     run_id: &str,

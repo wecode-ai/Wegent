@@ -46,6 +46,10 @@ export function planIntake(snapshot, { now = Date.now(), force = false } = {}) {
       nextWakeAt = Math.min(nextWakeAt, due)
       continue
     }
+    if (event.kind === 'schedule_due' && event.arrangement) {
+      actions.push({ kind: 'dispatch_arrangement', eventIds: [event.id] })
+      continue
+    }
     if (event.dispatch) {
       actions.push({ kind: 'dispatch_work', roleId: event.dispatch.roleId, eventIds: [event.id] })
       continue

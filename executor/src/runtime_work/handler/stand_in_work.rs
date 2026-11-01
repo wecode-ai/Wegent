@@ -47,7 +47,7 @@ impl RuntimeWorkRpcHandler {
             .map(|command| command.receipt());
         if let Some(receipt) = receipt {
             let status = match receipt["state"].as_str() {
-                Some("queued" | "dispatching" | "started" | "settled") => "sent",
+                Some("queued" | "dispatching" | "started" | "settled" | "awaiting_user") => "sent",
                 Some("failed" | "cancelled") => "failed",
                 _ => return Ok(()),
             };
