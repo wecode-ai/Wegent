@@ -120,6 +120,10 @@ captures stack locations once and resumes execution, without reading scopes, arg
 source text. Monitoring stops when startup completes.
 An uncaught-exception monitor retains errors synchronously
 without taking over exception handling or exit behavior.
+Windows native child working directories use extended-length paths for both profile validation
+and supervised runtime startup. Command execution handles process and stdio errors while
+preserving the original spawn failure, stops failed process trees before returning, and waits
+for stdio closure on success.
 Cleanup must retain `electron-logs` and `release-logs` so the target executor's original logs
 distinguish startup failure, health-check timeout, and rollback. Missing logs are not a basis
 for guessing changes to startup behavior.

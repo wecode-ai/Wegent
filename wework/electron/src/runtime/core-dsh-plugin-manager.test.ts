@@ -19,7 +19,7 @@ vi.mock('node:child_process', { spy: true })
 
 describe('CoreDshPluginManager', () => {
   test.runIf(process.platform === 'win32')(
-    'validates a profile from a real Electron parent in a runtime directory beyond MAX_PATH',
+    'validates a profile and supervised process from Electron beyond MAX_PATH',
     async () => {
       const fixture = await createFixture()
       try {
@@ -64,6 +64,9 @@ describe('CoreDshPluginManager', () => {
           harness,
           `
 import { CoreDshPluginManager } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/core-dsh-plugin-manager.js')).href)}
+import { RuntimeSupervisor } from ${JSON.stringify(pathToFileURL(join(compiled, 'runtime/runtime-supervisor.js')).href)}
+import { once } from 'node:events'
+import { rename } from 'node:fs/promises'
 const manager = new CoreDshPluginManager(${JSON.stringify({
             dshHome: join(fixture.root, 'home'),
             runtimeRoot,
@@ -72,6 +75,20 @@ const manager = new CoreDshPluginManager(${JSON.stringify({
             environment: runtime.environment,
           })})
 await manager.setEnabled('dsh-alpha', false)
+await rename(${JSON.stringify(observed)}, ${JSON.stringify(join(fixture.root, 'manager-observed.json'))})
+const supervisor = new RuntimeSupervisor(${JSON.stringify({
+            command: runtime.environment.WEWORK_NODE_PATH,
+            args: [dshEntry],
+            cwd: runtimeRoot,
+            env: runtime.environment,
+            name: 'deep-runtime',
+          })})
+try {
+  const child = await supervisor.start()
+  await once(child, 'close')
+} finally {
+  await supervisor.stop()
+}
 `
         )
         await promisify(execFile)(electron, [harness], {
@@ -80,6 +97,10 @@ await manager.setEnabled('dsh-alpha', false)
         })
         const result = JSON.parse(await readFile(observed, 'utf8')) as { cwd: string }
         expect(await realpath(result.cwd)).toBe(await realpath(runtimeRoot))
+        const managerResult = JSON.parse(
+          await readFile(join(fixture.root, 'manager-observed.json'), 'utf8')
+        ) as { cwd: string }
+        expect(await realpath(managerResult.cwd)).toBe(await realpath(runtimeRoot))
       } finally {
         await fixture.remove()
       }

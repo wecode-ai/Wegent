@@ -11,7 +11,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, toNamespacedPath } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
@@ -720,7 +720,7 @@ function runCommand(
     const phase = args.includes('--dump-config') ? 'profile-validation' : 'package-manager'
     logPluginCommand(options.env, { stage: 'command-spawning', phase, command, cwd: options.cwd })
     const child = spawn(command, args, {
-      cwd: options.cwd,
+      cwd: toNamespacedPath(options.cwd),
       env: options.env,
       shell: false,
       detached: process.platform !== 'win32',
@@ -762,8 +762,8 @@ function runCommand(
         ...(phase === 'package-manager' ? packageManagerProgress(stderr) : {}),
       })
     })
-    const fail = (error: Error, stop = false): boolean => {
-      if (settled) return false
+    const fail = (error: Error, stop = false): void => {
+      if (settled) return
       settled = true
       clearTimeout(timeout)
       logPluginCommand(options.env, {
@@ -789,7 +789,6 @@ function runCommand(
             )
         )
       } else reject(failure)
-      return true
     }
     const streamFailed = (error: Error) => {
       const failure = (streamError ??= error)

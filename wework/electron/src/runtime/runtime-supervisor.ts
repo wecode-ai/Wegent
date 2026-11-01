@@ -6,6 +6,7 @@ import {
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { readdir, readFile } from 'node:fs/promises'
+import { toNamespacedPath } from 'node:path'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
@@ -104,7 +105,8 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     }
     const resolved = resolveSpawnCommand(this.options.command, this.options.args ?? [])
     const child = spawn(resolved.command, resolved.args, {
-      cwd: this.options.cwd,
+      // CreateProcess otherwise rejects valid versioned runtime directories beyond MAX_PATH.
+      cwd: this.options.cwd && toNamespacedPath(this.options.cwd),
       env: this.options.env,
       detached: process.platform !== 'win32',
       stdio,
