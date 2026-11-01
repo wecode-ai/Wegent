@@ -36,7 +36,9 @@ async function waitForProcessExit(child, timeoutMs) {
   const startedAt = Date.now()
   try {
     while (child.exitCode === null && child.signalCode === null) {
-      if (Number.isInteger(child.pid) && !processIsAlive(child.pid)) return
+      // Windows PID probes can disappear before the native exit callback releases resources.
+      if (process.platform !== 'win32' && Number.isInteger(child.pid) && !processIsAlive(child.pid))
+        return
       if (Date.now() - startedAt >= timeoutMs) {
         throw new Error(
           `Timed out waiting for process ${child.pid ?? 'unknown'} to exit: ${JSON.stringify(processExitDiagnostics(child))}`
