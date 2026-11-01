@@ -16,16 +16,21 @@ const root = ${JSON.stringify(root)}
 const results = []
 ;(async () => {
 for (const deep of [false, true]) for (const method of ['auto', 'hardlink', 'copy']) {
-  const profile = join(root, 'profile-' + deep + '-' + method)
-  let store = join(root, 'store-' + deep + '-' + method)
-  while (deep && store.length < 175) store = join(store, 'nested-store-directory')
+  let profile = join(root, 'profile-' + deep + '-' + method)
+  while (profile.length < 175) profile = join(profile, 'nested-profile-directory')
+  const store = join(root, 'store-' + deep + '-' + method)
+  let source = join(root, 'source-' + deep + '-' + method)
+  while (deep && source.length < 320) source = join(source, 'managed-components-directory')
+  mkdirSync(toNamespacedPath(source), { recursive: true })
+  writeFileSync(toNamespacedPath(join(source, 'package.json')), JSON.stringify({ name: 'clone-file-source', version: '1.0.0' }))
+  writeFileSync(toNamespacedPath(join(source, 'index.js')), 'module.exports = 42')
   mkdirSync(toNamespacedPath(profile), { recursive: true })
   mkdirSync(toNamespacedPath(store), { recursive: true })
-  writeFileSync(join(profile, 'package.json'), JSON.stringify({ name: 'pnpm-clone-probe', private: true, dependencies: { 'is-number': '7.0.0' } }))
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ name: 'pnpm-clone-probe', private: true, dependencies: { 'clone-file-source': 'file:' + source } }))
   writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'packages:\\n  - .\\n')
   const args = [${JSON.stringify(process.env.npm_execpath)}, '--dir', profile, '--store-dir', store, '--package-import-method=' + method, 'install']
   const result = await new Promise(resolve => execFile(process.execPath, args, { cwd: toNamespacedPath(profile), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30000 }, (error, stdout, stderr) => resolve({ status: error?.code ?? 0, stdout, stderr })))
-  results.push({ deep, method, profile, store, storeLength: store.length, ...result })
+  results.push({ deep, method, profile, store, source, sourceLength: source.length, storeLength: store.length, ...result })
   console.log(JSON.stringify(results.at(-1)))
 }
 writeFileSync(join(root, 'results.json'), JSON.stringify(results, null, 2))
