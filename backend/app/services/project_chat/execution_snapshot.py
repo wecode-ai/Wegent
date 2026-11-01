@@ -4,6 +4,7 @@ Reports contain identities and outcomes only, never conversation contents.
 They repair execution state without replaying business workflow callbacks.
 """
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -30,6 +31,7 @@ from app.services.loop_item_executions.runtime_identity import execution_runtime
 from app.services.project_chat.service import project_chat_service
 
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 def completed_activity_for_turn(
@@ -325,6 +327,19 @@ def _persist_outcome(
     if execution is not None:
         if execution.status != status and execution.status not in CAPACITY_STATUSES:
             return False
+        logger.info(
+            "[RuntimeExecutionSnapshot] Persist outcome execution=%s activity=%s "
+            "task=%s turn=%s previous_turn=%s trigger=%s "
+            "execution_status=%s outcome=%s",
+            execution.id,
+            row.message_id,
+            row.runtime_task_id,
+            turn.id,
+            metadata.get("runtime_turn_id"),
+            row.trigger_message_id,
+            execution.status,
+            status,
+        )
         # Reconciliation commits the terminal root and activity. Persist their
         # turn binding in that same commit so a final event can recover text
         # even when it arrives before this outcome-only report returns.
