@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
-import { mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { PassThrough } from 'node:stream'
@@ -50,6 +50,18 @@ describe('CoreDshPluginManager', () => {
         )
         const pnpmEntry = process.env.npm_execpath
         expect(pnpmEntry).toBeTruthy()
+        const patchedPnpm = join(fixture.root, 'pnpm')
+        await cp(dirname(dirname(pnpmEntry!)), patchedPnpm, { recursive: true })
+        await promisify(execFile)(
+          'git',
+          [
+            'apply',
+            fileURLToPath(
+              new URL('../../../harness-runtime/patches/pnpm@11.7.0.patch', import.meta.url)
+            ),
+          ],
+          { cwd: patchedPnpm }
+        )
         // Writable profiles remain outside the versioned runtime in production.
         let packageHome = join(fixture.root, 'plugin-home')
         while (packageHome.length < 175) packageHome = join(packageHome, 'nested-profile-directory')
@@ -60,9 +72,13 @@ describe('CoreDshPluginManager', () => {
           name: 'deep-import-dependency',
           version: '1.0.0',
           main: 'index.js',
-          scripts: { postinstall: 'node -e "process.exit(0)"' },
+          scripts: { postinstall: 'node postinstall.cjs' },
         })
         await writeFile(join(dependencyRoot, 'index.js'), 'module.exports = 42\n')
+        await writeFile(
+          join(dependencyRoot, 'postinstall.cjs'),
+          "require('node:fs').writeFileSync('built.txt', 'ready')\n"
+        )
         const dependencyArchive = join(fixture.root, 'dependency.tgz')
         await createTar(
           { cwd: join(fixture.root, 'dependency'), file: dependencyArchive, gzip: true },
@@ -86,7 +102,10 @@ describe('CoreDshPluginManager', () => {
         await writeFile(join(pluginRoot, 'cordis.patch.yml'), '[]\n')
         const packageEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
         await mkdir(join(runtimeRoot, 'node_modules', 'pnpm', 'bin'), { recursive: true })
-        await writeFile(packageEntry, `import(${JSON.stringify(pathToFileURL(pnpmEntry!).href)})`)
+        await writeFile(
+          packageEntry,
+          `import(${JSON.stringify(pathToFileURL(join(patchedPnpm, 'bin', 'pnpm.cjs')).href)})`
+        )
         const electron = require('electron') as string
         const runtime = await prepareElectronNodeRuntime({
           dataDirectory: fixture.root,
@@ -143,6 +162,8 @@ const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
 if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
 const dependency = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'index.js'))}, 'utf8')
 if (dependency !== ${JSON.stringify('module.exports = 42\n')}) throw new Error('Archive dependency was not imported')
+const built = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'built.txt'))}, 'utf8')
+if (built !== 'ready') throw new Error('Archive dependency build did not complete')
 const removed = await packageManager.uninstall('deep-runtime-plugin')
 if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin remained installed')
 const nativeChild = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume()'], { env: process.env })
