@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { cp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { PassThrough } from 'node:stream'
@@ -80,6 +80,7 @@ describe('CoreDshPluginManager', () => {
           "require('node:fs').writeFileSync('built.txt', 'ready')\n"
         )
         const dependencyArchive = join(fixture.root, 'dependency.tgz')
+        const dependencySpec = `file:${relative(packageProfile, dependencyArchive).split(sep).join('/')}`
         await createTar(
           { cwd: join(fixture.root, 'dependency'), file: dependencyArchive, gzip: true },
           ['package']
@@ -88,10 +89,13 @@ describe('CoreDshPluginManager', () => {
         await writeJson(join(packageProfile, 'package.json'), {
           name: 'deep-runtime-profile',
           private: true,
-          dependencies: { 'deep-import-dependency': `file:${dependencyArchive}` },
+          dependencies: { 'deep-import-dependency': dependencySpec },
           dsh: { profile: { bundles: [] } },
         })
-        await writeFile(join(packageProfile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+        await writeFile(
+          join(packageProfile, 'pnpm-workspace.yaml'),
+          `packages:\n  - .\nallowBuilds:\n  ${JSON.stringify(`deep-import-dependency@${dependencySpec}`)}: true\n`
+        )
         const pluginRoot = join(fixture.root, 'local-bundle')
         await mkdir(pluginRoot)
         await writeJson(join(pluginRoot, 'package.json'), {
