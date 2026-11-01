@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Brain, ListTodo, MessageSquare, Settings, X } from 'lucide-react'
+import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
 import type {
   CollaborationGroup,
   CollaborationProject,
@@ -15,6 +15,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
+import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 export function ProjectCoordinatorConversation({
@@ -43,10 +44,25 @@ export function ProjectCoordinatorConversation({
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const [memory, setMemory] = useState(false)
+  const [publication, setPublication] = useState(false)
   const memoryRef = useRef<StandInSettingsHandle>(null)
+  const publicationRef = useRef<StandInSettingsHandle>(null)
   const runtime = services.standInApi
   const group = groups?.find(row => row.id === selectedGroup)
-  const dialogRef = useDialogKeyboard<HTMLElement>(() => setOpen(false), open && !memory)
+  const closeConversation = () => {
+    setPublication(false)
+    setMemory(false)
+    setOpen(false)
+  }
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    closeConversation,
+    open && !memory && !publication
+  )
+  const leave = (action: () => void) => {
+    if (publication) publicationRef.current?.requestLeave(action)
+    else if (memory) memoryRef.current?.requestLeave(action)
+    else action()
+  }
   const storage = project.project_store === 'local' ? 'local' : 'cloud'
   useEffect(() => {
     if (!open) return
@@ -75,7 +91,7 @@ export function ProjectCoordinatorConversation({
     }
   }, [api, project.id, services, open, retry, t])
   const configure = () => {
-    setOpen(false)
+    closeConversation()
     onOpenGroupSettings()
   }
   return (
@@ -97,8 +113,7 @@ export function ProjectCoordinatorConversation({
             data-testid="project-coordinator-backdrop"
             onClick={event => {
               if (event.target === event.currentTarget) {
-                if (memory) memoryRef.current?.requestClose()
-                else setOpen(false)
+                leave(closeConversation)
               }
             }}
           >
@@ -122,10 +137,9 @@ export function ProjectCoordinatorConversation({
                 <button
                   type="button"
                   data-testid="project-coordinator-work-list"
-                  disabled={memory}
+                  disabled={memory || publication}
                   onClick={() => {
-                    if (memory) memoryRef.current?.requestClose()
-                    else setOpen(false)
+                    leave(closeConversation)
                   }}
                   className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted"
                 >
@@ -134,9 +148,19 @@ export function ProjectCoordinatorConversation({
                 </button>
                 <button
                   type="button"
+                  data-testid="project-coordinator-publish"
+                  onClick={() => setPublication(true)}
+                  disabled={memory || publication || group?.leader.kind !== 'agent'}
+                  className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted disabled:opacity-40 md:min-h-8"
+                >
+                  <Send className="h-4 w-4" />
+                  {t('standIn.project_coordinator.publish')}
+                </button>
+                <button
+                  type="button"
                   data-testid="project-coordinator-memory"
                   onClick={() => setMemory(true)}
-                  disabled={!deviceId || memory}
+                  disabled={!deviceId || memory || publication}
                   className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted disabled:opacity-40"
                 >
                   <Brain className="h-4 w-4" />
@@ -145,7 +169,7 @@ export function ProjectCoordinatorConversation({
                 <button
                   type="button"
                   data-testid="project-coordinator-settings"
-                  disabled={memory}
+                  disabled={memory || publication}
                   onClick={configure}
                   className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted"
                 >
@@ -157,107 +181,121 @@ export function ProjectCoordinatorConversation({
                   data-testid="project-coordinator-close"
                   aria-label={t('standIn.close')}
                   onClick={() => {
-                    if (memory) memoryRef.current?.requestClose()
-                    else setOpen(false)
+                    leave(closeConversation)
                   }}
                   className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </header>
-              {memory && runtime && deviceId ? (
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <StandInMemoryPanel
-                    ref={memoryRef}
-                    api={runtime}
-                    settings={{ userId, executionDeviceId: deviceId, version: 0, roles: [] }}
-                    projects={[project]}
-                    fixedScope={{ kind: 'project_coordinator', id: project.id, store: storage }}
-                    scopeLabel={project.name}
-                    onClose={() => setMemory(false)}
-                  />
-                </div>
-              ) : (
-                <>
-                  <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-5 py-2">
-                    <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-                      <span className="shrink-0 text-text-muted">
-                        {t('standIn.project_coordinator.group')}
-                      </span>
-                      <select
-                        data-testid="project-coordinator-group"
-                        value={selectedGroup}
-                        onChange={event => setSelectedGroup(event.target.value)}
-                        className="min-h-9 min-w-0 flex-1 bg-background outline-none"
-                      >
-                        <option value="">{t('standIn.project_coordinator.choose_group')}</option>
-                        {groups?.map(row => (
-                          <option key={row.id} value={row.id}>
-                            {row.name}
-                            {row.leader.name ? ` · ${row.leader.name}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {localDeviceId && (
-                      <StandInDeviceSelect
-                        value={deviceId}
-                        currentDeviceId={localDeviceId}
-                        devices={storage === 'local' ? [] : devices}
-                        disabled={false}
-                        onChange={setDeviceId}
-                      />
-                    )}
-                  </div>
-                  {error ? (
-                    <div role="alert" className="p-5 text-sm text-error">
-                      <p>{error}</p>
-                      <button
-                        type="button"
-                        data-testid="project-coordinator-retry"
-                        onClick={() => setRetry(value => value + 1)}
-                        className="min-h-9 underline"
-                      >
-                        {t('standIn.reload')}
-                      </button>
-                    </div>
-                  ) : groups === null ? (
-                    <p role="status" className="p-5 text-sm text-text-muted">
-                      {t('standIn.loading')}
-                    </p>
-                  ) : !groups.length ? (
-                    <div className="p-5 text-sm text-text-muted">
-                      <p>{t('standIn.project_coordinator.no_group')}</p>
-                      <button
-                        type="button"
-                        data-testid="project-coordinator-configure-group"
-                        onClick={configure}
-                        className="min-h-9 underline"
-                      >
-                        {t('standIn.project_coordinator.configure')}
-                      </button>
-                    </div>
-                  ) : group?.leader.kind === 'human' ? (
-                    <p className="p-5 text-sm text-text-muted">
-                      {t('standIn.project_coordinator.human_leader')}
-                    </p>
-                  ) : group && runtime && deviceId ? (
-                    <ProjectCoordinatorChat
-                      key={`${userId}:${storage}:${project.id}:${group.id}:${deviceId}`}
-                      api={runtime}
-                      userId={userId}
-                      project={project}
-                      group={group}
-                      deviceId={deviceId}
-                      onOpenTask={onOpenTask}
-                    />
-                  ) : (
-                    <p className="p-5 text-sm text-text-muted">
-                      {t('standIn.project_coordinator.choose_group')}
-                    </p>
-                  )}
-                </>
+              {publication && (
+                <ProjectCoordinatorPublication
+                  ref={publicationRef}
+                  api={api}
+                  project={project}
+                  onClose={() => setPublication(false)}
+                />
               )}
+              <div
+                hidden={publication}
+                inert={publication}
+                className={publication ? undefined : 'contents'}
+              >
+                {memory && runtime && deviceId ? (
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <StandInMemoryPanel
+                      ref={memoryRef}
+                      api={runtime}
+                      settings={{ userId, executionDeviceId: deviceId, version: 0, roles: [] }}
+                      projects={[project]}
+                      fixedScope={{ kind: 'project_coordinator', id: project.id, store: storage }}
+                      scopeLabel={project.name}
+                      onClose={() => setMemory(false)}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-5 py-2">
+                      <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                        <span className="shrink-0 text-text-muted">
+                          {t('standIn.project_coordinator.group')}
+                        </span>
+                        <select
+                          data-testid="project-coordinator-group"
+                          value={selectedGroup}
+                          onChange={event => setSelectedGroup(event.target.value)}
+                          className="min-h-9 min-w-0 flex-1 bg-background outline-none"
+                        >
+                          <option value="">{t('standIn.project_coordinator.choose_group')}</option>
+                          {groups?.map(row => (
+                            <option key={row.id} value={row.id}>
+                              {row.name}
+                              {row.leader.name ? ` · ${row.leader.name}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {localDeviceId && (
+                        <StandInDeviceSelect
+                          value={deviceId}
+                          currentDeviceId={localDeviceId}
+                          devices={storage === 'local' ? [] : devices}
+                          disabled={false}
+                          onChange={setDeviceId}
+                        />
+                      )}
+                    </div>
+                    {error ? (
+                      <div role="alert" className="p-5 text-sm text-error">
+                        <p>{error}</p>
+                        <button
+                          type="button"
+                          data-testid="project-coordinator-retry"
+                          onClick={() => setRetry(value => value + 1)}
+                          className="min-h-9 underline"
+                        >
+                          {t('standIn.reload')}
+                        </button>
+                      </div>
+                    ) : groups === null ? (
+                      <p role="status" className="p-5 text-sm text-text-muted">
+                        {t('standIn.loading')}
+                      </p>
+                    ) : !groups.length ? (
+                      <div className="p-5 text-sm text-text-muted">
+                        <p>{t('standIn.project_coordinator.no_group')}</p>
+                        <button
+                          type="button"
+                          data-testid="project-coordinator-configure-group"
+                          onClick={configure}
+                          className="min-h-9 underline"
+                        >
+                          {t('standIn.project_coordinator.configure')}
+                        </button>
+                      </div>
+                    ) : group?.leader.kind === 'human' ? (
+                      <p className="p-5 text-sm text-text-muted">
+                        {t('standIn.project_coordinator.human_leader')}
+                      </p>
+                    ) : group && runtime && deviceId ? (
+                      <ProjectCoordinatorChat
+                        key={`${userId}:${storage}:${project.id}:${group.id}:${deviceId}`}
+                        api={runtime}
+                        userId={userId}
+                        project={project}
+                        group={group}
+                        deviceId={deviceId}
+                        onOpenTask={onOpenTask}
+                        active={!publication}
+                      />
+                    ) : (
+                      <p className="p-5 text-sm text-text-muted">
+                        {t('standIn.project_coordinator.choose_group')}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </section>
           </div>,
           document.body
@@ -273,6 +311,7 @@ function ProjectCoordinatorChat({
   group,
   deviceId,
   onOpenTask,
+  active,
 }: {
   api: NonNullable<WorkbenchServices['standInApi']>
   userId: number
@@ -280,6 +319,7 @@ function ProjectCoordinatorChat({
   group: CollaborationGroup
   deviceId: string
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
+  active: boolean
 }) {
   const { t } = useTranslation('common')
   const [initial, setInitial] = useState<{ taskId: string; address: RuntimeTaskAddress | null }>()
@@ -337,6 +377,7 @@ function ProjectCoordinatorChat({
       sendEphemeral={false}
       showExecutionTools={false}
       expanded
+      active={active}
       emptyStateText={t('standIn.project_coordinator.empty', { project: project.name })}
       placeholder={t('standIn.project_coordinator.prompt')}
       onOpenRuntimeTask={onOpenTask}

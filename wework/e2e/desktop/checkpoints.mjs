@@ -34,6 +34,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-model-catalog',
   'stand-in-processing',
   'coordination-runtime',
+  'project-coordinator-publication',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -226,6 +227,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'stand-in-model-catalog',
       'stand-in-processing',
       'coordination-runtime',
+      'project-coordinator-publication',
     ],
   ],
   [

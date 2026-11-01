@@ -18,6 +18,7 @@ test('the existing CI profile checkpoint includes the original and model catalog
     'stand-in-model-catalog',
     'stand-in-processing',
     'coordination-runtime',
+    'project-coordinator-publication',
   ])
 })
 
@@ -29,6 +30,7 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
       'stand-in-model-catalog',
       'stand-in-processing',
       'coordination-runtime',
+      'project-coordinator-publication',
       'stand-in-controls',
     ]
   )

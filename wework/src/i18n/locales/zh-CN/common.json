@@ -5333,7 +5333,16 @@
       "configure": "配置项目协作小组",
       "human_leader": "这个小组由成员担任负责人，请在项目 Issue 中与负责人协作。",
       "empty": "在这里与负责人讨论「{{project}}」的目标、交办和进展。具体工作保留在原 Issue 中。",
-      "prompt": "交办项目工作，或询问进展……"
+      "prompt": "交办项目工作，或询问进展……",
+      "publish": "发布到项目",
+      "publish_help": "只将你在下方填写的指令或结论发布为所选 Issue 的评论，按该 Issue 的权限共享。不会附带私人聊天或记忆。",
+      "publish_target": "目标 Issue",
+      "choose_issue": "选择当前项目中的 Issue",
+      "publish_content": "要公开的指令或结论",
+      "publishing": "发布中…",
+      "published": "已发布至「{{issue}}」的评论。项目成员按原有权限查看。",
+      "back_to_chat": "返回私人对话",
+      "no_publish_target": "当前项目中没有你可以评论的 Issue。请返回项目创建或选择可访问的 Issue。"
     },
     "model_label": "模型",
     "agent_label": "智能体",

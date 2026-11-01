@@ -5338,7 +5338,16 @@
       "configure": "Configure project groups",
       "human_leader": "This group has a human lead. Work with them in the project Issues.",
       "empty": "Discuss goals, assignments, and progress for {{project}}. Concrete work stays in its original Issue.",
-      "prompt": "Delegate project work or ask about progress…"
+      "prompt": "Delegate project work or ask about progress…",
+      "publish": "Publish to project",
+      "publish_help": "Publish only the instruction or conclusion entered below as a comment on the selected Issue, shared under its existing permissions. Private chat and memories are not included.",
+      "publish_target": "Target Issue",
+      "choose_issue": "Choose an Issue in this project",
+      "publish_content": "Instruction or conclusion to share",
+      "publishing": "Publishing…",
+      "published": "Published as a comment on “{{issue}}”. Project members can view it under existing permissions.",
+      "back_to_chat": "Back to private chat",
+      "no_publish_target": "There are no Issues you can comment on in this project. Return to the project to create or choose an accessible Issue."
     },
     "model_label": "Model",
     "agent_label": "Agent",
