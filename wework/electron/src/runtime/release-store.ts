@@ -357,8 +357,10 @@ export class ReleaseStore {
     const retained = new Set([active.id, previous, activation?.from, activation?.to])
     const bridge = await optionalText(join(this.root, 'bridge'))
     if (bridge) {
-      const location = relative(join(this.root, 'slots'), bridge).split(/[\\/]/)
-      if (location.length > 1 && location[0] !== '..') retained.add(releaseId(location[0]))
+      const path = relative(join(this.root, 'slots'), bridge)
+      const location = path.split(/[\\/]/)
+      if (!isAbsolute(path) && location.length > 1 && location[0] !== '..')
+        retained.add(releaseId(location[0]))
     }
     for (const id of retained) {
       if (!id) continue

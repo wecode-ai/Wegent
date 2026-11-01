@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import {
   atomicReleaseWrite,
@@ -253,6 +253,20 @@ test('cleanup retains the active and previous healthy release', async () => {
     code: 'ENOENT',
   })
 })
+if (process.platform === 'win32') {
+  test('cleanup ignores an installed recovery bridge on another Windows drive', async () => {
+    const { store, before, after, root } = await fixture()
+    const drive = win32.parse(root).root.toLowerCase().startsWith('c:') ? 'D:/' : 'C:/'
+    const executable = win32.resolve(drive, 'Program Files', 'Wework', 'WeWork.exe')
+    await store.save({ ...before, executable })
+    await atomicReleaseWrite(join(root, 'bridge'), executable)
+    await store.save({ ...after, id: 'abandoned' })
+    await store.prune()
+    expect((await store.active())!.executable).toBe(executable)
+    expect(await optionalText(join(root, 'bridge'))).toBe(executable)
+    await expect(store.read('abandoned')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+}
 test('cleanup preserves newer plugin data after an incompatible rollback', async () => {
   const { store, after } = await fixture()
   const release = { ...after, profileRoot: join(store.slot(after.id), 'profile') }
