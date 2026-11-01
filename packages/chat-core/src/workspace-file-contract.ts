@@ -25,8 +25,8 @@ type WorkspacePathRoot =
 
 export function normalizeWorkspaceSeparators(path: string): string {
   const trimmed = path.trim()
-  const windows = /^[a-z]:[\\/]/i.test(trimmed) || /^(?:\\\\|\/\/)/.test(trimmed)
-  const normalized = windows ? trimmed.replace(/\\/g, '/') : trimmed
+  const posixAbsolute = trimmed.startsWith('/') && !trimmed.startsWith('//')
+  const normalized = posixAbsolute ? trimmed : trimmed.replace(/\\/g, '/')
   if (/^\/\/\?\/UNC\//i.test(normalized)) {
     return `//${normalized.slice(8)}`
   }

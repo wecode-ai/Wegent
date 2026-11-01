@@ -122,6 +122,7 @@ describe("shared conversation cards without Electron", () => {
     "/workspace/notes.md",
     String.raw`/workspace/report\2026.md`,
     String.raw`C:\workspace\notes.md`,
+    String.raw`docs\notes.md`,
   ])("opens reference %s at its original file and line range", (path) => {
     const openFile = vi.fn();
     render(
@@ -138,7 +139,10 @@ describe("shared conversation cards without Electron", () => {
     expect(element("codex-reference-kind-label").textContent).toBe(
       "Document · MD",
     );
-    expect(element("codex-reference-card").textContent).toContain(
+    expect(
+      element("codex-reference-card").querySelector(".font-semibold")
+        ?.textContent,
+    ).toBe(
       path === String.raw`/workspace/report\2026.md`
         ? String.raw`report\2026.md`
         : "notes.md",
