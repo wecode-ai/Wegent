@@ -1,16 +1,19 @@
 import { Worker } from 'node:worker_threads'
+import { redactLog } from './rotating-log.js'
 
 // Inspect only stack locations: never capture scopes, arguments or source text.
 export const STARTUP_WATCHDOG_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads')
 const { appendFileSync } = require('node:fs')
 const { Session } = require('node:inspector')
+const { execFile } = require('node:child_process')
+const redact = ${redactLog.toString()}
 const heartbeat = new BigInt64Array(workerData.heartbeat)
 const write = (event, details) => {
   try {
-    appendFileSync(workerData.path, JSON.stringify({
+    appendFileSync(workerData.path, redact(JSON.stringify({
       event, releaseId: workerData.releaseId, ...details,
-    }) + '\\n', { mode: 0o600 })
+    })) + '\\n', { mode: 0o600 })
   } catch {}
 }
 let captured = false
@@ -28,6 +31,20 @@ setInterval(() => {
   if (captured || ageMs < workerData.stallMs) return
   captured = true
   write('startup-main-thread-stalled', { ageMs })
+  if (workerData.nativeStack) {
+    execFile('gdb', [
+      '-nx', '-q', '-batch',
+      '-iex', 'set debuginfod enabled off',
+      '-iex', 'set print frame-arguments none',
+      '-iex', 'set print entry-values no',
+      '-iex', 'set print frame-info location-and-address',
+      '-p', String(process.pid),
+      '-ex', 'thread apply all bt 10', '-ex', 'detach',
+    ], { timeout: 10000, maxBuffer: 1024 * 1024, windowsHide: true },
+    (error, stdout, stderr) => write('startup-native-stack', {
+      code: error?.code ?? null, stdout, stderr,
+    }))
+  }
   const session = new Session()
   try {
     session.connectToMainThread()
@@ -63,7 +80,14 @@ export function startStartupWatchdog(path: string, releaseId: string | undefined
   beat()
   const worker = new Worker(STARTUP_WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { heartbeat: heartbeat.buffer, path, releaseId, intervalMs: 1000, stallMs: 5000 },
+    workerData: {
+      heartbeat: heartbeat.buffer,
+      path,
+      releaseId,
+      intervalMs: 1000,
+      stallMs: 5000,
+      nativeStack: process.platform === 'win32',
+    },
   })
   const timer = setInterval(beat, 1000)
   timer.unref()

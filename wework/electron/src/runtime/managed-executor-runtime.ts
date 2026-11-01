@@ -15,6 +15,7 @@ import { createConnection } from 'node:net'
 import type { Socket } from 'node:net'
 import { isAbsolute, join, resolve } from 'node:path'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
+import { recordReleaseDiagnostic } from './release-diagnostics.js'
 
 export interface ManagedExecutorRuntimeOptions {
   command: string
@@ -53,14 +54,18 @@ export class ManagedExecutorRuntime {
       name: 'wegent-executor',
       log: { path: managedExecutorLogPath(options) },
       probe: async (_child, signal) => {
+        recordReleaseDiagnostic('executor-probe', { phase: 'authentication-start' }, true)
         await waitForEndpointAuthentication(this.endpoint, this.token, signal)
+        recordReleaseDiagnostic('executor-probe', { phase: 'authentication-finish' }, true)
         this.ownerSocket?.destroy()
+        recordReleaseDiagnostic('executor-probe', { phase: 'owner-start' }, true)
         this.ownerSocket = await connectExecutorSocket(
           this.endpoint,
           this.ownerToken,
           this.options.onEvent ?? (() => undefined),
           signal
         )
+        recordReleaseDiagnostic('executor-probe', { phase: 'owner-finish' }, true)
       },
     })
     this.process.on('exit', () => {
@@ -348,7 +353,9 @@ function connectExecutorSocket(
   signal: AbortSignal
 ): Promise<Socket> {
   return new Promise((resolve, reject) => {
+    recordReleaseDiagnostic('executor-socket', { phase: 'create-start' }, true)
     const socket = createConnection(endpoint)
+    recordReleaseDiagnostic('executor-socket', { phase: 'create-finish' }, true)
     let authenticated = false
     let settled = false
     let buffer = ''
@@ -364,6 +371,7 @@ function connectExecutorSocket(
     }
     socket.setEncoding('utf8')
     socket.once('connect', () => {
+      recordReleaseDiagnostic('executor-socket', { phase: 'authenticate-write-start' }, true)
       socket.write(
         `${JSON.stringify({
           type: 'authenticate',
@@ -371,6 +379,7 @@ function connectExecutorSocket(
           token,
         })}\n`
       )
+      recordReleaseDiagnostic('executor-socket', { phase: 'authenticate-write-finish' }, true)
     })
     socket.on('data', chunk => {
       buffer += chunk

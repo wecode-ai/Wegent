@@ -6,6 +6,16 @@ import { startStartupWatchdog } from './startup-watchdog.js'
 let log: RotatingLog | undefined
 let stopStartupWatchdog: (() => void) | undefined
 
+if (process.env.WEWORK_E2E_CONTROL_URL) {
+  process.on('uncaughtExceptionMonitor', (error, origin) => {
+    recordReleaseDiagnostic(
+      'uncaught-exception',
+      { errorType: error.name, message: error.message, stack: error.stack, origin },
+      true
+    )
+  })
+}
+
 /** Keep isolated activation diagnostics after Electron's relaunch loses stdio. */
 export function recordReleaseDiagnostic(
   event: string,

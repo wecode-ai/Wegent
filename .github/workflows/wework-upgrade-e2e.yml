@@ -55,6 +55,9 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - name: Verify policy and transaction tests
         run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            if command -v gdb >/dev/null; then gdb --version; else echo "Preinstalled GDB unavailable"; fi
+          fi
           node --test wework/e2e/desktop/upgrade-user-home.test.mjs wework/e2e/desktop/upgrade-user-environment.test.mjs wework/e2e/desktop/checkpoints.test.mjs wework/scripts/build-launcher.test.mjs wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/component-update-scenario.test.mjs
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --filter wework prepare:electron
