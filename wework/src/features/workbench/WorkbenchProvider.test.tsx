@@ -21601,7 +21601,29 @@ describe('WorkbenchProvider runtime tasks', () => {
       }) as WorkbenchServices['runtimeWorkApi'],
     })
 
-    renderWorkbench(<RuntimeTaskSkillsProbe />, services)
+    const skillSources: unknown[] = []
+    function SkillsSourceProbe() {
+      const workbench = useWorkbench()
+      useEffect(() => {
+        skillSources.push(workbench.projectChat.listLocalSkills)
+      }, [workbench.projectChat.listLocalSkills])
+      return (
+        <button
+          type="button"
+          data-testid="refresh-skills-work-lists"
+          onClick={() => void workbench.refreshWorkLists()}
+        >
+          refresh skill work lists
+        </button>
+      )
+    }
+    renderWorkbench(
+      <>
+        <RuntimeTaskSkillsProbe />
+        <SkillsSourceProbe />
+      </>,
+      services
+    )
 
     await userEvent.click(screen.getByText('open runtime skill task'))
     await waitFor(() =>
@@ -21627,6 +21649,17 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
       )
     })
+
+    const skillSource = skillSources.at(-1)
+    const previousRuntimeReads = vi.mocked(services.runtimeWorkApi!.listRuntimeWork!).mock.calls
+      .length
+    await userEvent.click(screen.getByTestId('refresh-skills-work-lists'))
+    await waitFor(() =>
+      expect(services.runtimeWorkApi!.listRuntimeWork).toHaveBeenCalledTimes(
+        previousRuntimeReads + 1
+      )
+    )
+    expect(skillSources.at(-1)).toBe(skillSource)
 
     await userEvent.click(screen.getByText('list local apps'))
 
