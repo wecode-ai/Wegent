@@ -47,6 +47,29 @@ describe('CoreDshPluginManager', () => {
           dshEntry,
           `require('node:fs').writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ cwd: process.cwd() }))`
         )
+        const pnpmEntry = process.env.npm_execpath
+        expect(pnpmEntry).toBeTruthy()
+        const packageHome = join(runtimeRoot, 'plugin-home')
+        const packageProfile = join(packageHome, 'profiles', 'wework-core')
+        await mkdir(packageProfile, { recursive: true })
+        await writeJson(join(packageProfile, 'package.json'), {
+          name: 'deep-runtime-profile',
+          private: true,
+          dependencies: {},
+          dsh: { profile: { bundles: [] } },
+        })
+        await writeFile(join(packageProfile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+        const pluginRoot = join(fixture.root, 'local-bundle')
+        await mkdir(pluginRoot)
+        await writeJson(join(pluginRoot, 'package.json'), {
+          name: 'deep-runtime-plugin',
+          version: '1.0.0',
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        })
+        await writeFile(join(pluginRoot, 'cordis.patch.yml'), '[]\n')
+        const packageEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+        await mkdir(join(runtimeRoot, 'node_modules', 'pnpm', 'bin'), { recursive: true })
+        await writeFile(packageEntry, `import(${JSON.stringify(pathToFileURL(pnpmEntry!).href)})`)
         const electron = require('electron') as string
         const runtime = await prepareElectronNodeRuntime({
           dataDirectory: fixture.root,
@@ -89,6 +112,17 @@ try {
 } finally {
   await supervisor.stop()
 }
+const packageManager = new CoreDshPluginManager(${JSON.stringify({
+            dshHome: packageHome,
+            runtimeRoot,
+            dshEntry,
+            nodeCommand: runtime.environment.WEWORK_NODE_PATH,
+            environment: runtime.environment,
+          })})
+const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
+if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
+const removed = await packageManager.uninstall('deep-runtime-plugin')
+if (removed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin remained installed')
 `
         )
         await promisify(execFile)(electron, [harness], {
