@@ -115,6 +115,7 @@ try {
 } finally {
   await supervisor.stop()
 }
+await rename(${JSON.stringify(observed)}, ${JSON.stringify(join(fixture.root, 'supervisor-observed.json'))})
 const packageManager = new CoreDshPluginManager(${JSON.stringify({
             dshHome: packageHome,
             runtimeRoot,
@@ -148,7 +149,9 @@ try {
           env: { ...runtime.environment, ELECTRON_RUN_AS_NODE: '1' },
           timeout: 10000,
         })
-        const result = JSON.parse(await readFile(observed, 'utf8')) as { cwd: string }
+        const result = JSON.parse(
+          await readFile(join(fixture.root, 'supervisor-observed.json'), 'utf8')
+        ) as { cwd: string }
         expect(await realpath(result.cwd)).toBe(await realpath(runtimeRoot))
         const managerResult = JSON.parse(
           await readFile(join(fixture.root, 'manager-observed.json'), 'utf8')
