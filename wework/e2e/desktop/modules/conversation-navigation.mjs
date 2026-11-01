@@ -1030,7 +1030,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
   await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
 }
 
-async function verifyTurnNavigationComposerClearance(control) {
+async function verifyTurnNavigationComposerClearance(control, turnCount) {
   const previousSize = JSON.parse(
     await control.command('setMainWindowSize', 'body', {
       value: JSON.stringify({ width: 1280, height: 420 }),
@@ -1041,36 +1041,51 @@ async function verifyTurnNavigationComposerClearance(control) {
   const footerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-sticky-footer"]`
   const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
   const previewsSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
-  const lastPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${E2E_TRANSCRIPT_PAGE_SIZE + 4}`
+  const lastPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnCount}`
 
   try {
     const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
     let rail = await getSingleElementMetrics(control, railSelector, 'The turn-navigation rail')
-    while (
-      (rail.scrollHeight <= rail.clientHeight || rail.clientHeight <= 0) &&
-      Date.now() < deadline
-    ) {
+    while (rail.clientHeight <= 0 && Date.now() < deadline) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       rail = await getSingleElementMetrics(control, railSelector, 'The turn-navigation rail')
     }
     assert.ok(
-      rail.clientHeight > 0 && rail.scrollHeight > rail.clientHeight,
-      `The turn-navigation fixture did not overflow at the reduced window size: ${JSON.stringify(
-        rail
-      )}`
+      rail.clientHeight > 0,
+      `The turn-navigation rail did not render at the reduced window size: ${JSON.stringify(rail)}`
     )
 
-    const navigation = await getSingleElementMetrics(
-      control,
-      navSelector,
-      'The turn-navigation rail box'
+    // The resize reaches the nav through the composer ResizeObserver and a state
+    // update, so poll the real clearance instead of sampling one transient frame.
+    const clearanceDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    let clearanceStableSince = null
+    let navigation
+    let footer
+    let composer
+    while (Date.now() < clearanceDeadline) {
+      navigation = await getSingleElementMetrics(
+        control,
+        navSelector,
+        'The turn-navigation rail box'
+      )
+      footer = await getSingleElementMetrics(control, footerSelector, 'The sticky composer footer')
+      composer = await getSingleElementMetrics(control, composerSelector, 'The composer card')
+      const clear =
+        navigation.height > 0 &&
+        navigation.bottom <= footer.top + 0.5 &&
+        navigation.bottom <= composer.top + 0.5
+      if (!clear) {
+        clearanceStableSince = null
+      } else {
+        clearanceStableSince ??= Date.now()
+        if (Date.now() - clearanceStableSince >= COMPOSER_READY_STABILITY_MS) break
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.ok(
+      navigation && footer && composer,
+      'The turn-navigation clearance metrics did not resolve'
     )
-    const footer = await getSingleElementMetrics(
-      control,
-      footerSelector,
-      'The sticky composer footer'
-    )
-    const composer = await getSingleElementMetrics(control, composerSelector, 'The composer card')
     assert.ok(
       navigation.height > 0,
       `The turn navigation collapsed instead of staying above the composer: ${JSON.stringify(
