@@ -10,6 +10,11 @@ import {
 const t = (_key: string, fallback?: string) => fallback ?? _key
 
 describe('getSmartAppErrorMessage', () => {
+  test('explains how to recover from a package extraction timeout', () => {
+    expect(
+      getSmartAppErrorMessage(new Error('Smart app ZIP extraction timed out'), '安装失败', t)
+    ).toBe('发布包解压超时，请重试安装；若仍然失败，请重新生成发布包。')
+  })
   test('explains how to recover from missing or stale verification reports', () => {
     expect(getSmartAppErrorMessage(new Error('SA-PACKAGE-UNVERIFIED'), '发布失败', t)).toBe(
       '请先完成工作台正式验证，再导出或发布。'

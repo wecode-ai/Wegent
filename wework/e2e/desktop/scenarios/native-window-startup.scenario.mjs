@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
+import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -181,6 +182,7 @@ export async function createDesktopScenario({ resultDir }) {
         Number.isFinite(succeeded.properties?.duration_ms) && succeeded.properties.duration_ms >= 0,
         'The successful desktop startup did not include a valid duration'
       )
+      await verifyFirstUsePageLoading(control)
     },
 
     diagnostics() {
