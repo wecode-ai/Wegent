@@ -138,7 +138,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       assert.equal(await control.command('getElementCount', `${PANEL} textarea`), '1')
       assert.equal(
@@ -178,7 +178,7 @@ export function createDesktopScenario({
       assert.equal(saved.primary.preferences, '帮我跟进工作\n\n回复简洁，发送前确认')
       assert.equal(saved.primary.workspace.workspacePath, workspacePath)
       assert.equal(saved.primary.model.model_id, model.model_id)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       await control.command('waitFor', `${PANEL} [data-testid="project-work-button"]`, {
         text: NAME,
@@ -283,7 +283,7 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="stand-in-memory-close"]')
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-delete"]')
       await control.command('click', '[data-testid="stand-in-role-delete"]')
       await captureScreenshot(control, '13-role-delete-confirmation.png')

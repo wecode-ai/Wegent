@@ -89,7 +89,7 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, '01-primary-conversation.png', ROOT)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('fill', '[data-testid="stand-in-preferences"]', {
         value: '回复简洁；需要决策时先问我。',
       })
@@ -162,7 +162,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-role-chat"]')
       await control.command('waitFor', CHAT)
       await captureScreenshot(control, '07-role-conversation.png', ROOT)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await control.command('click', '[data-testid="stand-in-add-connection"]')
       await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')

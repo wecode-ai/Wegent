@@ -105,7 +105,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         for (const model of models) {
-          await control.command('click', '[data-testid="stand-in-settings-open"]')
+          await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`

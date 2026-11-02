@@ -749,7 +749,7 @@ export async function createDesktopScenario({
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await control.command('click', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-role-select"]'),
@@ -789,7 +789,7 @@ export async function createDesktopScenario({
         await control.command('getText', '[data-testid="stand-in-settings-open"]'),
         '设置'
       )
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-role-name"]'), renamed)
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '未保存的名字' })

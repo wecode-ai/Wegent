@@ -67,7 +67,7 @@ export function createStandInCoordinatorVerification({
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await control.command('click', '[data-testid="stand-in-primary-open"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('click', '[data-testid="stand-in-primary-enabled"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {

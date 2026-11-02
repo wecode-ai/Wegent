@@ -195,7 +195,7 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
-        await control.command('click', '[data-testid="stand-in-settings-open"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
         await control.command('click', '[data-testid="stand-in-connections-open"]')
         await control.command(
           'click',

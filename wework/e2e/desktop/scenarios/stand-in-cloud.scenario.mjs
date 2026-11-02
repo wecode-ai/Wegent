@@ -278,7 +278,7 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('click', '[data-testid="stand-in-settings-open"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
         await control.command('click', '[data-testid="stand-in-advanced-open"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         assert.equal(
