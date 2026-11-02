@@ -53,7 +53,11 @@ export async function verifySmartAppMarketplaceIdentity({
   await control.command('waitFor', `[data-testid="harness-app-start-market-${marketItem.id}"]`, {
     timeoutMs: uiTimeoutMs,
   })
-  const marketModelSelector = `[data-testid="harness-app-model-market-${marketItem.id}"]`
+  await control.command('navigate', 'body', {
+    value: '/sites?app_type=smart_app&view=owned',
+  })
+  await control.command('waitFor', owned, { timeoutMs: uiTimeoutMs })
+  const marketModelSelector = `${owned} [data-testid="harness-app-model-market-${marketItem.id}"]`
   await control.command('waitFor', marketModelSelector, {
     enabled: true,
     timeoutMs: uiTimeoutMs,
