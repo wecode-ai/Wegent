@@ -25,9 +25,11 @@ export async function verifyArchivedStandInNotification({
   assert.equal(history.items[0].status, 'archived')
   await control.command('click', '[data-testid="wework-notifications-button"]')
   await reloadMainWindow(control, 'Archived assignment history must survive renderer restart')
+  await control.command('waitFor', '[data-testid="wework-notifications-button"]')
   await control.command('click', '[data-testid="wework-notifications-button"]')
+  await control.command('waitFor', '[data-testid="wework-notifications-category-collaboration"]')
   await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
-  await control.command('click', '[data-testid="wework-notifications-refresh"]')
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-refresh"]')
   await control.command('waitFor', `[data-testid="notification-stand-in-status-${notice.id}"]`, {
     text: '处理完毕，等你检查',
   })
