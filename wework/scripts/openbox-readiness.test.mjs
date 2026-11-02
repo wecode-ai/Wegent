@@ -18,7 +18,7 @@ exec node -e 'setInterval(() => {}, 1000)'
 
 const windowManagerProperties = `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
 if [ "$queries" -lt 2 ] || [ ! -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
@@ -34,7 +34,7 @@ if [ -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
   exit 1
 fi
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/display-queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
 if [ "$queries" -lt 3 ]; then
@@ -53,17 +53,24 @@ function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
       join(directory, 'xprop'),
       `#!/bin/sh
 if [ "$#" -eq 1 ] && [ "$1" = '-root' ]; then
-  exec "$OPENBOX_TEST_DIR/xprop-display"
+  . "$OPENBOX_TEST_DIR/xprop-display"
+else
+  . "$OPENBOX_TEST_DIR/xprop-window-manager"
 fi
-exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
 `,
       { mode: 0o755 }
     )
-    writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    // Keep the mocked delay in-process instead of spawning it for every probe.
+    const fixtureLauncher = join(directory, 'launch')
+    writeFileSync(
+      fixtureLauncher,
+      '#!/bin/sh\nsleep() { :; }\n. "$OPENBOX_TEST_LAUNCHER"\n',
+      { mode: 0o755 }
+    )
     const result = spawnSync(
       'sh',
       [
-        launcher,
+        fixtureLauncher,
         'sh',
         '-c',
         'touch "$OPENBOX_TEST_DIR/application-launched"; test "$(cat "$OPENBOX_TEST_DIR/queries")" -ge 2',
@@ -74,13 +81,17 @@ exec "$OPENBOX_TEST_DIR/xprop-window-manager" "$@"
           PATH: `${directory}:${process.env.PATH}`,
           DISPLAY: ':1234',
           OPENBOX_TEST_DIR: directory,
+          OPENBOX_TEST_LAUNCHER: launcher,
         },
         encoding: 'utf8',
         timeout: fixtureTimeoutMs,
       }
     )
-    expect(result.error).toBeUndefined()
     const displayQueries = join(directory, 'display-queries')
+    expect(
+      result.error,
+      `display probes=${existsSync(displayQueries) ? readFileSync(displayQueries, 'utf8').trim() : 0}; stderr=${result.stderr}`
+    ).toBeUndefined()
     return {
       ...result,
       openboxStarted: existsSync(join(directory, 'openbox-started')),
@@ -148,7 +159,7 @@ it(
       windowManagerProperties,
       `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/display-queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/display-queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/display-queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/display-queries"
 echo "X connection unavailable probe=$queries" >&2
@@ -171,7 +182,7 @@ it(
   () => {
     const xprop = `#!/bin/sh
 queries=0
-if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
 if [ "$queries" -lt 3 ]; then exit 1; fi
