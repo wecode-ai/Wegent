@@ -149,6 +149,7 @@ describe('smart app operations', () => {
         outcome: 'failed',
       }),
     ])
+    expect(mocks.notify).not.toHaveBeenCalled()
     events.stop()
   })
 

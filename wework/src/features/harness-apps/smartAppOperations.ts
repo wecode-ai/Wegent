@@ -109,20 +109,19 @@ export async function installMarketplaceSmartApp(
     throw error
   }
 
-  try {
-    notifyInstalled(installation)
-  } catch (error) {
-    attempt.fail('confirm', { context: { smartApp: smartAppContext(installation) } })
-    throw error
-  }
-
   const details = { context: { smartApp: smartAppContext(installation) } }
-  if (installation.state === 'installed' || installation.state === 'running') {
-    attempt.succeed(details)
-  } else {
+  if (installation.state !== 'installed' && installation.state !== 'running') {
     attempt.fail('confirm', details)
     throw new Error(`Smart app installation ended in state "${installation.state}".`)
   }
+
+  try {
+    notifyInstalled(installation)
+  } catch (error) {
+    attempt.fail('confirm', details)
+    throw error
+  }
+  attempt.succeed(details)
   return installation
 }
 

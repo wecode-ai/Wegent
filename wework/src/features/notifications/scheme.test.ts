@@ -76,6 +76,10 @@ describe('Wework scheme routing', () => {
 
     const smartApp = parseWeworkScheme(weworkSmartAppScheme(42))!
     expect(smartApp).toEqual({ kind: 'smart-app', smartAppId: 42 })
+    expect(parseWeworkScheme('wework://smart-apps/%34%32')).toEqual({
+      kind: 'smart-app',
+      smartAppId: 42,
+    })
     const route = new URL(weworkDestinationRoute(smartApp), 'https://local')
     expect(route.pathname).toBe('/sites')
     expect(route.searchParams.get('app_type')).toBe('smart_app')

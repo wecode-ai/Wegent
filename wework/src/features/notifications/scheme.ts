@@ -110,8 +110,10 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       const appId = segment(parts[0])
       return appId ? { kind: 'app', appId } : null
     }
-    if (url.hostname === 'smart-apps' && parts.length === 1 && /^[1-9]\d{0,15}$/.test(parts[0])) {
-      const smartAppId = Number(parts[0])
+    if (url.hostname === 'smart-apps' && parts.length === 1) {
+      const smartAppSegment = segment(parts[0])
+      if (!smartAppSegment || !/^[1-9]\d{0,15}$/.test(smartAppSegment)) return null
+      const smartAppId = Number(smartAppSegment)
       return Number.isSafeInteger(smartAppId) ? { kind: 'smart-app', smartAppId } : null
     }
     return null
