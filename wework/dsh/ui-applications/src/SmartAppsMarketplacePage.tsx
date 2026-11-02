@@ -463,7 +463,9 @@ export function SmartAppsMarketplacePage({
     )
     if (installation) {
       const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
-      handledTargetSmartAppIdRef.current = targetSmartAppId
+      if (shouldOpen && (installation.state === 'running' || hasSelectedModel(installation))) {
+        handledTargetSmartAppIdRef.current = targetSmartAppId
+      }
       targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setTargetInstallItem(null)
@@ -554,6 +556,7 @@ export function SmartAppsMarketplacePage({
   }, [
     activeInstallations,
     api,
+    hasSelectedModel,
     items,
     openInstalledApp,
     startInstalledApp,

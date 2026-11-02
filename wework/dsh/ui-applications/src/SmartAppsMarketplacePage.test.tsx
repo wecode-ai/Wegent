@@ -62,9 +62,12 @@ const harnessModel: UnifiedModel = {
   config: { weworkModelKind: 'model-interface' },
 }
 
+const workbenchModels = vi.hoisted(() => ({ current: [] as UnifiedModel[] }))
+workbenchModels.current = [harnessModel]
+
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [harnessModel] },
+    projectChat: { models: workbenchModels.current },
     services: { localHarnessModelApi: null },
   }),
 }))
@@ -195,6 +198,8 @@ const importedInstallation = {
 describe('SmartAppsMarketplacePage', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/')
+    workbenchModels.current = [harnessModel]
+    vi.mocked(openHarnessAppTab).mockClear()
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
     queueSmartAppDevelopmentPreview.mockReset()
@@ -1364,6 +1369,29 @@ describe('SmartAppsMarketplacePage', () => {
         expect.anything(),
         expect.objectContaining({ id: 'research-desk', smartAppId: 7 })
       )
+    )
+  })
+
+  test('retries a deep-link start after the model catalog becomes available', async () => {
+    workbenchModels.current = []
+    const installation = {
+      ...importedInstallation,
+      smartAppId: 7,
+      modelKey: localHarnessModelOptionKey(harnessModel),
+      state: 'installed',
+    }
+    listInstalled.mockResolvedValue([installation])
+    const { rerender } = render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
+    expect(
+      await screen.findByText('此智能工作台绑定的 Wework 模型已不可用，请重新选择模型。')
+    ).toBeInTheDocument()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+
+    workbenchModels.current = [harnessModel]
+    rerender(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
+
+    await waitFor(() =>
+      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
     )
   })
 

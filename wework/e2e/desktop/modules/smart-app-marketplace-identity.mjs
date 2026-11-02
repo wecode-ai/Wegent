@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { MODEL_LABEL } from './harness-app-fixture.mjs'
 
 export async function verifySmartAppMarketplaceIdentity({
   control,
@@ -50,6 +51,20 @@ export async function verifySmartAppMarketplaceIdentity({
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', `[data-testid="harness-app-start-market-${marketItem.id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  const marketModelSelector = `[data-testid="harness-app-model-market-${marketItem.id}"]`
+  await control.command('waitFor', marketModelSelector, {
+    enabled: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('select', marketModelSelector, {
+    by: 'label',
+    value: MODEL_LABEL,
+  })
+  await control.command('waitFor', marketModelSelector, {
+    enabled: true,
+    stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
   const tabsBeforeDeepLink = JSON.parse(await control.command('snapshot', 'body')).testIds.filter(
