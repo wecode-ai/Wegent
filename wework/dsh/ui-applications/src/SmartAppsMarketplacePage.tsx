@@ -87,6 +87,12 @@ interface PendingInstall {
   item: SmartAppMarketplaceItem
   preview: HarnessAppPreview
   intent: 'install' | 'update'
+  readInstallations: () => HarnessAppInstallation[] | null
+}
+
+interface SelectedSmartApp {
+  item: SmartAppMarketplaceItem
+  readInstallations: PendingInstall['readInstallations']
 }
 
 type OwnedFilter = 'all' | 'created' | 'installed'
@@ -255,7 +261,7 @@ export function SmartAppsMarketplacePage({
     message: string
     showMarketplace: boolean
   } | null>(null)
-  const [selected, setSelected] = useState<SmartAppMarketplaceItem | null>(null)
+  const [selected, setSelected] = useState<SelectedSmartApp | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
   const [modelKey, setModelKey] = useState('')
   const [publishItem, setPublishItem] = useState<SmartAppMarketplaceItem | null | undefined>()
@@ -275,14 +281,22 @@ export function SmartAppsMarketplacePage({
     items,
     marketItems,
     installed,
+    localReady,
+    localError,
+    readLocalInstallations,
     tags,
     loading,
     error,
+    loadError,
     refresh,
     invalidateRefresh,
     setError,
     setInstalled,
   } = useSmartAppCatalog({ api, mode, query, source, tag })
+  const currentPendingInstall =
+    pendingInstall?.readInstallations === readLocalInstallations ? pendingInstall : null
+  const currentSelected =
+    selected?.readInstallations === readLocalInstallations ? selected.item : null
 
   const navigateFromSmartApps = useCallback(
     (path: string) => {
@@ -421,15 +435,45 @@ export function SmartAppsMarketplacePage({
     }
   }
 
+  function selectDetails(item: SmartAppMarketplaceItem) {
+    setSelected({ item, readInstallations: readLocalInstallations })
+  }
+
+  function currentInstallation(installation: HarnessAppInstallation) {
+    return readLocalInstallations()?.find(candidate => candidate.id === installation.id)
+  }
+
+  function requireCurrentInstallation(installation: HarnessAppInstallation) {
+    const current = currentInstallation(installation)
+    if (!current) {
+      throw new Error(
+        t('workbench.smart_apps_local_state_unavailable', '请等待本机工作台列表加载完成后重试。')
+      )
+    }
+    return current
+  }
+
+  function withCurrentInstallation(
+    installation: HarnessAppInstallation,
+    action: (current: HarnessAppInstallation) => unknown
+  ) {
+    const current = currentInstallation(installation)
+    if (current) void action(current)
+  }
+
   async function download(item: SmartAppMarketplaceItem) {
-    if (!api) return
-    const intent = localState(item)?.update ? 'update' : 'install'
+    const installations = readLocalInstallations()
+    if (!api || !installations) return
+    const current = installations.find(candidate => candidate.smartAppId === item.id)
+    const intent = current && current.releaseId !== item.latestReleaseId ? 'update' : 'install'
     setBusy(`download-${item.id}`)
     setError(null)
     try {
       const preparation = await prepareMarketplaceSmartApp(api, item, intent)
-      setPendingInstall(preparation)
-      setModelKey(localState(item)?.installation.modelKey ?? '')
+      const latest = readLocalInstallations()
+      if (!latest) return
+      setPendingInstall({ ...preparation, readInstallations: readLocalInstallations })
+      setModelKey(latest.find(candidate => candidate.smartAppId === item.id)?.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
       setError(
@@ -445,18 +489,22 @@ export function SmartAppsMarketplacePage({
   }
 
   async function install() {
-    if (!pendingInstall || !installModelKey) return
-    const current = localState(pendingInstall.item)?.installation
+    const installations = readLocalInstallations()
+    if (!currentPendingInstall || !installModelKey || !installations) return
+    const current = installations.find(
+      candidate => candidate.smartAppId === currentPendingInstall.item.id
+    )
     if (current?.state === 'running') {
       const shouldStop = window.confirm(
         t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的工作台，是否继续？')
       )
       if (!shouldStop || !(await stopInstalledApp(current, false))) return
     }
+    if (!readLocalInstallations()) return
     setBusy('install')
     setError(null)
     try {
-      await installMarketplaceSmartApp(pendingInstall, installModelKey)
+      await installMarketplaceSmartApp(currentPendingInstall, installModelKey)
       setPendingInstall(null)
       setModelKey('')
       await refresh()
@@ -522,11 +570,13 @@ export function SmartAppsMarketplacePage({
 
   async function addPluginToInstallation(pluginSpec: string) {
     if (!pluginInstallation) return
-    if (pluginInstallation.state === 'running') {
-      const stopped = await stopInstalledApp(pluginInstallation, false)
+    const current = requireCurrentInstallation(pluginInstallation)
+    if (current.state === 'running') {
+      const stopped = await stopInstalledApp(current, false)
       if (!stopped) throw new Error(t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'))
     }
-    await harnessAppsApi.addPlugin(pluginInstallation.id, pluginSpec)
+    requireCurrentInstallation(current)
+    await harnessAppsApi.addPlugin(current.id, pluginSpec)
     await refresh()
   }
 
@@ -556,9 +606,10 @@ export function SmartAppsMarketplacePage({
 
   async function copySmartApp(input: SmartAppDevelopmentInput) {
     if (!copyInstallation) return
+    const current = requireCurrentInstallation(copyInstallation)
     setCreating(true)
     try {
-      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, {
+      const installation = await harnessAppsApi.copyToDirectory(current.id, {
         parentPath: input.parentPath,
         name: input.name,
         displayName: input.displayName,
@@ -738,19 +789,20 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.smart_apps_change_model', '修改模型'),
         icon: Settings2,
         testId: `smart-app-change-model-${installation.id}`,
-        disabled: installation.state === 'running',
-        onSelect: () => focusModelSelector(installation),
+        disabled: !localReady || installation.state === 'running',
+        onSelect: () => withCurrentInstallation(installation, focusModelSelector),
       })
       if (installation.source === 'market') {
         actions.push({
           label: t('workbench.smart_apps_copy_for_development', '复制为我的工作台'),
           icon: Copy,
           testId: `smart-app-copy-${installation.id}`,
-          disabled: installation.state === 'running',
-          onSelect: () => {
-            setCopyInstallation(installation)
-            setDevelopmentDialog('copy')
-          },
+          disabled: !localReady || installation.state === 'running',
+          onSelect: () =>
+            withCurrentInstallation(installation, current => {
+              setCopyInstallation(current)
+              setDevelopmentDialog('copy')
+            }),
         })
       } else {
         actions.push(
@@ -758,7 +810,8 @@ export function SmartAppsMarketplacePage({
             label: t('workbench.smart_apps_add_plugins', '添加 DSH 插件'),
             icon: Wrench,
             testId: `smart-app-add-plugins-${installation.id}`,
-            onSelect: () => setPluginInstallation(installation),
+            disabled: !localReady,
+            onSelect: () => withCurrentInstallation(installation, setPluginInstallation),
           },
           {
             label: t('workbench.smart_apps_continue_development', '开发工作台'),
@@ -823,7 +876,8 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.harness_apps_stop', '停止'),
         icon: Square,
         testId: `smart-app-stop-menu-${installation.id}`,
-        onSelect: () => void stopInstalledApp(installation),
+        disabled: !localReady,
+        onSelect: () => withCurrentInstallation(installation, stopInstalledApp),
       })
     }
     actions.push(
@@ -833,7 +887,8 @@ export function SmartAppsMarketplacePage({
         icon: Trash2,
         testId: `smart-app-remove-local-${installation.id}`,
         danger: true,
-        onSelect: () => setPendingDelete(installation),
+        disabled: !localReady,
+        onSelect: () => withCurrentInstallation(installation, setPendingDelete),
       }
     )
     return actions
@@ -841,14 +896,16 @@ export function SmartAppsMarketplacePage({
 
   async function deleteLocalInstallation() {
     if (!pendingDelete) return
-    const installation = pendingDelete
-    const installationId = pendingDelete.id
+    const installation = currentInstallation(pendingDelete)
+    if (!installation) return
+    const installationId = installation.id
     setBusy(installationId)
     setError(null)
     try {
-      if (pendingDelete.state === 'running' && !(await stopInstalledApp(pendingDelete, false))) {
+      if (installation.state === 'running' && !(await stopInstalledApp(installation, false))) {
         return
       }
+      if (!currentInstallation(installation)) return
       setBusy(installationId)
       invalidateRefresh()
       notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
@@ -1034,9 +1091,23 @@ export function SmartAppsMarketplacePage({
       ) : null}
 
       {createError || error ? (
-        <p role="alert" className="mt-4 rounded-lg bg-danger/10 p-3 text-sm text-danger">
-          {createError ?? error}
-        </p>
+        <div
+          role="alert"
+          className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-danger/10 p-3 text-sm text-danger"
+        >
+          <span>{createError ?? error}</span>
+          {loadError ? (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="smart-apps-load-retry"
+              className="h-11 md:h-9"
+              onClick={() => void refresh()}
+            >
+              {t('workbench.retry', '重试')}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       {exportNotice ? (
@@ -1093,12 +1164,12 @@ export function SmartAppsMarketplacePage({
             </Button>
           }
         />
-      ) : loading ? (
+      ) : loading && !hasItems ? (
         <div className="flex min-h-72 items-center justify-center text-text-muted">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           {t('workbench.smart_apps_loading', '正在加载')}
         </div>
-      ) : !hasItems ? (
+      ) : !hasItems && !error ? (
         <EmptyState
           icon={<Box className="h-6 w-6" />}
           title={
@@ -1118,7 +1189,7 @@ export function SmartAppsMarketplacePage({
                 )
           }
         />
-      ) : (
+      ) : !hasItems ? null : (
         <div
           data-testid={mode === 'owned' ? 'smart-apps-created-list' : undefined}
           className="mt-3 grid gap-4 md:grid-cols-2"
@@ -1148,7 +1219,11 @@ export function SmartAppsMarketplacePage({
                   ? update
                     ? t('workbench.smart_apps_update_available', '有可用更新')
                     : runtimeStateLabel(installation)
-                  : t('workbench.smart_apps_not_installed', '未安装')
+                  : !localReady
+                    ? localError
+                      ? t('workbench.smart_apps_load_failed', '智能工作台加载失败。')
+                      : t('workbench.smart_apps_loading', '正在加载')
+                    : t('workbench.smart_apps_not_installed', '未安装')
                 return (
                   <SmartAppCard
                     key={card.key}
@@ -1186,7 +1261,7 @@ export function SmartAppsMarketplacePage({
                     stateLabel={stateLabel}
                     stateTone={stateTone}
                     version={installation?.manifest.version ?? item?.version ?? ''}
-                    onDetails={item ? () => setSelected(item) : undefined}
+                    onDetails={item ? () => selectDetails(item) : undefined}
                     supplementary={
                       <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
                         {installation ? (
@@ -1198,9 +1273,15 @@ export function SmartAppsMarketplacePage({
                               className="min-w-0 max-w-44 rounded-md border border-border/50 bg-background px-1.5 py-0.5 text-xs text-text-secondary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:cursor-not-allowed disabled:opacity-60"
                               value={installation.modelKey ?? ''}
                               disabled={
-                                busy === installation.id || installation.state === 'running'
+                                !localReady ||
+                                busy === installation.id ||
+                                installation.state === 'running'
                               }
-                              onChange={event => void changeModel(installation, event.target.value)}
+                              onChange={event =>
+                                withCurrentInstallation(installation, current =>
+                                  changeModel(current, event.target.value)
+                                )
+                              }
                             >
                               {!installation.modelKey ? (
                                 <option value="">
@@ -1253,7 +1334,7 @@ export function SmartAppsMarketplacePage({
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={busy === installation?.id}
+                            disabled={!localReady || busy === installation?.id}
                             onClick={() => void download(update)}
                           >
                             <Download className="h-4 w-4" />
@@ -1265,7 +1346,7 @@ export function SmartAppsMarketplacePage({
                             <Button
                               size="sm"
                               data-testid={`harness-app-open-${installation.id}`}
-                              disabled={busy === installation.id}
+                              disabled={!localReady || busy === installation.id}
                               onClick={() => openInstalledApp(installation)}
                             >
                               <ExternalLink className="h-4 w-4" />
@@ -1275,8 +1356,14 @@ export function SmartAppsMarketplacePage({
                             <Button
                               size="sm"
                               data-testid={`harness-app-start-${installation.id}`}
-                              disabled={busy === installation.id || !hasSelectedModel(installation)}
-                              onClick={() => startInstalledApp(installation)}
+                              disabled={
+                                !localReady ||
+                                busy === installation.id ||
+                                !hasSelectedModel(installation)
+                              }
+                              onClick={() =>
+                                withCurrentInstallation(installation, startInstalledApp)
+                              }
                             >
                               <Play className="h-4 w-4" />
                               {t('workbench.harness_apps_start', '运行')}
@@ -1286,7 +1373,7 @@ export function SmartAppsMarketplacePage({
                           <Button
                             size="sm"
                             data-testid={`smart-app-owned-install-${item.id}`}
-                            disabled={busy === `download-${item.id}`}
+                            disabled={!localReady || busy === `download-${item.id}`}
                             onClick={() => void download(item)}
                           >
                             <Download className="h-4 w-4" />
@@ -1349,7 +1436,11 @@ export function SmartAppsMarketplacePage({
                       ? state.update
                         ? t('workbench.smart_apps_update_available', '有可用更新')
                         : runtimeStateLabel(state.installation)
-                      : t('workbench.smart_apps_not_installed', '未安装')
+                      : !localReady
+                        ? localError
+                          ? t('workbench.smart_apps_load_failed', '智能工作台加载失败。')
+                          : t('workbench.smart_apps_loading', '正在加载')
+                        : t('workbench.smart_apps_not_installed', '未安装')
                   }
                   stateTone={
                     state?.installation.state === 'failed'
@@ -1371,7 +1462,7 @@ export function SmartAppsMarketplacePage({
                       </span>
                     </div>
                   }
-                  onDetails={() => setSelected(item)}
+                  onDetails={() => selectDetails(item)}
                   actions={
                     <>
                       {state ? (
@@ -1379,7 +1470,7 @@ export function SmartAppsMarketplacePage({
                           <Button
                             size="sm"
                             data-testid={`smart-app-marketplace-install-${item.id}`}
-                            disabled={busy === `download-${item.id}`}
+                            disabled={!localReady || busy === `download-${item.id}`}
                             onClick={() => void download(item)}
                           >
                             <Download className="h-4 w-4" />
@@ -1389,7 +1480,7 @@ export function SmartAppsMarketplacePage({
                           <Button
                             size="sm"
                             data-testid={`harness-app-open-${state.installation.id}`}
-                            disabled={busy === state.installation.id}
+                            disabled={!localReady || busy === state.installation.id}
                             onClick={() => openInstalledApp(state.installation)}
                           >
                             <ExternalLink className="h-4 w-4" />
@@ -1400,10 +1491,13 @@ export function SmartAppsMarketplacePage({
                             size="sm"
                             data-testid={`harness-app-start-${state.installation.id}`}
                             disabled={
+                              !localReady ||
                               busy === state.installation.id ||
                               !hasSelectedModel(state.installation)
                             }
-                            onClick={() => startInstalledApp(state.installation)}
+                            onClick={() =>
+                              withCurrentInstallation(state.installation, startInstalledApp)
+                            }
                           >
                             <Play className="h-4 w-4" />
                             {t('workbench.harness_apps_start', '运行')}
@@ -1413,7 +1507,7 @@ export function SmartAppsMarketplacePage({
                         <Button
                           size="sm"
                           data-testid={`smart-app-marketplace-install-${item.id}`}
-                          disabled={busy === `download-${item.id}`}
+                          disabled={!localReady || busy === `download-${item.id}`}
                           onClick={() => void download(item)}
                         >
                           {busy === `download-${item.id}` ? (
@@ -1441,22 +1535,24 @@ export function SmartAppsMarketplacePage({
         </div>
       )}
 
-      {selected ? (
+      {currentSelected ? (
         <SmartAppDetails
-          item={selected}
-          state={localState(selected)}
-          busy={busy === `download-${selected.id}`}
+          item={currentSelected}
+          state={localState(currentSelected)}
+          installDisabled={!localReady}
+          busy={busy === `download-${currentSelected.id}`}
           onClose={() => setSelected(null)}
-          onInstall={() => void download(selected)}
+          onInstall={() => void download(currentSelected)}
         />
       ) : null}
-      {pendingInstall ? (
+      {currentPendingInstall ? (
         <HarnessAppInstallDialog
           busy={busy === 'install'}
+          installDisabled={!localReady}
           error={error}
           modelKey={installModelKey}
           modelOptions={modelOptions}
-          preview={pendingInstall.preview}
+          preview={currentPendingInstall.preview}
           onCancel={() => setPendingInstall(null)}
           onInstall={() => void install()}
           onModelChange={setModelKey}
@@ -1545,6 +1641,7 @@ export function SmartAppsMarketplacePage({
         confirmTestId="smart-app-remove-local-confirm"
         destructive
         pending={Boolean(pendingDelete && busy === pendingDelete.id)}
+        confirmDisabled={!localReady}
         onClose={() => setPendingDelete(null)}
         onConfirm={() => void deleteLocalInstallation()}
       />
@@ -1715,12 +1812,14 @@ function EmptyState({
 function SmartAppDetails({
   item,
   state,
+  installDisabled,
   busy,
   onClose,
   onInstall,
 }: {
   item: SmartAppMarketplaceItem
   state: { installation: HarnessAppInstallation; update: boolean } | null
+  installDisabled: boolean
   busy: boolean
   onClose: () => void
   onInstall: () => void
@@ -1903,7 +2002,7 @@ function SmartAppDetails({
           <Button
             size="sm"
             className="min-w-28"
-            disabled={busy || Boolean(state && !state.update)}
+            disabled={installDisabled || busy || Boolean(state && !state.update)}
             onClick={onInstall}
           >
             {busy ? (

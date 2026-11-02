@@ -21,92 +21,173 @@ interface CatalogOwner {
   tag: string
 }
 
-interface CatalogSnapshot {
+interface CloudCatalog {
   items: SmartAppMarketplaceItem[]
   marketItems: SmartAppMarketplaceItem[]
-  installed: HarnessAppInstallation[]
   tags: SmartAppMarketplaceTag[]
 }
 
-interface CatalogState {
+interface ResourceState<T> {
   owner: CatalogOwner
-  snapshot: CatalogSnapshot | null
+  requestId: number
+  data: T | null
   loading: boolean
   error: string | null
 }
 
-const EMPTY_CATALOG: CatalogSnapshot = { items: [], marketItems: [], installed: [], tags: [] }
+const EMPTY_CLOUD_CATALOG: CloudCatalog = { items: [], marketItems: [], tags: [] }
+const EMPTY_INSTALLATIONS: HarnessAppInstallation[] = []
 
-export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwner) {
+function useCatalogResource<T>(owner: CatalogOwner, load: () => Promise<T>) {
   const { t } = useTranslation('common')
-  const owner = useMemo(() => ({ api, mode, query, source, tag }), [api, mode, query, source, tag])
   const activeOwnerRef = useRef(owner)
   const requestRef = useRef(0)
-  const [state, setState] = useState<CatalogState>({
+  const [state, setState] = useState<ResourceState<T>>({
     owner,
-    snapshot: null,
+    requestId: 0,
+    data: null,
     loading: true,
     error: null,
   })
-
+  const stateRef = useRef(state)
   useLayoutEffect(() => {
     activeOwnerRef.current = owner
+    stateRef.current = state
+  }, [owner, state])
+
+  const readReadyData = useCallback(() => {
+    const current = stateRef.current
+    return activeOwnerRef.current === owner &&
+      current.owner === owner &&
+      current.requestId === requestRef.current &&
+      !current.loading &&
+      !current.error
+      ? current.data
+      : null
   }, [owner])
 
-  const invalidateRefresh = useCallback(() => {
-    if (activeOwnerRef.current === owner) requestRef.current += 1
+  const invalidate = useCallback(() => {
+    if (activeOwnerRef.current !== owner) return
+    requestRef.current += 1
+    setState(current => (current.owner === owner ? { ...current, loading: true } : current))
   }, [owner])
 
   const refresh = useCallback(async () => {
     if (activeOwnerRef.current !== owner) return
     const requestId = ++requestRef.current
-    const isCurrentRequest = () =>
-      requestId === requestRef.current && activeOwnerRef.current === owner
-    setState(current => {
-      const snapshot = current.owner === owner ? current.snapshot : null
-      return { owner, snapshot, loading: snapshot === null, error: null }
-    })
+    const isCurrent = () => requestId === requestRef.current && activeOwnerRef.current === owner
+    setState(current => ({
+      owner,
+      requestId,
+      data: current.owner === owner ? current.data : null,
+      loading: true,
+      error: null,
+    }))
     try {
-      const installed = await harnessAppsApi.list()
-      if (!isCurrentRequest()) return
-      let snapshot: CatalogSnapshot = { ...EMPTY_CATALOG, installed }
-      if (api) {
-        const [catalog, marketplace, tagCatalog] = await Promise.all([
-          mode === 'owned'
-            ? api.listOwned()
-            : api.listMarketplace({
-                q: query,
-                source: source === 'all' ? undefined : source,
-                tag: tag || undefined,
-              }),
-          mode === 'owned' ? api.listMarketplace() : null,
-          api.listTags().catch(() => ({ version: 0, items: [] })),
-        ])
-        snapshot = {
-          installed,
-          items: catalog.items,
-          marketItems: marketplace?.items ?? catalog.items,
-          tags: tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort),
-        }
-      }
-      if (isCurrentRequest()) setState({ owner, snapshot, loading: false, error: null })
+      const data = await load()
+      if (isCurrent()) setState({ owner, requestId, data, loading: false, error: null })
     } catch (loadError) {
-      if (!isCurrentRequest()) return
+      if (!isCurrent()) return
       const error = getSmartAppErrorMessage(
         loadError,
-        t('workbench.smart_apps_marketplace_load_failed', '智能工作台市场加载失败'),
+        t('workbench.smart_apps_load_failed', '智能工作台加载失败。'),
         t
       )
       setState(current => ({ ...current, loading: false, error }))
     }
-  }, [api, mode, owner, query, source, t, tag])
+  }, [load, owner, t])
 
+  const update = useCallback(
+    (value: SetStateAction<T>) => {
+      if (activeOwnerRef.current !== owner) return
+      // Confirmed local changes supersede only the local discovery request.
+      const requestId = ++requestRef.current
+      if (state.owner !== owner || state.data === null) {
+        void refresh()
+        return
+      }
+      setState(current => {
+        if (current.owner !== owner || current.data === null) return current
+        const data =
+          typeof value === 'function' ? (value as (previous: T) => T)(current.data) : value
+        return { ...current, requestId, data, loading: false }
+      })
+    },
+    [owner, refresh, state.data, state.owner]
+  )
+
+  useEffect(
+    () => () => {
+      requestRef.current += 1
+    },
+    []
+  )
+  return {
+    data: state.owner === owner ? state.data : null,
+    loading: state.owner !== owner || state.loading,
+    error: state.owner === owner ? state.error : null,
+    ready: state.owner === owner && state.data !== null && !state.loading && !state.error,
+    readReadyData,
+    refresh,
+    invalidate,
+    update,
+  }
+}
+
+export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwner) {
+  const owner = useMemo(() => ({ api, mode, query, source, tag }), [api, mode, query, source, tag])
+  const loadLocal = useCallback(() => harnessAppsApi.list(), [])
+  const loadCloud = useCallback(async (): Promise<CloudCatalog> => {
+    if (!api) return EMPTY_CLOUD_CATALOG
+    const [catalog, marketplace, tagCatalog] = await Promise.all([
+      mode === 'owned'
+        ? api.listOwned()
+        : api.listMarketplace({
+            q: query,
+            source: source === 'all' ? undefined : source,
+            tag: tag || undefined,
+          }),
+      mode === 'owned' ? api.listMarketplace() : null,
+      api.listTags().catch(() => ({ version: 0, items: [] })),
+    ])
+    return {
+      items: catalog.items,
+      marketItems: marketplace?.items ?? catalog.items,
+      tags: tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort),
+    }
+  }, [api, mode, query, source, tag])
+  const local = useCatalogResource(owner, loadLocal)
+  const cloud = useCatalogResource(owner, loadCloud)
+  const refreshLocal = local.refresh
+  const refreshCloud = cloud.refresh
+  const [operationError, setOperationError] = useState<{
+    owner: CatalogOwner
+    error: string | null
+  }>({
+    owner,
+    error: null,
+  })
+  const activeOwnerRef = useRef(owner)
+  useLayoutEffect(() => {
+    activeOwnerRef.current = owner
+  }, [owner])
+  const setError = useCallback(
+    (error: string | null) => {
+      if (activeOwnerRef.current === owner) setOperationError({ owner, error })
+    },
+    [owner]
+  )
+  const refresh = useCallback(async () => {
+    setError(null)
+    // Local mutations finish after local discovery; cloud discovery never gates them.
+    const localRefresh = refreshLocal()
+    void refreshCloud()
+    await localRefresh
+  }, [refreshCloud, refreshLocal, setError])
   const currentRefreshRef = useRef(refresh)
   useLayoutEffect(() => {
     currentRefreshRef.current = refresh
   }, [refresh])
-
-  // A completed local mutation refreshes the current query in its original mode.
   const refreshCurrentMode = useCallback(async () => {
     if (activeOwnerRef.current.mode === mode) await currentRefreshRef.current()
   }, [mode])
@@ -115,7 +196,6 @@ export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwn
     const timer = window.setTimeout(() => void refresh(), query ? 250 : 0)
     return () => window.clearTimeout(timer)
   }, [refresh, query])
-
   useEffect(() => {
     const reenter = () => {
       const params = new URLSearchParams(window.location.search)
@@ -130,47 +210,21 @@ export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwn
     return () => window.removeEventListener('popstate', reenter)
   }, [refresh])
 
-  useEffect(
-    () => () => {
-      requestRef.current += 1
-    },
-    []
-  )
-
-  const setError = useCallback(
-    (error: string | null) => {
-      if (activeOwnerRef.current !== owner) return
-      setState(current => (current.owner === owner ? { ...current, error } : current))
-    },
-    [owner]
-  )
-
-  const setInstalled = useCallback(
-    (value: SetStateAction<HarnessAppInstallation[]>) => {
-      if (activeOwnerRef.current !== owner) return
-      // Local lifecycle events supersede a catalog read started before the event.
-      requestRef.current += 1
-      if (state.owner !== owner || !state.snapshot) {
-        void refresh()
-        return
-      }
-      setState(current => {
-        if (current.owner !== owner || !current.snapshot) return current
-        const installed = typeof value === 'function' ? value(current.snapshot.installed) : value
-        return { ...current, snapshot: { ...current.snapshot, installed } }
-      })
-    },
-    [owner, refresh, state.owner, state.snapshot]
-  )
-
-  const isCurrentOwner = state.owner === owner
+  const loadError = [local.error, cloud.error].filter(Boolean).join(' ')
   return {
-    ...(isCurrentOwner ? (state.snapshot ?? EMPTY_CATALOG) : EMPTY_CATALOG),
-    loading: !isCurrentOwner || state.loading,
-    error: isCurrentOwner ? state.error : null,
+    ...(cloud.data ?? EMPTY_CLOUD_CATALOG),
+    installed: local.data ?? EMPTY_INSTALLATIONS,
+    localReady: local.ready,
+    localError: local.error,
+    readLocalInstallations: local.readReadyData,
+    loading:
+      (mode === 'owned' && local.loading && local.data === null) ||
+      (cloud.loading && cloud.data === null),
+    error: (operationError.owner === owner ? operationError.error : null) ?? (loadError || null),
+    loadError,
     refresh: refreshCurrentMode,
-    invalidateRefresh,
+    invalidateRefresh: local.invalidate,
     setError,
-    setInstalled,
+    setInstalled: local.update,
   }
 }

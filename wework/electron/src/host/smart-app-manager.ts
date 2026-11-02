@@ -450,6 +450,9 @@ export class SmartAppManager {
         input.smartAppId === null || input.smartAppId === undefined
           ? preview.manifest.name
           : `market-${input.smartAppId}`
+      if (this.options.runtimeHost()?.runningTabIds().has(tabId(id))) {
+        throw new Error('Stop the Smart app before installing a new version')
+      }
       const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
       const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
       try {
