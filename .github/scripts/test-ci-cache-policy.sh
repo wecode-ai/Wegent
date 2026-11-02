@@ -675,6 +675,8 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$RUNTIME_HEAD_SHA"' "$desktop_build_action" ||
   ! grep -Fq 'restore_runtime executor executor-e2e-binary' "$desktop_build_action" ||
+  ! grep -Fq 'executor-e2e-binary wegent-executor' "$desktop_build_action" ||
+  ! grep -Fq 'backend-rs-e2e-runtime wegent-backend-rs' "$desktop_build_action" ||
   ! grep -Fq 'WEWORK_E2E_PREBUILT_EXECUTOR_PATH' "$desktop_build_action" ||
   ! grep -Fq 'pnpm --filter wework ai:verify:electron:build' \
     "$desktop_build_action" ||

@@ -8,7 +8,8 @@ trap 'rm -rf "$temp_dir"' EXIT
 
 mkdir -p "$temp_dir/bin" "$temp_dir/fixture"
 printf 'executor binary\n' >"$temp_dir/fixture/wegent-executor"
-(cd "$temp_dir/fixture" && zip -q "$temp_dir/artifact.zip" wegent-executor)
+printf 'backend binary\n' >"$temp_dir/fixture/wegent-backend-rs"
+(cd "$temp_dir/fixture" && zip -q "$temp_dir/artifact.zip" wegent-executor wegent-backend-rs)
 
 cat >"$temp_dir/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -30,21 +31,21 @@ case "$url" in
     ;;
   */runs/43/jobs*)
     if [[ "$TEST_CASE" == "producer-failed" ]]; then
-      printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"failure"}]}'
+      printf '{"jobs":[{"name":"%s","status":"completed","conclusion":"failure"}]}' "$TEST_PRODUCER_JOB"
     else
-      printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"skipped"}]}'
+      printf '{"jobs":[{"name":"%s","status":"completed","conclusion":"skipped"}]}' "$TEST_PRODUCER_JOB"
     fi
     ;;
   */runs/42/jobs*)
-    printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"success"}]}'
+    printf '{"jobs":[{"name":"%s","status":"completed","conclusion":"success"}]}' "$TEST_PRODUCER_JOB"
     ;;
   */runs/7/artifacts*|*/runs/42/artifacts*)
     if [[ "$TEST_CASE" == "missing" ]]; then
       printf '{"artifacts":[]}'
     elif [[ "$TEST_CASE" == "duplicate" ]]; then
-      printf '{"artifacts":[{"id":201,"name":"executor-e2e-binary"},{"id":202,"name":"executor-e2e-binary"}]}'
+      printf '{"artifacts":[{"id":201,"name":"%s"},{"id":202,"name":"%s"}]}' "$TEST_ARTIFACT_NAME" "$TEST_ARTIFACT_NAME"
     else
-      printf '{"artifacts":[{"id":200,"name":"executor-e2e-binary","expired":true},{"id":201,"name":"executor-e2e-binary","expired":false}]}'
+      printf '{"artifacts":[{"id":200,"name":"%s","expired":true},{"id":201,"name":"%s","expired":false}]}' "$TEST_ARTIFACT_NAME" "$TEST_ARTIFACT_NAME"
     fi
     ;;
   */artifacts/201/zip)
@@ -67,52 +68,66 @@ export TEST_TEMP_DIR="$temp_dir"
 export GITHUB_REPOSITORY=example/repo GITHUB_RUN_ID=7 GITHUB_TOKEN=test-token
 export GITHUB_EVENT_NAME=pull_request ACTIONS_ARTIFACT_WAIT_SECONDS=0
 
-export TEST_CASE=success
-"$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/current-run"
-cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/current-run/wegent-executor"
+for artifact_spec in executor-e2e-binary:wegent-executor backend-rs-e2e-runtime:wegent-backend-rs; do
+  export TEST_ARTIFACT_NAME="${artifact_spec%:*}"
+  binary="${artifact_spec#*:}"
+  if [[ "$TEST_ARTIFACT_NAME" == executor-e2e-binary ]]; then
+    export TEST_PRODUCER_JOB="Prepare Executor E2E Runtime"
+  else
+    export TEST_PRODUCER_JOB="Build Backend Rust E2E Runtime"
+  fi
+  destination="$temp_dir/$TEST_ARTIFACT_NAME"
+  unset ACTIONS_ARTIFACT_WORKFLOW ACTIONS_ARTIFACT_HEAD_SHA
+  rm -f "$temp_dir/producer-seen" "$temp_dir/requests"
 
-export ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml ACTIONS_ARTIFACT_HEAD_SHA=target
-"$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/source-run"
-cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/source-run/wegent-executor"
-grep -Fq '/runs/42/artifacts' "$temp_dir/requests"
-if grep -Eq '/runs/(99|100)/artifacts' "$temp_dir/requests"; then
-  echo 'Downloader selected a different commit or event' >&2
-  exit 1
-fi
+  export TEST_CASE=success
+  "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/current-run"
+  cmp "$temp_dir/fixture/$binary" "$destination/current-run/$binary"
 
-TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
-  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/queued-run"
-cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/queued-run/wegent-executor"
-
-TEST_CASE=producer-skipped ACTIONS_ARTIFACT_JOB='Build Backend Rust E2E Runtime' \
-  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/eligible-run"
-cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/eligible-run/wegent-executor"
-if TEST_CASE=producer-failed ACTIONS_ARTIFACT_JOB='Build Backend Rust E2E Runtime' \
-  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/rejected" >"$temp_dir/error" 2>&1; then
-  echo 'Downloader unexpectedly masked a failed producer' >&2
-  exit 1
-fi
-grep -Fq 'ended with failure' "$temp_dir/error"
-
-for failure_case in wrong-sha missing duplicate; do
-  export TEST_CASE="$failure_case"
-  if "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/rejected" >"$temp_dir/error" 2>&1; then
-    echo "Downloader unexpectedly accepted $failure_case" >&2
+  export ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml ACTIONS_ARTIFACT_HEAD_SHA=target
+  "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/source-run"
+  cmp "$temp_dir/fixture/$binary" "$destination/source-run/$binary"
+  grep -Fq '/runs/42/artifacts' "$temp_dir/requests"
+  if grep -Eq '/runs/(99|100)/artifacts' "$temp_dir/requests"; then
+    echo 'Downloader selected a different commit or event' >&2
     exit 1
   fi
-  test ! -e "$temp_dir/rejected/wegent-executor"
-  case "$failure_case" in
-    wrong-sha) grep -Fq 'was not available' "$temp_dir/error" ;;
-    missing) grep -Fq 'completed without artifact' "$temp_dir/error" ;;
-    duplicate) grep -Fq 'Expected at most one active artifact' "$temp_dir/error" ;;
-  esac
-done
 
-if ACTIONS_ARTIFACT_HEAD_SHA='' "$script_dir/download-actions-artifact.sh" \
-  executor-e2e-binary "$temp_dir/rejected" >"$temp_dir/error" 2>&1; then
-  echo 'Downloader unexpectedly accepted a missing commit SHA' >&2
-  exit 1
-fi
-grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA is required' "$temp_dir/error"
+  TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
+    "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/queued-run"
+  cmp "$temp_dir/fixture/$binary" "$destination/queued-run/$binary"
+
+  TEST_CASE=producer-skipped ACTIONS_ARTIFACT_JOB="$TEST_PRODUCER_JOB" \
+    "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/eligible-run"
+  cmp "$temp_dir/fixture/$binary" "$destination/eligible-run/$binary"
+  if TEST_CASE=producer-failed ACTIONS_ARTIFACT_JOB="$TEST_PRODUCER_JOB" \
+    "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/failed-producer" >"$temp_dir/error" 2>&1; then
+    echo 'Downloader unexpectedly masked a failed producer' >&2
+    exit 1
+  fi
+  test ! -e "$destination/failed-producer/$binary"
+  grep -Fq 'ended with failure' "$temp_dir/error"
+
+  for failure_case in wrong-sha missing duplicate; do
+    export TEST_CASE="$failure_case"
+    if "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/rejected" >"$temp_dir/error" 2>&1; then
+      echo "Downloader unexpectedly accepted $failure_case" >&2
+      exit 1
+    fi
+    test ! -e "$destination/rejected/$binary"
+    case "$failure_case" in
+      wrong-sha) grep -Fq 'was not available' "$temp_dir/error" ;;
+      missing) grep -Fq 'completed without artifact' "$temp_dir/error" ;;
+      duplicate) grep -Fq 'Expected at most one active artifact' "$temp_dir/error" ;;
+    esac
+  done
+
+  if ACTIONS_ARTIFACT_HEAD_SHA='' "$script_dir/download-actions-artifact.sh" \
+    "$TEST_ARTIFACT_NAME" "$destination/rejected" >"$temp_dir/error" 2>&1; then
+    echo 'Downloader unexpectedly accepted a missing commit SHA' >&2
+    exit 1
+  fi
+  grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA is required' "$temp_dir/error"
+done
 
 printf 'Actions artifact downloader tests passed\n'

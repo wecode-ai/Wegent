@@ -297,8 +297,15 @@ export interface ElectronE2EHost {
     workbenchRuntimes: unknown[]
   }
   rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
-  rendererStartupFailed: () => void | Promise<void>
+  rendererStartupFailed: (failure: {
+    message: string
+    stack?: string
+    source: string
+  }) => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
+  startupSplashInspect: () => Promise<Record<string, unknown>>
+  startupSplashClick: (testId: string) => Promise<void>
+  startupLogPath: (path: string | null) => void
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
@@ -385,6 +392,9 @@ export function createElectronCapabilityRouter(
     rendererStartupReady: () => undefined,
     rendererStartupFailed: () => undefined,
     startupSplashSnapshot: () => null,
+    startupSplashInspect: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupSplashClick: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupLogPath: () => undefined,
     trayActivate: () => false,
     traySetState: () => undefined,
     traySnapshot: () => null,
@@ -458,7 +468,15 @@ export function createElectronCapabilityRouter(
       optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
     )
   )
-  router.register('renderer.startupFailed', () => e2eHost.rendererStartupFailed())
+  router.register('renderer.startupFailed', params =>
+    e2eHost.rendererStartupFailed({
+      message: optionalStringParam(params, 'message') ?? 'Desktop frontend failed to initialize',
+      source: optionalStringParam(params, 'source') ?? 'renderer_initialize',
+      ...(optionalStringParam(params, 'stack')
+        ? { stack: optionalStringParam(params, 'stack') }
+        : {}),
+    })
+  )
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
@@ -868,6 +886,29 @@ export function createElectronCapabilityRouter(
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
   router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
+  router.register('e2e.inspectStartupSplash', () => {
+    assertE2EEnabled('Startup splash inspection')
+    return e2eHost.startupSplashInspect()
+  })
+  router.register('e2e.clickStartupSplash', params => {
+    assertE2EEnabled('Startup splash actions')
+    const testId = stringParam(params, 'testId')
+    if (
+      ![
+        'startup-timeout-copy-button',
+        'startup-timeout-open-logs-button',
+        'startup-copy-diagnostics-button',
+        'startup-open-logs-button',
+      ].includes(testId)
+    ) {
+      throw new HostCapabilityError('invalid_params', 'Unsupported startup splash action')
+    }
+    return e2eHost.startupSplashClick(testId)
+  })
+  router.register('e2e.setStartupLogPath', params => {
+    assertE2EEnabled('Startup log directory failure fixture')
+    return e2eHost.startupLogPath(nullableStringParam(params, 'path') ?? null)
+  })
   router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
   router.register('e2e.activateTray', params => e2eHost.trayActivate(trayActivationParam(params)))
