@@ -220,6 +220,12 @@ where
     let gateway = build_gateway(&config, RequestIdFilter::new(api))?.with_cors(gateway_cors())?;
     // Bind both listeners before opted-in jobs can cause side effects.
     let listener = bind(config.listen_address).await?;
+    info!(
+        listen = %listener.local_addr()?,
+        python_upstream = %config.python_upstream,
+        rust_routes = config.routes.len(),
+        "Wegent migration gateway started"
+    );
     let mut jobs =
         crate::background_jobs::BackgroundJobsRuntime::start(background_jobs, &job_client).await?;
     let stop_jobs = jobs.stop_sender();

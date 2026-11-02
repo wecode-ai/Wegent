@@ -26,6 +26,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',

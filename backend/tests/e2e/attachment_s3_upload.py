@@ -14,8 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
-import socket
 import subprocess
 import sys
 import time
@@ -133,9 +133,6 @@ class AttachmentS3Upload(unittest.TestCase):
 
     @classmethod
     def _start_backend(cls, endpoint: str, access_key: str, secret_key: str) -> None:
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
         empty_env = REPORT / "empty.env"
         empty_env.write_text(
             "# Isolated E2E configuration comes from the environment.\n"
@@ -152,7 +149,7 @@ class AttachmentS3Upload(unittest.TestCase):
             WEGENT_BACKEND_RS_ENV_FILE=str(empty_env),
             WEGENT_RS_ROUTES_FILE=str(ROOT / "backend-rs/config/routes.toml"),
             WEGENT_RS_LISTEN_HOST="127.0.0.1",
-            WEGENT_RS_LISTEN_PORT=str(port),
+            WEGENT_RS_LISTEN_PORT="0",
             WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:1",
             EXECUTOR_MANAGER_URL="http://127.0.0.1:1",
             BREEZE_LOG_DIR=str(REPORT / "rust-logs"),
@@ -168,13 +165,22 @@ class AttachmentS3Upload(unittest.TestCase):
             stderr=subprocess.STDOUT,
         )
         cls.addClassCleanup(cls._stop_backend)
-        cls.client = httpx.Client(
-            base_url=f"http://127.0.0.1:{port}", timeout=60, trust_env=False
-        )
-        cls.addClassCleanup(cls.client.close)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             assert cls.process.poll() is None, "Rust Backend exited during startup"
+            info_log = REPORT / "rust-logs" / "info.log"
+            started = re.search(
+                r"Wegent migration gateway started listen=(127\.0\.0\.1:\d+)",
+                info_log.read_text() if info_log.exists() else "",
+            )
+            if not started:
+                time.sleep(0.1)
+                continue
+            if not hasattr(cls, "client"):
+                cls.client = httpx.Client(
+                    base_url=f"http://{started.group(1)}", timeout=60, trust_env=False
+                )
+                cls.addClassCleanup(cls.client.close)
             try:
                 response = cls.client.get("/api/attachments/0/download")
                 if response.status_code == 401:
