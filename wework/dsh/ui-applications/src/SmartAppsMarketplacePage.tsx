@@ -1,13 +1,5 @@
 import { beginSmartAppPublication } from '@/features/harness-apps/smartAppOperations'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import JSZip from 'jszip'
 import {
   Box,
@@ -58,7 +50,6 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { ApplicationContextToolbar } from '@/components/sites/ApplicationContextToolbar'
 import { Button } from '@/components/ui/button'
-import { stripAppBasePath } from '@/config/runtime'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
 import {
   SmartAppDevelopmentDialog,
@@ -84,6 +75,7 @@ import { navigateTo } from '@/lib/navigation'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
+import { useSmartAppCatalog } from './useSmartAppCatalog'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -251,24 +243,18 @@ export function SmartAppsMarketplacePage({
   onNavigate = navigateTo,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
-  const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
-  const [marketItems, setMarketItems] = useState<SmartAppMarketplaceItem[]>([])
-  const [installed, setInstalled] = useState<HarnessAppInstallation[]>([])
   const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
-  const [tags, setTags] = useState<SmartAppMarketplaceTag[]>([])
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<'all' | 'official' | 'public' | 'shared'>('all')
   const [tag, setTag] = useState('')
   const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [accessNotice, setAccessNotice] = useState<{
     message: string
     showMarketplace: boolean
   } | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<SmartAppMarketplaceItem | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
   const [modelKey, setModelKey] = useState('')
@@ -285,12 +271,18 @@ export function SmartAppsMarketplacePage({
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
-  const refreshRequestRef = useRef(0)
-  const activeModeRef = useRef(mode)
-
-  useLayoutEffect(() => {
-    activeModeRef.current = mode
-  }, [mode])
+  const {
+    items,
+    marketItems,
+    installed,
+    tags,
+    loading,
+    error,
+    refresh,
+    invalidateRefresh,
+    setError,
+    setInstalled,
+  } = useSmartAppCatalog({ api, mode, query, source, tag })
 
   const navigateFromSmartApps = useCallback(
     (path: string) => {
@@ -299,52 +291,6 @@ export function SmartAppsMarketplacePage({
     },
     [onNavigate]
   )
-
-  const refresh = useCallback(async () => {
-    if (activeModeRef.current !== mode) return
-    const requestId = ++refreshRequestRef.current
-    const isCurrentRequest = () =>
-      requestId === refreshRequestRef.current && activeModeRef.current === mode
-    setLoading(true)
-    setError(null)
-    try {
-      const localPromise = harnessAppsApi.list().catch(() => [])
-      const local = await localPromise
-      if (!isCurrentRequest()) return
-      setInstalled(local)
-      if (!api) {
-        setItems([])
-        setMarketItems([])
-        return
-      }
-      const [catalog, marketplace, tagCatalog] = await Promise.all([
-        mode === 'owned'
-          ? api.listOwned()
-          : api.listMarketplace({
-              q: query,
-              source: source === 'all' ? undefined : source,
-              tag: tag || undefined,
-            }),
-        mode === 'owned' ? api.listMarketplace() : null,
-        api.listTags().catch(() => ({ version: 0, items: [] })),
-      ])
-      if (!isCurrentRequest()) return
-      setItems(catalog.items)
-      setMarketItems(marketplace?.items ?? catalog.items)
-      setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
-    } catch (loadError) {
-      if (!isCurrentRequest()) return
-      setError(
-        getSmartAppErrorMessage(
-          loadError,
-          t('workbench.smart_apps_marketplace_load_failed', '智能工作台市场加载失败'),
-          t
-        )
-      )
-    } finally {
-      if (isCurrentRequest()) setLoading(false)
-    }
-  }, [api, mode, query, source, t, tag])
 
   const activeInstallations = useMemo(
     () =>
@@ -410,25 +356,6 @@ export function SmartAppsMarketplacePage({
   const hasItems = mode === 'owned' ? visibleOwnedCards.length > 0 : items.length > 0
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), query ? 250 : 0)
-    return () => window.clearTimeout(timer)
-  }, [refresh, query])
-
-  useEffect(() => {
-    const refreshWhenReenteringSmartApps = () => {
-      const params = new URLSearchParams(window.location.search)
-      if (
-        stripAppBasePath(window.location.pathname) !== '/sites' ||
-        params.get('app_type') !== 'smart_app'
-      )
-        return
-      void refresh()
-    }
-    window.addEventListener('popstate', refreshWhenReenteringSmartApps)
-    return () => window.removeEventListener('popstate', refreshWhenReenteringSmartApps)
-  }, [refresh])
-
-  useEffect(() => {
     const syncLocalInstallationChange = (event: Event) => {
       const detail = (event as CustomEvent<HarnessAppInstallationsChangedDetail>).detail
       if (detail.type === 'removed') {
@@ -465,7 +392,7 @@ export function SmartAppsMarketplacePage({
         HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
         syncLocalInstallationChange
       )
-  }, [])
+  }, [setInstalled])
 
   useEffect(() => {
     if (mode !== 'owned' || publishRequestHandled) return
@@ -923,7 +850,7 @@ export function SmartAppsMarketplacePage({
         return
       }
       setBusy(installationId)
-      refreshRequestRef.current += 1
+      invalidateRefresh()
       notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
       setPendingDelete(null)
       await harnessAppsApi.delete(installationId)

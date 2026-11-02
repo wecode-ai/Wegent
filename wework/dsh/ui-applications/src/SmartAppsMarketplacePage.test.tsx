@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import type { UnifiedModel } from '@/types/api'
+import { notifyHarnessAppInstallationsChanged } from '@/features/harness-apps/harnessAppInstallationsChanged'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const navigateTo = vi.fn()
@@ -580,6 +581,151 @@ describe('SmartAppsMarketplacePage', () => {
       await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
 
       expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
+    }
+  )
+
+  test('keeps model controls mounted during a second refresh and commits the catalog together', async () => {
+    const original = { ...importedInstallation, modelKey: 'original-model' }
+    const updated = { ...original, modelKey: 'updated-model' }
+    listInstalled.mockResolvedValue([original])
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    const selector = await screen.findByTestId('harness-app-model-research-desk')
+    expect(selector).toHaveValue('original-model')
+
+    await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+    await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('harness-app-model-research-desk')).toHaveValue('original-model')
+
+    let finishRefresh!: (result: { items: SmartAppMarketplaceItem[] }) => void
+    vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+      new Promise(resolve => {
+        finishRefresh = resolve
+      })
+    )
+    listInstalled.mockResolvedValueOnce([updated])
+    await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+    await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(3))
+
+    expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
+    expect(selector).toHaveValue('original-model')
+    expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveTextContent(
+      '研究工作台'
+    )
+
+    await act(async () => finishRefresh({ items: [item({ displayName: '更新后的工作台' })] }))
+
+    expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
+    expect(selector).toHaveValue('updated-model')
+    expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveTextContent(
+      '更新后的工作台'
+    )
+  })
+
+  test.each(['local', 'catalog'])(
+    'preserves loaded controls after a %s refresh failure and recovers on reentry',
+    async failureSource => {
+      listInstalled.mockResolvedValue([{ ...importedInstallation, modelKey: 'original-model' }])
+      const smartAppsApi = api()
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+      const selector = await screen.findByTestId('harness-app-model-research-desk')
+      let rejectRefresh!: (error: Error) => void
+      const pending = new Promise<never>((_resolve, reject) => {
+        rejectRefresh = reject
+      })
+      if (failureSource === 'local') listInstalled.mockReturnValueOnce(pending)
+      else vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(pending)
+      await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+      await act(async () => rejectRefresh(new Error('刷新失败')))
+
+      expect(screen.getByRole('alert')).toHaveTextContent('刷新失败')
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
+      expect(selector).toHaveValue('original-model')
+
+      await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
+      expect(listInstalled).toHaveBeenCalledTimes(3)
+    }
+  )
+
+  test('does not restore a stale running installation after a local stop event', async () => {
+    listInstalled.mockResolvedValue([
+      { ...importedInstallation, state: 'running', webUrl: 'http://127.0.0.1:3080' },
+    ])
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    await screen.findByTestId('harness-app-open-research-desk')
+    let finishRefresh!: (result: { items: SmartAppMarketplaceItem[] }) => void
+    vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+      new Promise(resolve => {
+        finishRefresh = resolve
+      })
+    )
+    await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+
+    act(() =>
+      notifyHarnessAppInstallationsChanged({ type: 'stopped', installationId: 'research-desk' })
+    )
+    expect(screen.getByTestId('harness-app-start-research-desk')).toBeInTheDocument()
+    await act(async () => finishRefresh({ items: [item()] }))
+
+    expect(screen.getByTestId('harness-app-start-research-desk')).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-app-open-research-desk')).not.toBeInTheDocument()
+    expect(listInstalled).toHaveBeenCalledTimes(2)
+  })
+
+  test.each(['query', 'api'] as const)(
+    'hides the previous %s scope immediately and rejects its late refresh',
+    async change => {
+      listInstalled.mockResolvedValue([importedInstallation])
+      const originalApi = api()
+      const replacementApi = change === 'api' ? api() : originalApi
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      const { rerender } = render(<SmartAppsMarketplacePage api={originalApi} mode="owned" />)
+      await screen.findByTestId('harness-app-model-research-desk')
+      let finishOld!: (result: { items: SmartAppMarketplaceItem[] }) => void
+      vi.mocked(originalApi.listOwned).mockReturnValueOnce(
+        new Promise(resolve => {
+          finishOld = resolve
+        })
+      )
+      await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+      let finishCurrent!: (result: { items: SmartAppMarketplaceItem[] }) => void
+      vi.mocked(replacementApi.listOwned).mockReturnValueOnce(
+        new Promise(resolve => {
+          finishCurrent = resolve
+        })
+      )
+
+      if (change === 'query') {
+        fireEvent.change(screen.getByTestId('smart-apps-owned-search'), {
+          target: { value: '研究' },
+        })
+      } else {
+        rerender(<SmartAppsMarketplacePage api={replacementApi} mode="owned" />)
+      }
+
+      expect(screen.getByText('正在加载')).toBeInTheDocument()
+      expect(screen.queryByTestId('harness-app-model-research-desk')).not.toBeInTheDocument()
+      await waitFor(() =>
+        expect(replacementApi.listOwned).toHaveBeenCalledTimes(change === 'query' ? 3 : 1)
+      )
+      await act(async () => finishCurrent({ items: [item({ displayName: '当前研究工作台' })] }))
+      expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveTextContent(
+        '当前研究工作台'
+      )
+
+      await act(async () => finishOld({ items: [item({ displayName: '过期研究工作台' })] }))
+
+      expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveTextContent(
+        '当前研究工作台'
+      )
+      expect(screen.queryByText('过期研究工作台')).not.toBeInTheDocument()
     }
   )
 

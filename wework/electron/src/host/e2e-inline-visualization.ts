@@ -1,4 +1,5 @@
 import type { WebContents, WebFrameMain } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { HostCapabilityError } from './capability-router.js'
 import { withDebuggerSession, type DebuggerTarget } from './debugger-session.js'
 
@@ -15,6 +16,21 @@ interface VisualizationRect {
   top: number
   right: number
   bottom: number
+}
+
+interface VisualizationRootObservation {
+  frameRect: VisualizationRect | null
+  ownsPoint: boolean
+  hit: {
+    tag: string
+    id: string | null
+    testId: string | null
+    className: string | null
+  } | null
+}
+
+interface VisualizationTargetObservation extends VisualizationRootObservation {
+  targetRect: VisualizationRect | null
 }
 
 const ACTIONS = ['text', 'click', 'fill', 'attribute', 'value', 'metrics', 'wheel']
@@ -91,7 +107,9 @@ export async function controlInlineVisualizationFrame(
   if (action !== 'wheel') return result
   const input = await sendVisualizationWheel(
     contents,
+    frame,
     url,
+    selector,
     parseVisualizationRect(visualizationRecord(result).rect),
     deltaX as number,
     deltaY as number
@@ -126,7 +144,9 @@ function parseVisualizationRect(value: unknown): VisualizationRect {
 
 async function sendVisualizationWheel(
   contents: VisualizationContents,
+  frame: VisualizationFrame,
   url: string,
+  selector: string,
   target: VisualizationRect,
   deltaX: number,
   deltaY: number
@@ -170,17 +190,154 @@ async function sendVisualizationWheel(
   }
   const x = Math.floor((left + right) / 2)
   const y = Math.floor((top + bottom) / 2)
-  await withDebuggerSession(contents, async session => {
-    await session.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
-    await session.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x,
-      y,
-      deltaX,
-      deltaY,
-    })
+  return withDebuggerSession(contents, async session => {
+    const key = `__weworkInlineVisualizationWheel_${randomUUID()}`
+    let cleanupFailure: { error: unknown } | undefined
+    let probe: {
+      before: VisualizationTargetObservation
+      afterMove: VisualizationTargetObservation
+      afterWheel: unknown
+    }
+    try {
+      const before = parseRootObservation(
+        await visualizationRootProbe(contents, key, 'start', { url, x, y })
+      )
+      const initial = { frameRect: parseVisualizationRect(bounds), targetRect: target }
+      assertVisualizationTarget(initial, { ...before, targetRect: target }, { x, y })
+      await session.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      assertVisualizationView(contents)
+      const movedTarget = await frame.executeJavaScript(`(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      })()`)
+      const afterMove = parseRootObservation(
+        visualizationRecord(await visualizationRootProbe(contents, key, 'read')).observation
+      )
+      const targetRect = movedTarget === null ? null : parseVisualizationRect(movedTarget)
+      assertVisualizationTarget(
+        { ...before, targetRect: target },
+        { ...afterMove, targetRect },
+        { x, y }
+      )
+      assertVisualizationView(contents)
+      await session.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseWheel',
+        x,
+        y,
+        deltaX,
+        deltaY,
+      })
+      assertVisualizationView(contents)
+      const afterWheel = await visualizationRootProbe(contents, key, 'read')
+      probe = {
+        before: { ...before, targetRect: target },
+        afterMove: { ...afterMove, targetRect },
+        afterWheel,
+      }
+    } finally {
+      try {
+        await visualizationRootProbe(contents, key, 'cleanup')
+      } catch (error) {
+        cleanupFailure = { error }
+      }
+    }
+    if (cleanupFailure) throw cleanupFailure.error
+    return { backend: 'chromium-input-dispatch', x, y, deltaX, deltaY, probe }
   })
-  return { backend: 'chromium-input-dispatch', x, y, deltaX, deltaY }
+}
+
+function assertVisualizationView(contents: VisualizationContents): void {
+  if (contents.isDestroyed()) {
+    throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+  }
+}
+
+function parseRootObservation(value: unknown): VisualizationRootObservation {
+  const record = visualizationRecord(value)
+  return {
+    frameRect: record.frameRect === null ? null : parseVisualizationRect(record.frameRect),
+    ownsPoint: record.ownsPoint === true,
+    hit: record.hit as VisualizationRootObservation['hit'],
+  }
+}
+
+function assertVisualizationTarget(
+  before: { frameRect: VisualizationRect | null; targetRect: VisualizationRect },
+  after: VisualizationTargetObservation,
+  point: { x: number; y: number }
+): void {
+  const frame = after.frameRect
+  // Movement is safe only while the fixed input point still belongs to this target.
+  const remainsInTarget =
+    frame !== null &&
+    after.targetRect !== null &&
+    point.x >= frame.left + after.targetRect.left &&
+    point.x < frame.left + after.targetRect.right &&
+    point.y >= frame.top + after.targetRect.top &&
+    point.y < frame.top + after.targetRect.bottom
+  if (!after.ownsPoint || !remainsInTarget) {
+    const details = { point, before, after }
+    throw new HostCapabilityError(
+      'e2e_target_changed',
+      `Inline visualization wheel target moved or is covered: ${JSON.stringify(details)}`,
+      details
+    )
+  }
+}
+
+async function visualizationRootProbe(
+  contents: VisualizationContents,
+  key: string,
+  action: 'start' | 'read' | 'cleanup',
+  point?: { url: string; x: number; y: number }
+): Promise<unknown> {
+  return contents.mainFrame.executeJavaScript(`(() => {
+    const { key, action, point } = ${JSON.stringify({ key, action, point })};
+    if (action === 'cleanup') {
+      const probe = globalThis[key];
+      if (probe) removeEventListener('wheel', probe.listener, true);
+      delete globalThis[key];
+      return null;
+    }
+    if (action === 'read') {
+      const probe = globalThis[key];
+      if (!probe) throw new Error('Inline visualization wheel probe is unavailable');
+      return { observation: probe.observe(), wheelEvents: probe.events.slice() };
+    }
+    const frame = Array.from(document.querySelectorAll('iframe[data-testid="codex-inline-visualization-frame"]'))
+      .find(candidate => candidate.src === point.url);
+    const describe = element => element instanceof Element ? {
+      tag: element.tagName.toLowerCase(),
+      id: element.id.slice(0, 256) || null,
+      testId: element.getAttribute('data-testid')?.slice(0, 256) || null,
+      className: element.getAttribute('class')?.slice(0, 256) || null,
+    } : null;
+    const observe = () => {
+      const rect = frame?.isConnected ? frame.getBoundingClientRect() : null;
+      const hit = document.elementFromPoint(point.x, point.y);
+      return {
+        frameRect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null,
+        ownsPoint: Boolean(frame?.isConnected && frame.src === point.url && hit === frame),
+        hit: describe(hit),
+      };
+    };
+    const events = [];
+    const listener = event => {
+      if (!event.isTrusted) return;
+      events.push({
+        time: performance.now(), trusted: event.isTrusted,
+        target: describe(event.target), clientX: event.clientX, clientY: event.clientY,
+        deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode,
+        cancelable: event.cancelable, defaultPrevented: event.defaultPrevented,
+      });
+      if (events.length > 8) events.shift();
+    };
+    globalThis[key] = { observe, events, listener };
+    addEventListener('wheel', listener, { capture: true, passive: true });
+    return observe();
+  })()`)
 }
 
 async function waitForVisualizationFrame(

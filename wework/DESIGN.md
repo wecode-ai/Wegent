@@ -787,6 +787,41 @@ same-scope data and show a local error, never an empty-state substitute. Scope
 changes hide old data and reject late responses. Follow the shared
 [implementation contract](../frontend/AGENTS.md#page-data-loading-and-error-isolation).
 
+智能工作台列表由 `useSmartAppCatalog` 按 API 实例、页面模式、查询、来源和标签
+维护一个快照。首次加载或切换作用域时隐藏旧数据；同作用域后台刷新保留卡片、
+模型选择器及其值，全部列表结果就绪后一次更新。失败保留有效快照并显示局部错误。
+本机变更完成后刷新原页面模式的当前查询；已离开的模式不能覆盖当前页面。
+已确认的本机生命周期事件先使旧请求失效，再更新快照，避免恢复已停止的运行状态。
+
+`useSmartAppCatalog` owns one Smart app catalog snapshot per API instance, page
+mode, query, source and tag. Initial loads and scope changes hide previous data.
+Background refreshes preserve cards, model controls and their values until all
+catalog results commit together. Failures preserve a valid snapshot with a local
+error. Completed local mutations refresh the current query of their original
+page mode; responses from an old mode or superseded request cannot replace it.
+Confirmed local lifecycle events invalidate earlier reads before updating the
+snapshot, so an older read cannot restore a stopped runtime.
+
+```mermaid
+flowchart TD
+    Owner[API instance + mode + query + source + tag] --> Loaded{Current scope has a snapshot?}
+    Loaded -- No --> Initial[Show initial loading and hide previous scope]
+    Loaded -- Yes --> Retain[Keep existing cards and model controls]
+    Initial --> Request[Read local installations, catalog and tags]
+    Retain --> Request
+    Mutation[Local mutation completes] --> Mode{Original mode still active?}
+    Mode -- Yes --> Owner
+    Mode -- No --> Ignore[Ignore old-mode refresh]
+    Event[Confirmed local lifecycle event] --> Invalidate[Invalidate older requests]
+    Invalidate --> Existing{Current scope has a snapshot?}
+    Existing -- Yes --> Patch[Update installation in the current snapshot]
+    Existing -- No --> Request
+    Request --> Current{Request ID and scope still current?}
+    Current -- No --> Discard[Discard late response]
+    Current -- Yes, success --> Commit[Commit one catalog snapshot]
+    Current -- Yes, failure --> Error[Keep same-scope snapshot and show local error]
+```
+
 Every interactive component must account for the applicable states:
 
 - default;
@@ -1079,11 +1114,22 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   that cancel wheel events and internal overscroll containment keep ownership.
 
   桌面 E2E 通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
-  回执；不能把跨进程 iframe 的输入直接送给主渲染器。内联可视化输入、主工作台
+  回执；不能把跨进程 iframe 的输入直接送给主渲染器。鼠标移动前后观测同一输入点，
+  仅当其仍命中原 iframe 且位于目标区域内时发送滚轮；遮挡或移出目标直接报错，
+  附前后几何与命中信息，不重试。临时根页面被动监听器只记录可信原生事件，
+  在所有退出路径清理，并先于 debugger 使用权释放。回执不代表 DOM 已收到事件；
+  根页面探针只提供即时诊断，实际投递由业务断言确认。内联可视化输入、主工作台
   截图、堆读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
   外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
   Desktop E2E dispatches native wheel input through Chromium hit testing and
-  awaits each acknowledgement so out-of-process frames receive the input. Inline
+  awaits each protocol acknowledgement. Before
+  and after the mouse move, the fixed input point must hit the same owned iframe
+  and remain inside the target region. Occlusion or loss of the target fails with
+  both observations, without retries. A temporary passive root listener records
+  only trusted native events and is cleaned up on every exit before releasing
+  the debugger lease. Acknowledgements do not establish DOM delivery, and the
+  root probe is an immediate diagnostic snapshot; business assertions verify
+  actual delivery. Inline
   visualization input, main workbench screenshots, heap reads and persistent
   media overrides share debugger leases. Only the final lease detaches a
   connection owned by the workbench;
@@ -1097,11 +1143,15 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     participant Chromium
     participant Frame as Opaque-origin iframe
     Test->>Lease: Acquire input lease
+    Test->>Test: Install root probe and observe fixed point ownership
     Test->>Chromium: Dispatch mouse move and await acknowledgement
     Chromium-->>Test: Acknowledge mouse move
+    Test->>Test: Recheck point ownership and target region; fail if lost
     Test->>Chromium: Dispatch wheel at clipped frame coordinates
     Chromium->>Frame: Hit test and deliver trusted native input
     Chromium-->>Test: Acknowledge dispatch
+    Test->>Test: Read trusted root events; finally remove probe
+    Note over Test,Chromium: Dispatch acknowledgement does not establish DOM delivery
     Test->>Lease: Release input lease
     Note over Lease: Detach owned connection after the final consumer releases
   ```

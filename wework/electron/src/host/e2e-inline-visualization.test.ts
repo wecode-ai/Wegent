@@ -10,6 +10,11 @@ const url = 'blob:http://127.0.0.1:1234/calculator'
 
 function target() {
   let attached = false
+  const hitTest = vi.fn(() => document.querySelector<Element>('iframe'))
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    value: hitTest,
+  })
   const frame = {
     url,
     processId: 202,
@@ -35,7 +40,7 @@ function target() {
       frames: [frame],
     },
   }
-  return { contents, frame }
+  return { contents, frame, hitTest }
 }
 
 function visibleWheelTarget() {
@@ -61,7 +66,30 @@ function request(action = 'text', selector = '#result', value?: string) {
   return { url, action, selector, value }
 }
 
+function observeRootWheelProbe() {
+  const added = vi.spyOn(window, 'addEventListener')
+  const removed = vi.spyOn(window, 'removeEventListener')
+  return {
+    listener: () => {
+      const listener = added.mock.calls.find(([type]) => type === 'wheel')?.[1]
+      expect(typeof listener).toBe('function')
+      return listener as EventListener
+    },
+    expectCleaned: () => {
+      const listener = added.mock.calls.find(([type]) => type === 'wheel')?.[1]
+      expect(added).toHaveBeenCalledWith('wheel', listener, { capture: true, passive: true })
+      expect(removed).toHaveBeenCalledWith('wheel', listener, true)
+    },
+  }
+}
+
 afterEach(() => {
+  expect(
+    Object.getOwnPropertyNames(window).filter(key =>
+      key.startsWith('__weworkInlineVisualizationWheel_')
+    )
+  ).toEqual([])
+  vi.restoreAllMocks()
   vi.useRealTimers()
   document.body.replaceChildren()
 })
@@ -179,6 +207,7 @@ describe('inline visualization verification controls', () => {
 
   test('reads fixed geometry and sends native wheel input at the visible frame target', async () => {
     const { contents, blank } = visibleWheelTarget()
+    const probe = observeRootWheelProbe()
     Object.defineProperty(blank, 'scrollHeight', { value: 700 })
     Object.defineProperty(blank, 'clientHeight', { value: 80 })
     blank.scrollTop = 120
@@ -204,12 +233,22 @@ describe('inline visualization verification controls', () => {
       deltaY: -40,
       frameProcessId: 202,
       mainFrameProcessId: 101,
+      probe: {
+        before: {
+          frameRect: { left: 100, top: 150, right: 600, bottom: 450 },
+          ownsPoint: true,
+          hit: { tag: 'iframe', testId: 'codex-inline-visualization-frame' },
+        },
+        afterMove: { ownsPoint: true },
+        afterWheel: { wheelEvents: [] },
+      },
     })
     expect(contents.debugger.sendCommand.mock.calls).toEqual([
       ['Input.dispatchMouseEvent', { type: 'mouseMoved', x: 210, y: 210 }],
       ['Input.dispatchMouseEvent', { type: 'mouseWheel', x: 210, y: 210, deltaX: 8, deltaY: -40 }],
     ])
     expect(blank.scrollTop).toBe(120)
+    probe.expectCleaned()
   })
 
   test('clips native wheel coordinates to the visible conversation viewport', async () => {
@@ -340,6 +379,7 @@ describe('inline visualization verification controls', () => {
     'propagates a rejected %s acknowledgement',
     async type => {
       const { contents } = visibleWheelTarget()
+      const probe = observeRootWheelProbe()
       const failure = new Error(`${type} rejected`)
       contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
         if ((params as { type: string }).type === type) throw failure
@@ -354,6 +394,212 @@ describe('inline visualization verification controls', () => {
       ).rejects.toBe(failure)
       expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(type === 'mouseMoved' ? 1 : 2)
       expect(contents.debugger.detach).toHaveBeenCalledOnce()
+      probe.expectCleaned()
+    }
+  )
+
+  test.each(['frame', 'target', 'overlay', 'removed'])(
+    'does not send wheel input when the fixed point loses its %s target after move acknowledgement',
+    async change => {
+      const { contents, blank, hitTest } = visibleWheelTarget()
+      const probe = observeRootWheelProbe()
+      let releaseMove!: () => void
+      contents.debugger.sendCommand.mockImplementationOnce(
+        () => new Promise(resolve => (releaseMove = () => resolve({})))
+      )
+      const operation = controlInlineVisualizationFrame(
+        contents,
+        { ...request('wheel', '#blank'), deltaY: 80 },
+        environment
+      )
+      const rejected = expect(operation).rejects.toMatchObject({
+        code: 'e2e_target_changed',
+        details: {
+          point: { x: 210, y: 210 },
+          before: { ownsPoint: true },
+          after: { ownsPoint: change !== 'overlay' },
+        },
+      })
+      await vi.waitFor(() => expect(contents.debugger.sendCommand).toHaveBeenCalledOnce())
+      if (change === 'frame') {
+        vi.mocked(document.querySelector('iframe')!.getBoundingClientRect).mockReturnValue({
+          left: 100,
+          top: 300,
+          right: 600,
+          bottom: 600,
+        } as DOMRect)
+      } else if (change === 'target') {
+        vi.mocked(blank.getBoundingClientRect).mockReturnValue({
+          left: 10,
+          top: 100,
+          right: 210,
+          bottom: 180,
+        } as DOMRect)
+      } else if (change === 'removed') {
+        blank.remove()
+      } else {
+        const overlay = document.createElement('button')
+        overlay.dataset.testid = 'covering-overlay'
+        overlay.textContent = 'Private text must never be included in probe descriptors'
+        document.body.append(overlay)
+        hitTest.mockReturnValue(overlay)
+      }
+      releaseMove()
+      await rejected
+      expect(contents.debugger.sendCommand).toHaveBeenCalledOnce()
+      expect(contents.debugger.detach).toHaveBeenCalledOnce()
+      probe.expectCleaned()
+    }
+  )
+
+  test('rejects an initially covered point without sending mouse input', async () => {
+    const { contents, hitTest } = visibleWheelTarget()
+    const probe = observeRootWheelProbe()
+    const overlay = document.createElement('div')
+    overlay.dataset.testid = 'initial-overlay'
+    document.body.append(overlay)
+    hitTest.mockReturnValue(overlay)
+    await expect(
+      controlInlineVisualizationFrame(
+        contents,
+        { ...request('wheel', '#blank'), deltaY: 80 },
+        environment
+      )
+    ).rejects.toMatchObject({
+      code: 'e2e_target_changed',
+      details: { after: { ownsPoint: false, hit: { tag: 'div', testId: 'initial-overlay' } } },
+    })
+    expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+    expect(contents.debugger.detach).toHaveBeenCalledOnce()
+    probe.expectCleaned()
+  })
+
+  test('allows subpixel movement while the fixed point still hits the owned target', async () => {
+    const { contents } = visibleWheelTarget()
+    contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+      if ((params as { type: string }).type === 'mouseMoved') {
+        vi.mocked(document.querySelector('iframe')!.getBoundingClientRect).mockReturnValue({
+          left: 100.25,
+          top: 150.25,
+          right: 600.25,
+          bottom: 450.25,
+        } as DOMRect)
+      }
+      return {}
+    })
+    await expect(
+      controlInlineVisualizationFrame(
+        contents,
+        { ...request('wheel', '#blank'), deltaY: 80 },
+        environment
+      )
+    ).resolves.toMatchObject({ x: 210, y: 210 })
+    expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(2)
+  })
+
+  test('records bounded trusted root wheel targets without collecting text or synthetic bridge events', async () => {
+    const { contents } = visibleWheelTarget()
+    const probe = observeRootWheelProbe()
+    const rootTarget = document.createElement('button')
+    rootTarget.id = 'root-target'
+    rootTarget.dataset.testid = 'root-target-test'
+    rootTarget.className = 'root-target-class'
+    rootTarget.textContent = 'Private control label'
+    document.body.append(rootTarget)
+    contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+      if ((params as { type: string }).type === 'mouseWheel') {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: 80 }))
+        for (let index = 0; index < 10; index += 1) {
+          probe.listener()({
+            isTrusted: true,
+            target: rootTarget,
+            clientX: 210,
+            clientY: 210,
+            deltaX: 0,
+            deltaY: index,
+            deltaMode: 0,
+            cancelable: true,
+            defaultPrevented: false,
+          } as unknown as Event)
+        }
+      }
+      return {}
+    })
+    const result = await controlInlineVisualizationFrame(
+      contents,
+      { ...request('wheel', '#blank'), deltaY: 80 },
+      environment
+    )
+    expect(result).toMatchObject({
+      probe: {
+        afterWheel: {
+          wheelEvents: Array.from({ length: 8 }, (_, index) => ({
+            trusted: true,
+            deltaY: index + 2,
+            target: {
+              tag: 'button',
+              id: 'root-target',
+              testId: 'root-target-test',
+              className: 'root-target-class',
+            },
+          })),
+        },
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain(rootTarget.textContent)
+    probe.expectCleaned()
+  })
+
+  test.each(['mouseMoved', 'mouseWheel'])(
+    'cleans the observer and lease when the view is destroyed during %s acknowledgement',
+    async type => {
+      const { contents } = visibleWheelTarget()
+      const probe = observeRootWheelProbe()
+      let destroyed = false
+      contents.isDestroyed = () => destroyed
+      contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+        if ((params as { type: string }).type === type) destroyed = true
+        return {}
+      })
+      await expect(
+        controlInlineVisualizationFrame(
+          contents,
+          { ...request('wheel', '#blank'), deltaY: 80 },
+          environment
+        )
+      ).rejects.toMatchObject({ code: 'e2e_view_unavailable' })
+      expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(type === 'mouseMoved' ? 1 : 2)
+      expect(contents.debugger.detach).toHaveBeenCalledOnce()
+      probe.expectCleaned()
+    }
+  )
+
+  test.each([false, true])(
+    'reports cleanup failure without replacing a primary input failure (%s)',
+    async inputFails => {
+      const { contents } = visibleWheelTarget()
+      const probe = observeRootWheelProbe()
+      const inputFailure = new Error('wheel acknowledgement failed')
+      const cleanupFailure = new Error('cleanup acknowledgement failed')
+      const execute = contents.mainFrame.executeJavaScript.getMockImplementation()!
+      contents.mainFrame.executeJavaScript.mockImplementation(async script => {
+        const result = await execute(script)
+        if (script.includes('"action":"cleanup"')) throw cleanupFailure
+        return result
+      })
+      contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+        if (inputFails && (params as { type: string }).type === 'mouseWheel') throw inputFailure
+        return {}
+      })
+      await expect(
+        controlInlineVisualizationFrame(
+          contents,
+          { ...request('wheel', '#blank'), deltaY: 80 },
+          environment
+        )
+      ).rejects.toBe(inputFails ? inputFailure : cleanupFailure)
+      expect(contents.debugger.detach).toHaveBeenCalledOnce()
+      probe.expectCleaned()
     }
   )
 })
