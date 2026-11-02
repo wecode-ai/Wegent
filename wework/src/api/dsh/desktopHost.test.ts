@@ -21,7 +21,7 @@ describe('desktop host events', () => {
     vi.stubEnv('MODE', 'production')
     vi.stubEnv('VITE_WEWORK_E2E', e2e)
     const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
     vi.stubGlobal(
       'fetch',
       vi.fn().mockImplementation(async () => {
@@ -38,14 +38,17 @@ describe('desktop host events', () => {
       token: 'private-result',
     })
     if (logged) {
-      expect(warn).toHaveBeenCalledExactlyOnceWith('[Wework] Slow Electron host request', {
-        capability: 'secureStorage.get',
-        elapsedMs,
-        status: 200,
-        ok: true,
-      })
+      expect(debug).toHaveBeenCalledExactlyOnceWith(
+        '[Wework] Slow Electron host request ' +
+          JSON.stringify({
+            capability: 'secureStorage.get',
+            elapsedMs,
+            status: 200,
+            ok: true,
+          })
+      )
     } else {
-      expect(warn).not.toHaveBeenCalled()
+      expect(debug).not.toHaveBeenCalled()
     }
   })
 

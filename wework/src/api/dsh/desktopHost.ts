@@ -63,12 +63,15 @@ export async function invokeDesktopHost<Result>(
     (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
     performance.now() - startedAt >= 1_000
   ) {
-    console.warn('[Wework] Slow Electron host request', {
-      capability,
-      elapsedMs: Math.round(performance.now() - startedAt),
-      status: response.status,
-      ok: response.ok && body.ok === true,
-    })
+    console.debug(
+      '[Wework] Slow Electron host request ' +
+        JSON.stringify({
+          capability,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          status: response.status,
+          ok: response.ok && body.ok === true,
+        })
+    )
   }
   if (!response.ok || body.ok !== true) {
     throw new DesktopHostError(
