@@ -370,6 +370,11 @@ mod tests {
         .collect();
         for (path, method, bit) in [
             (
+                "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id/authorization",
+                http::Method::GET,
+                2,
+            ),
+            (
                 "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id",
                 http::Method::GET,
                 2,

@@ -49,6 +49,37 @@ fn command_input(
     )
 }
 
+#[brz_http_server::get(
+    "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id/authorization"
+)]
+async fn authorize_command(
+    #[inject(state)] state: &AppState,
+    #[auth] actor: crate::loop_tasks::auth::FlexibleUser,
+    project_id: &str,
+    group_id: &str,
+    command_id: &str,
+) -> Result<Value, FastApiError> {
+    let scope = command_scope(project_id, group_id, command_id)?;
+    let context = crate::background_jobs::robot::coordination_context(
+        state,
+        project_id,
+        &scope,
+        i64::from(actor.0.id),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "project coordination authorization dependency failure");
+        FastApiError::detail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unable to validate project coordination authorization",
+        )
+    })?
+    .ok_or_else(|| {
+        FastApiError::forbidden("Project coordination authorization is unavailable or revoked")
+    })?;
+    Ok(json!({"authorized":true,"context":context}))
+}
+
 #[derive(FromMysqlRow)]
 struct Receipt {
     id: i64,

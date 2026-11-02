@@ -1035,6 +1035,10 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 
 # New APIs implemented directly in Rust.
 [[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id/authorization"
+
+[[routes]]
 methods = ["POST"]
 path = "/api/runtime-work/transcript/search"
 

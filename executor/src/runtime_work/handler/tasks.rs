@@ -52,6 +52,9 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let manager_task_id = format!("{dispatch_task_id}-manager-initial");
+        let coordinator_identity = execution_request(&manager_request)
+            .as_ref()
+            .and_then(super::project_coordination_execution::capture_identity);
         let member_profiles = payload
             .get("memberRuntimeProfiles")
             .and_then(Value::as_array)
@@ -83,6 +86,9 @@ impl RuntimeWorkRpcHandler {
                 .or_insert_with(|| json!({}));
             if !runtime_handle.is_object() {
                 *runtime_handle = json!({});
+            }
+            if let Some(identity) = coordinator_identity {
+                runtime_handle[super::project_coordination_execution::IDENTITY_KEY] = identity;
             }
             runtime_handle
                 .as_object_mut()
@@ -2323,6 +2329,7 @@ fn apply_runtime_profile_handle(runtime_handle: &mut Value, payload: &Value) {
             COLLABORATION_MANAGER_CONTEXT_KEY,
             "collaborationDispatchTaskId",
             "collaborationMemberRuntimeProfiles",
+            super::project_coordination_execution::IDENTITY_KEY,
         ] {
             if let Some(value) = profile.get(key) {
                 handle.insert(key.to_owned(), value.clone());

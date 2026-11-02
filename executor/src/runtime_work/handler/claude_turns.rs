@@ -361,7 +361,9 @@ impl RuntimeWorkRpcHandler {
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
 
-            let outcome = tokio::select! {
+            let outcome = match handler.validate_project_coordinator_request(&request).await {
+                Err(message) => ExecutionOutcome::Failed { message },
+                Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {
                     message: "cancelled".to_owned(),
                 },
@@ -370,6 +372,7 @@ impl RuntimeWorkRpcHandler {
                     sink.clone(),
                     builder.clone(),
                 ) => outcome,
+                },
             };
 
             scheduled_turn_guard.command_outcome =

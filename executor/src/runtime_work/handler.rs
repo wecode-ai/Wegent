@@ -144,6 +144,7 @@ mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
 mod project_coordination_binding;
+mod project_coordination_execution;
 mod project_coordinator;
 mod project_preparation;
 mod queries;
@@ -1167,6 +1168,14 @@ impl RuntimeWorkRpcHandler {
             .is_empty()
         {
             request.backend_url = Some(connection.backend_url.clone());
+        }
+        // Coordinator work must retain the enabling actor, including absent credentials.
+        if request
+            .extra
+            .get("origin")
+            .is_some_and(|origin| origin.get("project_coordination").is_some())
+        {
+            return;
         }
         if request
             .auth_token

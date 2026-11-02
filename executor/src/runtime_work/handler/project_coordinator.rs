@@ -224,6 +224,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &ExecutionRequest,
     ) -> Result<(), String> {
+        super::project_coordination_execution::validate_request(request).await?;
         let Some(origin) = request
             .extra
             .get("origin")
