@@ -137,4 +137,44 @@ describe('assignment execution history', () => {
     )
     expect(hook.result.current.items[0].payload.standInLookupError).toBeUndefined()
   })
+
+  it.each(['account', 'assignment'] as const)(
+    'hides resolved history immediately when only the %s scope changes',
+    async changed => {
+      const hook = renderHook(
+        ({ account, currentInbox }) => useStandInNotifications(currentInbox, source, account, true),
+        { initialProps: { account: 'old', currentInbox: inbox } }
+      )
+      await waitFor(() =>
+        expect(hook.result.current.items[0].payload.standIn?.status).toBe('completed')
+      )
+      let complete!: (value: { items: [] }) => void
+      assignmentTasks.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            complete = resolve
+          })
+      )
+      hook.rerender({
+        account: changed === 'account' ? 'new' : 'old',
+        currentInbox:
+          changed === 'assignment'
+            ? {
+                ...inbox,
+                items: [
+                  {
+                    ...assignment,
+                    payload: { ...assignment.payload, humanAssignmentId: 'new-human' },
+                  },
+                ],
+              }
+            : inbox,
+      })
+      expect(hook.result.current.items[0].payload.standIn).toBeUndefined()
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(true)
+      await waitFor(() => expect(assignmentTasks).toHaveBeenCalledTimes(2))
+      await act(async () => complete({ items: [] }))
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+    }
+  )
 })
