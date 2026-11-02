@@ -124,6 +124,7 @@ async function verifyCachedInitialRecovery({
     'The previous Issue conversation did not unmount before testing its next history read'
   )
   const start = proxy.requests.length
+  console.log('[issue-history-fault] installing rule', { at: new Date().toISOString(), start })
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -142,6 +143,20 @@ async function verifyCachedInitialRecovery({
     )
     updateFixtureReply(sqliteHome, threadId)
   } finally {
+    console.log('[issue-history-fault] releasing rule', {
+      at: new Date().toISOString(),
+      requests: proxy.requests
+        .slice(start)
+        .map(({ method, path, receivedAt, completedAt, fault, status, dropped }) => ({
+          method,
+          path,
+          receivedAt,
+          completedAt,
+          fault,
+          status,
+          dropped,
+        })),
+    })
     proxy.rule = () => null
   }
   await control.command('clickWhenEnabled', `${modal} [data-testid="runtime-transcript-retry"]`)

@@ -201,7 +201,10 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
       )
-      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="collaboration-tab-board"]`
+      )
       await control.command('click', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]')
       assert.notEqual(
