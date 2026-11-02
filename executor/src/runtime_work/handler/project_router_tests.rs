@@ -43,6 +43,27 @@ fn dispatch_output(event: &Value) -> Value {
     json!({"decisions":[{"kind":"dispatch_issue","eventIds":[event["id"]],"issueId":event["issueId"],"reason":"Shared work requires the existing group","at":null}]})
 }
 
+#[test]
+fn project_assessment_payload_selects_an_isolated_workspace_inside_execution_request() {
+    let request: ExecutionRequest = serde_json::from_value(
+        json!({"task_id":"assessment","ephemeral":true,"enable_tools":false}),
+    )
+    .unwrap();
+    let payload = assessment::assessment_payload(
+        request,
+        &json!({"userId":7}),
+        &json!({"id":"batch","taskId":"assessment"}),
+        "runner-a",
+        "command",
+    );
+    let request = execution_request(&payload).unwrap();
+    assert!(is_standalone_chat_workspace(&request));
+    assert!(request.ephemeral);
+    assert_eq!(request.extra["enable_tools"], false);
+    assert_eq!(request.extra["user_id"], 7);
+    assert_eq!(request.extra["origin"]["batchId"], "batch");
+}
+
 #[tokio::test]
 async fn router_native_assessment_requires_exact_actor_batch_and_read_only_request() {
     let (_directory, handler, store, target, source, event) = routing_fixture().await;
@@ -115,6 +136,17 @@ async fn router_assessment_cannot_start_after_binding_is_stopped() {
         .as_array()
         .unwrap()
         .is_empty());
+    assert!(handler
+        .advance_project_router_batch(&store, &target)
+        .await
+        .is_err());
+    assert_eq!(
+        store.project_router_state(&target).unwrap()["batch"]["status"],
+        "failed"
+    );
+    assert!(!project_processing_due(
+        &store.project_router_state(&target).unwrap()
+    ));
 }
 
 #[tokio::test]

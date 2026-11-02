@@ -164,7 +164,7 @@ export function ProjectCoordinationPanel({
       <p className="mt-1 text-xs text-text-muted">
         {t('standIn.project_coordinator.coordination_help')}
       </p>
-      {processing && (
+      {processing && !processing.error && (
         <p className="mt-1 text-xs text-text-muted">
           {t(
             processing.running

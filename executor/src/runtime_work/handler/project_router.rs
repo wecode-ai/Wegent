@@ -312,7 +312,7 @@ impl RuntimeWorkRpcHandler {
                     state["error"].clone()
                 };
                 Ok(
-                    json!({"contextId":id,"lastCheckAt":state["lastCheckAt"],"nextCheckAt":state["nextWakeAt"],"running":state["batch"].is_object(),"questions":state["questions"],"error":error,"lastBatch":state["lastBatch"]["id"]}),
+                    json!({"contextId":id,"lastCheckAt":state["lastCheckAt"],"nextCheckAt":state["nextWakeAt"],"running":matches!(state["batch"]["status"].as_str(), Some("pending" | "dispatching")),"questions":state["questions"],"error":error,"lastBatch":state["lastBatch"]["id"]}),
                 )
             }
             "runtime.coordination.wake" => {
