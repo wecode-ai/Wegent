@@ -269,6 +269,11 @@ fn is_visible_discovery_resource(row: &ListingRow) -> bool {
 
 /// The predicate `_is_visible_discovery_resource` applies to one payload.
 fn is_visible_payload(payload: Option<&KindPayload>, user_id: i64, kind: &str) -> bool {
+    if kind == "Template" {
+        return payload
+            .and_then(|payload| payload.spec.category.as_ref())
+            .is_some_and(|category| category.text() == "collaboration");
+    }
     if user_id != 0 || kind != "Skill" {
         return true;
     }
@@ -446,7 +451,7 @@ fn effective_capability(source: &Source<'_>) -> Capability {
 /// str(capability.get("version") or _source_version(source))`. A Skill's
 /// version always comes from `spec.version`, never the capability block.
 fn listing_version(source: &Source<'_>, capability: &Capability) -> String {
-    if source.kind == "Skill" {
+    if matches!(source.kind, "Skill" | "Template") {
         return source_version(source);
     }
     capability
@@ -492,7 +497,7 @@ fn spec_display_name(source: &Source<'_>) -> String {
     let metadata_value = source
         .payload
         .and_then(|payload| payload.metadata.display_name.clone());
-    let chosen = if source.kind == "Skill" {
+    let chosen = if matches!(source.kind, "Skill" | "Template") {
         spec_value.or(first_non_falsy(metadata_value))
     } else {
         first_non_falsy(metadata_value)

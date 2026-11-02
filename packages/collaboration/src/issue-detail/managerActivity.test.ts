@@ -61,3 +61,9 @@ describe("managerActivityPresentation", () => {
     ]);
   });
 });
+
+it('keeps internal stage identifiers out of the user-facing dispatch summary', () => {
+  const summary = managerActivityPresentation(createCollaborationTranslator('zh-CN'), { dispatch_assignments: [{ task_title: '完成体验设计', agent_name: '设计智能体', workflow_stage_id: 'stage-1' }] }, 'completed')
+  expect(summary.label).toContain('完成体验设计 → 设计智能体')
+  expect(summary.label).not.toContain('stage-1')
+})

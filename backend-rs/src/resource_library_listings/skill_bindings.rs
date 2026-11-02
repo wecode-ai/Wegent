@@ -23,7 +23,7 @@ use super::repository::{
 use super::service::Source;
 
 /// `REFERENCE_KINDS` (`app.services.capability_reference_service`).
-const REFERENCE_KINDS: [&str; 3] = ["Model", "Shell", "Retriever"];
+const REFERENCE_KINDS: [&str; 4] = ["Model", "Shell", "Retriever", "Template"];
 
 /// `_is_personally_installed`.
 pub(super) async fn is_personally_installed<M>(
@@ -40,7 +40,11 @@ where
         return Ok(installed.contains(&source.id));
     }
     if REFERENCE_KINDS.contains(&source.kind) {
-        if source.user_id == 0 {
+        if source.user_id == 0
+            || (source.kind == "Template"
+                && source.namespace == "default"
+                && source.user_id == user_id)
+        {
             return Ok(true);
         }
         return has_resource_reference(mysql, source.kind, source.id, user_id).await;

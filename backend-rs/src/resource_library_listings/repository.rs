@@ -284,6 +284,9 @@ pub fn build_discovery_query(parts: &QueryParts<'_>) -> String {
             quote_list(parts.kinds)
         )
     };
+    if parts.kinds.contains(&"Template") {
+        sql.push_str(" AND (kinds.kind != 'Template' OR JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.category')) = 'collaboration')");
+    }
     if parts.published
         && let Some(resource_type) = parts.resource_type
     {
