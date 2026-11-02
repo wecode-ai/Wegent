@@ -2094,8 +2094,8 @@ function CollaborationPlatformAppContent({
     domainProjects[0] ??
     null;
   useEffect(() => {
-    if (!state.loading && !state.error) onReady?.();
-  }, [onReady, state.error, state.loading]);
+    if (ownsPageRequests || (!state.loading && !state.error)) onReady?.();
+  }, [onReady, ownsPageRequests, state.error, state.loading]);
   const navigationProjectsRef = useRef(state.navigationProjects);
   useLayoutEffect(() => {
     navigationProjectsRef.current = state.navigationProjects;
@@ -3056,7 +3056,9 @@ function CollaborationPlatformAppContent({
       workspaces={state.workspaces}
       workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
-      navigationIncomplete={state.navigationIncomplete}
+      navigationIncomplete={
+        state.navigationIncomplete || (ownsPageRequests && Boolean(state.error))
+      }
       onRetryNavigation={commands.reload}
       canCreateWorkspace={canCreateCloudWorkspace}
       onCreateWorkspace={() => {

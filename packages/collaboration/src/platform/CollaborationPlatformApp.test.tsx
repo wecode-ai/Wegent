@@ -3910,6 +3910,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     "preserves available templates through navigation refresh (failure: %s)",
     async (failNavigation) => {
       const { api } = createApi();
+      const onReady = vi.fn();
       const record = {
         ...builtinCollaborationTemplates()[0],
         id: 70,
@@ -3948,6 +3949,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       const page = (refreshKey: string) => (
         <PlatformHarness
           api={api}
+          onReady={onReady}
           templateStore={templateStore}
           refreshKey={refreshKey}
           start={{ ...initialLocation, rootView: "templates" }}
@@ -3964,8 +3966,10 @@ describe("CollaborationPlatformApp real component flow", () => {
         pendingWorkspaces.promise,
       );
 
+      onReady.mockClear();
       await render(page("refresh"));
       expect(byTestId("template-details-70")).toBe(details);
+      expect(onReady).toHaveBeenCalled();
       await act(async () => {
         if (failNavigation) {
           pendingProjects.reject(new Error("Project navigation unavailable"));
@@ -3982,9 +3986,19 @@ describe("CollaborationPlatformApp real component flow", () => {
 
       vi.mocked(api.projects.list).mockResolvedValue([project]);
       vi.mocked(api.workspaces!.list).mockResolvedValue([workspace]);
-      await render(page("recovered"));
+      if (failNavigation) {
+        expect(byTestId("collaboration-navigation-error")).toBeTruthy();
+        await click(byTestId("collaboration-navigation-retry"));
+      } else {
+        await render(page("recovered"));
+      }
       await waitForUi(200);
       expect(byTestId("template-details-70")).toBe(details);
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-navigation-error"]',
+        ),
+      ).toBeNull();
       expect(remote.list).toHaveBeenCalledOnce();
       expect(remote.discover).toHaveBeenCalledOnce();
       await click(details);
