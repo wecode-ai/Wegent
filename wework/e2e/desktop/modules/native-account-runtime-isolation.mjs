@@ -75,13 +75,17 @@ export async function verifyNativeAccountRuntimeIsolation({
     },
   })
   try {
-    await signalAutomaticRetry()
-    assert.ok(
-      !(await readFile(appLog, 'utf8')).slice(logOffset).includes('python-runtime-install-started'),
-      'Background maintenance attempted to install Python'
-    )
-    await requestPython()
     await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
+    await signalAutomaticRetry()
+    assert.equal(
+      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+        .length - 1,
+      1,
+      'Startup preparation must make one attempt before explicit use'
+    )
+    const foregroundOffset = (await readFile(appLog, 'utf8')).length
+    await requestPython()
+    await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', foregroundOffset)
     await writeFile(
       source,
       JSON.stringify({
@@ -113,8 +117,8 @@ export async function verifyNativeAccountRuntimeIsolation({
     assert.equal(
       (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
         .length - 1,
-      1,
-      'A failed foreground Python preparation was automatically retried through login'
+      2,
+      'Only startup preparation and the explicit foreground retry may install Python'
     )
     await writeFile(
       join(resultDir, 'mixed-runtime-isolation.json'),

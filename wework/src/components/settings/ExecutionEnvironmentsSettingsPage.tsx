@@ -177,7 +177,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                         )
                       : t(
                           'workbench.execution_environment_python_description',
-                          '首次使用 Python 插件时自动准备独立的 Python 3.12，普通任务保留原有的 Python 环境。'
+                          '启用 Python 插件后在后台自动准备独立的 Python 3.12，普通任务保留原有的 Python 环境。'
                         )}
                   </p>
                   {downloading && (

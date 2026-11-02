@@ -11,6 +11,73 @@ afterEach(async () => {
 })
 
 describe('WeworkDesktopControlBridge', () => {
+  test('authorizes plugin interpreter selection and background preparation with the Python token', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-selection-'))
+    directories.push(registryDirectory)
+    const selected = {
+      path: join(registryDirectory, 'python'),
+      version: '3.12.8',
+      source: 'system',
+    }
+    const resolvePython = vi.fn(async () => selected)
+    const prewarmPython = vi.fn(async () => ({ id: 'python', state: 'installed' }))
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'selection-test',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      ensurePython: vi.fn(),
+      resolvePython,
+      prewarmPython,
+    })
+    await bridge.start()
+    const environment = bridge.environment()
+    const endpoint = new URL('/runtime/python/resolve', environment.WEWORK_PYTHON_RUNTIME_URL)
+    const headers = {
+      authorization: `Bearer ${environment.WEWORK_PYTHON_RUNTIME_TOKEN}`,
+      'content-type': 'application/json',
+    }
+    try {
+      expect((await fetch(endpoint, { method: 'POST', body: '{}' })).status).toBe(401)
+      expect(resolvePython).not.toHaveBeenCalled()
+      const invalid = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pluginRoot: '../project' }),
+      }).then(response => response.json())
+      expect(invalid.ok).toBe(false)
+      expect(resolvePython).not.toHaveBeenCalled()
+      const result = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pluginRoot: registryDirectory, allowSystemFallback: true }),
+      }).then(response => response.json())
+      expect(result).toEqual({ ok: true, data: selected })
+      expect(resolvePython).toHaveBeenCalledExactlyOnceWith(registryDirectory, true, true)
+      await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pluginRoot: registryDirectory,
+          allowSystemFallback: true,
+          prepare: false,
+        }),
+      })
+      expect(resolvePython).toHaveBeenLastCalledWith(registryDirectory, true, false)
+      expect((await fetch(new URL('/status', endpoint), { headers })).status).toBe(401)
+      expect(
+        await fetch(new URL('/runtime/python/prewarm', endpoint), { method: 'POST', headers }).then(
+          response => response.json()
+        )
+      ).toEqual({ ok: true, data: { id: 'python', state: 'installed' } })
+      expect(prewarmPython).toHaveBeenCalledOnce()
+    } finally {
+      await bridge.stop()
+    }
+  })
+
   test('waits for Python readiness with a token that cannot control the desktop', async () => {
     const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-python-'))
     directories.push(registryDirectory)

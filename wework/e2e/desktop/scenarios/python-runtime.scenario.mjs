@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 import {
   assertManagedPythonSettings,
@@ -9,7 +12,6 @@ import {
   collectManagedPythonStatus,
   inspectManagedPython,
   managedPythonPath,
-  requestManagedPythonInstall,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
@@ -21,6 +23,9 @@ export async function createDesktopScenario({
   workspacePath,
   uiTimeoutMs,
 }) {
+  const localPython = (
+    await promisify(execFile)('uv', ['python', 'find', '--system', '--no-python-downloads', '3.12'])
+  ).stdout.trim()
   const chat = createPluginPythonChat({
     resultDir,
     workspacePath,
@@ -44,7 +49,10 @@ export async function createDesktopScenario({
   return {
     requiresPackagedHarnessRuntime: true,
     launchWorkingDirectory: launchDirectory,
-    appEnvironment: { WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0' },
+    appEnvironment: {
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
+      PATH: [dirname(localPython), process.env.PATH].filter(Boolean).join(delimiter),
+    },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
@@ -67,7 +75,7 @@ export async function createDesktopScenario({
       await chat.start(control)
       try {
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
-          text: '首次使用 Python 插件',
+          text: '托管环境继续准备',
         })
         await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
@@ -102,6 +110,21 @@ export async function createDesktopScenario({
       await assertPathMissing(marker, 'Refreshing Python health executed project code')
       await captureScreenshot(control, 'python-runtime-cold-installed.png', 'body')
 
+      const installed = await requestExecutor(
+        control,
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+          pluginName: 'chat-python-plugin',
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        installed.localCommitted,
+        true,
+        'The Python plugin must be installed through the real runtime'
+      )
+
       // A real directory at the launcher's location makes uv's publication fail.
       // Keep the real executable only as a cleanup guard, never substitute a fake Python.
       const backup = `${pythonPath}.e2e-backup`
@@ -115,16 +138,7 @@ export async function createDesktopScenario({
       })
       try {
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
-        await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
-          text: '未安装',
-        })
-        assert.ok(
-          !(await readFile(appLog, 'utf8'))
-            .slice(logOffset)
-            .includes('python-runtime-install-started'),
-          'An unhealthy restart installed Python without explicit use'
-        )
-        await requestManagedPythonInstall(control)
+        // The installed Python plugin now requests repair automatically at startup.
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
         await control.command('waitFor', '[data-testid="execution-environment-python"]', {
@@ -134,6 +148,12 @@ export async function createDesktopScenario({
           text: '准备失败',
         })
         await captureScreenshot(control, 'python-runtime-publication-failed.png', 'body')
+        assert.equal(
+          (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+            .length - 1,
+          1,
+          'A failed startup preparation must not loop'
+        )
         await rm(pythonPath, { recursive: true })
         logOffset = (await readFile(appLog, 'utf8')).length
         await control.command('clickWhenEnabled', '[data-testid="plugin-python-runtime-retry"]')

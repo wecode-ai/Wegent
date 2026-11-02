@@ -46,6 +46,12 @@ export interface WeworkDesktopControlBridgeOptions {
   smartApps?: () => SmartAppControlService | null
   ensurePython?: () => Promise<unknown>
   pythonStatus?: () => Promise<unknown>
+  prewarmPython?: () => Promise<unknown>
+  resolvePython?: (
+    pluginRoot: string,
+    allowSystemFallback: boolean,
+    prepare: boolean
+  ) => Promise<unknown>
 }
 
 export interface SmartAppControlService {
@@ -148,12 +154,35 @@ export class WeworkDesktopControlBridge {
     pythonToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
+    if (request.method === 'POST' && request.url === '/runtime/python/resolve') {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })
+        return
+      }
+      try {
+        const input = await readJsonBody(request)
+        if (typeof input.pluginRoot !== 'string' || !isAbsolute(input.pluginRoot))
+          throw new Error('An absolute plugin root is required')
+        if (!this.options.resolvePython) throw new Error('Plugin Python selection is unavailable')
+        const data = await this.options.resolvePython(
+          input.pluginRoot,
+          input.allowSystemFallback === true,
+          input.prepare !== false
+        )
+        writeResponse(response, 200, { ok: true, data })
+      } catch (error) {
+        writeResponse(response, 200, { ok: false, error: errorMessage(error) })
+      }
+      return
+    }
     const pythonOperation =
       request.method === 'POST' && request.url === '/runtime/python/ensure'
         ? this.options.ensurePython
         : request.method === 'GET' && request.url === '/runtime/python/status'
           ? this.options.pythonStatus
-          : undefined
+          : request.method === 'POST' && request.url === '/runtime/python/prewarm'
+            ? this.options.prewarmPython
+            : undefined
     if (pythonOperation) {
       if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
         writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })

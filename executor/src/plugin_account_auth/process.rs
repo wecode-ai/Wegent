@@ -54,7 +54,7 @@ pub(super) fn adapter_uses_python(adapter: &NativeAdapter) -> bool {
 
 pub(super) async fn ensure_adapter_python(adapter: &NativeAdapter) -> Result<(), AuthError> {
     if adapter_uses_python(adapter) {
-        crate::python_runtime::ensure_managed_python()
+        crate::python_runtime::prepare_plugin_python(&adapter.root, true)
             .await
             .map_err(|_| AuthError("python_runtime_unavailable"))?;
     }
@@ -79,15 +79,26 @@ pub(super) async fn invoke(
         .port();
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
-    let mut command = Command::new(interpreter);
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::ready_plugin_python(&adapter.root)
+                .await
+                .map_err(|_| AuthError("python_runtime_unavailable"))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(interpreter, |python| python.path.as_path()),
+    );
     let local_configuration = super::local_configuration::capture(
         adapter.definition.local_environment.as_ref(),
         arguments.first().map(String::as_str),
     )?;
     crate::process::hide_windows_console(&mut command);
     command
-        .arg(&adapter.script)
-        .args(arguments)
         .current_dir(working_directory.unwrap_or(&adapter.root))
         .env_clear()
         .envs(native_environment())
@@ -99,9 +110,14 @@ pub(super) async fn invoke(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     if requires_python {
-        crate::python_runtime::isolate_python_environment(&mut command)
-            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+        let result = if let Some(selected) = &selected {
+            selected.configure(&mut command)
+        } else {
+            crate::python_runtime::isolate_python_environment(&mut command)
+        };
+        result.map_err(|_| AuthError("python_runtime_unavailable"))?;
     }
+    command.arg(&adapter.script).args(arguments);
     if let Some(configuration) = local_configuration {
         command.env("WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION", configuration);
     }

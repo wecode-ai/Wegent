@@ -50,12 +50,31 @@ async fn run_tool_json(
     let requires_python = tool
         .to_str()
         .is_some_and(crate::python_runtime::is_python_program);
-    if requires_python {
-        crate::python_runtime::ensure_managed_python()
-            .await
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::prepare_plugin_python(root, true)
+                .await
+                .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(tool, |python| python.path.as_path()),
+    );
+    if let Some(selected) = &selected {
+        selected
+            .configure(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        if tool
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+        {
+            command.arg(tool);
+        }
     }
-    let mut command = Command::new(tool);
     crate::process::hide_windows_console(&mut command);
     command
         .args(args)
@@ -65,7 +84,7 @@ async fn run_tool_json(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    if requires_python {
+    if requires_python && selected.is_none() {
         crate::python_runtime::isolate_python_environment(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }

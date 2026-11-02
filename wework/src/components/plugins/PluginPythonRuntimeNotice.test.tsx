@@ -12,6 +12,13 @@ const mocks = vi.hoisted(() => ({
   unsubscribe: vi.fn(),
 }))
 vi.mock('@/api/dsh/desktopHost', () => ({ subscribeDesktopHostEvents: mocks.subscribe }))
+vi.mock('@/hooks/useTranslation', async () => {
+  const { default: i18next } = await import('i18next')
+  const { default: common } = await import('@/i18n/locales/zh-CN/common.json')
+  const instance = i18next.createInstance()
+  await instance.init({ lng: 'zh-CN', resources: { 'zh-CN': { common } } })
+  return { useTranslation: () => ({ t: instance.getFixedT('zh-CN', 'common') }) }
+})
 vi.mock('@/desktop/executionEnvironments', () => ({
   listExecutionEnvironments: mocks.list,
   ensurePython: mocks.ensure,
@@ -39,6 +46,17 @@ function publish(status: Partial<ExecutionEnvironmentStatus>) {
 }
 
 describe('PluginPythonRuntimeNotice', () => {
+  test('explains temporary local Python while the managed installation continues', async () => {
+    render(<PluginPythonRuntimeNotice />)
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledOnce())
+    publish({ state: 'downloading', phase: 'install', temporaryPythonVersion: '3.12.8' })
+    expect(screen.getByTestId('plugin-python-runtime-notice')).toHaveTextContent(
+      '本机 Python 3.12.8'
+    )
+    expect(screen.getByTestId('plugin-python-runtime-notice')).toHaveTextContent('托管环境继续准备')
+    expect(mocks.ensure).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     vi.resetAllMocks()
     mocks.list.mockResolvedValue([python])

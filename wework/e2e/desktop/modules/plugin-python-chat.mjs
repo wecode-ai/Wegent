@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
 
 import { accountCommandEvents, accountCommandResult } from './account-auth-command.mjs'
@@ -25,24 +25,54 @@ export function createPluginPythonChat({
   electronUserDataDirectory,
   uiTimeoutMs,
 }) {
-  const plugin = join(resultDir, 'chat-python-plugin')
+  const plugin = join(resultDir, 'plugins', 'chat-python-plugin')
   const scriptPath = join(plugin, 'skills', 'example', 'scripts', 'inspect runtime.py')
+  const localPlugin = join(resultDir, 'chat-python-local-plugin')
+  const localScriptPath = join(localPlugin, 'skills', 'example', 'scripts', 'inspect runtime.py')
   let active = false
   let started = false
   let details
+  let temporaryDetails
 
-  // No system Python can resolve in this command. The task's Python settings
-  // deliberately conflict with CPython and must stay out of the plugin child.
-  const script = `const cp=require('child_process'),assert=require('assert/strict');process.env.PATH='';process.env.PYTHONHOME='task-python-home';process.env.PYTHONPATH='task-python-path';const fingerprint=()=>require('crypto').createHash('sha256').update(JSON.stringify(Object.entries(process.env).sort())).digest('hex');const before=fingerprint();assert.equal(cp.spawnSync('python3',['--version']).error.code,'ENOENT');const output=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(scriptPath)},'argument with spaces','中文'],{encoding:'utf8',stdio:['ignore','pipe','pipe']});if(output.error)throw output.error;process.stdout.write(output.stdout);process.stderr.write(output.stderr);assert.equal(output.status,0);const failed=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(scriptPath)},'--exit-seven'],{encoding:'utf8'});assert.equal(failed.status,7,failed.stderr);assert.equal(fingerprint(),before,'The plugin changed its parent task environment');assert.equal(cp.spawnSync('python3',['--version']).error.code,'ENOENT');console.log('ORDINARY_TASK_ENVIRONMENT_PRESERVED');`
+  // The command environment cannot resolve Python; only the host may select
+  // a validated interpreter. Project import settings stay out of both children.
+  const script = [
+    `const cp=require('child_process'),assert=require('assert/strict');`,
+    `process.env.PATH='';process.env.PYTHONHOME='task-python-home';process.env.PYTHONPATH='task-python-path';`,
+    `const fingerprint=()=>require('crypto').createHash('sha256').update(JSON.stringify(Object.entries(process.env).sort())).digest('hex');const before=fingerprint();`,
+    `assert.equal(cp.spawnSync('python3',['--version']).error.code,'ENOENT');`,
+    `const temporary=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(localScriptPath)},'argument with spaces','中文'],{encoding:'utf8'});`,
+    `if(temporary.error)throw temporary.error;assert.equal(temporary.status,0,temporary.stderr);`,
+    `process.stdout.write(temporary.stdout.replace('PLUGIN_PYTHON_RESULT:','PLUGIN_SYSTEM_PYTHON_RESULT:'));`,
+    `const output=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(scriptPath)},'argument with spaces','中文'],{encoding:'utf8',stdio:['ignore','pipe','pipe']});`,
+    `if(output.error)throw output.error;process.stdout.write(output.stdout);process.stderr.write(output.stderr);assert.equal(output.status,0);`,
+    `const ready=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(localScriptPath)},'ready'],{encoding:'utf8'});assert.equal(ready.status,0,ready.stderr);process.stdout.write(ready.stdout.replace('PLUGIN_PYTHON_RESULT:','PLUGIN_READY_PYTHON_RESULT:'));`,
+    `const failed=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['plugin-python',${JSON.stringify(scriptPath)},'--exit-seven'],{encoding:'utf8'});assert.equal(failed.status,7,failed.stderr);`,
+    `assert.equal(fingerprint(),before,'The plugin changed its parent task environment');assert.equal(cp.spawnSync('python3',['--version']).error.code,'ENOENT');console.log('ORDINARY_TASK_ENVIRONMENT_PRESERVED');`,
+  ].join('')
   const command = `node -e "eval(Buffer.from('${Buffer.from(script).toString('base64')}','base64').toString('utf8'))"`
 
   return {
     async prepare() {
+      await mkdir(join(resultDir, '.agents', 'plugins'), { recursive: true })
+      await writeFile(
+        join(resultDir, '.agents', 'plugins', 'marketplace.json'),
+        JSON.stringify({
+          name: 'wework-personal',
+          plugins: [
+            {
+              name: 'chat-python-plugin',
+              version: '1.0.0',
+              source: { source: 'local', path: './plugins/chat-python-plugin' },
+            },
+          ],
+        })
+      )
       await mkdir(join(plugin, '.codex-plugin'), { recursive: true })
       await mkdir(join(plugin, 'skills', 'example', 'scripts'), { recursive: true })
       await writeFile(
         join(plugin, '.codex-plugin', 'plugin.json'),
-        JSON.stringify({ name: 'chat-python-plugin', skills: './skills' })
+        JSON.stringify({ name: 'chat-python-plugin', version: '1.0.0', skills: './skills' })
       )
       await writeFile(
         join(plugin, 'skills', 'example', 'SKILL.md'),
@@ -50,8 +80,27 @@ export function createPluginPythonChat({
       )
       await writeFile(
         scriptPath,
-        `import base64, json, os, sys\nprint('PLUGIN_PYTHON_RESULT:' + base64.b64encode(json.dumps({'version': sys.version.split()[0], 'executable': sys.executable, 'cwd': os.getcwd(), 'args': sys.argv[1:], 'pythonhome': os.environ.get('PYTHONHOME'), 'pythonpath': os.environ.get('PYTHONPATH'), 'bridge_token': 'WEWORK_PYTHON_RUNTIME_TOKEN' in os.environ}).encode()).decode())\nsys.exit(7 if '--exit-seven' in sys.argv else 0)\n`
+        `import base64, json, os, sys, runtime_probe_support\nprint('PLUGIN_PYTHON_RESULT:' + base64.b64encode(json.dumps({'version': sys.version.split()[0], 'executable': sys.executable, 'cwd': os.getcwd(), 'args': sys.argv[1:], 'pythonhome': os.environ.get('PYTHONHOME'), 'pythonpath': os.environ.get('PYTHONPATH'), 'no_site': sys.flags.no_site, 'bridge_token': 'WEWORK_PYTHON_RUNTIME_TOKEN' in os.environ}).encode()).decode())\nsys.exit(7 if '--exit-seven' in sys.argv else 0)\n`
       )
+      await mkdir(join(localPlugin, '.codex-plugin'), { recursive: true })
+      await mkdir(join(localPlugin, 'skills', 'example', 'scripts'), { recursive: true })
+      await writeFile(
+        join(localPlugin, '.codex-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'chat-python-local-plugin',
+          version: '1.0.0',
+          runtimeRequirements: {
+            python: { systemFallback: { version: '3.12', dependencies: [] } },
+          },
+        })
+      )
+      await copyFile(scriptPath, localScriptPath)
+      for (const root of [plugin, localPlugin]) {
+        await writeFile(
+          join(root, 'skills', 'example', 'scripts', 'runtime_probe_support.py'),
+          'probe = "bundle-ok"\n'
+        )
+      }
     },
     async handleHttp(request, response, url) {
       if (
@@ -79,6 +128,17 @@ export function createPluginPythonChat({
           const encoded = result.output.match(/PLUGIN_PYTHON_RESULT:([A-Za-z0-9+/=]+)/)?.[1]
           assert.ok(encoded, 'The real plugin script did not finish')
           details = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
+          const local = result.output.match(/PLUGIN_SYSTEM_PYTHON_RESULT:([A-Za-z0-9+/=]+)/)?.[1]
+          assert.ok(local, 'The compatible local Python invocation did not finish')
+          temporaryDetails = JSON.parse(Buffer.from(local, 'base64').toString('utf8'))
+          const ready = result.output.match(/PLUGIN_READY_PYTHON_RESULT:([A-Za-z0-9+/=]+)/)?.[1]
+          assert.ok(
+            ready,
+            'The plugin did not switch to ready managed Python on its next invocation'
+          )
+          const readyDetails = JSON.parse(Buffer.from(ready, 'base64').toString('utf8'))
+          assert.equal(readyDetails.executable, details.executable)
+          assert.equal(readyDetails.no_site, 0)
           events = [assistantMessage(COMPLETE)]
         } else {
           assert.equal(started, false, 'The chat must start the plugin command only once')
@@ -112,6 +172,19 @@ export function createPluginPythonChat({
         timeoutMs: PYTHON_BOOTSTRAP_TIMEOUT_MS,
       })
       assert.equal(details.version, '3.12.12')
+      assert.match(temporaryDetails.version, /^3\.12\./)
+      assert.equal(temporaryDetails.no_site, 1)
+      assert.equal(temporaryDetails.pythonhome, null)
+      assert.equal(temporaryDetails.pythonpath, null)
+      assert.equal(temporaryDetails.bridge_token, false)
+      assert.notEqual(temporaryDetails.executable, details.executable)
+      for (const root of [plugin, localPlugin]) {
+        await assert.rejects(
+          access(join(root, 'skills', 'example', 'scripts', '__pycache__')),
+          { code: 'ENOENT' },
+          'Interpreter selection must not write bytecode into the plugin package'
+        )
+      }
       assert.deepEqual(details.args, ['argument with spaces', '中文'])
       assert.equal(details.pythonhome, null)
       assert.equal(details.pythonpath, null)
@@ -119,7 +192,10 @@ export function createPluginPythonChat({
       assert.equal(details.cwd, workspacePath)
       const executable = relative(electronUserDataDirectory, details.executable)
       assert.ok(executable && !executable.startsWith('..') && !isAbsolute(executable))
-      await writeFile(join(resultDir, 'plugin-python-chat.json'), JSON.stringify(details, null, 2))
+      await writeFile(
+        join(resultDir, 'plugin-python-chat.json'),
+        JSON.stringify({ managed: details, temporary: temporaryDetails }, null, 2)
+      )
     },
   }
 }

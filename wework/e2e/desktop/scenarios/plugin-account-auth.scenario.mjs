@@ -10,10 +10,9 @@ import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
-  assertPathMissing,
   inspectManagedPython,
-  managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
+  waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
 import {
   createConversationAuthModelFixture,
@@ -324,9 +323,9 @@ export async function createDesktopScenario({
         [
           'plugin-account-auth-password',
           async () => {
-            await assertPathMissing(
-              managedPythonPath(electronUserDataDirectory),
-              'Installing or viewing a plugin downloaded Python before first use'
+            await waitForPythonRuntimeEvent(
+              join(resultDir, 'app.log'),
+              'python-runtime-ensure-started'
             )
             await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
@@ -346,15 +345,16 @@ export async function createDesktopScenario({
             await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
             await captureScreenshot(control, 'plugin-auth-transparent-detail.png', 'body')
 
-            // This foreground action prepares Python without signing in the password fixture.
+            // Foreground use joins any startup preparation without signing in this fixture.
             await control.command(
               'click',
               '[data-testid="plugin-connection-manage-connector:conversation-qr"]'
             )
-            await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
-              text: '首次使用 Python 插件',
-            })
-            await captureScreenshot(control, 'plugin-auth-first-python-use.png', 'body')
+            await captureScreenshot(
+              control,
+              'plugin-auth-background-python-preparation.png',
+              'body'
+            )
             await control.command('waitFor', '[data-testid="local-connector-auth-cancel"]', {
               timeoutMs: PYTHON_BOOTSTRAP_TIMEOUT_MS,
             })

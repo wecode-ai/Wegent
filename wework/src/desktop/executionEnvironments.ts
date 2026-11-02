@@ -20,6 +20,7 @@ export interface ExecutionEnvironmentStatus {
   configuredPath?: string | null
   restartRequired?: boolean
   phase?: 'download' | 'install' | 'verify' | null
+  temporaryPythonVersion?: string
 }
 
 export function listExecutionEnvironments() {

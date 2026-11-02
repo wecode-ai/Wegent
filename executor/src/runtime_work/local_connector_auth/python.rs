@@ -6,14 +6,18 @@ pub(super) async fn prepare_command(
     root: &Path,
     args: &[String],
     tool: Option<&Path>,
-) -> Result<bool, AppIpcError> {
+) -> Result<(bool, Option<crate::python_runtime::PluginPythonInterpreter>), AppIpcError> {
     let requires_python = command_uses_python(root, args, tool)?;
     if requires_python && crate::python_runtime::managed_python_bridge_configured() {
-        crate::python_runtime::ensure_managed_python()
+        let direct = args
+            .first()
+            .is_some_and(|program| crate::python_runtime::is_python_program(program));
+        let selected = crate::python_runtime::prepare_plugin_python(root, direct)
             .await
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
+        return Ok((true, Some(selected)));
     }
-    Ok(requires_python)
+    Ok((requires_python, None))
 }
 
 pub(super) fn command_uses_python(

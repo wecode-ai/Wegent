@@ -39,6 +39,7 @@ impl ActivationCoordinator {
 }
 
 static ACTIVATION: ActivationCoordinator = ActivationCoordinator::new();
+static CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 pub async fn begin_execution() -> RwLockReadGuard<'static, ()> {
     ACTIVATION.begin_execution().await
@@ -55,6 +56,15 @@ pub fn revision() -> u64 {
 // Call while holding the activation writer, including after partial publication.
 pub fn mark_changed() {
     ACTIVATION.mark_changed();
+    notify_changed();
+}
+
+pub(crate) fn notify_changed() {
+    CHANGED.notify_one();
+}
+
+pub(crate) async fn changed() {
+    CHANGED.notified().await;
 }
 
 #[cfg(test)]

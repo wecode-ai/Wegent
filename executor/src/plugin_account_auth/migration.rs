@@ -206,25 +206,25 @@ pub(super) async fn ensure_registered_python(
     }
     let manifest_path = manifest_path_for_home(home);
     let shared_plugins = shared_plugins_for_home(home)?;
-    if registered_python_required(
+    for root in registered_python_roots(
         &manifest_path,
         &shared_plugins,
         installed_ids,
         connector_slug,
     )? {
-        crate::python_runtime::ensure_managed_python()
+        crate::python_runtime::prepare_plugin_python(&root, true)
             .await
             .map_err(|_| AuthError("python_runtime_unavailable"))?;
     }
     Ok(())
 }
 
-fn registered_python_required(
+fn registered_python_roots(
     manifest_path: &Path,
     shared_plugins: &Path,
     installed_ids: &[u64],
     connector_slug: Option<&str>,
-) -> Result<bool, AuthError> {
+) -> Result<Vec<PathBuf>, AuthError> {
     let manifest = read_package_json(manifest_path, "plugin_auth_package_sync_required")?;
     let capabilities = manifest_path
         .parent()
@@ -232,6 +232,7 @@ fn registered_python_required(
     let entries = manifest["plugins"]
         .as_object()
         .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    let mut roots = Vec::new();
     for entry in entries.values().filter(|entry| {
         entry["managed"] == true
             && entry["enabled"] == true
@@ -255,10 +256,10 @@ fn registered_python_required(
                         .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
             })
         }) {
-            return Ok(true);
+            roots.push(root);
         }
     }
-    Ok(false)
+    Ok(roots)
 }
 
 fn read_package_json(path: &Path, missing_code: &'static str) -> Result<Value, AuthError> {
@@ -464,14 +465,28 @@ mod tests {
         )
         .unwrap();
 
-        assert!(registered_python_required(&manifest, &shared, &[42], Some("mail")).unwrap());
-        assert!(registered_python_required(&manifest, &shared, &[42], None).unwrap());
-        assert!(!registered_python_required(&manifest, &shared, &[42], Some("native")).unwrap());
-        assert!(!registered_python_required(&manifest, &shared, &[99], None).unwrap());
+        assert!(
+            !registered_python_roots(&manifest, &shared, &[42], Some("mail"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!registered_python_roots(&manifest, &shared, &[42], None)
+            .unwrap()
+            .is_empty());
+        assert!(
+            registered_python_roots(&manifest, &shared, &[42], Some("native"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(registered_python_roots(&manifest, &shared, &[99], None)
+            .unwrap()
+            .is_empty());
         let mut data: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
         data["plugins"]["mail"]["enabled"] = json!(false);
         fs::write(&manifest, data.to_string()).unwrap();
-        assert!(!registered_python_required(&manifest, &shared, &[], None).unwrap());
+        assert!(registered_python_roots(&manifest, &shared, &[], None)
+            .unwrap()
+            .is_empty());
     }
 
     #[cfg(unix)]
@@ -483,7 +498,7 @@ mod tests {
         let alias = temp.path().join("manifest-alias.json");
         symlink(&manifest, &alias).unwrap();
         assert_eq!(
-            registered_python_required(&alias, &shared, &[42], None),
+            registered_python_roots(&alias, &shared, &[42], None),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }

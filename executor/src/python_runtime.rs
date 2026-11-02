@@ -15,6 +15,9 @@ const RUNTIME_URL_ENV: &str = "WEWORK_PYTHON_RUNTIME_URL";
 const RUNTIME_TOKEN_ENV: &str = "WEWORK_PYTHON_RUNTIME_TOKEN";
 const ENSURE_PATH: &str = "/runtime/python/ensure";
 const STATUS_PATH: &str = "/runtime/python/status";
+const PREWARM_PATH: &str = "/runtime/python/prewarm";
+const RESOLVE_PATH: &str = "/runtime/python/resolve";
+pub(crate) mod prewarm;
 pub(crate) const PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS: u64 = 16 * 60;
 
 pub(crate) fn managed_python_bridge_configured() -> bool {
@@ -27,10 +30,94 @@ struct PreparationResponse {
     data: Option<Value>,
 }
 
-pub(crate) async fn ensure_managed_python() -> Result<(), String> {
+pub(crate) async fn prewarm_managed_python() -> Result<(), String> {
+    request_configured_python(
+        configured_value(RUNTIME_URL_ENV)?.as_deref(),
+        configured_value(RUNTIME_TOKEN_ENV)?.as_deref(),
+        PREWARM_PATH,
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PluginPythonInterpreter {
+    pub path: std::path::PathBuf,
+    pub source: String,
+    pub version: String,
+}
+
+impl PluginPythonInterpreter {
+    pub(crate) fn configure(&self, command: &mut Command) -> Result<(), String> {
+        if self.source == "system" {
+            command.args(["-B", "-E", "-s", "-S"]);
+        }
+        isolate_python_environment_with(command, Some(&self.path))
+    }
+}
+
+pub(crate) async fn prepare_plugin_python(
+    root: &Path,
+    allow_system: bool,
+) -> Result<PluginPythonInterpreter, String> {
+    select_plugin_python(root, allow_system, true).await
+}
+
+pub(crate) async fn ready_plugin_python(root: &Path) -> Result<PluginPythonInterpreter, String> {
+    select_plugin_python(root, true, false).await
+}
+
+async fn select_plugin_python(
+    root: &Path,
+    allow_system: bool,
+    prepare: bool,
+) -> Result<PluginPythonInterpreter, String> {
     let url = configured_value(RUNTIME_URL_ENV)?;
     let token = configured_value(RUNTIME_TOKEN_ENV)?;
-    ensure_configured_python(url.as_deref(), token.as_deref()).await
+    let Some(mut url) = bridge_configuration(url.as_deref(), token.as_deref())? else {
+        return Ok(PluginPythonInterpreter {
+            path: env::var_os("WEGENT_PYTHON_PATH")
+                .map(Into::into)
+                .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into()),
+            source: "external".into(),
+            version: String::new(),
+        });
+    };
+    url.set_path(RESOLVE_PATH);
+    let response = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS))
+        .redirect(Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(|_| "Managed Python runtime bridge is unavailable".to_owned())?
+        .post(url)
+        .bearer_auth(token.expect("validated token"))
+        .json(&serde_json::json!({"pluginRoot": root, "allowSystemFallback": allow_system, "prepare": prepare}))
+        .send()
+        .await
+        .map_err(|_| "Plugin Python preparation could not be reached".to_owned())?;
+    if !response.status().is_success() {
+        return Err("Plugin Python preparation request failed".into());
+    }
+    let response: PreparationResponse = response
+        .json()
+        .await
+        .map_err(|_| "Plugin Python preparation response is invalid".to_owned())?;
+    let selected: PluginPythonInterpreter = serde_json::from_value(
+        response
+            .data
+            .filter(|_| response.ok)
+            .ok_or("Plugin Python could not be prepared")?,
+    )
+    .map_err(|_| "Plugin Python interpreter response is invalid".to_owned())?;
+    if !selected.path.is_absolute()
+        || !matches!(selected.source.as_str(), "managed" | "system")
+        || (selected.source == "system" && !allow_system)
+        || selected.version.is_empty()
+    {
+        return Err("Plugin Python interpreter response is invalid".into());
+    }
+    Ok(selected)
 }
 
 pub(crate) fn is_python_program(program: &str) -> bool {
@@ -53,6 +140,14 @@ pub(crate) fn is_python_program(program: &str) -> bool {
 }
 
 pub(crate) fn isolate_python_environment(command: &mut Command) -> Result<(), String> {
+    let path = env::var_os("WEGENT_PYTHON_PATH").map(std::path::PathBuf::from);
+    isolate_python_environment_with(command, path.as_deref())
+}
+
+fn isolate_python_environment_with(
+    command: &mut Command,
+    interpreter: Option<&Path>,
+) -> Result<(), String> {
     let inherited = env::vars_os().map(|(name, _)| name);
     let configured = command.as_std().get_envs().map(|(name, _)| name.to_owned());
     let names: Vec<_> = inherited
@@ -74,8 +169,10 @@ pub(crate) fn isolate_python_environment(command: &mut Command) -> Result<(), St
         command.env_remove(name);
     }
     command.env("PYTHONNOUSERSITE", "1");
-    if let Some(interpreter) = env::var_os("WEGENT_PYTHON_PATH") {
-        prepend_python_path(command, Path::new(&interpreter))?;
+    command.env("PYTHONDONTWRITEBYTECODE", "1");
+    if let Some(interpreter) = interpreter {
+        prepend_python_path(command, interpreter)?;
+        command.env("WEGENT_PYTHON_PATH", interpreter);
     }
     Ok(())
 }
@@ -177,10 +274,20 @@ fn bridge_configuration(url: Option<&str>, token: Option<&str>) -> Result<Option
     Ok(Some(parsed))
 }
 
+#[cfg(test)]
 async fn ensure_configured_python(url: Option<&str>, token: Option<&str>) -> Result<(), String> {
-    let Some(url) = bridge_configuration(url, token)? else {
+    request_configured_python(url, token, ENSURE_PATH).await
+}
+
+async fn request_configured_python(
+    url: Option<&str>,
+    token: Option<&str>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(mut url) = bridge_configuration(url, token)? else {
         return Ok(());
     };
+    url.set_path(path);
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS))
@@ -221,6 +328,41 @@ mod tests {
         routing::{get, post},
         Router,
     };
+
+    #[test]
+    fn system_selection_is_isolated_to_the_plugin_child_and_disables_bytecode() {
+        let _lock = crate::test_env::lock();
+        let path = env::temp_dir().join("local-plugin-python").join("python3");
+        let selected = PluginPythonInterpreter {
+            path: path.clone(),
+            source: "system".into(),
+            version: "3.12.8".into(),
+        };
+        let original_path = env::var_os("PATH");
+        let mut command = Command::new(&path);
+        selected.configure(&mut command).unwrap();
+        assert_eq!(
+            command.as_std().get_args().collect::<Vec<_>>(),
+            ["-B", "-E", "-s", "-S"]
+        );
+        let child_path = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(
+            env::split_paths(child_path).next().unwrap(),
+            path.parent().unwrap()
+        );
+        assert!(command
+            .as_std()
+            .get_envs()
+            .any(|(name, value)| name == "PYTHONDONTWRITEBYTECODE"
+                && value == Some(std::ffi::OsStr::new("1"))));
+        assert_eq!(env::var_os("PATH"), original_path);
+    }
 
     struct TestBridge {
         url: String,

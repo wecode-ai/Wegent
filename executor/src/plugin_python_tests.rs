@@ -86,7 +86,12 @@ fn managed_environment_and_arguments_are_scoped_to_the_plugin_child() {
     let original_path = env::var_os("PATH");
     let (_root, script) = fixture();
     let args = ["--output", "a b.json", "$(must-not-run)"];
-    let command = plugin_command(&interpreter, &script, args.map(OsString::from)).unwrap();
+    let selected = crate::python_runtime::PluginPythonInterpreter {
+        path: interpreter.clone(),
+        source: "managed".into(),
+        version: "3.12.12".into(),
+    };
+    let command = plugin_command(&selected, &script, args.map(OsString::from)).unwrap();
     assert_eq!(command.as_std().get_program(), interpreter);
     assert_eq!(command.as_std().get_current_dir(), None);
     let expected = std::iter::once(script.into_os_string())
@@ -136,7 +141,7 @@ async fn assert_preparation_failure() {
     let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = hits.clone();
     let router = axum::Router::new().route(
-        "/runtime/python/ensure",
+        "/runtime/python/resolve",
         axum::routing::post(move || {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
@@ -153,6 +158,6 @@ async fn assert_preparation_failure() {
     let (_root, script) = fixture();
     let error = run_script(&script, []).await.unwrap_err();
     server.abort();
-    assert_eq!(error, "Managed Python runtime preparation request failed");
+    assert_eq!(error, "Plugin Python preparation request failed");
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

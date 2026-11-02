@@ -8,6 +8,10 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import extractZip from 'extract-zip'
 import * as tar from 'tar'
+import {
+  findCompatibleSystemPython,
+  type PluginPythonInterpreter,
+} from './python-runtime-selection.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -88,6 +92,7 @@ export interface PythonRuntimeStatus {
   error: string | null
   source: 'managed'
   phase: 'download' | 'install' | 'verify' | null
+  temporaryPythonVersion?: string
 }
 
 interface RunFileResult {
@@ -98,7 +103,7 @@ interface RunFileResult {
 type RunFile = (
   file: string,
   args: string[],
-  options: { env: NodeJS.ProcessEnv; timeout: number }
+  options: { env: NodeJS.ProcessEnv; timeout: number; cwd?: string }
 ) => Promise<RunFileResult>
 
 export interface PythonRuntimeManagerOptions {
@@ -131,6 +136,8 @@ export class PythonRuntimeManager {
   private activeStatus: Promise<PythonRuntimeStatus> | null = null
   private currentStatus: PythonRuntimeStatus
   private lastStatusPublishedAt = 0
+  private temporaryPythonVersion: string | undefined
+  private automaticPreparationAttempted = false
   private readonly onStatusChange?: (status: PythonRuntimeStatus) => void
 
   constructor(options: PythonRuntimeManagerOptions) {
@@ -161,6 +168,61 @@ export class PythonRuntimeManager {
     return { ...this.runtimeEnvironment }
   }
 
+  async resolvePluginPython(
+    pluginRoot: string,
+    allowSystemFallback: boolean,
+    prepare = true
+  ): Promise<PluginPythonInterpreter> {
+    const status = await this.status()
+    if (
+      status.state === 'installed' &&
+      status.version &&
+      (status.version === PYTHON_VERSION || !prepare)
+    )
+      return { path: status.path, version: status.version, source: 'managed' }
+    if (!prepare && !this.activeEnsure) throw new Error('Plugin Python is not ready')
+    const preparation = prepare ? this.ensure() : this.activeEnsure
+    if (!preparation) throw new Error('Plugin Python is not ready')
+    const managed = preparation.then(
+      (ready): PluginPythonInterpreter => ({
+        path: ready.path,
+        version: ready.version ?? PYTHON_VERSION,
+        source: 'managed',
+      })
+    )
+    void managed.catch(() => undefined)
+    if (!allowSystemFallback) {
+      if (!prepare) throw new Error('Plugin Python is not ready')
+      return managed
+    }
+    // Local probing must not delay a managed runtime that becomes ready first.
+    const local = findCompatibleSystemPython(
+      pluginRoot,
+      this.root,
+      this.runtimeEnvironment,
+      this.platform,
+      this.runFile
+    ).then(candidate => {
+      if (
+        candidate &&
+        this.activeEnsure &&
+        !['installed', 'error'].includes(this.currentStatus.state)
+      ) {
+        this.temporaryPythonVersion = candidate.version
+        this.setStatus({
+          ...this.currentStatus,
+          state: 'downloading',
+          temporaryPythonVersion: candidate.version,
+        })
+        return candidate
+      }
+      if (!prepare && this.currentStatus.state !== 'installed')
+        throw new Error('Plugin Python is not ready')
+      return managed
+    })
+    return Promise.race([managed, local])
+  }
+
   status(): Promise<PythonRuntimeStatus> {
     if (this.activeEnsure) return Promise.resolve({ ...this.currentStatus })
     this.activeStatus ??= this.inspectStatus().finally(() => {
@@ -182,11 +244,17 @@ export class PythonRuntimeManager {
   }
 
   ensure(): Promise<PythonRuntimeStatus> {
+    this.automaticPreparationAttempted = true
     if (this.activeEnsure) return this.activeEnsure
     this.activeEnsure = this.performEnsure().finally(() => {
       this.activeEnsure = null
     })
     return this.activeEnsure
+  }
+
+  prewarm(): Promise<PythonRuntimeStatus> {
+    if (this.automaticPreparationAttempted) return this.activeEnsure ?? this.status()
+    return this.ensure()
   }
 
   private async performEnsure(): Promise<PythonRuntimeStatus> {
@@ -467,6 +535,9 @@ export class PythonRuntimeManager {
   }
 
   private setStatus(status: PythonRuntimeStatus): void {
+    if (status.state !== 'downloading') this.temporaryPythonVersion = undefined
+    else if (this.temporaryPythonVersion)
+      status = { ...status, temporaryPythonVersion: this.temporaryPythonVersion }
     const previous = this.currentStatus
     this.currentStatus = status
     if (JSON.stringify(previous) === JSON.stringify(status)) return
@@ -475,6 +546,7 @@ export class PythonRuntimeManager {
       status.state === 'downloading' &&
       previous.state === status.state &&
       previous.phase === status.phase &&
+      previous.temporaryPythonVersion === status.temporaryPythonVersion &&
       now - this.lastStatusPublishedAt < 250
     )
       return

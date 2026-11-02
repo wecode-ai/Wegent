@@ -10,7 +10,7 @@ pub(crate) const INSTRUCTIONS: &str = r#"Wework Python plugin execution:
 When a plugin skill needs to execute a bundled Python script, use the host runner:
   "$WEGENT_EXECUTOR_BINARY" plugin-python /absolute/plugin/path/scripts/example.py [script arguments]
 In PowerShell use: & $env:WEGENT_EXECUTOR_BINARY plugin-python <script-path> <arguments>.
-This host rule overrides python/python3/uv invocation examples in plugin skills. Read the skill first, resolve its actual script path, and pass script arguments unchanged. Keep the task's working directory. The runner checks the plugin script, prepares Wework Python on demand, shows preparation progress in the desktop UI, waits until ready, and then runs only that plugin child with the managed interpreter. Use the shell tool's background/session support when preparation takes time, and wait for the same process to finish. Do not start a second preparation or switch to system Python after a preparation error; report the failure and let the user retry from the progress notice or execution environment settings.
+This host rule overrides python/python3/uv invocation examples in plugin skills. Read the skill first, resolve its actual script path, and pass script arguments unchanged. Keep the task's working directory. The runner checks the plugin script, prepares Wework Python on demand, shows preparation progress in the desktop UI, selects a ready interpreter, and runs only that plugin child with it. Managed Python is preferred; during preparation the host may temporarily select a validated local Python only when the plugin explicitly declares compatible, dependency-free execution. Use the shell tool's background/session support when preparation takes time, and wait for the same process to finish. Do not start a second preparation or switch to system Python after a preparation error; report the failure and let the user retry from the progress notice or execution environment settings.
 Use this runner only for scripts belonging to a plugin package. Ordinary project scripts and shell commands keep their existing Python environment. Do not export PATH, PYTHONHOME or PYTHONPATH for the task, install system Python, or install packages into the shared managed interpreter. Plugin-specific dependency environments remain the plugin's responsibility.
 "#;
 
@@ -34,11 +34,8 @@ async fn run_script(
     if !crate::python_runtime::managed_python_bridge_configured() {
         return Err("Wework managed Python is unavailable on this execution device".to_owned());
     }
-    let interpreter = env::var_os("WEGENT_PYTHON_PATH")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .ok_or("Wework managed Python interpreter is not configured")?;
-    crate::python_runtime::ensure_managed_python().await?;
+    let interpreter =
+        crate::python_runtime::prepare_plugin_python(&plugin_root(&script)?, true).await?;
     let mut command = plugin_command(&interpreter, &script, args)?;
     let status = command
         .status()
@@ -48,11 +45,12 @@ async fn run_script(
 }
 
 fn plugin_command(
-    interpreter: &Path,
+    interpreter: &crate::python_runtime::PluginPythonInterpreter,
     script: &Path,
     args: impl IntoIterator<Item = OsString>,
 ) -> Result<Command, String> {
-    let mut command = Command::new(interpreter);
+    let mut command = Command::new(&interpreter.path);
+    interpreter.configure(&mut command)?;
     command
         .arg(script)
         .args(args)
@@ -60,7 +58,6 @@ fn plugin_command(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
-    crate::python_runtime::isolate_python_environment(&mut command)?;
     // The installation bridge is a host capability, not a plugin credential.
     command.env_remove("WEWORK_PYTHON_RUNTIME_URL");
     command.env_remove("WEWORK_PYTHON_RUNTIME_TOKEN");
@@ -84,8 +81,18 @@ fn plugin_script(path: &Path) -> Result<PathBuf, String> {
     if !script.is_file() {
         return Err("The plugin Python script must be a regular file".to_owned());
     }
-    let root = path
-        .ancestors()
+    let root = plugin_root(&path)?;
+    if !script.starts_with(&root) {
+        return Err("The Python script resolves outside its plugin package".to_owned());
+    }
+    if !valid_plugin_manifest(&root) {
+        return Err("The Python script's plugin manifest is invalid".to_owned());
+    }
+    Ok(script)
+}
+
+fn plugin_root(path: &Path) -> Result<PathBuf, String> {
+    path.ancestors()
         .skip(1)
         .find(|directory| {
             [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]
@@ -94,14 +101,7 @@ fn plugin_script(path: &Path) -> Result<PathBuf, String> {
         })
         .ok_or("The Python script must belong to a plugin package")?
         .canonicalize()
-        .map_err(|error| error.to_string())?;
-    if !script.starts_with(&root) {
-        return Err("The Python script resolves outside its plugin package".to_owned());
-    }
-    if !valid_plugin_manifest(&root) {
-        return Err("The Python script's plugin manifest is invalid".to_owned());
-    }
-    Ok(script)
+        .map_err(|error| error.to_string())
 }
 
 fn valid_plugin_manifest(root: &Path) -> bool {

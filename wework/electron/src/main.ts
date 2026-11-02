@@ -2015,6 +2015,17 @@ async function configureDesktopRuntime(): Promise<void> {
     pythonStatus: pythonRuntimeEnabled
       ? async () => (await managedPythonRuntime()).status()
       : undefined,
+    resolvePython: pythonRuntimeEnabled
+      ? async (pluginRoot, allowSystemFallback, prepare) =>
+          (await managedPythonRuntime()).resolvePluginPython(
+            pluginRoot,
+            allowSystemFallback,
+            prepare
+          )
+      : undefined,
+    prewarmPython: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).prewarm()
+      : undefined,
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()

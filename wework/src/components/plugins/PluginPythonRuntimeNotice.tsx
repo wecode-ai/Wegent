@@ -92,15 +92,20 @@ export function PluginPythonRuntimeNotice() {
         </button>
       </div>
       <p className="mt-2 text-sm text-text-secondary">
-        {failed
-          ? t(
-              'workbench.plugin_python_retry_hint',
-              '请检查网络并重试安装，安装完成后重新执行插件操作。'
-            )
-          : t(
-              'workbench.plugin_python_preparing_hint',
-              '首次使用 Python 插件需要准备运行环境，其他任务可以继续。'
-            )}
+        {status.temporaryPythonVersion && !failed
+          ? t('workbench.plugin_python_temporary', {
+              defaultValue: '插件临时使用本机 Python {{version}}，托管环境继续准备。',
+              version: status.temporaryPythonVersion,
+            })
+          : failed
+            ? t(
+                'workbench.plugin_python_retry_hint',
+                '请检查网络并重试安装，安装完成后重新执行插件操作。'
+              )
+            : t(
+                'workbench.plugin_python_preparing_hint',
+                '插件运行环境正在后台准备，其他任务可以继续。'
+              )}
       </p>
       {failed ? (
         <Button
