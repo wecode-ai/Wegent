@@ -10,6 +10,7 @@ import {
   waitForStartupProgressEvidence,
 } from '../modules/startup-splash-progress.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
+import { verifyFirstUsePageLoading } from '../modules/first-use-page-loading.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
@@ -200,6 +201,7 @@ export async function createDesktopScenario({ resultDir }) {
         Number.isFinite(succeeded.properties?.duration_ms) && succeeded.properties.duration_ms >= 0,
         'The successful desktop startup did not include a valid duration'
       )
+      await verifyFirstUsePageLoading(control)
     },
 
     diagnostics() {

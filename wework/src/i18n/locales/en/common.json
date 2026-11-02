@@ -2483,6 +2483,7 @@
     "smart_apps_publish_failed": "Failed to publish the Smart app",
     "smart_apps_storage_unavailable": "File storage is temporarily unavailable. Try again later.",
     "smart_apps_development_failed": "Failed to create the Smart app.",
+    "smart_apps_error_extraction_timeout": "Extracting the release package timed out. Try installing again; if it still fails, generate a new release package.",
     "smart_apps_error_package_too_large": "The release package exceeds 50 MB. Generate a release artifact with the project's packaging command instead of uploading a ZIP of the source directory.",
     "smart_apps_error_extracted_package_too_large": "The extracted release package must not exceed 250 MB. Remove unnecessary files and package it again.",
     "smart_apps_error_image_too_large": "The icon must be no larger than 512 KB and each screenshot no larger than 2 MB.",
