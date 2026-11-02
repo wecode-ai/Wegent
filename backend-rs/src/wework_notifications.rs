@@ -40,7 +40,7 @@ enum Category {
 /// (assigned, mentioned or run) rather than a message sent to them directly.
 /// Rendered as the SQLAlchemy `IN`/`NOT IN` literal list.
 const COLLABORATION_NOTIFICATION_KINDS: &str =
-    "'assignment', 'mention', 'execution', 'issue_dispatch_assignment'";
+    "'assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'issue_follow'";
 
 impl Category {
     /// FastAPI `Literal` coercion: an absent value stays `None`, a value inside
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn list_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'issue_follow') ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
         );
         assert_eq!(
             list_sql(151, 0, 51, Some(Category::Collaboration)),
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn list_sql_general_matches_recorded() {
         let expected = format!(
-            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
+            "SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND (wework_notifications.kind NOT IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'issue_follow')) ORDER BY wework_notifications.created_at DESC, wework_notifications.id DESC \n LIMIT 0, 51"
         );
         assert_eq!(list_sql(151, 0, 51, Some(Category::General)), expected);
     }
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn unread_count_sql_collaboration_matches_recorded() {
         let expected = format!(
-            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment') AND wework_notifications.is_read IS false) AS anon_1"
+            "SELECT count(*) AS count_1 \nFROM (SELECT {RECORDED_COLUMNS} \nFROM wework_notifications \nWHERE wework_notifications.user_id = 151 AND wework_notifications.kind IN ('assignment', 'mention', 'execution', 'issue_dispatch_assignment', 'issue_follow') AND wework_notifications.is_read IS false) AS anon_1"
         );
         assert_eq!(
             unread_count_sql(151, Some(Category::Collaboration)),

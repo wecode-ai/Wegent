@@ -67,6 +67,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
       await reloadMainWindow(control, 'The renderer did not reconnect after following an Issue')
+      await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', scoped(`[data-testid="cloud-todo-card-${issueId}"]`))
       await control.command('waitFor', follow, { visible: true, timeoutMs: uiTimeoutMs })
       assert.equal(await control.command('getAttribute', follow, { value: 'aria-pressed' }), 'true')

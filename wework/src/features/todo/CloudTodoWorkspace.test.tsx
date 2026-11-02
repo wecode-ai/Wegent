@@ -2738,6 +2738,45 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
   })
 
+  it('opens a local bound task while signed in to a different cloud identity', async () => {
+    const localApi = services().deliveryApi!
+    const [binding] = await localApi.listTaskBindings(item.id)
+    vi.mocked(localApi.listTaskBindings).mockResolvedValue([
+      { ...binding, task_user_id: 0 },
+      { ...binding, id: 2, task_user_id: 1, task_id: 'foreign-cloud-task' },
+    ])
+    vi.mocked(localApi.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, project_store: 'local', current_user_id: 1 }],
+    })
+    const cloudApi = services().deliveryApi!
+    vi.mocked(cloudApi.listCloudProjects).mockResolvedValue({ items: [] })
+    const workbenchServices = services({
+      deliveryApi: cloudApi,
+      projectSpaceApis: { local: localApi, cloud: cloudApi, defaultLocation: 'local' },
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'cloud-user' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await expandIssueExecutionDetails()
+    expect(screen.queryByTestId('cloud-todo-open-task-conversation-2')).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
+    expect(await screen.findByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-runtime-task-id',
+      binding.task_id
+    )
+    expect(workbenchServices.standInApi!.readTask).toHaveBeenCalledWith(
+      binding.device_id,
+      binding.task_id
+    )
+  })
+
   it('opens a bound task conversation from the card detail and can jump to the full task', async () => {
     const workbenchServices = services()
     const onOpenRuntimeTask = vi.fn()
@@ -5773,7 +5812,7 @@ describe('CloudTodoWorkspace', () => {
         {
           id: 1,
           loop_item_id: trackedIssue.id,
-          task_user_id: 1,
+          task_user_id: 0,
           device_id: address.deviceId,
           task_id: address.taskId,
           task_title: trackedIssue.title,
@@ -6019,7 +6058,7 @@ describe('CloudTodoWorkspace', () => {
         {
           id: 1,
           loop_item_id: persistedIssue.id,
-          task_user_id: 1,
+          task_user_id: 0,
           device_id: firstAddress.deviceId,
           task_id: firstAddress.taskId,
           task_title: persistedIssue.title,
@@ -6029,7 +6068,7 @@ describe('CloudTodoWorkspace', () => {
         {
           id: 2,
           loop_item_id: persistedIssue.id,
-          task_user_id: 1,
+          task_user_id: 0,
           device_id: secondAddress.deviceId,
           task_id: secondAddress.taskId,
           task_title: 'Second bound Runtime Task',

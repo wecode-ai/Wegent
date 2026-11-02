@@ -13,8 +13,85 @@ mod fixture;
 #[allow(dead_code)]
 mod http_e2e;
 
-use brz_mysql::MysqlRow;
+use brz_mysql::{MysqlRow, MysqlService};
 use serde_json::json;
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL and Redis; explicitly run by Backend Rust CI"]
+async fn follower_events_appear_in_collaboration_inbox_and_unread_count() {
+    let fixture = fixture::Fixture::new().await;
+    data::seed(&fixture.mysql).await;
+    seed_follow_inbox(&fixture.mysql).await;
+    let server = http_e2e::Server::start(fixture.mysql.clone()).await;
+    let client = brz_http::Client::new();
+    for (query, expected_ids) in [
+        (
+            "category=collaboration",
+            vec!["status", "comment", "assignee"],
+        ),
+        ("category=general", vec!["message"]),
+        ("", vec!["status", "message", "comment", "assignee"]),
+    ] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/wework-notifications?{query}",
+                server.base
+            ))
+            .unwrap()
+            .header(
+                "authorization",
+                format!("Bearer {}", http_e2e::token(7, 300)),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let body = response.json::<serde_json::Value>().await.unwrap();
+        let ids: Vec<_> = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, expected_ids, "Incorrect category membership: {query}");
+        assert_eq!(body["unread_count"], expected_ids.len());
+        assert!(body["next_offset"].is_null());
+    }
+    server.close().await;
+    fixture.close().await;
+}
+
+async fn seed_follow_inbox(mysql: &MysqlService) {
+    mysql
+        .execute(
+            "CREATE TABLE wework_notifications (
+            id VARCHAR(36) PRIMARY KEY, user_id INT NOT NULL, actor_user_id INT NOT NULL,
+            kind VARCHAR(64) NOT NULL, title VARCHAR(256) NOT NULL, body TEXT NOT NULL,
+            url VARCHAR(2048) NOT NULL, payload JSON NOT NULL, created_at DATETIME NOT NULL,
+            is_read BOOLEAN NOT NULL, read_status_changed_at DATETIME NOT NULL
+        ) ENGINE=InnoDB",
+            (),
+        )
+        .await
+        .unwrap();
+    for (id, user_id, kind) in [
+        ("comment", 7, "issue_follow"),
+        ("status", 7, "issue_follow"),
+        ("assignee", 7, "issue_follow"),
+        ("message", 7, "message"),
+        ("other-user", 8, "issue_follow"),
+    ] {
+        mysql
+            .execute(
+                "INSERT INTO wework_notifications VALUES (
+                ?,?,8,?,'Notification','','',JSON_OBJECT('event',?),
+                '2026-11-02 08:00:00',FALSE,'2026-11-02 08:00:00')",
+                (id, user_id, kind, id),
+            )
+            .await
+            .unwrap();
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL and Redis; explicitly run by Backend Rust CI"]

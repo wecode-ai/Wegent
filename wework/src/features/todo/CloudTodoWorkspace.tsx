@@ -1059,7 +1059,8 @@ export function CloudTodoWorkspace({
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
     ) ?? null
-  const taskOwnerUserId = selectedProject?.current_user_id ?? user.id
+  const taskOwnerUserId =
+    selectedProject?.project_store === 'local' ? 0 : (selectedProject?.current_user_id ?? user.id)
   const openTaskBinding = async (binding: SelectedTaskBinding) => {
     advanceTaskPanelSession()
     const session = taskPanelSessionIdRef.current
