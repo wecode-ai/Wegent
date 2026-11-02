@@ -405,11 +405,28 @@ assert_case "explicit all modules" "$all_true" --all
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
-assert_case "shared CI actions validate all modules" "$all_true" \
+rust_cache_expected="${backend_rs_expected/executor=false/executor=true}"
+assert_case "Rust cache actions validate Rust and both runtime consumers" "$rust_cache_expected" \
   ".github/actions/setup-sccache/action.yml"
 
-assert_case "artifact downloader validates its runtime producers and consumers" "$all_true" \
+runtime_consumers="${all_false/platform_e2e=false/platform_e2e=true}"
+runtime_consumers="${runtime_consumers/wework_e2e=false/wework_e2e=true}"
+assert_case "artifact downloader validates its runtime producers and consumers" "$runtime_consumers" \
   ".github/scripts/download-actions-artifact.sh"
+
+assert_case "Node cache follows workspace and E2E consumers" "$collaboration_package" \
+  ".github/actions/setup-node-workspace/action.yml"
+for path in .github/actions/build-wework-core-e2e/action.yml \
+  .github/actions/build-wework-macos-e2e/action.yml \
+  .github/actions/build-wework-windows-e2e/action.yml \
+  .github/actions/build-minio-e2e/action.yml .github/actions/setup-minio-e2e/action.yml; do
+  assert_case "Desktop build actions select desktop consumers: $path" \
+    "${all_false/wework_e2e=false/wework_e2e=true}" "$path"
+done
+assert_case "Unknown shared actions remain conservative" "$all_true" \
+  ".github/actions/future-shared-action/action.yml"
+assert_case "Runtime contract fixtures run in the unconditional configuration gate" "$all_false" \
+  ".github/scripts/runtime-artifact.test.mjs"
 
 assert_case "shared apt helper validates all modules" "$all_true" \
   ".github/scripts/lib/apt-packages.sh"

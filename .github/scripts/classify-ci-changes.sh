@@ -27,6 +27,39 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    # Known leaf actions select their actual consumers; unknown actions retain full validation.
+    .github/actions/setup-node-workspace/*)
+      changed[frontend]=true
+      changed[wework]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      return
+      ;;
+    .github/actions/setup-rust-cache/* | .github/actions/setup-sccache/* | .github/ci/rust-toolchain)
+      changed[backend_rs]=true
+      changed[executor]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      return
+      ;;
+    .github/actions/build-wework-core-e2e/* | .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/build-wework-macos-e2e/* | .github/actions/build-minio-e2e/* | \
+      .github/actions/setup-minio-e2e/* | .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | .github/scripts/macos-e2e-source-digest.mjs)
+      changed[wework_e2e]=true
+      return
+      ;;
+    .github/scripts/download-actions-artifact.sh | .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.mjs)
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      return
+      ;;
+    # These checks execute in the unconditional CI configuration gate.
+    .github/scripts/ci-scheduling.test.mjs | .github/scripts/runtime-artifact.test.mjs | \
+      .github/scripts/macos-e2e-source-digest.test.mjs | .github/scripts/test-rust-cache.sh)
+      return
+      ;;
     .github/ci/rust-toolchain | \
       .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
