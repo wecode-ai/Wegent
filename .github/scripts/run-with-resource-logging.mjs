@@ -31,6 +31,7 @@ function cpuTimes() {
 
 let previousCpu = cpuTimes()
 let child
+let diskUsageReported = false
 function sample(phase, exitCode) {
   const currentCpu = cpuTimes()
   const elapsed = currentCpu.total - previousCpu.total
@@ -68,6 +69,32 @@ function sample(phase, exitCode) {
         ['cgroupIo', '/sys/fs/cgroup/io.stat'],
       ].map(([name, path]) => [name, readMetric(path)])
     )
+    if (!diskUsageReported && record.diskAvailableBytes < 4 * 1024 ** 3) {
+      diskUsageReported = true
+      try {
+        record.diskUsage = execFileSync(
+          'du',
+          [
+            '-x',
+            '-B1',
+            '--max-depth=2',
+            '.ci-artifacts',
+            'wework/test-results/desktop-e2e',
+            '/__w',
+            '/root',
+            '/tmp',
+            '/var/lib',
+            '/var/log',
+          ],
+          { encoding: 'utf8', timeout: 10_000, maxBuffer: 256 * 1024 }
+        )
+      } catch (error) {
+        record.diskUsage = {
+          unavailable: error.code ?? error.name,
+          output: error.stdout?.toString(),
+        }
+      }
+    }
   }
   if (process.env.RUNNER_PROCESS_DIAGNOSTICS === '1') {
     try {
