@@ -17,7 +17,7 @@ import {
   selectTool,
   toolOutputText,
 } from '../modules/response-protocol.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -335,7 +335,15 @@ export function createDesktopScenario({
         0
       )
       if (checkpoint === 'human-interactions') {
-        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+        const taskId = destination.searchParams.get('taskId')
+        assert.ok(taskId, 'The original conversation URL must identify its task')
+        // Debug state is published separately from the visible transcript on a bounded interval.
+        const snapshot = await waitForWorkbenchDebugState(
+          control,
+          value => value.workbench?.currentRuntimeTask?.taskId === taskId,
+          'The original task must own the visible conversation'
+        )
         const address = snapshot.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The original task must own the visible conversation')
         const transcript = await requestExecutor(

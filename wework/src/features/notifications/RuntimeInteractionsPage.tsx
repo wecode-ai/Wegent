@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, Bot, ChevronRight, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, ChevronRight, RefreshCw } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
@@ -85,8 +85,12 @@ export function RuntimeInteractionsPage({
           !twoPanes && !showList && 'hidden'
         )}
       >
-        <header className="flex min-h-14 items-center gap-3 px-4 py-3">
-          <h1 ref={listHeading} tabIndex={-1} className="heading-sm flex-1 outline-none">
+        <header className="flex min-h-14 flex-wrap items-center gap-1 px-4 py-2">
+          <h1
+            ref={listHeading}
+            tabIndex={-1}
+            className="min-w-0 flex-1 text-base font-medium outline-none"
+          >
             {t(history ? 'interactions.history' : 'interactions.title')}{' '}
             <span
               data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
@@ -127,7 +131,7 @@ export function RuntimeInteractionsPage({
               data-interaction-id={entry.id}
               aria-pressed={row?.id === entry.id}
               className={cn(
-                'mb-1 flex w-full items-start gap-2 rounded-lg px-3 py-3 text-left hover:bg-muted',
+                'mb-1 flex w-full items-start rounded-lg px-3 py-3 text-left hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
                 row?.id === entry.id && 'bg-muted'
               )}
               onClick={() => {
@@ -136,8 +140,7 @@ export function RuntimeInteractionsPage({
                 setShowList(false)
               }}
             >
-              <Bot className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
-              <span className="min-w-0">
+              <span className="min-w-0 flex-1">
                 <span
                   data-testid="interaction-list-summary"
                   className="line-clamp-2 text-base font-medium"
@@ -169,7 +172,7 @@ export function RuntimeInteractionsPage({
       </section>
       <section
         className={cn(
-          'flex min-w-0 flex-1 flex-col overflow-y-auto md:pl-4 lg:pl-6 xl:pl-8',
+          'flex min-w-0 flex-1 flex-col overflow-y-auto',
           !twoPanes && showList && 'hidden'
         )}
       >
@@ -188,36 +191,38 @@ export function RuntimeInteractionsPage({
           </button>
         )}
         {row ? (
-          <article className="mx-auto w-full max-w-2xl px-5 py-6 md:mx-0 lg:px-8 lg:py-8">
-            <header className="mb-6 flex items-center gap-3 border-b border-border pb-4">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary">
-                <Bot className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium" title={row.title}>
-                  {row.title}
-                </p>
+          <article className="mx-auto w-full max-w-2xl px-5 py-6 lg:px-8 lg:py-10">
+            <header className="mb-4 flex items-center gap-3 text-sm text-text-secondary">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 {item?.task.projectName && (
-                  <p className="mt-0.5 truncate text-xs text-text-secondary">
-                    {item.task.projectName}
-                  </p>
+                  <>
+                    <span className="max-w-40 shrink-0 truncate" title={item.task.projectName}>
+                      {item.task.projectName}
+                    </span>
+                    <span aria-hidden="true" className="text-text-muted">
+                      /
+                    </span>
+                  </>
                 )}
+                <span className="truncate" title={row.title}>
+                  {row.title}
+                </span>
               </div>
               <button
                 type="button"
                 data-testid="interaction-open-original"
-                className="flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
+                className="flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-7"
                 onClick={() => openWeworkScheme(row.originalUrl || weworkTaskScheme(row.address))}
               >
                 {t('interactions.open_original')}
                 <ArrowUpRight className="h-4 w-4" />
               </button>
             </header>
-            <div className="space-y-6">
+            <div className="space-y-4">
               <h2
                 ref={heading}
                 tabIndex={-1}
-                className="heading-md whitespace-pre-wrap text-balance outline-none"
+                className="heading-base whitespace-pre-wrap break-words outline-none"
               >
                 {row.question}
               </h2>
@@ -227,13 +232,13 @@ export function RuntimeInteractionsPage({
               {item ? (
                 <>
                   {item.context.trim() && item.context.trim() !== row.question.trim() && (
-                    <section className="border-l-2 border-border pl-4">
+                    <section>
                       <button
                         type="button"
                         data-testid="interaction-evidence"
                         aria-expanded={evidence}
                         onClick={() => setEvidence(value => !value)}
-                        className="flex min-h-11 items-center gap-2 text-sm font-medium text-text-secondary hover:text-text-primary md:min-h-6"
+                        className="flex min-h-11 items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-6"
                       >
                         <ChevronRight className={cn('h-4 w-4', evidence && 'rotate-90')} />
                         {t('interactions.context')}
@@ -241,14 +246,14 @@ export function RuntimeInteractionsPage({
                       {evidence && (
                         <p
                           data-testid="interaction-evidence-content"
-                          className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-base leading-relaxed text-text-secondary"
+                          className="mt-2 whitespace-pre-wrap break-words text-base leading-relaxed text-text-secondary"
                         >
                           {item.context}
                         </p>
                       )}
                     </section>
                   )}
-                  <div className="space-y-2">
+                  <div className="space-y-3 border-t border-border/60 pt-6">
                     {canReplyToInteraction(item) && (
                       <p className="text-sm font-medium">{t('interactions.your_reply')}</p>
                     )}

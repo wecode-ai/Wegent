@@ -91,6 +91,42 @@ it('does not offer an empty evidence disclosure or repeat the question as eviden
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
 })
 
+it('shows option consequences beside the answer and sends its value without taking focus', () => {
+  const respond = vi.fn()
+  const request: RuntimeInteraction = {
+    ...approval,
+    id: 'business-choice',
+    payload: {
+      ...interactionQuestion,
+      questions: [
+        {
+          ...interactionQuestion.questions![0],
+          options: [
+            {
+              label: 'Keep existing customer behavior',
+              description:
+                'Existing customers retain their configuration; new customers use the new rule.',
+              value: 'keep',
+            },
+          ],
+        },
+      ],
+    },
+  }
+  view(undefined, {}, { pending: [request], respond })
+  const answer = screen.getByRole('button', {
+    name: 'Keep existing customer behavior',
+  })
+  expect(answer).toHaveAccessibleDescription(
+    'Existing customers retain their configuration; new customers use the new rule.'
+  )
+  expect(answer).not.toHaveFocus()
+  fireEvent.click(answer)
+  expect(respond).toHaveBeenCalledExactlyOnceWith(request, 'keep')
+  fireEvent.click(screen.getByTestId('interaction-other-answer'))
+  expect(screen.getByRole('textbox', { name: 'interactions.reply' })).toHaveFocus()
+})
+
 it('only registers a narrow-screen request as viewed after opening it and restores list focus', () => {
   viewport.twoPanes = false
   const registerView = view()
