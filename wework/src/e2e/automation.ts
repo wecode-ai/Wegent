@@ -1993,6 +1993,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getStartupSplashSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
+    case 'inspectStartupSplash':
+      return JSON.stringify(await invokeDesktopHost('e2e.inspectStartupSplash'))
+    case 'clickStartupSplash':
+      await invokeDesktopHost('e2e.clickStartupSplash', { testId: command.value })
+      return ''
+    case 'setStartupLogPath':
+      await invokeDesktopHost('e2e.setStartupLogPath', { path: command.value || null })
+      return ''
     case 'getTraySnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
     case 'getApplicationMenuSnapshot':
@@ -2672,6 +2680,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return getWindowFocusSnapshot()
     case 'getDesktopRuntimeDiagnostics':
       return JSON.stringify(await invokeDesktopHost('e2e.getRuntimeDiagnostics'))
+    case 'getOwnedProcessSnapshot':
+      return JSON.stringify(await invokeDesktopHost('diagnostics.processSnapshot'))
     case 'showSystemDragPanel': {
       await invokeDesktopHost<void>('systemDrag.showPanel')
       return ''

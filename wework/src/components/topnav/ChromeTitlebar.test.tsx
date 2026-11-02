@@ -7,10 +7,6 @@ vi.mock('@/components/layout/WindowFrameControls', () => ({
   WindowFrameControls: () => <div data-testid="window-frame-controls">FrameControls</div>,
 }))
 
-vi.mock('@/features/feedback/TaskFeedbackDialog', () => ({
-  TaskFeedbackDialog: () => <div data-testid="task-feedback-dialog">FeedbackDialog</div>,
-}))
-
 const labels = {
   task: '任务',
   board: '项目空间',

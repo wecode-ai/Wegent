@@ -450,15 +450,17 @@ export class SmartAppManager {
         input.smartAppId === null || input.smartAppId === undefined
           ? preview.manifest.name
           : `market-${input.smartAppId}`
+      if (this.options.runtimeHost()?.runningTabIds().has(tabId(id))) {
+        throw new Error('Stop the Smart app before installing a new version')
+      }
       const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
       const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
-      await extractSmartAppArchive(preview.archivePath, staging)
-      const packageRoot = await findSmartAppManifestRoot(staging)
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 })
-      if (await exists(target)) {
-        await rm(staging, { recursive: true, force: true })
-      } else {
-        await rename(packageRoot, target)
+      try {
+        await extractSmartAppArchive(preview.archivePath, staging)
+        const packageRoot = await findSmartAppManifestRoot(staging)
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+        if (!(await exists(target))) await rename(packageRoot, target)
+      } finally {
         await rm(staging, { recursive: true, force: true })
       }
       const installations = await this.readRegistry()

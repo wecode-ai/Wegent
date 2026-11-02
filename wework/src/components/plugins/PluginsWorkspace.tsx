@@ -131,6 +131,7 @@ import { usePluginInstallActions } from './hooks/usePluginInstallActions'
 import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
+  acquirePluginDeviceSync,
   beginPluginDeviceSync,
   collectPluginDeviceStatusReports,
   getPluginDeviceSyncRevision,
@@ -421,6 +422,7 @@ export function PluginsWorkspace({
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
   )
+  const uninstallingPluginIdsRef = useRef(uninstallingPluginIds)
   const [updatingPluginPolicyIds, setUpdatingPluginPolicyIds] = useState<Set<string | number>>(
     () => new Set()
   )
@@ -773,7 +775,9 @@ export function PluginsWorkspace({
     installingMarketplacePluginIdsRef.current = new Set()
     setInstallingMarketplacePluginIds(new Set())
     setPendingPluginUninstall(null)
+    uninstallingPluginIdsRef.current = new Set()
     setUninstallingPluginIds(new Set())
+    setUpdatingPluginPolicyIds(new Set())
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, knownExecutorDeviceId, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
@@ -1713,39 +1717,34 @@ export function PluginsWorkspace({
 
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
     if (!isCloudManagedInstalledPlugin(plugin.raw)) return
+    const isCurrent = capturePluginScope()
     const attempt = beginOperation('plugin.update_policy')
     const updatePolicy = enabled ? 'auto' : 'manual'
     const pluginId = plugin.id
     setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
     setPluginMarketplaceState(previous => ({ ...previous, error: null }))
-    setInstalledPlugins(previous =>
-      previous.map(item =>
-        String(item.id) === String(pluginId)
-          ? {
-              ...item,
-              raw: {
-                ...item.raw,
-                spec: { ...item.raw.spec, updatePolicy },
-              },
-            }
-          : item
-      )
-    )
 
-    pluginApi
-      .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+    let finishDeviceSync: (() => void) | undefined
+    const deviceLease = currentDeviceId
+      ? acquirePluginDeviceSync(currentDeviceId)
+      : Promise.resolve(() => {})
+    void deviceLease
+      .then(finish => {
+        finishDeviceSync = finish
+        if (!isCurrent()) throw new DOMException('Plugin scope changed', 'AbortError')
+        return pluginApi.updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+      })
       .then(updated => {
+        if (!isCurrent()) return attempt.cancel()
         updatePluginInventoryInstallation(marketplaceCacheKeyValue, pluginId, updated, {
           updatePolicy,
         })
         attempt.succeed()
       })
       .catch(error => {
+        if (!isCurrent()) return attempt.cancel()
         attempt.fail('request')
         const errorMessage = getErrorMessage(error, 'Unknown error')
-        setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(pluginId) ? plugin : item))
-        )
         setPluginMarketplaceState(previous => ({
           ...previous,
           error: t('workbench.plugins_update_policy_failed', {
@@ -1755,6 +1754,8 @@ export function PluginsWorkspace({
         }))
       })
       .finally(() => {
+        finishDeviceSync?.()
+        if (!isCurrent()) return
         setUpdatingPluginPolicyIds(previous => {
           const next = new Set(previous)
           next.delete(pluginId)
@@ -1783,7 +1784,9 @@ export function PluginsWorkspace({
       pluginMarketplaceStateRef.current.items.find(
         item => String(item.installedPluginId) === String(id)
       ) ?? pluginMarketplaceStateRef.current.items.find(item => String(item.id) === String(id))
-    setUninstallingPluginIds(previous => new Set(previous).add(id))
+    const pendingUninstalls = new Set(uninstallingPluginIdsRef.current).add(id)
+    uninstallingPluginIdsRef.current = pendingUninstalls
+    setUninstallingPluginIds(pendingUninstalls)
     const markUninstalledLocally = () => {
       const marketplaceId = plugin
         ? installedPluginMarketplaceId(plugin.raw)
@@ -1886,16 +1889,17 @@ export function PluginsWorkspace({
       })
       .finally(() => {
         if (!isCurrent()) return
-        setUninstallingPluginIds(previous => {
-          const next = new Set(previous)
-          next.delete(id)
-          return next
-        })
+        const next = new Set(uninstallingPluginIdsRef.current)
+        next.delete(id)
+        uninstallingPluginIdsRef.current = next
+        setUninstallingPluginIds(next)
       })
   }
 
   const pluginMutationInFlight =
-    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
+    installingMarketplacePluginIds.size > 0 ||
+    uninstallingPluginIds.size > 0 ||
+    updatingPluginPolicyIds.size > 0
   const isReconcilingPlugins = usePluginRefreshReconciliation({
     request:
       reconciliationScope.accountKey === marketplaceCacheKeyValue &&
@@ -2014,9 +2018,43 @@ export function PluginsWorkspace({
       })
   }
 
+  const isMarketplacePluginUninstalling = useCallback((item: PluginMarketplaceItem) => {
+    const latest =
+      pluginMarketplaceStateRef.current.items.find(
+        candidate => String(candidate.id) === String(item.id)
+      ) ?? item
+    return (
+      latest.currentDeviceInstallation?.state === 'uninstalling' ||
+      uninstallingPluginIdsRef.current.has(
+        resolveMarketplaceUninstallId(latest, installedPluginsRef.current)
+      )
+    )
+  }, [])
+
+  const isInstalledPluginUninstalling = useCallback(
+    (plugin: InstalledPluginItem) => {
+      const latest =
+        installedPluginsRef.current.find(candidate => String(candidate.id) === String(plugin.id)) ??
+        plugin
+      if (uninstallingPluginIdsRef.current.has(latest.id)) return true
+      if (
+        currentDeviceInstallation(latest.raw, currentDeviceIdRef.current)?.state === 'uninstalling'
+      )
+        return true
+      if (pluginUninstallScope(latest.raw) === 'published-source') return false
+      const listing = findMarketplaceItemForInstalled(
+        latest,
+        pluginMarketplaceStateRef.current.items
+      )
+      return listing ? isMarketplacePluginUninstalling(listing) : false
+    },
+    [isMarketplacePluginUninstalling]
+  )
+
   const { beginMarketplacePluginTrial, tryMarketplacePluginInChat } = usePluginInstallActions({
     installedPlugins,
     localPluginApi,
+    isUninstalling: isMarketplacePluginUninstalling,
     t,
     setPluginMarketplaceState,
   })
@@ -2174,6 +2212,7 @@ export function PluginsWorkspace({
     promptAfterInstall?: string,
     updateConfirmed = false
   ) => {
+    if (isMarketplacePluginUninstalling(item)) return
     const isCurrent = capturePluginScope()
     if (isReconcilingPlugins) {
       setPluginOperationNotice({
@@ -2221,7 +2260,10 @@ export function PluginsWorkspace({
         preparingInstallPluginIdsRef.current.delete(item.id)
         throw error
       })
-      if (!isCurrent()) return
+      if (!isCurrent() || isMarketplacePluginUninstalling(item)) {
+        preparingInstallPluginIdsRef.current.delete(item.id)
+        return
+      }
       if (!liveConnection.connected) {
         preparingInstallPluginIdsRef.current.delete(item.id)
         showDeviceDisconnectedNotice(item.id)
@@ -2358,6 +2400,10 @@ export function PluginsWorkspace({
       pluginMarketplaceStateRef.current.items.find(
         candidate => String(candidate.id) === String(dialogItem.id)
       ) ?? dialogItem
+    if (isMarketplacePluginUninstalling(latestItem)) {
+      setPendingInstall(null)
+      return
+    }
     const installLock = resolveMarketplacePluginLock(latestItem)
     if (installLock) {
       setPendingInstall(null)
@@ -2387,6 +2433,9 @@ export function PluginsWorkspace({
     const isCurrent = capturePluginScope()
     const requireCurrentScope = () => {
       if (!isCurrent()) throw new Error('Plugin account changed; retry with the current account')
+      if (isMarketplacePluginUninstalling(item)) {
+        throw new Error(t('workbench.plugins_uninstalling', '正在卸载'))
+      }
     }
 
     setPendingInstall(null)
@@ -5426,6 +5475,7 @@ export function PluginsWorkspace({
       selectedPlugin.raw,
       currentDeviceId
     )
+    const selectedUninstalling = isInstalledPluginUninstalling(selectedPlugin)
     const selectedAutoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate({
       updateAvailable: selectedPlugin.updateAvailable,
       currentDeviceInstallation: selectedDeviceInstallation,
@@ -5450,7 +5500,12 @@ export function PluginsWorkspace({
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           actionError={pluginDetailActionErrorMessage(pluginDetailActionError, selectedPlugin.id)}
           usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
-          primaryActionLabel={t('workbench.plugins_try_now', '立即对话')}
+          primaryActionLabel={
+            selectedUninstalling
+              ? t('workbench.plugins_uninstalling', '正在卸载')
+              : t('workbench.plugins_try_now', '立即对话')
+          }
+          primaryActionDisabled={selectedUninstalling}
           shareActionLabel={t('workbench.plugins_share', '分享')}
           shareActionDisabled={headerBusy}
           onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
@@ -5513,6 +5568,7 @@ export function PluginsWorkspace({
               : undefined
           }
           onToggle={() => {
+            if (isInstalledPluginUninstalling(selectedPlugin)) return
             if (!tryPluginInChat(selectedPlugin.raw)) {
               setPluginDetailActionError({
                 pluginId: selectedPlugin.id,
@@ -5521,6 +5577,7 @@ export function PluginsWorkspace({
             }
           }}
           onPromptSelect={prompt => {
+            if (isInstalledPluginUninstalling(selectedPlugin)) return
             if (queuePluginPromptTrial(selectedPlugin.raw, prompt, { openInNewChat: true })) {
               navigateTo('/')
             }
@@ -5581,16 +5638,9 @@ export function PluginsWorkspace({
     const isDeviceSyncing =
       !isFailed &&
       !isInstalled &&
-      (deviceState === 'pending' ||
-        deviceState === 'downloading' ||
-        deviceState === 'installing' ||
-        deviceState === 'uninstalling')
+      (deviceState === 'pending' || deviceState === 'downloading' || deviceState === 'installing')
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
-    const detailUninstallId = installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
-    const isUninstalling =
-      detailUninstallId !== null &&
-      detailUninstallId !== undefined &&
-      uninstallingPluginIds.has(detailUninstallId)
+    const isUninstalling = isMarketplacePluginUninstalling(selectedMarketplacePlugin)
     const isActionPending = isInstalling || isUninstalling || isDeviceSyncing
     const canUpdate =
       marketplaceItemCanRetryPluginUpdate(selectedMarketplacePlugin) &&
@@ -5823,6 +5873,8 @@ export function PluginsWorkspace({
           showUninstall={showDetailActionMenu}
           onBack={() => closePluginDetail(() => setSelectedMarketplacePluginId(null))}
           onToggle={() => {
+            if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
+              return
             if (canUpdate) {
               installMarketplacePlugin(selectedMarketplacePlugin)
               return
@@ -5860,6 +5912,8 @@ export function PluginsWorkspace({
             )
           }}
           onPromptSelect={prompt => {
+            if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
+              return
             if (isInstalled) {
               beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin, prompt)
               return

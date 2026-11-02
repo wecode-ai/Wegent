@@ -4,6 +4,7 @@ import {
   configure,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -66,6 +67,11 @@ import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
+import {
+  closeFeedbackDialog,
+  openFeedbackDialog,
+  useFeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type {
   DeviceInfo,
@@ -2548,6 +2554,29 @@ describe('DesktopWorkbenchLayout', () => {
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: false }
     )
+  })
+
+  test('registers the active task context for the application menu feedback dialog', () => {
+    closeFeedbackDialog()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-feedback',
+          },
+        }}
+      />
+    )
+    const { result } = renderHook(() => useFeedbackDialogRequest())
+
+    act(() => openFeedbackDialog())
+
+    expect(result.current?.hasActiveTask).toBe(true)
+    closeFeedbackDialog()
   })
 
   test('ignores the implementation plan confirmation through the pane session', async () => {
