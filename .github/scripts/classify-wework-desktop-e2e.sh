@@ -175,6 +175,7 @@ cloud_worktree_segments=(
   cloud-worktree-archive-restore
 )
 cloud_segments=(
+  responses-api-gateway
   cloud-model-recovery
   task-model-deletion
   cloud-model-presets
@@ -232,7 +233,7 @@ cloud_shards=(
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
-  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
+  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github,responses-api-gateway
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
@@ -797,6 +798,11 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs)
+      select_target "cloud:responses-api-gateway"
       return
       ;;
 
@@ -1948,6 +1954,13 @@ classify_path() {
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
+      ;;
+    backend/app/api/endpoints/openapi_responses.py | \
+      backend/app/api/endpoints/wework_api.py | \
+      backend/app/services/wework_api/* | \
+      backend/tests/api/test_openapi_responses.py | \
+      backend/tests/api/test_wework_api.py)
+      select_target "cloud:responses-api-gateway"
       ;;
     backend/app/api/endpoints/adapter/attachments.py | \
       backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \

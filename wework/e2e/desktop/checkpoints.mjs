@@ -13,6 +13,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
+  'responses-api-gateway',
   'task-model-deletion',
   'cloud-model-presets',
   'cloud-space-mention',
