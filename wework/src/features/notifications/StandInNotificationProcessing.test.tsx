@@ -77,6 +77,24 @@ beforeEach(() => {
   readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it.each([{ standInLookupPending: true }, { standInLookupError: 'History unavailable' }])(
+    'never offers delegation before history is resolved: %j',
+    lookup => {
+      render(
+        <StandInNotificationProcessing
+          notification={{ ...assignment, payload: { ...assignment.payload, ...lookup } }}
+          rowProps={rowProps}
+          services={services}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+      expect(screen.queryByTestId('notification-stand-in-start-assignment')).toBeNull()
+      expect(run).not.toHaveBeenCalled()
+      if ('standInLookupError' in lookup)
+        expect(screen.getByRole('alert')).toHaveTextContent(lookup.standInLookupError)
+    }
+  )
   it.each([undefined, 'turn-1'])(
     'accepts completed source state with second precision and turn %s',
     async turnId => {

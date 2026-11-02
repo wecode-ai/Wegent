@@ -47,7 +47,15 @@ export function StandInNotificationProcessing({
   const actorName = notification.payload.actorName?.trim()
   const projectId = notification.payload.projectId
   const issueId = notification.payload.itemId
-  const canStart = !state && services?.standInApi && projectId && issueId && userId != null
+  const lookupError = notification.payload.standInLookupError
+  const canStart =
+    !state &&
+    !notification.payload.standInLookupPending &&
+    !lookupError &&
+    services?.standInApi &&
+    projectId &&
+    issueId &&
+    userId != null
   const completionVersion = state
     ? `${state.deviceId}:${state.taskId}:${standInVersion(state)}`
     : ''
@@ -144,7 +152,7 @@ export function StandInNotificationProcessing({
           ) : undefined
         }
         processing={
-          state || canStart || error ? (
+          state || canStart || error || lookupError ? (
             <div className="space-y-2">
               {state && (
                 <span
@@ -193,9 +201,9 @@ export function StandInNotificationProcessing({
                   {t('interactions.title')}
                 </Button>
               )}
-              {error && (
+              {(error || lookupError) && (
                 <p role="alert" className="text-sm text-status-error">
-                  {error}
+                  {error || lookupError}
                 </p>
               )}
             </div>
