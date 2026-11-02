@@ -12,6 +12,7 @@ import type { ProjectBoardGroupBy } from './useProjectBoardState'
 import type { ProjectBoardSort, ProjectBoardSortLabels } from './projectBoardSorting'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
 import { isExecutionBoardColumn } from './projectBoardColumns'
+import { ProjectBoardParentRows, type ProjectBoardParentRowsProps } from './ProjectBoardParentRows'
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -87,6 +88,7 @@ export interface ProjectBoardLocalProjectOption {
 }
 
 export interface ProjectBoardBodyProps<TItem> {
+  parentRows?: ProjectBoardParentRowsProps<TItem>
   emptyState?: ReactNode
   viewNavigation?: ReactNode
   viewNotice?: ReactNode
@@ -167,6 +169,7 @@ export interface ProjectBoardBodyProps<TItem> {
 }
 
 export function ProjectBoardBody<TItem>({
+  parentRows,
   emptyState,
   viewNavigation,
   viewNotice,
@@ -221,6 +224,43 @@ export function ProjectBoardBody<TItem>({
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
     isExecutionBoardColumn(column, state.groupBy)
+  const parentSummary = parentRows?.translate('todo.parent_board_summary', undefined, {
+    parents: parentRows.rows.filter(row => row.parent !== null).length,
+    standalone: new Set(
+      parentRows.rows
+        .filter(row => row.parent === null)
+        .flatMap(row => [...row.items.values()].flat().map(getItemKey))
+    ).size,
+  })
+  const columnHeaderActions = (column: ProjectBoardColumn, items: readonly TItem[]) => (
+    <>
+      {renderColumnHeaderActions?.(column, items, state)}
+      {sortLabels && !isExternalBoard ? (
+        <ProjectBoardColumnSortPicker
+          columnKey={column.key}
+          columnLabel={column.label}
+          labels={sortLabels}
+          value={state.getColumnSort(column.key)}
+          onChange={value => state.selectColumnSort(column.key, value)}
+        />
+      ) : null}
+    </>
+  )
+  const boardCard = (item: TItem, column: ProjectBoardColumn) => {
+    const highlighted =
+      dropFeedback?.itemId === getItemKey(item) && dropFeedback.columnKey === column.key
+    // Preserve the card's drag registration when feedback changes.
+    return (
+      <ProjectBoardCardContext.Provider value={{ columnKey: column.key, groupBy: state.groupBy }}>
+        <div
+          data-testid={highlighted ? 'board-drop-highlight' : undefined}
+          className={highlighted ? 'rounded-xl ring-2 ring-focus/50' : undefined}
+        >
+          {renderItem(item, column, state)}
+        </div>
+      </ProjectBoardCardContext.Provider>
+    )
+  }
   return (
     <div ref={registerBoardCursorPolicy} className="flex min-h-0 min-w-0 flex-1 flex-col pt-4">
       {isExternalBoard ? (
@@ -399,7 +439,7 @@ export function ProjectBoardBody<TItem>({
             <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
               <h1 className="text-heading-sm font-semibold">{currentParent.title}</h1>
               <span className="text-xs text-text-muted">
-                {layerCount} 个任务 · 仅显示当前层的直接子任务
+                {parentSummary ?? `${layerCount} 个任务 · 仅显示当前层的直接子任务`}
               </span>
             </div>
           </>
@@ -407,7 +447,7 @@ export function ProjectBoardBody<TItem>({
           <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
             <h1 className="text-heading-sm font-semibold">{rootLabel}</h1>
             <span className="text-xs text-text-muted">
-              {layerCount} {rootUnitLabel}
+              {parentSummary ?? `${layerCount} ${rootUnitLabel}`}
             </span>
           </div>
         )}
@@ -432,6 +472,22 @@ export function ProjectBoardBody<TItem>({
         <ProjectBoardScrollArea viewportRef={state.scrollRef}>
           {boardItemsLoading ? (
             renderSkeleton()
+          ) : parentRows ? (
+            <ProjectBoardParentRows
+              key={parentRows.scopeKey}
+              {...parentRows}
+              columns={columns}
+              dnd={dnd}
+              dndContextProps={dndContextProps}
+              getItemKey={getItemKey}
+              renderItem={boardCard}
+              renderColumnHeaderActions={columnHeaderActions}
+              getColumnDragHint={getColumnDragHint}
+              renderDragOverlay={renderDragOverlay}
+              getColumnWidthClassName={column =>
+                state.focusExecutionColumns && isExecutionColumn(column) ? 'w-[480px]' : 'w-[292px]'
+              }
+            />
           ) : (
             <KanbanBoard
               columns={columns}
@@ -448,38 +504,9 @@ export function ProjectBoardBody<TItem>({
                 state.focusExecutionColumns && isExecutionColumn(column) ? 'w-[480px]' : 'w-[292px]'
               }
               getColumnDragHint={getColumnDragHint}
-              renderColumnHeaderActions={(column, items) => (
-                <>
-                  {renderColumnHeaderActions?.(column, items, state)}
-                  {sortLabels && !isExternalBoard ? (
-                    <ProjectBoardColumnSortPicker
-                      columnKey={column.key}
-                      columnLabel={column.label}
-                      labels={sortLabels}
-                      value={state.getColumnSort(column.key)}
-                      onChange={value => state.selectColumnSort(column.key, value)}
-                    />
-                  ) : null}
-                </>
-              )}
+              renderColumnHeaderActions={columnHeaderActions}
               getItemKey={getItemKey}
-              renderItem={(item, column) => {
-                const highlighted =
-                  dropFeedback?.itemId === getItemKey(item) && dropFeedback.columnKey === column.key
-                // Preserve the card's drag registration when feedback changes.
-                return (
-                  <ProjectBoardCardContext.Provider
-                    value={{ columnKey: column.key, groupBy: state.groupBy }}
-                  >
-                    <div
-                      data-testid={highlighted ? 'board-drop-highlight' : undefined}
-                      className={highlighted ? 'rounded-xl ring-2 ring-focus/50' : undefined}
-                    >
-                      {renderItem(item, column, state)}
-                    </div>
-                  </ProjectBoardCardContext.Provider>
-                )
-              }}
+              renderItem={boardCard}
               renderItemsFooter={renderItemsFooter}
               getColumnEmptyState={getColumnEmptyState}
               renderAddIcon={() => <Plus className="h-5 w-5" />}

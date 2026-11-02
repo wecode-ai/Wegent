@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import { ProjectBoardCardContext } from './projectBoardCardContext'
+import { createCollaborationTranslator } from '../i18n'
 import { KanbanBoard } from '../kanban/KanbanBoard'
 import {
   ProjectBoardBody,
@@ -101,6 +102,45 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it('distinguishes parents from standalone issues instead of calling every row an Issue', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div'),
+      root = createRoot(container)
+    const options = props()
+    options.parentRows = {
+      rows: [
+        {
+          key: 'p',
+          parentId: 'p',
+          parent: { id: 'p' },
+          items: new Map([['inbox', [{ id: 'child' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+        {
+          key: 'root',
+          parentId: null,
+          parent: null,
+          items: new Map([['inbox', [{ id: 'standalone' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+      ],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    try {
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个独立事项')
+    } finally {
+      act(() => root.unmount())
+    }
+  })
   it('keeps card nodes mounted when successful drop feedback moves or clears', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')

@@ -3957,7 +3957,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTitle('alice')).toBeInTheDocument()
   })
 
-  it('shows child tasks in the unified execution task list without a duplicate child section', async () => {
+  it('shows child issues in the hierarchy summary with bidirectional navigation instead of duplicating execution tasks', async () => {
     const child = {
       ...item,
       id: 'WEG-2',
@@ -3985,16 +3985,17 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    await expandIssueExecutionDetails()
     expect(screen.queryByTestId('cloud-todo-detail-add-child')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-children')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('关联任务')
-    expect(screen.getByTestId('cloud-todo-execution-task-count')).toHaveTextContent('1')
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('实现快速排序')
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('开发机器人')
+    expect(screen.getByTestId('issue-children-progress')).toHaveTextContent('0/1 已完成')
+    expect(screen.getByTestId('issue-hierarchy-child-WEG-2')).toHaveTextContent('实现快速排序')
+    expect(screen.getByTestId('issue-hierarchy-child-WEG-2')).toHaveTextContent('开发机器人')
+    expect(screen.queryByTestId('cloud-todo-open-child-task-WEG-2')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-open-child-task-WEG-2'))
+    await userEvent.click(screen.getByTestId('issue-hierarchy-child-WEG-2'))
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('实现快速排序')
+    await userEvent.click(screen.getByTestId('issue-parent-link'))
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
   })
 
   it('adds an attachment from the TODO edit dialog', async () => {

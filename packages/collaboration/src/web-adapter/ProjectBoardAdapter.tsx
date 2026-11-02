@@ -30,6 +30,7 @@ import {
   isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useParentIssueBoard,
   useSavedBoardViews,
   savedBoardColumns,
   BoardViewNavigation,
@@ -99,6 +100,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
@@ -151,6 +153,7 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  parentGroupingEnabled = false,
   emptyState,
   toolbarAction,
   runtime,
@@ -311,6 +314,16 @@ export function ProjectBoardAdapter({
   const activeItem = issues.find(
     (issue) => issue.id === controller.activeDragItemId,
   );
+  const parentBoard = useParentIssueBoard({
+    scope: `${project.current_user_id ?? "anonymous"}:${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    enabled: parentGroupingEnabled && supportsOrder,
+    items: issues,
+    columns: controller.columns,
+    currentParentId: controller.currentParentId,
+    state: controller.state,
+    getColumnItems: controller.getColumnItems,
+    translate,
+  });
 
   return (
     <div
@@ -318,6 +331,20 @@ export function ProjectBoardAdapter({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
+        parentRows={
+          parentBoard.active
+            ? {
+                rows: parentBoard.rows,
+                scopeKey: parentBoard.scopeKey,
+                translate,
+                getParentTitle: (issue) => issue.title,
+                getParentKey: (issue) => issue.id,
+                onOpenParent: onOpen,
+                onEnterParent: (issue) =>
+                  controller.setCurrentParentId(issue.id),
+              }
+            : undefined
+        }
         emptyState={
           issues.length === 0 && !savedViews.view ? emptyState : undefined
         }
@@ -354,7 +381,12 @@ export function ProjectBoardAdapter({
             translate={translate}
           />
         }
-        toolbarAction={toolbarAction}
+        toolbarAction={
+          <>
+            {parentBoard.toggle}
+            {toolbarAction}
+          </>
+        }
         viewNotice={
           <BoardViewNotice
             controller={savedViews}
@@ -516,8 +548,13 @@ export function ProjectBoardAdapter({
             savedViews.view &&
             onCreateUnmatchedIssue
           ) {
-            if (controller.currentParentId && !controller.currentParent) return null;
-            const defaults = unmatchedCreateDefaults(savedViews.view, statuses, controller.currentParent);
+            if (controller.currentParentId && !controller.currentParent)
+              return null;
+            const defaults = unmatchedCreateDefaults(
+              savedViews.view,
+              statuses,
+              controller.currentParent,
+            );
             return defaults ? (
               <button
                 type="button"
@@ -597,7 +634,7 @@ export function ProjectBoardAdapter({
               }}
               className="mx-3 mb-3 min-h-11 text-xs text-text-secondary hover:text-text-primary md:min-h-0"
             >
-              {translate('todo.view_child_task')}
+              {translate("todo.view_child_task")}
             </button>
           ) : null;
           const defaultCard = (

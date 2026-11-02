@@ -205,6 +205,7 @@ import { CloudFilesView, LocalFilesView } from './CloudFilesView'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
+import { useParentIssueBoard } from '@wegent/collaboration/project-board'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
 import { createLocalWorkspaceApi, toWeworkIssueTaskBinding } from './WeworkCollaborationPlatform'
@@ -2030,6 +2031,18 @@ export function CloudTodoWorkspace({
     setProjectSearchQuery('')
     setProjectSearchFilters(emptyTaskSearchFilters)
   }, [setNativeBoardQuery, setNativeGroupFilter])
+
+  const parentIssueBoard = useParentIssueBoard({
+    scope: `${user.id}:${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
+    enabled:
+      Boolean(selectedProject) && !isMyTasksBoard && !isAITableProject && !isExternalGitBoard,
+    items: boardItems,
+    columns: boardColumns,
+    currentParentId: boardParentId,
+    state: boardState,
+    getColumnItems: standardBoardController.getColumnItems,
+    translate: boardTranslate,
+  })
 
   useEffect(() => {
     if (activeProjectKey === undefined) return
@@ -4698,6 +4711,20 @@ export function CloudTodoWorkspace({
                   ) : null,
                   board: (
                     <ProjectBoardBody<LocatedLoopItem>
+                      toolbarAction={parentIssueBoard.toggle}
+                      parentRows={
+                        parentIssueBoard.active
+                          ? {
+                              rows: parentIssueBoard.rows,
+                              scopeKey: parentIssueBoard.scopeKey,
+                              translate: boardTranslate,
+                              getParentTitle: item => item.title,
+                              getParentKey: item => item.id,
+                              onOpenParent: openBoardItem,
+                              onEnterParent: item => setBoardParentId(item.id),
+                            }
+                          : undefined
+                      }
                       customView={Boolean(savedViews.view)}
                       dropFeedback={
                         standardBoardController.lastMove
@@ -5424,6 +5451,16 @@ export function CloudTodoWorkspace({
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
+                  onAddChild={
+                    canEditProjectSpaceIssue(selectedItem)
+                      ? () => openTodoCreation(selectedItem)
+                      : undefined
+                  }
+                  onOpenRelatedIssue={related => {
+                    if (related.can_view_detail === false) return
+                    closeTaskPanel()
+                    setSelectedItem({ ...related, project_store: selectedItem.project_store })
+                  }}
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                   taskExecutionStates={taskExecutionStatesByBindingId}
                   deviceNamesById={deviceNamesById}

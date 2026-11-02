@@ -15,3 +15,5 @@ export * from "./BoardViewNavigation";
 export * from "./BoardViewEditor";
 export * from "./saveProjectBoardViews";
 export { collectProjectTags } from "./projectTags";
+export * from "./parentBoardGrouping";
+export * from './useParentIssueBoard'
