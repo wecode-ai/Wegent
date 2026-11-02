@@ -17,7 +17,6 @@ import {
 
 const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
-const PLUGIN_RPC_PATH = '/wework/plugins/v1/rpc'
 const TELEMETRY_RECOVERY_PLUGIN_ID = 'wework-e2e-internal-telemetry'
 const TELEMETRY_RECOVERY_PLUGIN_PACKAGE = '@wegent/dsh-e2e-internal-telemetry'
 const UI_PLUGINS = [
@@ -539,14 +538,14 @@ async function verifyInternalTelemetryRecovery({
       telemetryRequestCount,
       WORKBENCH_READY_TIMEOUT_MS
     )
-    await assertTelemetryRecoveryForSession(control, rendererOrigin, session)
+    await assertTelemetryRecoveryForSession(control, session)
   }
   return rendererOrigin
 }
 
-async function assertTelemetryRecoveryForSession(control, origin, session) {
+async function assertTelemetryRecoveryForSession(control, session) {
   const recovered = await waitForTelemetryReceiver(
-    origin,
+    control,
     status =>
       status.readyDelayMs !== null &&
       status.facts.filter(fact => fact.name === 'app_startup_attempted').length === 1 &&
@@ -578,7 +577,7 @@ async function assertTelemetryRecoveryForSession(control, origin, session) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const received = await waitForTelemetryReceiver(
-    origin,
+    control,
     status =>
       status.facts.filter(fact => fact.name === 'plugin_center_opened').length ===
       previousPluginCenterEvents + 1
@@ -591,13 +590,13 @@ async function assertTelemetryRecoveryForSession(control, origin, session) {
   )
 }
 
-async function waitForTelemetryReceiver(origin, predicate) {
+async function waitForTelemetryReceiver(control, predicate) {
   const startedAt = Date.now()
   let status = { facts: [], readyDelayMs: null }
   let lastError = null
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     try {
-      status = await invokePluginBackend(origin, TELEMETRY_RECOVERY_PLUGIN_ID, 'status')
+      status = await invokePluginBackend(control, TELEMETRY_RECOVERY_PLUGIN_ID, 'status')
       lastError = null
       if (Array.isArray(status.facts) && predicate(status)) return status
     } catch (error) {
@@ -610,21 +609,11 @@ async function waitForTelemetryReceiver(origin, predicate) {
   )
 }
 
-async function invokePluginBackend(origin, plugin, method, params = {}) {
-  const response = await fetch(`${origin}${PLUGIN_RPC_PATH}`, {
-    signal: AbortSignal.timeout(WORKBENCH_READY_TIMEOUT_MS),
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ method, params, plugin }),
+async function invokePluginBackend(control, plugin, method, params = {}) {
+  const value = await control.command('invokeDshPluginBackend', 'body', {
+    value: JSON.stringify({ method, params, plugin }),
   })
-  const payload = await response.json()
-  assert.equal(
-    response.ok,
-    true,
-    `Plugin backend ${plugin}.${method} failed: ${payload.error?.message ?? response.status}`
-  )
-  assert.equal(payload.ok, true, `Plugin backend ${plugin}.${method} returned an error`)
-  return payload.result
+  return value ? JSON.parse(value) : null
 }
 
 async function createDelayedTelemetrySinkPlugin(resultDir) {
