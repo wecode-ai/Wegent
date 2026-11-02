@@ -6,6 +6,11 @@ export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> =
   'zh-CN': {
     'todo.parent_board_layout': '按父事项',
     'todo.parent_board_summary': '{{parents}} 个父事项 · {{standalone}} 个独立事项',
+    'todo.parent_board_nested_summary': '{{parents}} 个父事项 · {{children}} 个直属子事项',
+    'todo.parent_board_summary_with_other':
+      '{{parents}} 个父事项 · {{standalone}} 个独立事项 · {{other}} 个其他事项',
+    'todo.parent_board_direct_children': '直属子事项',
+    'todo.parent_board_other': '其他事项',
     'todo.parent_board_layout_hint': '按父事项分行，查看子事项的并发进度',
     'todo.parent_board_empty': '暂无匹配的事项，请调整搜索或泳道筛选。',
     'todo.parent_board_toggle': '展开或收起父事项行',
@@ -34,6 +39,12 @@ export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> =
   en: {
     'todo.parent_board_layout': 'By parent',
     'todo.parent_board_summary': '{{parents}} parent issues · {{standalone}} standalone issues',
+    'todo.parent_board_nested_summary':
+      '{{parents}} parent issues · {{children}} direct sub-issues',
+    'todo.parent_board_summary_with_other':
+      '{{parents}} parent issues · {{standalone}} standalone issues · {{other}} other issues',
+    'todo.parent_board_direct_children': 'Direct sub-issues',
+    'todo.parent_board_other': 'Other issues',
     'todo.parent_board_layout_hint': 'Group by parent to see parallel child progress',
     'todo.parent_board_empty': 'No matching issues. Adjust the search or column filter.',
     'todo.parent_board_toggle': 'Expand or collapse parent row',

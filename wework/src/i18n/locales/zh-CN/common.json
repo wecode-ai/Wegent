@@ -5283,7 +5283,11 @@
     "parent_board_standalone": "独立事项",
     "parent_board_parallel": "{{count}} 项并行中",
     "parent_board_summary": "{{parents}} 个父事项 · {{standalone}} 个独立事项",
-    "parent_board_progress_hint": "按全部可见的直接子事项统计；筛选不改变整体进度"
+    "parent_board_progress_hint": "按全部可见的直接子事项统计；筛选不改变整体进度",
+    "parent_board_nested_summary": "{{parents}} 个父事项 · {{children}} 个直属子事项",
+    "parent_board_summary_with_other": "{{parents}} 个父事项 · {{standalone}} 个独立事项 · {{other}} 个其他事项",
+    "parent_board_direct_children": "直属子事项",
+    "parent_board_other": "其他事项"
   },
   "collaboration": {
     "all_workspaces": "所有空间",

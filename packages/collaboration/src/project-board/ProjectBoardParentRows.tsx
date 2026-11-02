@@ -18,6 +18,7 @@ export interface ProjectBoardParentRowsProps<T> {
 
 export function ProjectBoardParentRows<T>({
   rows,
+  currentParentId,
   translate: t,
   getParentTitle,
   getParentKey,
@@ -44,7 +45,7 @@ export function ProjectBoardParentRows<T>({
     | 'getColumnWidthClassName'
     | 'renderColumnHeaderActions'
     | 'getColumnDragHint'
-  >) {
+  > & { currentParentId: string | null }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const { DndContext, DragOverlay } = dnd
   const cells = (render: (column: ProjectBoardColumn) => ReactNode) =>
@@ -150,7 +151,13 @@ export function ProjectBoardParentRows<T>({
                   </>
                 ) : (
                   <span className="text-sm text-text-secondary">
-                    {t('todo.parent_board_standalone')}
+                    {t(
+                      row.parentId === null
+                        ? 'todo.parent_board_standalone'
+                        : row.parentId === currentParentId
+                          ? 'todo.parent_board_direct_children'
+                          : 'todo.parent_board_other'
+                    )}
                   </span>
                 )}
               </header>

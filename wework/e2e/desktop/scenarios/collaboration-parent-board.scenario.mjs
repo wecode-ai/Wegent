@@ -235,6 +235,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.equal(created.parent_id, fixture.front.id)
       await capture('09-created-child-linked')
       await click('cloud-todo-detail-close')
+      let lastBoundaryCase
+      for (let index = 1; index <= 8; index += 1) {
+        lastBoundaryCase = await create(`会话恢复边界用例 ${index}`, fixture.front.id, ['test'])
+      }
 
       await reloadMainWindow(control, 'Parent board preference did not reload')
       await wait('cloud-board-parent-rows', fixture.front.title)
@@ -245,6 +249,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'true'
       )
       await capture('10-reload-persisted')
+      await click(`cloud-todo-card-${fixture.front.id}`)
+      await wait('issue-children-progress', '0/10 已完成')
+      const [childrenList] = JSON.parse(
+        await control.command('getElementMetrics', test('issue-hierarchy-children-list'))
+      )
+      assert.ok(
+        childrenList.clientHeight > 0 && childrenList.scrollHeight > childrenList.clientHeight,
+        'A long sub-issue list must scroll internally instead of displacing the remaining detail'
+      )
+      await capture('10b-long-children-list')
+      await control.command('scrollIntoView', test(`issue-hierarchy-child-${lastBoundaryCase.id}`))
+      await control.command('waitFor', test(`issue-hierarchy-child-${lastBoundaryCase.id}`), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture('10c-long-children-scrolled')
+      await click('cloud-todo-detail-close')
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1024, height: 800 }),
       })

@@ -137,6 +137,12 @@ describe('ProjectBoardBody', () => {
     try {
       act(() => root.render(<ProjectBoardBody {...options} />))
       expect(container.textContent).toContain('1 个父事项 · 1 个独立事项')
+      options.currentParentId = 'ancestor'
+      options.currentParent = { id: 'ancestor', title: 'Ancestor' }
+      options.parentRows.rows[1].parentId = 'ancestor'
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个直属子事项')
+      expect(container.textContent).not.toContain('独立事项')
     } finally {
       act(() => root.unmount())
     }

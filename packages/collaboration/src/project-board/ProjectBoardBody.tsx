@@ -224,14 +224,28 @@ export function ProjectBoardBody<TItem>({
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
     isExecutionBoardColumn(column, state.groupBy)
-  const parentSummary = parentRows?.translate('todo.parent_board_summary', undefined, {
-    parents: parentRows.rows.filter(row => row.parent !== null).length,
-    standalone: new Set(
-      parentRows.rows
-        .filter(row => row.parent === null)
+  const leafCount = (parentId?: string | null) =>
+    new Set(
+      parentRows?.rows
+        .filter(row => row.parent === null && (parentId === undefined || row.parentId === parentId))
         .flatMap(row => [...row.items.values()].flat().map(getItemKey))
-    ).size,
-  })
+    ).size
+  const otherCount =
+    leafCount() - leafCount(null) - (currentParentId ? leafCount(currentParentId) : 0)
+  const parentSummary = parentRows?.translate(
+    currentParentId
+      ? 'todo.parent_board_nested_summary'
+      : otherCount
+        ? 'todo.parent_board_summary_with_other'
+        : 'todo.parent_board_summary',
+    undefined,
+    {
+      parents: parentRows.rows.filter(row => row.parent !== null).length,
+      standalone: leafCount(null),
+      children: leafCount(currentParentId),
+      other: otherCount,
+    }
+  )
   const columnHeaderActions = (column: ProjectBoardColumn, items: readonly TItem[]) => (
     <>
       {renderColumnHeaderActions?.(column, items, state)}
@@ -476,6 +490,7 @@ export function ProjectBoardBody<TItem>({
             <ProjectBoardParentRows
               key={parentRows.scopeKey}
               {...parentRows}
+              currentParentId={currentParentId}
               columns={columns}
               dnd={dnd}
               dndContextProps={dndContextProps}
