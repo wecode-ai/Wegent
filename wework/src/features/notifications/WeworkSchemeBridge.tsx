@@ -38,6 +38,7 @@ export function WeworkSchemeBridge() {
   const connectionRef = useRef(connection)
   const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
+  const openedSchemeIds = useRef(new Set<number>())
   const drainSchemesRef = useRef<() => void>(() => {})
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
@@ -188,8 +189,15 @@ export function WeworkSchemeBridge() {
           )
           for (const request of requests) {
             if (disposed) break
-            if (await open(request.url, false)) {
+            if (!openedSchemeIds.current.has(request.id)) {
+              if (!(await open(request.url, false))) continue
+              openedSchemeIds.current.add(request.id)
+            }
+            try {
               await invokeDesktopHost('navigation.acknowledgeScheme', { id: request.id })
+              openedSchemeIds.current.delete(request.id)
+            } catch (error) {
+              console.error('[Wework] Failed to acknowledge scheme navigation', error)
             }
           }
         }

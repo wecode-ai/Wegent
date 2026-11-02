@@ -367,6 +367,50 @@ describe('Wework scheme bridge', () => {
     })
   })
 
+  it('retries only acknowledgement after a native navigation acknowledgement fails', async () => {
+    isElectronRuntime.mockReturnValue(true)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let requests = [
+      { id: 1, url: 'wework://tasks/device-1/task-1' },
+      { id: 2, url: 'wework://tasks/device-2/task-2' },
+    ]
+    let failedFirstAcknowledgement = false
+    invokeDesktopHost.mockImplementation(async (capability: string, input?: { id?: number }) => {
+      if (capability === 'navigation.pendingSchemes') return requests
+      if (capability === 'navigation.acknowledgeScheme' && input?.id === 1) {
+        if (!failedFirstAcknowledgement) {
+          failedFirstAcknowledgement = true
+          throw new Error('acknowledgement unavailable')
+        }
+      }
+      requests = requests.filter(request => request.id !== input?.id)
+      return undefined
+    })
+    render(<WeworkSchemeBridge />)
+
+    await waitFor(() =>
+      expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 2 })
+    )
+    expect(openTab).toHaveBeenCalledTimes(2)
+
+    const handler = subscribeDesktopHostEvents.mock.calls[0][0]
+    act(() => handler({ type: 'wework-scheme-requested' }))
+
+    await waitFor(() =>
+      expect(
+        invokeDesktopHost.mock.calls.filter(
+          ([capability, input]) =>
+            capability === 'navigation.acknowledgeScheme' && (input as { id?: number }).id === 1
+        )
+      ).toHaveLength(2)
+    )
+    expect(openTab).toHaveBeenCalledTimes(2)
+    expect(error).toHaveBeenCalledWith(
+      '[Wework] Failed to acknowledge scheme navigation',
+      expect.any(Error)
+    )
+  })
+
   it('keeps native board requests unacknowledged until authentication is restored', async () => {
     isElectronRuntime.mockReturnValue(true)
     invokeDesktopHost.mockImplementation(async (capability: string) =>

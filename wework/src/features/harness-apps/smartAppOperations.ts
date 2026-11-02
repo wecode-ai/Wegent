@@ -115,9 +115,12 @@ export async function installMarketplaceSmartApp(
   }
 
   const details = { context: { smartApp: smartAppContext(installation) } }
-  if (installation.state === 'installed' || installation.state === 'running')
+  if (installation.state === 'installed' || installation.state === 'running') {
     attempt.succeed(details)
-  else attempt.fail('confirm', details)
+  } else {
+    attempt.fail('confirm', details)
+    throw new Error(`Smart app installation ended in state "${installation.state}".`)
+  }
   return installation
 }
 
