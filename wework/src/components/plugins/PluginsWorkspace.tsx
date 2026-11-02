@@ -422,7 +422,6 @@ export function PluginsWorkspace({
     () => new Set()
   )
   const uninstallingPluginIdsRef = useRef(uninstallingPluginIds)
-  uninstallingPluginIdsRef.current = uninstallingPluginIds
   const [updatingPluginPolicyIds, setUpdatingPluginPolicyIds] = useState<Set<string | number>>(
     () => new Set()
   )
@@ -775,6 +774,7 @@ export function PluginsWorkspace({
     installingMarketplacePluginIdsRef.current = new Set()
     setInstallingMarketplacePluginIds(new Set())
     setPendingPluginUninstall(null)
+    uninstallingPluginIdsRef.current = new Set()
     setUninstallingPluginIds(new Set())
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, knownExecutorDeviceId, t])
@@ -2029,6 +2029,26 @@ export function PluginsWorkspace({
       )
     )
   }, [])
+
+  const isInstalledPluginUninstalling = useCallback(
+    (plugin: InstalledPluginItem) => {
+      const latest =
+        installedPluginsRef.current.find(candidate => String(candidate.id) === String(plugin.id)) ??
+        plugin
+      if (uninstallingPluginIdsRef.current.has(latest.id)) return true
+      if (
+        currentDeviceInstallation(latest.raw, currentDeviceIdRef.current)?.state === 'uninstalling'
+      )
+        return true
+      if (pluginUninstallScope(latest.raw) === 'published-source') return false
+      const listing = findMarketplaceItemForInstalled(
+        latest,
+        pluginMarketplaceStateRef.current.items
+      )
+      return listing ? isMarketplacePluginUninstalling(listing) : false
+    },
+    [isMarketplacePluginUninstalling]
+  )
 
   const { beginMarketplacePluginTrial, tryMarketplacePluginInChat } = usePluginInstallActions({
     installedPlugins,
@@ -5454,6 +5474,7 @@ export function PluginsWorkspace({
       selectedPlugin.raw,
       currentDeviceId
     )
+    const selectedUninstalling = isInstalledPluginUninstalling(selectedPlugin)
     const selectedAutoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate({
       updateAvailable: selectedPlugin.updateAvailable,
       currentDeviceInstallation: selectedDeviceInstallation,
@@ -5478,7 +5499,12 @@ export function PluginsWorkspace({
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           actionError={pluginDetailActionErrorMessage(pluginDetailActionError, selectedPlugin.id)}
           usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
-          primaryActionLabel={t('workbench.plugins_try_now', '立即对话')}
+          primaryActionLabel={
+            selectedUninstalling
+              ? t('workbench.plugins_uninstalling', '正在卸载')
+              : t('workbench.plugins_try_now', '立即对话')
+          }
+          primaryActionDisabled={selectedUninstalling}
           shareActionLabel={t('workbench.plugins_share', '分享')}
           shareActionDisabled={headerBusy}
           onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
@@ -5541,6 +5567,7 @@ export function PluginsWorkspace({
               : undefined
           }
           onToggle={() => {
+            if (isInstalledPluginUninstalling(selectedPlugin)) return
             if (!tryPluginInChat(selectedPlugin.raw)) {
               setPluginDetailActionError({
                 pluginId: selectedPlugin.id,
@@ -5549,6 +5576,7 @@ export function PluginsWorkspace({
             }
           }}
           onPromptSelect={prompt => {
+            if (isInstalledPluginUninstalling(selectedPlugin)) return
             if (queuePluginPromptTrial(selectedPlugin.raw, prompt, { openInNewChat: true })) {
               navigateTo('/')
             }

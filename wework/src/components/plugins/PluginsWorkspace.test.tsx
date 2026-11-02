@@ -9874,17 +9874,38 @@ describe('PluginsWorkspace', () => {
     }
   })
 
-  test.each([false, true])(
-    'blocks uninstalling examples and stale callbacks, then restores use (local=%s)',
-    async local => {
+  test.each([
+    ['catalog', false],
+    ['catalog', true],
+    ['installed', false],
+    ['installed', true],
+  ] as const)(
+    'blocks uninstalling examples and stale callbacks, then restores use (entry=%s, local=%s)',
+    async (entry, local) => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
       const marketplace = mockSystemSkillsFetch({
-        marketplaceInstalled: local,
+        marketplaceInstalled: entry === 'installed' || local,
         marketplaceDeviceState: 'installed',
         localVersionEvidence: local ? '1.0.0' : undefined,
         marketplaceVisibility: 'workspace',
         marketplaceSourceProvider: 'wegent',
       })
+      if (entry === 'installed') {
+        const originalFetch = vi.mocked(fetch).getMockImplementation()!
+        vi.mocked(fetch).mockImplementation((url, init) => {
+          if (
+            new URL(String(url), window.location.origin).pathname === '/api/plugins/marketplace'
+          ) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ items: [], total: 0 }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            )
+          }
+          return originalFetch(url, init)
+        })
+      }
       mockCodexAppServerInvoke({ deviceId: 'current-device' })
       const originalDetail = pluginDetailView.PluginDetailView
       let detailProps!: Parameters<typeof originalDetail>[0]
@@ -9925,11 +9946,16 @@ describe('PluginsWorkspace', () => {
       }
       try {
         render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
-        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        await userEvent.click(
+          await screen.findByTestId(
+            entry === 'catalog' ? 'plugin-marketplace-row-101' : 'plugins-installed-strip-item-101'
+          )
+        )
         await waitFor(() => expect(screen.getByTestId('plugin-prompt-0')).not.toBeDisabled())
         const stalePrompt = detailProps.onPromptSelect!
         const staleToggle = detailProps.onToggle
-        if (!local) {
+        const needsInstall = entry === 'catalog' && !local
+        if (needsInstall) {
           const originalEnsure = localExecutorMocks.ensureAvailable.getMockImplementation()!
           let finishPreflight!: () => void
           let preflightHeld = false
@@ -9967,10 +9993,10 @@ describe('PluginsWorkspace', () => {
         expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
         expect(navigate).not.toHaveBeenCalled()
         expect(marketplace.getSyncDeviceCalls()).toBe(0)
-        await publishInstallation(local, 'installed')
+        await publishInstallation(!needsInstall, 'installed')
         await waitFor(() => expect(screen.getByTestId('plugin-prompt-0')).not.toBeDisabled())
         await userEvent.click(screen.getByTestId('plugin-prompt-0'))
-        if (!local) {
+        if (needsInstall) {
           await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
           await waitFor(() => expect(installationPosts()).toHaveLength(1))
         }
@@ -9978,13 +10004,76 @@ describe('PluginsWorkspace', () => {
           expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
         )
         expect(navigate).toHaveBeenCalledWith('/')
-        expect(installationPosts()).toHaveLength(local ? 0 : 1)
+        expect(installationPosts()).toHaveLength(needsInstall ? 1 : 0)
       } finally {
         detailSpy.mockRestore()
         navigate.mockRestore()
       }
     }
   )
+
+  test('blocks installed local detail callbacks until a failed uninstall settles', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockEmptyCloudPluginApis()
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/tmp/wework-personal',
+          plugins: [{ id: 'documents-local-id', name: 'documents', displayName: 'Documents' }],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    let failUninstall!: (error: Error) => void
+    const uninstall = vi.spyOn(pluginUninstall, 'uninstallPluginIdentities').mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          failUninstall = reject
+        })
+    )
+    const originalDetail = pluginDetailView.PluginDetailView
+    let detailProps!: Parameters<typeof originalDetail>[0]
+    const detailSpy = vi.spyOn(pluginDetailView, 'PluginDetailView').mockImplementation(props => {
+      detailProps = props
+      return originalDetail(props)
+    })
+    const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(
+        await screen.findByTestId('plugins-installed-strip-item-documents-local-id')
+      )
+      const stalePrompt = detailProps.onPromptSelect!
+      const staleToggle = detailProps.onToggle
+      await userEvent.click(screen.getByTestId('plugin-detail-actions-documents-local-id'))
+      await userEvent.click(screen.getByTestId('plugin-detail-uninstall-documents-local-id'))
+      await userEvent.click(await screen.findByTestId('plugin-uninstall-confirm-button'))
+      expect(uninstall).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('plugin-detail-toggle-documents-local-id')).toBeDisabled()
+      expect(screen.getByTestId('plugin-prompt-0')).toBeDisabled()
+      sessionStorage.removeItem('wework:pending-plugin-trial')
+      navigate.mockClear()
+      await act(async () => {
+        detailProps.onPromptSelect!('Review this change')
+        detailProps.onToggle()
+        stalePrompt('Review this change')
+        staleToggle()
+      })
+      expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+      expect(navigate).not.toHaveBeenCalled()
+      await act(async () => failUninstall(new Error('Local cleanup is unavailable')))
+      await waitFor(() => expect(screen.getByTestId('plugin-prompt-0')).not.toBeDisabled())
+      await userEvent.click(screen.getByTestId('plugin-prompt-0'))
+      expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
+      expect(navigate).toHaveBeenCalledWith('/')
+    } finally {
+      uninstall.mockRestore()
+      detailSpy.mockRestore()
+      navigate.mockRestore()
+    }
+  })
 
   test('keeps server-reported uninstalling consistent between the row and detail', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
