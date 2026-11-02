@@ -519,9 +519,14 @@ fn advancing_release_matches_the_first_normalized_valid_connector() {
         "protocolVersion": 1, "credentialType": "password",
         "adapter": "scripts/account-auth.py"
     });
-    for with_auth in [false, true] {
+    for (padding, with_auth) in [" ", "\u{1c}", "\u{1d}", "\u{1e}", "\u{1f}"]
+        .into_iter()
+        .flat_map(|padding| [false, true].map(|with_auth| (padding, with_auth)))
+    {
         let mut release = release_row(12, 1);
-        let mut first = serde_json::json!({"slug": " gitlab-intra ", "authPolicy": "on_install"});
+        let mut first = serde_json::json!({
+            "slug": format!("{padding}gitlab-intra{padding}"), "authPolicy": "on_install"
+        });
         if with_auth {
             first["accountAuth"] = auth.clone();
         }
@@ -540,7 +545,8 @@ fn advancing_release_matches_the_first_normalized_valid_connector() {
 
         assert_eq!(
             payload["spec"]["components"]["connectors"][0].get("accountAuth"),
-            if with_auth { Some(&auth) } else { None }
+            if with_auth { Some(&auth) } else { None },
+            "padding={padding:?}, with_auth={with_auth}"
         );
     }
 }

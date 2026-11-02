@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::json_compat::{python_str, python_truthy};
+use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 use crate::plugins_marketplace::db::{
     InstalledKindRow, KIND_COLUMNS, NamespaceRow, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
@@ -726,7 +726,8 @@ fn manifest_connector_matches(item: &Value, slug: &str) -> bool {
         .filter(|value| python_truthy(value))
         .map(python_str)
         .unwrap_or_else(|| "optional".to_owned());
-    item_slug.trim() == slug && matches!(policy.as_str(), "on_install" | "on_use" | "optional")
+    python_strip(&item_slug) == slug
+        && matches!(policy.as_str(), "on_install" | "on_use" | "optional")
 }
 
 /// Build the advanced release document while preserving its runtime preferences.
