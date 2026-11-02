@@ -27,16 +27,13 @@ import {
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { createAgentResourceName } from '@wegent/collaboration'
 
-import type { SkillRefMeta } from '@/apis/bots'
 import { botApis } from '@/apis/bots'
-import type { ModelTypeEnum } from '@/apis/models'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
 import {
   Bot,
   Team,
   TaskType,
-  type KnowledgeBaseDefaultRef,
   type PipelineContextPassing,
   type TeamInputPlaceholder,
 } from '@/types/api'
@@ -61,11 +58,11 @@ import TeamModeSelector from './team-edit/TeamModeSelector'
 import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
+import { useSimpleTeamDraft } from './team-edit/useSimpleTeamDraft'
 import { toModelSelectValue } from './team-edit/model-select-utils'
 import { useShellModels } from '../hooks/useShellModels'
 import {
   bindModeRequiresCodingAgent,
-  DEFAULT_CODING_EXECUTOR_RUNTIME,
   getDefaultSimpleBindMode,
   getModelCategoryTypeForBindMode,
   isCodingAgentShell,
@@ -75,18 +72,12 @@ import {
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   shellSupportsPreloadSkills,
-  type CodingExecutorRuntime,
   type SimpleExecutorMode,
 } from './team-edit/simple-team-edit-utils'
 import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
 import { normalizeInputPlaceholder } from './team-edit/InputPlaceholderEditor'
-import {
-  getModelFromConfig,
-  getModelNamespaceFromConfig,
-  getModelTypeFromConfig,
-} from '../services/bots'
 import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
-import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
+import { normalizeMcpServers, parseMcpConfig } from '../utils/mcpConfig'
 import type { AgentType as McpAgentType } from '../utils/mcpTypeAdapter'
 import type { Group } from '@/types/group'
 import type { ResourceCreateTarget } from '@/features/resource-library/components/ResourceCreateButton'
@@ -209,7 +200,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [quickPhrases, setQuickPhrases] = useState<string[]>([])
   const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<TaskType[]>([])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(null)
 
@@ -397,29 +387,32 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [loadingShells, setLoadingShells] = useState(true)
 
   // Simplified editor state
-  const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
-  const [simpleCodingRuntime, setSimpleCodingRuntime] = useState<CodingExecutorRuntime>(
-    DEFAULT_CODING_EXECUTOR_RUNTIME
-  )
-  const [simpleCustomShellName, setSimpleCustomShellName] = useState('')
-  const [simpleBotName, setSimpleBotName] = useState('')
-  const [simpleModelName, setSimpleModelName] = useState('')
-  const [simpleModelType, setSimpleModelType] = useState<ModelTypeEnum | undefined>(undefined)
-  const [simpleModelNamespace, setSimpleModelNamespace] = useState<string | undefined>(undefined)
-  const [simplePrompt, setSimplePrompt] = useState('')
-  const [simpleInheritBaseCapabilities, setSimpleInheritBaseCapabilities] = useState(true)
-  const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
-  const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
-    Record<string, SkillRefMeta>
-  >({})
-  const [simplePreloadSkills, setSimplePreloadSkills] = useState<string[]>([])
+  const {
+    draft: {
+      bindMode,
+      simpleExecutorMode,
+      simpleCodingRuntime,
+      simpleCustomShellName,
+      simpleBotName,
+      simpleModelName,
+      simpleModelType,
+      simpleModelNamespace,
+      simplePrompt,
+      simpleInheritBaseCapabilities,
+      simpleSelectedSkills,
+      simpleSelectedSkillRefs,
+      simplePreloadSkills,
+      simpleDefaultKnowledgeBaseRefs,
+      simpleMcpConfig,
+    },
+    setField: setSimpleField,
+    setBindMode,
+    initializeBotFields,
+    initializeNewDraft,
+  } = useSimpleTeamDraft()
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
   const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
-  const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
-    KnowledgeBaseDefaultRef[]
-  >([])
-  const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -428,26 +421,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     sourceTeam: Team | null
     pendingBotId: number | null
   } | null>(null)
-
-  const initializeBotFields = useCallback((bot: Bot | undefined) => {
-    const executor = resolveSimpleExecutorFromBot(bot)
-    setSimpleExecutorMode(executor.mode)
-    setSimpleCodingRuntime(executor.codingRuntime)
-    setSimpleCustomShellName(executor.customShellName)
-    setSimpleBotName(bot?.name || '')
-    setSimplePrompt(bot?.system_prompt || '')
-    setSimpleInheritBaseCapabilities(bot?.inherit_base_capabilities === true)
-    setSimpleSelectedSkills(bot?.skills || [])
-    setSimpleSelectedSkillRefs(bot?.skill_refs || {})
-    setSimplePreloadSkills(bot?.preload_skills || [])
-    setSimpleDefaultKnowledgeBaseRefs(bot?.default_knowledge_base_refs || [])
-    setSimpleMcpConfig(stringifyMcpConfig(bot?.mcp_servers || {}))
-    setSimpleModelName(bot?.agent_config ? getModelFromConfig(bot.agent_config) : '')
-    setSimpleModelType(bot?.agent_config ? getModelTypeFromConfig(bot.agent_config) : undefined)
-    setSimpleModelNamespace(
-      bot?.agent_config ? getModelNamespaceFromConfig(bot.agent_config) : undefined
-    )
-  }, [])
 
   // Load shells data on mount
   useEffect(() => {
@@ -564,11 +537,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleModelName &&
       !simpleModelIsCompatible
     ) {
-      setSimpleModelName('')
-      setSimpleModelType(undefined)
-      setSimpleModelNamespace(undefined)
+      setSimpleField('simpleModelName', '', { userEdited: false })
+      setSimpleField('simpleModelType', undefined, { userEdited: false })
+      setSimpleField('simpleModelNamespace', undefined, { userEdited: false })
     }
-  }, [simpleModelsLoaded, simpleModelShellChanged, simpleModelName, simpleModelIsCompatible])
+  }, [
+    setSimpleField,
+    simpleModelsLoaded,
+    simpleModelShellChanged,
+    simpleModelName,
+    simpleModelIsCompatible,
+  ])
 
   // Team drafts belong to the editing session, not the Bot catalog.
   useEffect(() => {
@@ -618,8 +597,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         matchesAutomaticSimpleBindMode(initialBindMode, executor.mode, {
           shellType: fullLeaderBot?.shell_type || '',
         })
-      setBindMode(usesAutomaticBindMode ? [] : initialBindMode)
-      initializeBotFields(fullLeaderBot)
+      initializeBotFields(fullLeaderBot, usesAutomaticBindMode ? [] : initialBindMode)
       // Initialize requireConfirmationMap from existing team data
       const confirmMap: Record<number, boolean> = {}
       const passingMap: Record<number, PipelineContextPassing> = {}
@@ -660,30 +638,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setQuickPhrases([])
       setIcon(null)
       setMode('solo')
-      setBindMode(DEFAULT_NEW_AGENT_BIND_MODE)
       setSelectedBotKeys([])
       setLeaderBotId(null)
       setRequireConfirmationMap({})
       setContextPassingMap({})
-      setSimpleExecutorMode('complex')
-      setSimpleCodingRuntime(DEFAULT_CODING_EXECUTOR_RUNTIME)
-      setSimpleCustomShellName('')
-      setSimpleBotName('')
-      setSimpleModelName('')
-      setSimpleModelType(undefined)
-      setSimpleModelNamespace(undefined)
-      setSimplePrompt('')
-      setSimpleInheritBaseCapabilities(true)
-      setSimpleSelectedSkills([])
-      setSimpleSelectedSkillRefs({})
-      setSimplePreloadSkills([])
-      setSimpleDefaultKnowledgeBaseRefs([])
-      setSimpleMcpConfig('')
+      initializeNewDraft(DEFAULT_NEW_AGENT_BIND_MODE)
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
     }
     setUnsavedPrompts({})
-  }, [bots, createTarget.scope, formTeam, initializeBotFields, open, publishAfterCreate, scope])
+  }, [
+    bots,
+    createTarget.scope,
+    formTeam,
+    initializeBotFields,
+    initializeNewDraft,
+    open,
+    publishAfterCreate,
+    scope,
+  ])
 
   // A late catalog response may hydrate Bot fields once, without resetting the Team draft.
   useEffect(() => {
@@ -692,19 +665,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const bot = bots.find(candidate => candidate.id === session.pendingBotId)
     if (!bot) return
     session.pendingBotId = null
-    initializeBotFields(bot)
-
-    if (session.sourceTeam && (session.sourceTeam.workflow?.mode || 'solo') === 'solo') {
-      const initialBindMode = getInitialBindMode(session.sourceTeam, true)
-      const executor = resolveSimpleExecutorFromBot(bot)
-      setBindMode(
-        matchesAutomaticSimpleBindMode(initialBindMode, executor.mode, {
-          shellType: bot.shell_type,
-        })
-          ? []
-          : initialBindMode
-      )
-    }
+    const sourceTeam = session.sourceTeam
+    if (!sourceTeam) return
+    const isSolo = (sourceTeam.workflow?.mode || 'solo') === 'solo'
+    const initialBindMode = getInitialBindMode(sourceTeam, isSolo)
+    const executor = resolveSimpleExecutorFromBot(bot)
+    const usesAutomaticBindMode =
+      isSolo &&
+      matchesAutomaticSimpleBindMode(initialBindMode, executor.mode, {
+        shellType: bot.shell_type,
+      })
+    initializeBotFields(bot, usesAutomaticBindMode ? [] : initialBindMode, { preserveEdited: true })
   }, [bots, formTeam, initializeBotFields, open])
 
   useEffect(() => {
@@ -779,14 +750,15 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     )
 
     if (normalized.mode !== simpleExecutorMode) {
-      setSimpleExecutorMode(normalized.mode)
+      setSimpleField('simpleExecutorMode', normalized.mode, { userEdited: false })
     }
     if (normalized.codingRuntime !== simpleCodingRuntime) {
-      setSimpleCodingRuntime(normalized.codingRuntime)
+      setSimpleField('simpleCodingRuntime', normalized.codingRuntime, { userEdited: false })
     }
   }, [
     bindMode,
     shells,
+    setSimpleField,
     simpleCodingRuntime,
     simpleCustomShellName,
     simpleExecutorMode,
@@ -859,18 +831,21 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [selectedBotKeys, leaderBotId, unsavedPrompts, formTeam])
 
   // Execute mode change with reset
-  const executeModeChange = useCallback((newMode: TeamMode) => {
-    if (formSessionRef.current) formSessionRef.current.pendingBotId = null
-    setMode(newMode)
-    if (newMode !== 'solo') {
-      setBindMode(current => (current.length > 0 ? current : DEFAULT_NEW_AGENT_BIND_MODE))
-    }
-    setSelectedBotKeys([])
-    setLeaderBotId(null)
-    setUnsavedPrompts({})
-    setRequireConfirmationMap({})
-    setContextPassingMap({})
-  }, [])
+  const executeModeChange = useCallback(
+    (newMode: TeamMode) => {
+      if (formSessionRef.current) formSessionRef.current.pendingBotId = null
+      setMode(newMode)
+      if (newMode !== 'solo') {
+        setBindMode(current => (current.length > 0 ? current : DEFAULT_NEW_AGENT_BIND_MODE))
+      }
+      setSelectedBotKeys([])
+      setLeaderBotId(null)
+      setUnsavedPrompts({})
+      setRequireConfirmationMap({})
+      setContextPassingMap({})
+    },
+    [setBindMode]
+  )
 
   // Change Mode with confirmation
   const handleModeChange = (newMode: TeamMode) => {
@@ -912,9 +887,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       getModelCategoryTypeForBindMode(currentEffectiveBindMode) !==
       getModelCategoryTypeForBindMode(nextEffectiveBindMode)
     ) {
-      setSimpleModelName('')
-      setSimpleModelType(undefined)
-      setSimpleModelNamespace(undefined)
+      setSimpleField('simpleModelName', '')
+      setSimpleField('simpleModelType', undefined)
+      setSimpleField('simpleModelNamespace', undefined)
     }
     setBindMode(nextBindMode)
   }
@@ -925,7 +900,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     } else if (nextMode === 'complex' && bindMode.length === 1 && bindMode[0] === 'chat') {
       handleSimpleBindModeChange(DEFAULT_NEW_AGENT_BIND_MODE)
     }
-    setSimpleExecutorMode(nextMode)
+    setSimpleField('simpleExecutorMode', nextMode)
   }
 
   const isDifyLeader = useMemo(() => {
@@ -1478,45 +1453,49 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   executorMode={simpleExecutorMode}
                   setExecutorMode={handleSimpleExecutorModeChange}
                   codingRuntime={simpleCodingRuntime}
-                  setCodingRuntime={setSimpleCodingRuntime}
+                  setCodingRuntime={value => setSimpleField('simpleCodingRuntime', value)}
                   shells={shells}
                   customShellName={simpleCustomShellName}
-                  setCustomShellName={setSimpleCustomShellName}
+                  setCustomShellName={value => setSimpleField('simpleCustomShellName', value)}
                   modelName={simpleModelName}
                   modelType={simpleModelType}
                   modelNamespace={simpleModelNamespace}
                   models={simpleModels}
                   loadingModels={simpleLoadingModels}
                   onModelChange={value => {
-                    setSimpleModelName(value.name)
-                    setSimpleModelType(value.type)
-                    setSimpleModelNamespace(value.namespace)
+                    setSimpleField('simpleModelName', value.name)
+                    setSimpleField('simpleModelType', value.type)
+                    setSimpleField('simpleModelNamespace', value.namespace)
                   }}
                   selectedSkills={simpleSelectedSkills}
                   selectedSkillRefs={simpleSelectedSkillRefs}
                   preloadSkills={simplePreloadSkills}
-                  onPreloadSkillsChange={setSimplePreloadSkills}
+                  onPreloadSkillsChange={value => setSimpleField('simplePreloadSkills', value)}
                   supportsPreloadSkills={simpleSupportsPreloadSkills}
                   availableSkills={simpleAvailableSkills}
                   allSkills={simpleAllSkills}
                   loadingSkills={simpleLoadingSkills}
                   onSkillsChange={(skills, refs) => {
-                    setSimpleSelectedSkills(skills)
-                    setSimpleSelectedSkillRefs(refs)
-                    setSimplePreloadSkills(prev =>
+                    setSimpleField('simpleSelectedSkills', skills)
+                    setSimpleField('simpleSelectedSkillRefs', refs)
+                    setSimpleField('simplePreloadSkills', prev =>
                       prev.filter(skillName => skills.includes(skillName))
                     )
                   }}
                   onReloadSkills={reloadSimpleSkills}
                   defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
-                  onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                  onDefaultKnowledgeBaseRefsChange={value =>
+                    setSimpleField('simpleDefaultKnowledgeBaseRefs', value)
+                  }
                   mcpConfig={simpleMcpConfig}
-                  onMcpConfigChange={setSimpleMcpConfig}
+                  onMcpConfigChange={value => setSimpleField('simpleMcpConfig', value)}
                   mcpAgentType={simpleMcpAgentType}
                   prompt={simplePrompt}
-                  onPromptChange={setSimplePrompt}
+                  onPromptChange={value => setSimpleField('simplePrompt', value)}
                   inheritBaseCapabilities={simpleInheritBaseCapabilities}
-                  onInheritBaseCapabilitiesChange={setSimpleInheritBaseCapabilities}
+                  onInheritBaseCapabilitiesChange={value =>
+                    setSimpleField('simpleInheritBaseCapabilities', value)
+                  }
                   toast={toast}
                   scope={scope}
                   groupName={groupName}

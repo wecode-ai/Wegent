@@ -178,6 +178,14 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
     setDisplayName,
     prompt,
     onPromptChange,
+    bindMode,
+    setBindMode,
+    selectedSkills,
+    onSkillsChange,
+    mcpConfig,
+    onMcpConfigChange,
+    inheritBaseCapabilities,
+    onInheritBaseCapabilitiesChange,
   }: ComponentProps<typeof SimpleTeamEditForm>) => (
     <div data-testid="simple-editor">
       <input
@@ -190,6 +198,19 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
         value={prompt}
         onChange={event => onPromptChange(event.target.value)}
       />
+      <output data-testid="solo-draft">
+        {JSON.stringify({ bindMode, selectedSkills, mcpConfig, inheritBaseCapabilities })}
+      </output>
+      <button onClick={() => setBindMode(['chat'])}>Use chat</button>
+      <button
+        onClick={() => {
+          onSkillsChange([], {})
+          onMcpConfigChange('')
+          onInheritBaseCapabilitiesChange(false)
+        }}
+      >
+        Clear Bot capabilities
+      </button>
       {collaborationModeSelector}
     </div>
   ),
@@ -454,6 +475,83 @@ describe('TeamEditDialog team mode selector', () => {
     fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Draft prompt' } })
     rerender(<TeamEditDialog {...props} bots={[...loadedBots]} />)
     expect(screen.getByLabelText('Prompt')).toHaveValue('Draft prompt')
+    await act(async () => {})
+  })
+
+  it.each(['Draft prompt', ''])(
+    'preserves an edited solo prompt %p before the bot catalog arrives',
+    async draftPrompt => {
+      const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+      const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+      fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Draft prompt' } })
+      fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: draftPrompt } })
+
+      rerender(
+        <TeamEditDialog
+          {...props}
+          bots={bots.map(bot => ({ ...bot, system_prompt: 'Saved prompt', skills: ['saved'] }))}
+        />
+      )
+
+      expect(screen.getByLabelText('Prompt')).toHaveValue(draftPrompt)
+      expect(
+        JSON.parse(screen.getByTestId('solo-draft').textContent || '{}').selectedSkills
+      ).toEqual(['saved'])
+      await act(async () => {})
+    }
+  )
+
+  it('preserves explicitly cleared Bot capabilities before the catalog arrives', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Bot capabilities' }))
+
+    rerender(
+      <TeamEditDialog
+        {...props}
+        bots={bots.map(bot => ({
+          ...bot,
+          skills: ['saved'],
+          mcp_servers: { saved: { command: 'saved' } },
+          inherit_base_capabilities: true,
+        }))}
+      />
+    )
+
+    expect(JSON.parse(screen.getByTestId('solo-draft').textContent || '{}')).toEqual(
+      expect.objectContaining({ selectedSkills: [], mcpConfig: '', inheritBaseCapabilities: false })
+    )
+    await act(async () => {})
+  })
+
+  it('preserves a user-selected solo bind mode before the bot catalog arrives', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Use chat' }))
+
+    rerender(<TeamEditDialog {...props} />)
+
+    expect(JSON.parse(screen.getByTestId('solo-draft').textContent || '{}').bindMode).toEqual([
+      'chat',
+    ])
+    await act(async () => {})
+  })
+
+  it('clears solo field edit markers when reopening the dialog', async () => {
+    const props = { ...createProps(), editingTeamId: 1, teams: [existingTeam] }
+    const { rerender } = render(<TeamEditDialog {...props} bots={[]} />)
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Discard this draft' } })
+
+    rerender(<TeamEditDialog {...props} bots={[]} open={false} />)
+    rerender(<TeamEditDialog {...props} bots={[]} />)
+    rerender(
+      <TeamEditDialog
+        {...props}
+        bots={bots.map(bot => ({ ...bot, system_prompt: 'Saved prompt' }))}
+      />
+    )
+
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Saved prompt')
     await act(async () => {})
   })
 
