@@ -102,6 +102,12 @@ export async function verifySmartAppMarketplaceIdentity({
     `[data-testid="workspace-tab-select-${appTabId}"][aria-selected="true"]`,
     { timeoutMs: uiTimeoutMs }
   )
+  await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
+    { timeoutMs: uiTimeoutMs }
+  )
   await control.command('openWeworkScheme', 'body', {
     value: `wework://smart-apps/${marketItem.id}`,
   })
