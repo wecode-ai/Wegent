@@ -1994,6 +1994,8 @@ classify_path() {
       .github/scripts/test-classify-ci-changes.sh)
       select_all_desktop_suites
       ;;
+    wework/scripts/ci-test-sequencer.mjs)
+      ;;
     wework/*)
       classify_wework_path "$path"
       ;;

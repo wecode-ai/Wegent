@@ -423,6 +423,11 @@ for path in .github/actions/build-wework-core-e2e/action.yml \
   assert_case "Desktop build actions select desktop consumers: $path" \
     "${all_false/wework_e2e=false/wework_e2e=true}" "$path"
 done
+for path in .github/ci/wework-unit-test-durations.json \
+  .github/scripts/balance-wework-unit-tests.mjs wework/scripts/ci-test-sequencer.mjs; do
+  assert_case "Unit scheduling changes select the existing unit suite: $path" \
+    "${all_false/wework=false/wework=true}" "$path"
+done
 assert_case "Unknown shared actions remain conservative" "$all_true" \
   ".github/actions/future-shared-action/action.yml"
 assert_case "Runtime contract fixtures run in the unconditional configuration gate" "$all_false" \

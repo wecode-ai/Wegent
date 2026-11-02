@@ -28,6 +28,11 @@ classify_path() {
 
   case "$path" in
     # Known leaf actions select their actual consumers; unknown actions retain full validation.
+    .github/ci/wework-unit-test-durations.json | .github/scripts/balance-wework-unit-tests.* | \
+      wework/scripts/ci-test-sequencer.mjs)
+      changed[wework]=true
+      return
+      ;;
     .github/actions/setup-node-workspace/*)
       changed[frontend]=true
       changed[wework]=true

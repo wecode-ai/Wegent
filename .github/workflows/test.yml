@@ -639,9 +639,12 @@ jobs:
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
+          WEWORK_CI_BALANCED_SHARDS: "true"
         run: |
           pnpm --filter wework exec vitest run \
             --coverage \
+            --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/wework-unit-timings.json" \
             --passWithNoTests \
             --shard=${{ matrix.shard }}/2 &
           vitest_pid=$!
@@ -658,6 +661,15 @@ jobs:
             wait "$electron_pid" || status=$?
           fi
           exit "$status"
+
+      - name: Upload Wework unit timing evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-unit-timings-${{ matrix.shard }}
+          path: ${{ runner.temp }}/wework-unit-timings.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
