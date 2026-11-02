@@ -177,16 +177,28 @@ test("prebuild publication is limited to main and explicit manual dispatches", (
   const needs = { changes: { result: "success", outputs: { docker: "true" } } };
   for (const event_name of ["pull_request", "push", "workflow_dispatch"]) {
     for (const ref of ["refs/heads/main", "refs/heads/topic"]) {
-      const enabled = runInNewContext(publisher.if, {
-        github: { event_name, ref },
-        needs,
-        always: () => true,
-      });
-      assert.equal(
-        enabled,
-        event_name === "workflow_dispatch" ||
-          (event_name === "push" && ref === "refs/heads/main"),
-      );
+      for (const prebuild of ["linux", "macos-runtimes"]) {
+        const enabled = runInNewContext(publisher.if, {
+          github: { event_name, ref },
+          inputs: { prebuild },
+          needs,
+          always: () => true,
+        });
+        assert.equal(
+          enabled,
+          (event_name === "workflow_dispatch" && prebuild === "linux") ||
+            (event_name === "push" && ref === "refs/heads/main"),
+        );
+        const native =
+          workflow("ci-cache-warmup").jobs["publish-macos-runtime-prebuilds"];
+        assert.equal(
+          runInNewContext(native.if, {
+            github: { event_name, ref },
+            inputs: { prebuild },
+          }),
+          event_name === "workflow_dispatch" && prebuild === "macos-runtimes",
+        );
+      }
     }
   }
   assert.deepEqual(publisher.strategy.matrix.component, [

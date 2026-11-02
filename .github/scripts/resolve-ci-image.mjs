@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-export function resolveCiImage(reference, directory = root) {
+export function resolveCiImage(
+  reference,
+  directory = root,
+  platform = "linux/amd64",
+) {
   let seeds;
   try {
     seeds = JSON.parse(
@@ -39,7 +43,8 @@ export function resolveCiImage(reference, directory = root) {
     !source ||
     !target ||
     source[1] !== target[2] ||
-    entry.platform !== "linux/amd64" ||
+    !["linux/amd64", "darwin/arm64"].includes(platform) ||
+    entry.platform !== platform ||
     !/^[a-f0-9]{40}$/.test(entry.source_commit ?? "") ||
     !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/actions\/runs\/\d+\/job\/\d+$/.test(
       entry.provenance ?? "",
@@ -59,5 +64,5 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  console.log(resolveCiImage(process.argv[2]));
+  console.log(resolveCiImage(process.argv[2], root, process.argv[3]));
 }

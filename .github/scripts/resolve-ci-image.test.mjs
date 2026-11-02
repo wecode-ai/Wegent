@@ -16,7 +16,10 @@ test("checked-in image seeds contain immutable references and build provenance",
   const { images } = JSON.parse(readFileSync(file, "utf8"));
   assert.ok(Object.keys(images).length >= 5);
   for (const [reference, entry] of Object.entries(images)) {
-    assert.equal(resolveCiImage(reference), entry.image);
+    assert.equal(
+      resolveCiImage(reference, undefined, entry.platform),
+      entry.image,
+    );
   }
 });
 
@@ -43,6 +46,10 @@ test("immutable public seeds only match identical build input keys", () => {
       );
     save({});
     assert.equal(resolveCiImage(requested, directory), pinned);
+    save({ platform: "darwin/arm64" });
+    assert.throws(() => resolveCiImage(requested, directory), /CI image seed/);
+    assert.equal(resolveCiImage(requested, directory, "darwin/arm64"), pinned);
+    save({});
     const changed = requested.replace(/a{64}$/, "d".repeat(64));
     assert.equal(resolveCiImage(changed, directory), changed);
     for (const invalid of [

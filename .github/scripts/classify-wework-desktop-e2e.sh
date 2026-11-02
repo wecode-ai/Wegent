@@ -2005,6 +2005,7 @@ classify_path() {
       .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | \
       .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \

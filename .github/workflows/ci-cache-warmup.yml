@@ -57,6 +57,12 @@ on:
       - "wegent-cli/requirements.txt"
       - "wework/**"
   workflow_dispatch:
+    inputs:
+      prebuild:
+        description: Select the prebuilds to publish without running E2E.
+        type: choice
+        options: [linux, macos-runtimes]
+        default: linux
 
 permissions:
   contents: read
@@ -508,7 +514,7 @@ jobs:
   warm-executor-e2e-image:
     name: Publish CI prebuilds (${{ matrix.component }})
     needs: changes
-    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && (needs.changes.outputs.docker == 'true' || needs.changes.outputs.backend_rs_rust == 'true' || needs.changes.outputs.wework_target == 'true')) || github.event_name == 'workflow_dispatch')
+    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && (needs.changes.outputs.docker == 'true' || needs.changes.outputs.backend_rs_rust == 'true' || needs.changes.outputs.wework_target == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.prebuild != 'macos-runtimes'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -554,3 +560,71 @@ jobs:
           RUNTIME_IMAGE: ${{ steps.runtime.outputs.image }}
           EXECUTOR_BUILD_CACHE: ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
         run: .github/scripts/publish-ci-prebuild.sh "$COMPONENT"
+
+  publish-macos-runtime-prebuilds:
+    name: Publish native macOS runtime prebuilds
+    if: github.event_name == 'workflow_dispatch' && inputs.prebuild == 'macos-runtimes'
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Log in to GHCR with ORAS
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: echo "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
+          targets: aarch64-apple-darwin
+
+      - name: Restore or build native runtime prebuilds
+        id: native
+        env:
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
+          WEWORK_BACKEND_RS_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
+        run: |
+          test "$(uname -m)" = arm64
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          repository="ghcr.io/$owner/wegent-wework-macos-e2e-runtime"
+          for component in executor backend-rs; do
+            digest="$(node .github/scripts/macos-e2e-source-digest.mjs "$component")"
+            reference="$repository:$component-v1-$digest"
+            echo "$component=$reference" >> "$GITHUB_OUTPUT"
+            .github/scripts/restore-macos-e2e-runtime-oci.sh \
+              "$RUNNER_TEMP/native-prebuilds/wegent-$component" "wegent-$component" "$reference"
+          done
+          .github/scripts/build-macos-e2e-runtimes.sh \
+            "$RUNNER_TEMP/native-prebuilds/wegent-executor" \
+            "$RUNNER_TEMP/native-prebuilds/wegent-backend-rs"
+
+      - name: Publish immutable native runtime prebuilds
+        env:
+          EXECUTOR_REF: ${{ steps.native.outputs.executor }}
+          BACKEND_REF: ${{ steps.native.outputs.backend-rs }}
+        run: |
+          for component in executor backend-rs; do
+            if [[ "$component" == executor ]]; then reference="$EXECUTOR_REF"; else reference="$BACKEND_REF"; fi
+            .github/scripts/publish-macos-e2e-runtime-oci.sh \
+              "$RUNNER_TEMP/native-prebuilds/wegent-$component" "$reference"
+            printf '%s: %s@%s\n' "$component" "${reference%:*}" "$(oras resolve "$reference")" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done
