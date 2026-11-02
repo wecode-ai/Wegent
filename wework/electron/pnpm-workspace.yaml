@@ -2,9 +2,9 @@ packages: []
 
 confirmModulesPurge: false
 verifyDepsBeforeRun: warn
+
 overrides:
-  # Keep packaged ZIP extraction on the fixed stream lifecycle used by the workspace.
-  'extract-zip>yauzl': 3.4.0
+  'extract-zip>yauzl': '3.4.0'
 
 allowBuilds:
   electron: true

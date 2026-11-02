@@ -200,6 +200,8 @@ describe('WeworkDesktopControlBridge', () => {
               toDataURL: () => 'data:image/png;base64,AA==',
             })),
             debugger: {
+              on: vi.fn(),
+              off: vi.fn(),
               attach: vi.fn(),
               detach: vi.fn(),
               isAttached: vi.fn(() => false),
@@ -247,6 +249,8 @@ describe('WeworkDesktopControlBridge', () => {
     directories.push(registryDirectory)
     let debuggerAttached = false
     const debuggerSession = {
+      on: vi.fn(),
+      off: vi.fn(),
       attach: vi.fn(() => {
         debuggerAttached = true
       }),

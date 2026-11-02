@@ -2,6 +2,44 @@
 use super::stand_in_agent::apply_stand_in_agent;
 use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
+use crate::runtime_work::response::local_task_json;
+
+impl RuntimeWorkRpcHandler {
+    /// Notification history follows assignment ownership, including archived work.
+    pub(super) fn stand_in_assignment_tasks(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let user = payload["userId"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
+        let assignments = payload["assignments"]
+            .as_array()
+            .ok_or_else(|| AppIpcError::new("bad_request", "assignments is required"))?;
+        let items: Vec<Value> = self
+            .local_task_links(true)
+            .into_iter()
+            .filter(|task| {
+                let origin = &task.runtime_handle["origin"];
+                !self.archived_link_is_deleted(task)
+                    && origin["initiatedBy"] == "stand_in"
+                    && origin["projectStore"] == "cloud"
+                    && origin["userId"] == user
+                    && assignments.iter().any(|assignment| {
+                        ["projectId", "itemId", "humanAssignmentId"]
+                            .iter()
+                            .all(|key| {
+                                assignment[key]
+                                    .as_str()
+                                    .is_some_and(|value| !value.is_empty())
+                            })
+                            && assignment["projectId"] == origin["cloudProjectId"]
+                            && assignment["itemId"] == origin["loopItemId"]
+                            && assignment["humanAssignmentId"] == origin["humanAssignmentId"]
+                    })
+            })
+            .map(local_task_json)
+            .collect();
+        Ok(json!({"items":items}))
+    }
+}
 
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
     let code = match &error {

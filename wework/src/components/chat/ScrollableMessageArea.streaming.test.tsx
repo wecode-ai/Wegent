@@ -17,6 +17,51 @@ vi.mock('@/lib/runtime-environment', async importOriginal => ({
   isDesktopRuntime: () => false,
 }))
 
+function renderQuantizedStreamingConversation(quantum: number) {
+  const message = {
+    id: 'quantized-stream',
+    role: 'assistant' as const,
+    content: '正在处理',
+    status: 'streaming' as const,
+    createdAt: '2026-11-03T00:00:00.000Z',
+  }
+  const conversationKey = `quantized-stream-${quantum}`
+  const view = render(
+    <ScrollableMessageArea conversationKey={conversationKey} messages={[message]} />
+  )
+  const scroller = screen.getByTestId('chat-message-scroll-area')
+  let scrollHeight = 600
+  let scrollTop = 400
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 200, configurable: true },
+    scrollHeight: { get: () => scrollHeight, configurable: true },
+    scrollTop: {
+      get: () => scrollTop,
+      set: (top: number) => {
+        scrollTop = Math.max(0, Math.min(scrollHeight - 200, Math.round(top / quantum) * quantum))
+      },
+      configurable: true,
+    },
+  })
+  scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    const previous = scroller.scrollTop
+    scroller.scrollTop = Number(top)
+    if (previous !== scroller.scrollTop) window.setTimeout(() => fireEvent.scroll(scroller), 0)
+  })
+  fireEvent.scroll(scroller)
+  return {
+    scroller,
+    setHeight: (height: number) => {
+      scrollHeight = height
+      scrollTop = Math.max(0, Math.min(height - 200, scrollTop))
+    },
+    update: (content: string, status: 'streaming' | 'done' = 'streaming', key = conversationKey) =>
+      view.rerender(
+        <ScrollableMessageArea conversationKey={key} messages={[{ ...message, content, status }]} />
+      ),
+  }
+}
+
 describe('ScrollableMessageArea: streaming', () => {
   installScrollTestEnvironment()
 
@@ -402,6 +447,84 @@ describe('ScrollableMessageArea: streaming', () => {
       behavior: 'auto',
     })
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+  })
+
+  test.each([1, 0.5])(
+    'settles exactly after completion when browser scroll offsets are quantized to %s pixels',
+    quantum => {
+      const { scroller, setHeight, update } = renderQuantizedStreamingConversation(quantum)
+      setHeight(800)
+      update('正在处理\n\n流式内容增加')
+      act(() => vi.advanceTimersByTime(80))
+      expect(scroller.scrollTop).toBeGreaterThan(400)
+      expect(scroller.scrollTop).toBeLessThan(600)
+
+      update('回复完成', 'done')
+      flushStreamingFollow()
+
+      expect(scroller.scrollTop).toBe(600)
+      expect(scroller.scrollTo).toHaveBeenLastCalledWith({ top: 600, behavior: 'auto' })
+      const settledWrites = (scroller.scrollTo as ReturnType<typeof vi.fn>).mock.calls.length
+      act(() => vi.advanceTimersByTime(160))
+      expect(scroller.scrollTo).toHaveBeenCalledTimes(settledWrites)
+    }
+  )
+
+  test('clamps active streaming motion when the content becomes shorter', () => {
+    const { scroller, setHeight, update } = renderQuantizedStreamingConversation(1)
+    setHeight(1600)
+    update('正在处理\n\n更长的流式内容')
+    act(() => vi.advanceTimersByTime(80))
+    const end = scroller.scrollTop - 20
+
+    setHeight(end + 200)
+    update('收起后的短内容')
+    flushStreamingFollow()
+
+    expect(scroller.scrollTop).toBe(end)
+
+    setHeight(end + 203)
+    update('收起后的短内容继续增长')
+    flushStreamingFollow()
+    expect(scroller.scrollTop).toBe(end + 3)
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({ top: end + 3, behavior: 'auto' })
+  })
+
+  test('starts a new streaming motion from the reader position after interruption', () => {
+    const { scroller, setHeight, update } = renderQuantizedStreamingConversation(1)
+    setHeight(1600)
+    update('正在处理\n\n更长的流式内容')
+    act(() => vi.advanceTimersByTime(80))
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    flushStreamingFollow()
+    expect(scroller.scrollTop).toBe(100)
+
+    fireEvent.click(screen.getByTestId('scroll-to-bottom-button'))
+    act(() => vi.advanceTimersByTime(16))
+    expect(scroller.scrollTop).toBeGreaterThan(100)
+    expect(scroller.scrollTop).toBeLessThan(200)
+    flushStreamingFollow()
+    expect(scroller.scrollTop).toBe(1400)
+  })
+
+  test('discards active streaming motion when switching conversations', () => {
+    const { scroller, setHeight, update } = renderQuantizedStreamingConversation(1)
+    setHeight(1600)
+    update('正在处理\n\n更长的流式内容')
+    act(() => vi.advanceTimersByTime(80))
+
+    setHeight(500)
+    update('另一个会话', 'done', 'quantized-other-conversation')
+    flushStreamingFollow()
+    expect(scroller.scrollTop).toBe(300)
+
+    setHeight(503)
+    update('另一个会话的新回复', 'streaming', 'quantized-other-conversation')
+    flushStreamingFollow()
+    expect(scroller.scrollTop).toBe(303)
   })
 
   test('does not follow streaming content after the user scrolls upward near the bottom', () => {

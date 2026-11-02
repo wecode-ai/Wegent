@@ -27,6 +27,7 @@
     "@types/archiver": "8.0.0",
     "@types/node": "24.13.3",
     "@types/semver": "7.8.0",
+    "@types/yauzl": "3.4.0",
     "electron": "43.0.0",
     "electron-builder": "26.15.3",
     "typescript": "~6.0.2",
@@ -40,6 +41,7 @@
     "socket.io-client": "4.8.3",
     "systeminformation": "5.33.15",
     "tar": "7.5.22",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "yauzl": "3.4.0"
   }
 }

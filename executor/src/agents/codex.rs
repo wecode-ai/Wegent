@@ -168,6 +168,7 @@ pub(crate) use home::{
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
+mod inline_visualization;
 mod local_connector_auth;
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
@@ -3788,6 +3789,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         } else {
             ""
         },
+        inline_visualization::INSTRUCTIONS,
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
         crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]

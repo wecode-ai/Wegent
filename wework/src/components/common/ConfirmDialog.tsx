@@ -13,6 +13,7 @@ interface ConfirmDialogProps {
   cancelTestId?: string
   destructive?: boolean
   pending?: boolean
+  confirmDisabled?: boolean
   onClose: () => void
   onConfirm: () => void
 }
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   cancelTestId,
   destructive = false,
   pending = false,
+  confirmDisabled = false,
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -74,7 +76,7 @@ export function ConfirmDialog({
           <button
             type="button"
             data-testid={confirmTestId}
-            disabled={pending}
+            disabled={pending || confirmDisabled}
             onClick={onConfirm}
             className={
               destructive

@@ -15,6 +15,13 @@ const execute = promisify(execFile)
 const roots = []
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
+test('ships the Python bootstrap extractor with the maintained ZIP reader', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  expect(manifest.dependencies['extract-zip']).toBe(require('extract-zip/package.json').version)
+  const extractorRequire = createRequire(require.resolve('extract-zip/package.json'))
+  expect(extractorRequire('yauzl/package.json').version).toBe('3.4.0')
+})
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })

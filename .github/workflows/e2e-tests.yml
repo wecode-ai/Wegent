@@ -1227,6 +1227,7 @@ jobs:
           retention-days: 7
 
       - name: Run DingTalk OAuth import and authorization E2E
+        id: dingtalk_oauth_e2e
         if: matrix.shardIndex == 1
         timeout-minutes: 10
         working-directory: ./backend
@@ -1248,7 +1249,7 @@ jobs:
             --junitxml=reports/dingtalk-oauth-e2e.xml
 
       - name: Upload DingTalk OAuth E2E results
-        if: always() && matrix.shardIndex == 1
+        if: always() && matrix.shardIndex == 1 && steps.dingtalk_oauth_e2e.outcome != 'skipped' && steps.dingtalk_oauth_e2e.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dingtalk-oauth-e2e-results

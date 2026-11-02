@@ -50,6 +50,8 @@ export class FakeWebContents extends EventEmitter {
   private static nextId = 1
   readonly id = FakeWebContents.nextId++
   readonly debugger = {
+    on: vi.fn(),
+    off: vi.fn(),
     attach: vi.fn(),
     detach: vi.fn(),
     isAttached: vi.fn(() => false),

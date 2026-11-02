@@ -5182,9 +5182,9 @@ fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
         "WEWORK_PYTHON_RUNTIME_URL",
         "http://127.0.0.1:1234/runtime/python/ensure",
     );
-    assert!(
-        codex_thread_developer_instructions("", "").contains(crate::plugin_python::INSTRUCTIONS)
-    );
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(crate::plugin_python::INSTRUCTIONS));
+    assert!(instructions.contains(inline_visualization::INSTRUCTIONS));
     assert!(crate::agents::build_claude_command(&request, "claude")
         .args()
         .iter()
