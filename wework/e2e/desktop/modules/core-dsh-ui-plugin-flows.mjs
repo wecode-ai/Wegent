@@ -505,9 +505,20 @@ async function installDemoPlugin({ control, pluginSource, rendererOrigin, restar
 
 async function verifyInternalTelemetryRecovery({ control, rendererOrigin, restartDesktopApp }) {
   for (const session of ['initial restart', 'second restart']) {
+    const telemetryRequestCount = control.telemetryRequestCount()
     await restartDesktopApp()
     await dismissCodexHomeInitializer(control)
     rendererOrigin = await control.command('getLocationOrigin', 'body')
+    await control.awaitTelemetryEventAfter(
+      'app_startup_attempted',
+      telemetryRequestCount,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    await control.awaitTelemetryEventAfter(
+      'app_startup_succeeded',
+      telemetryRequestCount,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
     await assertTelemetryRecoveryForSession(control, session)
   }
   return rendererOrigin
@@ -558,7 +569,7 @@ async function assertTelemetryRecoveryForSession(control, session) {
 
 async function installTelemetrySinkFixture(control) {
   await control.command('installDshTelemetrySinkFixture', 'body', {
-    value: JSON.stringify({ id: TELEMETRY_RECOVERY_SINK, delayMs: 2_000 }),
+    value: JSON.stringify({ id: TELEMETRY_RECOVERY_SINK, delayMs: 1_000 }),
   })
 }
 
