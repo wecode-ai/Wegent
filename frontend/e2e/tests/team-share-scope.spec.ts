@@ -185,29 +185,30 @@ async function openUserPage(browser: Browser, token: string): Promise<Page> {
   return context.newPage()
 }
 
-async function openChatTeamEditor(page: Page, teamId: number): Promise<Locator> {
-  await page.goto(`/chat?teamId=${teamId}`)
-  const badge = page.getByTestId('selected-team-badge').first()
-  await expect(badge).toBeVisible({ timeout: 20000 })
-  // The badge sits inside a tooltip trigger; pointer clicks are intercepted by
-  // the tooltip overlay, while the badge itself is keyboard activatable.
-  await badge.focus()
-  await badge.press('Enter')
+// The quick create dialog is the chat entry that renders the agent editor
+// without preloading any writable group list.
+async function openQuickCreateDialog(page: Page): Promise<Locator> {
+  await page.goto('/chat', { waitUntil: 'domcontentloaded' })
+  const trigger = page.getByTestId('quick-create-agent').first()
+  await expect(trigger).toBeVisible({ timeout: 30000 })
+  await trigger.click()
   const dialog = page.getByTestId('team-edit-dialog')
   await expect(dialog).toBeVisible({ timeout: 15000 })
   return dialog
 }
 
-async function readGroupBindings(api: ApiClient, teamId: number): Promise<string[]> {
-  const response = await api.get<{ group_names: string[] }>(
-    `/api/resource-library/agents/${teamId}/bindings`
-  )
+async function findCreatedTeam(api: ApiClient, groupName: string, displayName: string) {
+  const response = await api.get<{
+    items: Array<{ id: number; name: string; displayName?: string; namespace: string }>
+  }>(`/api/teams?${new URLSearchParams({ scope: 'group', group_name: groupName })}`)
   expect(response.status, JSON.stringify(response.data)).toBe(200)
-  return response.data?.group_names ?? []
+  return (response.data?.items ?? []).find(
+    team => team.displayName === displayName || team.name === displayName
+  )
 }
 
 test.describe('Agent share scope', () => {
-  test('developer binds an unlisted group from the chat editor and keeps it after reload', async ({
+  test('developer can pick a group from the chat create dialog and the binding is kept', async ({
     browser,
     request,
   }) => {
@@ -215,31 +216,34 @@ test.describe('Agent share scope', () => {
     const fixture = await createShareScopeFixture(request, prefix)
     const login = await fixture.developerApi.login(REGULAR_USER.username, REGULAR_USER.password, 1)
     const page = await openUserPage(browser, login.data!.access_token)
+    const agentDisplayName = `${prefix} developer agent`
 
     try {
-      const dialog = await openChatTeamEditor(page, fixture.groupTeamId)
+      const dialog = await openQuickCreateDialog(page)
+      await dialog.getByTestId('team-display-name-input').fill(agentDisplayName)
       await dialog.getByTestId('capability-scope-team').click()
 
       const groupOption = dialog.getByTestId(`capability-scope-group-${fixture.groupName}`)
       await expect(groupOption).toBeVisible({ timeout: 15000 })
       await groupOption.click()
       await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
+      await expect(dialog).toBeHidden({ timeout: 30000 })
 
       await expect
-        .poll(() => readGroupBindings(fixture.developerApi, fixture.groupTeamId), {
-          timeout: 20000,
-        })
-        .toContain(fixture.groupName)
+        .poll(
+          async () =>
+            (await findCreatedTeam(fixture.developerApi, fixture.groupName, agentDisplayName))
+              ?.namespace ?? null,
+          { timeout: 30000 }
+        )
+        .toBe(fixture.groupName)
 
       await page.reload()
-      const reopened = await openChatTeamEditor(page, fixture.groupTeamId)
-      await expect(reopened.getByTestId('capability-scope-team')).toHaveAttribute(
-        'aria-pressed',
-        'true'
+      const reopened = await openQuickCreateDialog(page)
+      await reopened.getByTestId('capability-scope-team').click()
+      await expect(reopened.getByTestId(`capability-scope-group-${fixture.groupName}`)).toBeVisible(
+        { timeout: 15000 }
       )
-      await expect(
-        reopened.getByTestId(`capability-scope-group-${fixture.groupName}`)
-      ).toBeChecked()
     } finally {
       await page.context().close()
       await fixture.cleanup()
@@ -253,9 +257,11 @@ test.describe('Agent share scope', () => {
     const prefix = `e2e-share-scope-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const fixture = await createShareScopeFixture(request, prefix)
     const page = await openUserPage(browser, fixture.reporterToken)
+    const agentDisplayName = `${prefix} reporter agent`
 
     try {
-      const dialog = await openChatTeamEditor(page, fixture.reporterTeamId)
+      const dialog = await openQuickCreateDialog(page)
+      await dialog.getByTestId('team-display-name-input').fill(agentDisplayName)
       await dialog.getByTestId('capability-scope-team').click()
 
       await expect(dialog.getByTestId('capability-scope-groups')).toBeVisible({ timeout: 15000 })
@@ -269,7 +275,9 @@ test.describe('Agent share scope', () => {
           .first()
       ).toBeVisible({ timeout: 15000 })
 
-      expect(await readGroupBindings(fixture.reporterApi, fixture.reporterTeamId)).toEqual([])
+      expect(
+        await findCreatedTeam(fixture.reporterApi, fixture.groupName, agentDisplayName)
+      ).toBeUndefined()
     } finally {
       await page.context().close()
       await fixture.cleanup()
