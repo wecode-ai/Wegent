@@ -17,7 +17,9 @@ import {
 
 const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
-const TELEMETRY_RECOVERY_SINK = 'wework-e2e-telemetry-recovery-sink'
+const PLUGIN_RPC_PATH = '/wework/plugins/v1/rpc'
+const TELEMETRY_RECOVERY_PLUGIN_ID = 'wework-e2e-internal-telemetry'
+const TELEMETRY_RECOVERY_PLUGIN_PACKAGE = '@wegent/dsh-e2e-internal-telemetry'
 const UI_PLUGINS = [
   {
     name: '@wegent/dsh-conversation-export',
@@ -235,6 +237,7 @@ export async function verifyCoreDshUiPluginComposition({
     control,
     rendererOrigin,
     restartDesktopApp,
+    resultDir,
   })
 
   for (const plugin of UI_PLUGINS.filter(
@@ -503,7 +506,24 @@ async function installDemoPlugin({ control, pluginSource, rendererOrigin, restar
   return control.command('getLocationOrigin', 'body')
 }
 
-async function verifyInternalTelemetryRecovery({ control, rendererOrigin, restartDesktopApp }) {
+async function verifyInternalTelemetryRecovery({
+  control,
+  rendererOrigin,
+  restartDesktopApp,
+  resultDir,
+}) {
+  const pluginRoot = await createDelayedTelemetrySinkPlugin(resultDir)
+  const installed = await invokeCoreDshPluginCapability(
+    control,
+    rendererOrigin,
+    'runtime.installCoreDshPlugin',
+    { spec: `file:${pluginRoot}` }
+  )
+  assert.ok(
+    installed.some(plugin => plugin.name === TELEMETRY_RECOVERY_PLUGIN_PACKAGE && plugin.enabled),
+    'The delayed internal telemetry E2E plugin was not enabled after install'
+  )
+
   for (const session of ['initial restart', 'second restart']) {
     const telemetryRequestCount = control.telemetryRequestCount()
     await restartDesktopApp()
@@ -519,18 +539,28 @@ async function verifyInternalTelemetryRecovery({ control, rendererOrigin, restar
       telemetryRequestCount,
       WORKBENCH_READY_TIMEOUT_MS
     )
-    await assertTelemetryRecoveryForSession(control, session)
+    await assertTelemetryRecoveryForSession(control, rendererOrigin, session)
   }
   return rendererOrigin
 }
 
-async function assertTelemetryRecoveryForSession(control, session) {
-  await installTelemetrySinkFixture(control)
-  const recovered = await waitForTelemetryFacts(
-    control,
-    facts =>
-      facts.filter(fact => fact.name === 'app_startup_attempted').length === 1 &&
-      facts.filter(fact => fact.name === 'app_startup_succeeded').length === 1
+async function assertTelemetryRecoveryForSession(control, origin, session) {
+  const recovered = await waitForTelemetryReceiver(
+    origin,
+    status =>
+      status.readyDelayMs !== null &&
+      status.facts.filter(fact => fact.name === 'app_startup_attempted').length === 1 &&
+      status.facts.filter(fact => fact.name === 'app_startup_succeeded').length === 1
+  )
+  assert.ok(
+    typeof recovered.clientMountedAt === 'number' &&
+      typeof recovered.registeredAt === 'number' &&
+      recovered.clientMountedAt < recovered.registeredAt,
+    `The telemetry client mounted after its backend registered; plugin_not_found recovery was not exercised after ${session}`
+  )
+  assert.ok(
+    typeof recovered.readyDelayMs === 'number' && recovered.readyDelayMs >= 100,
+    `The telemetry client did not retry its delayed backend registration after ${session}`
   )
   const startupFacts = recovered.facts.filter(fact => String(fact.name).startsWith('app_startup_'))
   assert.equal(
@@ -538,12 +568,6 @@ async function assertTelemetryRecoveryForSession(control, session) {
     2,
     `Delayed telemetry registration duplicated startup events after ${session}`
   )
-  for (const fact of startupFacts) {
-    assert.ok(
-      Date.parse(String(fact.occurredAt)) <= Date.parse(recovered.registeredAt),
-      `The startup fact ${fact.name} was delivered after the sink registered; delayed recovery was not exercised after ${session}`
-    )
-  }
 
   const previousPluginCenterEvents = recovered.facts.filter(
     fact => fact.name === 'plugin_center_opened'
@@ -553,10 +577,10 @@ async function assertTelemetryRecoveryForSession(control, session) {
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const received = await waitForTelemetryFacts(
-    control,
-    facts =>
-      facts.filter(fact => fact.name === 'plugin_center_opened').length ===
+  const received = await waitForTelemetryReceiver(
+    origin,
+    status =>
+      status.facts.filter(fact => fact.name === 'plugin_center_opened').length ===
       previousPluginCenterEvents + 1
   )
   const pluginCenterFacts = received.facts.filter(fact => fact.name === 'plugin_center_opened')
@@ -567,29 +591,91 @@ async function assertTelemetryRecoveryForSession(control, session) {
   )
 }
 
-async function installTelemetrySinkFixture(control) {
-  await control.command('installDshTelemetrySinkFixture', 'body', {
-    value: JSON.stringify({ id: TELEMETRY_RECOVERY_SINK, delayMs: 1_000 }),
-  })
-}
-
-async function waitForTelemetryFacts(control, predicate) {
+async function waitForTelemetryReceiver(origin, predicate) {
   const startedAt = Date.now()
-  let fixture = null
+  let status = { facts: [], readyDelayMs: null }
+  let lastError = null
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-    const value = await control.command('readDshTelemetrySinkFixture', 'body')
-    fixture = value ? JSON.parse(value) : null
-    assert.equal(
-      fixture?.error ?? null,
-      null,
-      `The delayed telemetry sink fixture failed to register: ${fixture?.error}`
-    )
-    if (fixture?.registered && predicate(fixture.facts)) return fixture
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    try {
+      status = await invokePluginBackend(origin, TELEMETRY_RECOVERY_PLUGIN_ID, 'status')
+      lastError = null
+      if (Array.isArray(status.facts) && predicate(status)) return status
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   assert.fail(
-    `Delayed telemetry sink did not receive the expected facts: ${JSON.stringify(fixture)}`
+    `Delayed telemetry sink did not receive the expected facts: ${JSON.stringify(status)}${lastError ? ` (last error: ${lastError})` : ''}`
   )
+}
+
+async function invokePluginBackend(origin, plugin, method, params = {}) {
+  const response = await fetch(`${origin}${PLUGIN_RPC_PATH}`, {
+    signal: AbortSignal.timeout(WORKBENCH_READY_TIMEOUT_MS),
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ method, params, plugin }),
+  })
+  const payload = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `Plugin backend ${plugin}.${method} failed: ${payload.error?.message ?? response.status}`
+  )
+  assert.equal(payload.ok, true, `Plugin backend ${plugin}.${method} returned an error`)
+  return payload.result
+}
+
+async function createDelayedTelemetrySinkPlugin(resultDir) {
+  const pluginRoot = join(resultDir, 'delayed-internal-telemetry')
+  await mkdir(pluginRoot, { recursive: true })
+  await writeFile(
+    join(pluginRoot, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: TELEMETRY_RECOVERY_PLUGIN_PACKAGE,
+        displayName: 'Wework E2E internal telemetry',
+        description: 'Delayed telemetry sink fixture for desktop recovery coverage.',
+        version: '1.0.0',
+        private: true,
+        type: 'module',
+        main: 'index.js',
+        exports: {
+          '.': './index.js',
+          './client': './client.js',
+          './package.json': './package.json',
+        },
+        dsh: {
+          bundle: { patch: './cordis.patch.yml' },
+          client: {
+            inject: ['@deepseek-ai/dsh-client-ui-renderer', '@wegent/dsh-app-wework'],
+            platform: 'web',
+          },
+        },
+        files: ['client.js', 'cordis.patch.yml', 'index.js'],
+        peerDependencies: {
+          '@deepseek-ai/cordis': '~4.0.4',
+          '@deepseek-ai/dsh-client-ui-renderer': '0.2.0-rc.2',
+        },
+      },
+      null,
+      2
+    )}\n`
+  )
+  await writeFile(
+    join(pluginRoot, 'cordis.patch.yml'),
+    `- insert:\n    - id: ${TELEMETRY_RECOVERY_PLUGIN_ID}\n      name: '${TELEMETRY_RECOVERY_PLUGIN_PACKAGE}'\n`
+  )
+  await writeFile(
+    join(pluginRoot, 'index.js'),
+    `export const name = '${TELEMETRY_RECOVERY_PLUGIN_ID}'\nexport const inject = ['weworkPluginRuntime']\n\nexport function apply(ctx) {\n  const facts = []\n  const startedAt = Date.now()\n  let registeredAt = null\n  let clientMountedAt = null\n  let readyDelayMs = null\n  const timer = setTimeout(() => {\n    registeredAt = Date.now()\n    ctx.weworkPluginRuntime.register(ctx, {\n      id: '${TELEMETRY_RECOVERY_PLUGIN_ID}',\n      methods: {\n        ready: () => ({ enabled: true }),\n        accept: ({ envelope }) => {\n          facts.push(envelope)\n          return { accepted: facts.length }\n        },\n        clientState: ({ readyDelayMs: delay, clientMountedAt: mountedAt }) => {\n          readyDelayMs = delay\n          clientMountedAt = mountedAt\n          return { accepted: true }\n        },\n        status: () => ({ facts, readyDelayMs, clientMountedAt, registeredAt, startedAt }),\n      },\n    })\n  }, 10_000)\n  ctx.effect(() => () => clearTimeout(timer), '${TELEMETRY_RECOVERY_PLUGIN_ID}: delayed backend')\n}\n`
+  )
+  await writeFile(
+    join(pluginRoot, 'client.js'),
+    `window.__ModuleLoader__.load({\n  id: '${TELEMETRY_RECOVERY_PLUGIN_ID}',\n  factory: () => ({\n    inject: ['wework'],\n    apply(ctx) {\n      const backend = ctx.wework.backend.scope('${TELEMETRY_RECOVERY_PLUGIN_ID}')\n      ctx.effect(() => {\n        const clientMountedAt = Date.now()\n        let unregister = () => {}\n        void backend.request('ready', {}).then(ready => {\n          if (!ready?.enabled) return\n          const readyDelayMs = Date.now() - clientMountedAt\n          unregister = ctx.wework.telemetry.sinks.register(ctx, {\n            id: '${TELEMETRY_RECOVERY_PLUGIN_ID}',\n            protocol: 'telemetry-sink/v1',\n            accept: envelope => backend.request('accept', { envelope }),\n          })\n          void backend.request('clientState', { readyDelayMs, clientMountedAt })\n        })\n        return () => unregister()\n      }, '${TELEMETRY_RECOVERY_PLUGIN_ID}: register sink')\n    },\n  }),\n})\n`
+  )
+  return pluginRoot
 }
 
 async function assertDemoPluginVisible(control) {

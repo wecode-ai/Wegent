@@ -1,8 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createTelemetryDispatcher } from './dispatcher'
 import type { WeworkTelemetryFact } from './facts'
 
 const flushPromises = () => new Promise<void>(resolve => setTimeout(resolve, 0))
+
+beforeEach(() => {
+  vi.unstubAllEnvs()
+})
 
 function smartAppFact(name: WeworkTelemetryFact['name']): WeworkTelemetryFact {
   return {
@@ -16,6 +20,29 @@ function smartAppFact(name: WeworkTelemetryFact['name']): WeworkTelemetryFact {
         key: 'research',
         name: 'Research',
         source: 'market',
+        version: '1.0.0',
+      },
+    },
+  } as WeworkTelemetryFact
+}
+
+function pluginInvocationFact(durationMs: number | undefined): WeworkTelemetryFact {
+  return {
+    name: 'plugin_invocation_succeeded',
+    occurredAt: '2026-09-21',
+    properties: {
+      capability_type: 'mcp',
+      execution_surface: 'task',
+      executor_location: 'local',
+      plugin_distribution: 'personal',
+      plugin_id: 'personal/private-plugin',
+    },
+    context: {
+      pluginInvocation: {
+        ...(durationMs === undefined ? {} : { durationMs }),
+        marketplace: 'private-marketplace',
+        pluginKey: 'private-plugin',
+        toolName: 'private_server.search',
         version: '1.0.0',
       },
     },
@@ -106,6 +133,10 @@ describe('telemetry dispatcher', () => {
   })
 
   test('flushes full telemetry envelopes to sinks that register after startup', async () => {
+    vi.stubEnv(
+      'VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS',
+      '["smart_app_key","smart_app_name","smart_app_version","smart_app_source"]'
+    )
     const publicAccept = vi.fn()
     const internalAccept = vi.fn()
     let sinks: Array<{ id: string; accept: (fact: unknown) => void }> = []
@@ -132,6 +163,77 @@ describe('telemetry dispatcher', () => {
         name: 'smart_app_opened',
         context: expect.objectContaining({ smartApp: expect.any(Object) }),
         occurredAt: '2026-09-09T00:00:00.000Z',
+      })
+    )
+  })
+
+  test('delivers no plugin identity to sinks under the default field policy', async () => {
+    const internalAccept = vi.fn()
+    const dispatcher = createTelemetryDispatcher(vi.fn(), {
+      internalSinks: () => [{ id: 'internal', accept: internalAccept }],
+      isInternalDeliveryEnabled: () => true,
+    })
+
+    dispatcher.publish(pluginInvocationFact(undefined))
+    await flushPromises()
+
+    expect(internalAccept).toHaveBeenCalledWith({
+      name: 'plugin_invocation_succeeded',
+      properties: {
+        capability_type: 'mcp',
+        execution_surface: 'task',
+        executor_location: 'local',
+        plugin_distribution: 'personal',
+        plugin_id: 'personal/private-plugin',
+      },
+      occurredAt: '2026-09-21',
+      eventId: expect.any(String),
+    })
+    const envelope = internalAccept.mock.calls[0][0] as Record<string, unknown>
+    expect(envelope).not.toHaveProperty('context')
+    expect(JSON.stringify(envelope)).not.toMatch(
+      /private-marketplace|private_server\.search|1\.0\.0/
+    )
+  })
+
+  test('delivers only the context fields selected by the collection policy', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', '["plugin_key","tool_duration_ms"]')
+    const internalAccept = vi.fn()
+    const dispatcher = createTelemetryDispatcher(vi.fn(), {
+      internalSinks: () => [{ id: 'internal', accept: internalAccept }],
+      isInternalDeliveryEnabled: () => true,
+    })
+
+    dispatcher.publish(pluginInvocationFact(42))
+    await flushPromises()
+
+    expect(internalAccept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: { pluginInvocation: { pluginKey: 'private-plugin', durationMs: 42 } },
+      })
+    )
+    expect(JSON.stringify(internalAccept.mock.calls[0][0])).not.toMatch(
+      /private-marketplace|private_server\.search|1\.0\.0/
+    )
+  })
+
+  test('applies the field policy when queued facts flush after registration', async () => {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', '["tool_name"]')
+    const internalAccept = vi.fn()
+    let sinks: Array<{ id: string; accept: (fact: unknown) => void }> = []
+    const dispatcher = createTelemetryDispatcher(vi.fn(), {
+      internalSinks: () => sinks,
+      isInternalDeliveryEnabled: () => true,
+    })
+
+    dispatcher.publish(pluginInvocationFact(undefined))
+    sinks = [{ id: 'delayed', accept: internalAccept }]
+    dispatcher.flushInternalSinks()
+    await flushPromises()
+
+    expect(internalAccept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: { pluginInvocation: { toolName: 'private_server.search' } },
       })
     )
   })
