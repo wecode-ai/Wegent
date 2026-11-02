@@ -8,6 +8,7 @@ import {
 import { WeworkSchemeBridge } from './WeworkSchemeBridge'
 import { openWeworkScheme } from './schemeEvents'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 const {
   openTab,
@@ -272,6 +273,42 @@ describe('Wework scheme bridge', () => {
     await waitFor(() => expect(warn).toHaveBeenCalled())
     expect(openTab).not.toHaveBeenCalled()
     expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
+  it('keeps an app deep link pending until the DSH app slot loads', async () => {
+    const runtime = window.__WEWORK_DSH_UI__!
+    const originalGetEntries = runtime.getEntries
+    const originalSubscribe = runtime.subscribe
+    let notify = () => {}
+    runtime.getEntries = slotName =>
+      slotName === WEWORK_DSH_SLOTS.app ? [] : originalGetEntries(slotName)
+    runtime.subscribe = (slotName, listener) => {
+      if (slotName === WEWORK_DSH_SLOTS.app) notify = listener
+      return () => {}
+    }
+    try {
+      render(
+        <CloudConnectionContext.Provider
+          value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+        >
+          <WeworkSchemeBridge />
+        </CloudConnectionContext.Provider>
+      )
+      act(() => {
+        openWeworkScheme('wework://apps/wegent')
+      })
+      await waitFor(() => expect(openTab).not.toHaveBeenCalled())
+
+      runtime.getEntries = originalGetEntries
+      act(() => notify())
+
+      await waitFor(() =>
+        expect(openTab).toHaveBeenCalledWith('agent', { contentRoute: '/app/wegent' })
+      )
+    } finally {
+      runtime.getEntries = originalGetEntries
+      runtime.subscribe = originalSubscribe
+    }
   })
 
   it('opens an installed Smart app returned by its marketplace identity', async () => {

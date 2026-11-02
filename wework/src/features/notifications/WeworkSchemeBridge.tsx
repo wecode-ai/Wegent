@@ -10,7 +10,8 @@ import { inferWorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
 import { INTERACTIONS_TAB_ID } from './RuntimeInteractionsContext'
 import { useTranslation } from '@/hooks/useTranslation'
-import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
+import { getDshApps, resolveDshApp } from '@/features/dsh-runtime/dshApps'
+import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 
 function openAuxiliaryRoute(
@@ -37,6 +38,7 @@ export function WeworkSchemeBridge() {
   const connectionRef = useRef(connection)
   const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
+  const drainSchemesRef = useRef<() => void>(() => {})
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
     connectionRef.current = connection
@@ -73,6 +75,10 @@ export function WeworkSchemeBridge() {
       if (destination.kind === 'app') {
         const app = resolveDshApp(destination.appId)
         if (!app) {
+          if (getDshApps().length === 0) {
+            pendingUrls.current.add(url)
+            return false
+          }
           console.warn('[Wework] Rejected an unregistered DSH app deep link')
           return true
         }
@@ -130,13 +136,22 @@ export function WeworkSchemeBridge() {
     },
     [deferForCloud, t]
   )
-
-  useEffect(() => {
-    if (!connection?.isConnected || !connection.token) return
+  const retryPendingSchemes = useCallback(() => {
     const pending = [...pendingUrls.current]
     pendingUrls.current.clear()
     pending.forEach(url => void open(url))
-  }, [connection?.isConnected, connection?.token, open])
+    drainSchemesRef.current()
+  }, [open])
+
+  useEffect(() => {
+    if (!connection?.isConnected || !connection.token) return
+    retryPendingSchemes()
+  }, [connection?.isConnected, connection?.token, retryPendingSchemes])
+
+  useEffect(
+    () => subscribeDshSlot(WEWORK_DSH_SLOTS.app, retryPendingSchemes),
+    [retryPendingSchemes]
+  )
 
   useEffect(() => {
     const onOpen = (event: Event) => void open((event as CustomEvent<string>).detail)
@@ -187,9 +202,11 @@ export function WeworkSchemeBridge() {
     const unsubscribe = subscribeDesktopHostEvents(event => {
       if (event.type === 'wework-scheme-requested') void drain()
     })
+    drainSchemesRef.current = () => void drain()
     void drain()
     return () => {
       disposed = true
+      drainSchemesRef.current = () => {}
       unsubscribe()
     }
   }, [open, connection?.isConnected, connection?.token])

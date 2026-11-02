@@ -288,10 +288,10 @@ export function SmartAppsMarketplacePage({
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const [targetInstallItem, setTargetInstallItem] = useState<SmartAppMarketplaceItem | null>(null)
   const [targetLookupError, setTargetLookupError] = useState<string | null>(null)
+  const [targetLookupPending, setTargetLookupPending] = useState(false)
   const [targetLookupRevision, setTargetLookupRevision] = useState(0)
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
   const targetLookupRequestRef = useRef(0)
-  const targetLookupInFlightRef = useRef<number | null>(null)
   const refreshRequestRef = useRef(0)
   const activeModeRef = useRef(mode)
 
@@ -380,6 +380,7 @@ export function SmartAppsMarketplacePage({
     queueMicrotask(() => {
       setTargetInstallItem(null)
       setTargetLookupError(null)
+      setTargetLookupPending(false)
     })
   }, [targetSmartAppId])
   useEffect(() => {
@@ -391,37 +392,35 @@ export function SmartAppsMarketplacePage({
       const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
       handledTargetSmartAppIdRef.current = targetSmartAppId
       targetLookupRequestRef.current += 1
-      targetLookupInFlightRef.current = null
       queueMicrotask(() => {
         setTargetInstallItem(null)
         setTargetLookupError(null)
+        setTargetLookupPending(false)
         if (!shouldOpen) return
         if (installation.state === 'running') openInstalledApp(installation)
         else startInstalledApp(installation)
       })
       return
     }
-    if (
-      handledTargetSmartAppIdRef.current === targetSmartAppId ||
-      targetLookupInFlightRef.current === targetSmartAppId
-    ) {
-      return
-    }
+    if (handledTargetSmartAppIdRef.current === targetSmartAppId) return
     if (!api || loading) return
     const item = items.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
       handledTargetSmartAppIdRef.current = targetSmartAppId
       targetLookupRequestRef.current += 1
-      targetLookupInFlightRef.current = null
       queueMicrotask(() => {
         setTargetInstallItem(item)
         setTargetLookupError(null)
+        setTargetLookupPending(false)
         setSelected(item)
       })
       return
     }
     const requestId = ++targetLookupRequestRef.current
-    targetLookupInFlightRef.current = targetSmartAppId
+    queueMicrotask(() => {
+      setTargetLookupPending(true)
+      setTargetLookupError(null)
+    })
     let cancelled = false
     void api
       .getItem(targetSmartAppId)
@@ -434,7 +433,6 @@ export function SmartAppsMarketplacePage({
       })
       .catch(error => {
         if (cancelled || requestId !== targetLookupRequestRef.current) return
-        targetLookupInFlightRef.current = null
         setTargetInstallItem(null)
         setTargetLookupError(
           getSmartAppErrorMessage(
@@ -449,14 +447,11 @@ export function SmartAppsMarketplacePage({
       })
       .finally(() => {
         if (requestId === targetLookupRequestRef.current) {
-          targetLookupInFlightRef.current = null
+          queueMicrotask(() => setTargetLookupPending(false))
         }
       })
     return () => {
       cancelled = true
-      if (targetLookupInFlightRef.current === targetSmartAppId) {
-        targetLookupInFlightRef.current = null
-      }
     }
   }, [
     activeInstallations,
@@ -1223,6 +1218,7 @@ export function SmartAppsMarketplacePage({
             variant="secondary"
             className="min-h-11 shrink-0 sm:min-h-9"
             data-testid="smart-app-deep-link-retry"
+            disabled={targetLookupPending}
             onClick={() => setTargetLookupRevision(revision => revision + 1)}
           >
             {t('workbench.retry', '重试')}
@@ -1305,7 +1301,7 @@ export function SmartAppsMarketplacePage({
             </Button>
           }
         />
-      ) : loading ? (
+      ) : loading || targetLookupPending ? (
         <div className="flex min-h-72 items-center justify-center text-text-muted">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           {t('workbench.smart_apps_loading', '正在加载')}
