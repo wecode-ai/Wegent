@@ -11,6 +11,7 @@ test('keeps a new member after editing its prompt, saving the agent, and reloadi
   expect((await api.login(ADMIN_USER.username, ADMIN_USER.password, 1)).status).toBe(200)
   const bots: Array<{ id: number; name: string }> = []
   let teamId: number | undefined
+  const teamName = `${testPrefix}-team`
   const updatedPrompt = 'Diagnose frontend problems using concrete evidence.'
 
   try {
@@ -28,7 +29,7 @@ test('keeps a new member after editing its prompt, saving the agent, and reloadi
     }
     const [leader, member] = bots
     const team = await api.createTeam({
-      name: `${testPrefix}-team`,
+      name: teamName,
       namespace: 'default',
       workflow: { mode: 'pipeline', leader_bot_id: leader.id },
       bots: [{ bot_id: leader.id, role: 'leader', bot_prompt: '' }],
@@ -89,7 +90,12 @@ test('keeps a new member after editing its prompt, saving the agent, and reloadi
     expect(persistedTeam.status).toBe(200)
     expect(persistedTeam.data?.bots.map(bot => bot.bot_id)).toEqual([leader.id, member.id])
   } finally {
-    if (teamId !== undefined) expect((await api.delete(`/api/teams/${teamId}`)).status).toBe(200)
+    if (teamId !== undefined) {
+      const response = await api.delete(
+        `/api/teams/${teamId}?${new URLSearchParams({ force: 'true', confirm_name: teamName })}`
+      )
+      expect(response.status).toBe(200)
+    }
     for (const bot of bots) expect((await api.delete(`/api/bots/${bot.id}`)).status).toBe(200)
   }
 })
