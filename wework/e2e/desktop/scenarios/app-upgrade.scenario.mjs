@@ -13,6 +13,7 @@ import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { acquireProcessLock } from '../../../scripts/lib/process-lock.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
@@ -220,6 +221,10 @@ export async function createDesktopScenario(options) {
     }
     compositions.push({ version, ...actual, coreDsh: components.coreDsh })
     await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
+    if (process.platform === 'darwin') {
+      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+      await assertMacosStatusItem(control, pid, resultDir, version)
+    }
   }
   const about = async () => {
     await control.command('clickWhenEnabled', '[data-testid="settings-button"]')

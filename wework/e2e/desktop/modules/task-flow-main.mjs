@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1603,11 +1604,16 @@ async function main() {
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
-    const ready = await withTimeout(
-      control.awaitReady(),
-      DESKTOP_READY_TIMEOUT_MS,
-      'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-    )
+    const readiness = control.awaitReady()
+    const ready = desktopScenario?.usesColdPackageStartup
+      ? await waitForColdPackageStartup(readiness, appLogPath, {
+          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+        })
+      : await withTimeout(
+          readiness,
+          DESKTOP_READY_TIMEOUT_MS,
+          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+        )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,

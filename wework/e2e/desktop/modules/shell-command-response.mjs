@@ -7,11 +7,6 @@ import {
   selectTool,
 } from './response-protocol.mjs'
 
-export function nodeScriptCommand(script) {
-  const encoded = Buffer.from(script, 'utf8').toString('base64')
-  return `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
-}
-
 export function requestAdvertisesShellCommand(request) {
   return (
     requestAdvertisesProgrammaticExec(request) ||

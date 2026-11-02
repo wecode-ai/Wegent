@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { nodeScriptCommand } from '../modules/shell-command-response.mjs'
 
 import { CLOUD_DEVICE_ID, createSingleRootLocalProject } from '../modules/shared.mjs'
 import {
@@ -60,7 +59,8 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
         toolRequested = true
         const seed = `const fs=require('fs'),p=require('path'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||!process.env.WEGENT_BACKEND_TASK_ID)throw Error('Missing associated Backend Task');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,'report.md'),${JSON.stringify(CONTENT)});`
         const declare = `${seed}require('child_process').execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path','report.md'],{cwd:root,stdio:'inherit'});process.stdout.write(['WEWORK_ARTIFACT_DECLARED','report.md'].join(' ')+'\\n');`
-        const command = nodeScriptCommand(declare)
+        const encoded = Buffer.from(declare).toString('base64')
+        const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
         if (requestAdvertisesProgrammaticExec(body)) {
           const tool = selectProgrammaticExec(
             body,
