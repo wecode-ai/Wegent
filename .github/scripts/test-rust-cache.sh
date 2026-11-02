@@ -6,7 +6,7 @@ temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 mkdir -p "$temporary/.github/ci"
 cp "$root/.github/ci/rust-toolchain" "$temporary/.github/ci/"
-ruby -ryaml - "$root" "$temporary/context.sh" <<'RUBY'
+ruby -ryaml -rfileutils - "$root" "$temporary/context.sh" "$temporary" <<'RUBY'
 root, output = ARGV
 action = YAML.load_file(File.join(root, '.github/actions/setup-rust-cache/action.yml'))
 steps = action.fetch('runs').fetch('steps')
@@ -30,6 +30,30 @@ warm_steps = warmup.fetch('jobs').fetch('warm-executor-rust').fetch('steps')
   raise "Missing #{component} compiler warmup" unless warm_steps.any? { |step|
     step['working-directory'] == component && step.fetch('run', '').include?('--no-run') && step.fetch('run', '').include?('cargo clippy')
   }
+end
+fixture = ARGV.fetch(2)
+FileUtils.mkdir_p(File.join(fixture, 'docker/wework-e2e'))
+%w[browser desktop].each do |image|
+  FileUtils.cp(File.join(root, "docker/wework-e2e/#{image}.Dockerfile"), File.join(fixture, "docker/wework-e2e/#{image}.Dockerfile"))
+end
+{'wework-e2e' => 'changes', 'ci-cache-warmup' => 'prepare-wework-desktop-image'}.each do |name, job|
+  definition = YAML.load_file(File.join(root, ".github/workflows/#{name}.yml"))
+  steps = definition.fetch('jobs').fetch(job).fetch('steps')
+  resolver = steps.find { |step| step['id'] == 'image' }.fetch('run')
+  script = File.join(fixture, 'resolve-image.sh')
+  File.write(script, resolver)
+  references = %w[1.99.1 1.99.2].map do |version|
+    File.write(File.join(fixture, '.github/ci/rust-toolchain'), "#{version}\n")
+    result = File.join(fixture, 'image-output')
+    File.write(result, '')
+    raise 'Image resolver failed' unless system({'GITHUB_OUTPUT' => result, 'GITHUB_REPOSITORY_OWNER' => 'example'}, 'bash', script, chdir: fixture)
+    File.readlines(result).find { |line| line.start_with?('desktop-ref=') }
+  end
+  raise "#{name} needlessly invalidates the runtime-only desktop environment on a Rust toolchain change" unless references.uniq.length == 1
+  runtime = steps.find { |step| step['name'] == 'Resolve shared Rust E2E runtimes' }.fetch('env')
+  %w[EXECUTOR_SOURCE_DIGEST BACKEND_RS_SOURCE_DIGEST].each do |key|
+    raise "#{name} must invalidate compiled #{key} artifacts on toolchain changes" unless runtime.fetch(key).include?('.github/ci/rust-toolchain')
+  end
 end
 RUBY
 for component in executor backend-rs; do

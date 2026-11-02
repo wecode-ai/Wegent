@@ -95,8 +95,9 @@ jobs:
       - name: Resolve Wework E2E image
         id: image
         run: |
+          # Rust is compiled by runtime producers, independently of this environment.
           browser_digest="$(sha256sum docker/wework-e2e/browser.Dockerfile | cut -d ' ' -f 1)"
-          desktop_digest="$(cat docker/wework-e2e/desktop.Dockerfile .github/ci/rust-toolchain | sha256sum | cut -d ' ' -f 1)"
+          desktop_digest="$(sha256sum docker/wework-e2e/desktop.Dockerfile | cut -d ' ' -f 1)"
           echo "browser-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:browser-$browser_digest" \
             >> "$GITHUB_OUTPUT"
           echo "desktop-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:desktop-$desktop_digest" \
