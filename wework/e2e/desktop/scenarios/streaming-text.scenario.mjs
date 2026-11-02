@@ -2,6 +2,7 @@ import { createConversationSwitchingChecks } from '../modules/streaming-conversa
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
   MARKDOWN_LINKS_PROMPT,
@@ -277,7 +278,6 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
-      WEGENT_CODEX_STREAM_DEBUG: 'true',
     },
 
     async prepareApp({ appEnvironment, codexHome }) {
@@ -855,6 +855,12 @@ export function createDesktopScenario({
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
       })
+      await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.set',
+        { enabled: true },
+        uiTimeoutMs
+      )
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {

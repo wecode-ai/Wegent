@@ -121,7 +121,6 @@ export function createDesktopScenario(options) {
   })
 
   const scenario = {
-    appEnvironment: { WEGENT_CODEX_STREAM_DEBUG: 'true' },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
@@ -231,6 +230,7 @@ export function createDesktopScenario(options) {
         )
       const goalUser = result =>
         result.messages.find(message => message.role === 'user' && message.content === GOAL)
+      await rpc('runtime.codex.stream_debug.set', { enabled: true })
       try {
         await control.command('click', '[data-testid="new-chat-button"]')
         await createSingleRootLocalProject(control, options.workspacePath, 'output-identity')
