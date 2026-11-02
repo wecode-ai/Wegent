@@ -153,8 +153,7 @@ export class AppUpdateService {
     if (!plan) {
       this.pending = null
       this.pendingUpdate = null
-      this.prepared = null
-      this.readyProgress = null
+      this.clearPreparedRelease()
       if (
         catalog.releases.some(
           r => !r.revoked && compareVersions(r.version, this.options.currentVersion) > 0
@@ -169,19 +168,31 @@ export class AppUpdateService {
       }
       return null
     }
-    if (!matchesRelease(this.pending, plan.next)) {
-      this.prepared = null
-      this.readyProgress = null
+    if (
+      !matchesRelease(this.pending, plan.next) ||
+      (this.prepared && !(await this.profileStillCurrent()))
+    ) {
+      this.clearPreparedRelease()
     }
     this.pending = plan.next
     this.pendingUpdate = {
       currentVersion: this.options.currentVersion,
       version: plan.next.version,
+      readyToInstall: this.prepared !== null,
       body: plan.next.notes,
       targetVersion: plan.targetVersion,
       path: plan.path,
     }
+    this.progress = { ...this.progress, update: this.pendingUpdate }
     return this.pendingUpdate
+  }
+
+  private clearPreparedRelease(): void {
+    this.prepared = null
+    this.readyProgress = null
+    if (this.progress.phase === 'ready') {
+      this.progress = { downloadedBytes: 0, totalBytes: null }
+    }
   }
 
   downloadProgress(): WeworkUpdateDownloadProgress {
@@ -304,7 +315,8 @@ export class AppUpdateService {
       this.progress = { ...this.progress, phase: 'runtime' }
       await this.prepareHostEnvironment(release)
       this.prepared = await store.read(id)
-      this.progress = { ...this.progress, phase: 'ready' }
+      this.pendingUpdate = { ...this.pendingUpdate!, readyToInstall: true }
+      this.progress = { ...this.progress, phase: 'ready', update: this.pendingUpdate }
       this.log({
         event: 'release-prepared',
         version: release.version,

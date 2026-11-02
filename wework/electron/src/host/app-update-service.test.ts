@@ -457,11 +457,25 @@ test('an installation cannot start while a check may change its prepared target'
 
 test('invalidates a prepared package when its declared source identity changes', async () => {
   const { service, catalog } = await readyFixture()
+  expect(await service.check('stable')).toMatchObject({ readyToInstall: true })
   catalog.releases[1].sourceSha = 'd'.repeat(40)
   catalog.edges[0].toSourceSha = catalog.releases[1].sourceSha
 
-  await service.check('stable')
+  expect(await service.check('stable')).toMatchObject({ readyToInstall: false })
 
+  expect(service.downloadProgress().phase).not.toBe('ready')
+  expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
+})
+
+test('checking clears readiness after the prepared plugin profile changes', async () => {
+  const { service, options } = await readyFixture()
+  await writeFile(
+    join(currentCoreProfile(options.dataDirectory), 'package.json'),
+    '{"name":"changed-profile"}'
+  )
+
+  expect(await service.check('stable')).toMatchObject({ readyToInstall: false })
+  expect(service.downloadProgress().phase).not.toBe('ready')
   expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
 })
 

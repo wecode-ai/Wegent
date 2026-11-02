@@ -766,7 +766,11 @@ describe('registerAppUpdateCapabilities', () => {
       }),
     } as unknown as HostCapabilityRouter
     const appUpdates = {
-      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      check: vi.fn(async () => ({
+        currentVersion: '0.2.6',
+        readyToInstall: false,
+        version: '0.2.7',
+      })),
       download: vi.fn(async () => undefined),
       downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
       createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
@@ -784,6 +788,7 @@ describe('registerAppUpdateCapabilities', () => {
       handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
     ).resolves.toEqual({
       currentVersion: '0.2.6',
+      readyToInstall: false,
       version: '0.2.7',
     })
     await handlers.get('appUpdate.download')?.({ channel: 'stable' }, context)

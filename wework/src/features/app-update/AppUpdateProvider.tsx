@@ -266,7 +266,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
 
           setAvailableUpdate(update)
-          if (update && downloadedUpdateVersion === update.version) {
+          if (update?.readyToInstall && downloadedUpdateVersion === update.version) {
             setStatus('available')
             setError(null)
             return { update, error: null }
@@ -462,6 +462,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     resetDownloadedUpdate()
     setAvailableUpdate({
       currentVersion: appVersion ?? __WEWORK_APP_VERSION__,
+      readyToInstall: false,
       version: SIMULATED_UPDATE_VERSION,
       body: SIMULATED_RELEASE_NOTES,
     })

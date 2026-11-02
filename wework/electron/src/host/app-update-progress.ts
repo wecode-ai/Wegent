@@ -27,6 +27,7 @@ export type WeworkUpdateChannel = 'stable' | 'beta'
 export interface WeworkUpdateInfo {
   currentVersion: string
   version: string
+  readyToInstall: boolean
   body?: string
   targetVersion?: string
   path?: string[]

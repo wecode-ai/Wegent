@@ -23,8 +23,13 @@ vi.mock('@/lib/app-updater', () => ({
 }))
 vi.mock('@/hooks/useAppVersion', () => ({ useAppVersion: () => '1.0.1-beta.5' }))
 
-const oldUpdate = { currentVersion: '1.0.1-beta.5', version: '1.0.1-beta.6' }
-const newUpdate = { ...oldUpdate, version: '1.1.0-beta.1', body: 'New release notes' }
+const oldUpdate = { currentVersion: '1.0.1-beta.5', readyToInstall: false, version: '1.0.1-beta.6' }
+const newUpdate = {
+  ...oldUpdate,
+  version: '1.1.0-beta.1',
+  body: 'New release notes',
+  readyToInstall: true,
+}
 
 function renderUpdater() {
   let context!: AppUpdateContextValue
@@ -164,6 +169,29 @@ test('preserves a downloaded version across checks and re-enabling automatic dow
 
   expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
   expect(screen.getByRole('dialog')).toHaveTextContent('v1.1.0-beta.1')
+})
+
+test('clears restart readiness when the host invalidates preparation for the same version', async () => {
+  vi.mocked(checkForWeworkUpdate).mockResolvedValue(newUpdate)
+  const updater = renderUpdater()
+  await act(async () => {
+    await updater().checkNow()
+  })
+  await act(async () => {
+    await updater().installUpdate()
+  })
+  fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
+  vi.mocked(checkForWeworkUpdate).mockResolvedValue({ ...newUpdate, readyToInstall: false })
+
+  await act(async () => {
+    await updater().checkNow()
+  })
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await act(async () => {
+    await updater().installUpdate()
+  })
+  expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(2)
 })
 
 test('coalesced checks cannot replace an active download with an available state', async () => {

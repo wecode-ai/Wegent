@@ -101,6 +101,7 @@ describe('AppUpdateProvider', () => {
     let appUpdate: AppUpdateContextValue | null = null
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
     })
 
@@ -142,6 +143,7 @@ describe('AppUpdateProvider', () => {
     let updateRequest: Promise<void> | undefined
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
     })
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
@@ -198,6 +200,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
     })
 
@@ -225,6 +228,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
     })
 
@@ -258,6 +262,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
     })
     vi.mocked(downloadPendingWeworkUpdate)
@@ -342,6 +347,7 @@ describe('AppUpdateProvider', () => {
           })
         : Promise.resolve({
             currentVersion: '0.1.0',
+            readyToInstall: false,
             version: '0.2.0-beta.1',
           })
     )
@@ -471,6 +477,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.0.8',
+      readyToInstall: false,
       version: '0.0.9',
     })
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(onProgress => {
@@ -538,6 +545,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.0.8',
+      readyToInstall: false,
       version: '0.0.9',
     })
 
@@ -578,6 +586,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
+      readyToInstall: false,
       version: '0.2.0',
       body: '## Changes\n\n- Added release notes.',
     })
@@ -676,6 +685,7 @@ describe('AppUpdateProvider', () => {
     localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     const update = {
       currentVersion: '0.0.18',
+      readyToInstall: false,
       version: '0.0.19',
       body: '## Changes\n\n- Fixed update retries.',
     }
