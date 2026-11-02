@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
+import { prepareSourceRelease } from '../modules/source-preparation-progress.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
@@ -282,14 +281,13 @@ export async function createDesktopScenario(options) {
         })
       )
       console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = promisify(execFile)(
+      const preparation = prepareSourceRelease(
         pair.from.executable,
         [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
         {
           env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          timeout: 300_000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
+          logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log'),
+          version: pair.from.version,
         }
       )
       try {
@@ -306,12 +304,10 @@ export async function createDesktopScenario(options) {
             code: error.code,
             signal: error.signal,
             killed: error.killed,
+            error: { name: error.name, message: error.message },
           })
         )
-        throw new Error(
-          `Source preparation failed: code=${error.code}, signal=${error.signal}, killed=${error.killed}`,
-          { cause: error }
-        )
+        throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
       }
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
     },
