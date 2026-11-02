@@ -295,6 +295,7 @@ export function SmartAppsMarketplacePage({
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
   const catalogTargetSmartAppIdRef = useRef<number | null>(null)
   const resolvedTargetApiRef = useRef<SmartAppsApi | null>(null)
+  const itemsApiRef = useRef<SmartAppsApi | null>(null)
   const targetLookupRequestRef = useRef(0)
   const downloadRequestRef = useRef(0)
   const refreshRequestRef = useRef(0)
@@ -325,6 +326,7 @@ export function SmartAppsMarketplacePage({
       if (!isCurrentRequest()) return
       setInstalled(local)
       if (!api) {
+        itemsApiRef.current = null
         setItems([])
         setMarketItems([])
         return
@@ -341,6 +343,7 @@ export function SmartAppsMarketplacePage({
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
       if (!isCurrentRequest()) return
+      itemsApiRef.current = api
       setItems(catalog.items)
       setMarketItems(marketplace?.items ?? catalog.items)
       setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
@@ -445,7 +448,10 @@ export function SmartAppsMarketplacePage({
     handledTargetSmartAppIdRef.current = null
     if (catalogTargetSmartAppIdRef.current === targetSmartAppId) return
     if (!api) return
-    const item = items.find(candidate => candidate.id === targetSmartAppId)
+    const item =
+      itemsApiRef.current === api
+        ? items.find(candidate => candidate.id === targetSmartAppId)
+        : undefined
     if (item) {
       catalogTargetSmartAppIdRef.current = targetSmartAppId
       targetLookupRequestRef.current += 1

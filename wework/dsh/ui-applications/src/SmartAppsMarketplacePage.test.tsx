@@ -1368,8 +1368,7 @@ describe('SmartAppsMarketplacePage', () => {
   })
 
   test('re-resolves the target when the marketplace API changes', async () => {
-    const firstApi = api([])
-    vi.mocked(firstApi.getItem).mockResolvedValue(item())
+    const firstApi = api([item()])
     const secondApi = api([])
     const { rerender } = render(<SmartAppsMarketplacePage api={firstApi} targetSmartAppId={7} />)
     expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
