@@ -101,6 +101,14 @@ and rollback, beyond Electron having created a `Tray` object. Users with an exis
 pin targeting a release slot must remove it and pin the installed application instead;
 the application never edits Dock preferences.
 
+`release-package-startup` retains a real first launch without warming the runtime cache.
+The Windows CI trace recorded 145 seconds of extraction and a controller connection around
+192 seconds after launch. This scenario assigns the existing 180-second budget separately
+to component preparation, runtime extraction, Core profile preparation, Core process startup,
+and renderer loading. Stalled, regressing, or over-budget phases still fail; preparation logs
+never substitute for the real controller connection. Ordinary starts, restarts, and upgrade
+scenarios retain their existing wait budgets.
+
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.
 
 After confirmation, stop writers, finalize a consistent snapshot, exit, and switch. Both runtime and renderer readiness confirm health. Exit or failure to become ready within 60 seconds enters recovery without an automatic restart loop.
