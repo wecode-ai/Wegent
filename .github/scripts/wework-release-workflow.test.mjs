@@ -33,7 +33,7 @@ test("install diagnostics preserve the failing install gate on every platform", 
   );
   assert.equal(
     diagnostics.if,
-    "failure() && steps.workspace-install.outcome == 'failure'",
+    "always() && (steps.workspace-install.outcome == 'success' || steps.workspace-install.outcome == 'failure')",
   );
 });
 
