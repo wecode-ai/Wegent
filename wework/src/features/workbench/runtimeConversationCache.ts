@@ -464,7 +464,7 @@ export function replaceRuntimeConversationFromUserMessage(
 ): WorkbenchMessage[] {
   return updateRuntimeConversationTurns(address, turns => {
     const sourceTurnIndex = turns.findIndex(turn =>
-      turn.items.some(item => item.type === 'user_message' && item.id === sourceClientUserMessageId)
+      turnContainsClientUserMessage(turn, sourceClientUserMessageId)
     )
     if (sourceTurnIndex < 0) return turns
     const retainedTurns = turns.slice(0, sourceTurnIndex)

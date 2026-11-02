@@ -132,6 +132,13 @@ describe('Web adapter for the PC activity tools', () => {
     expect(prompt).toHaveBeenCalledTimes(2)
   })
 
+  it('does not offer acceptance again after the Issue is completed', async () => {
+    props.issue = { ...issue, status: 'completed', execution_state: 'succeeded' }
+    await mount()
+    expect(button('accept')).toBeNull()
+    expect(props.api.issues.update).not.toHaveBeenCalled()
+  })
+
   it('accepts the Issue without inventing another run and ignores a late response after switching Issues', async () => {
     let finish!: (issue: CollaborationIssue) => void
     vi.mocked(props.api.issues.update).mockImplementationOnce(

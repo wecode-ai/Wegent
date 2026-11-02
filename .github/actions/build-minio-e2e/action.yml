@@ -52,4 +52,3 @@ runs:
         path: ${{ runner.temp }}/wework-minio/bin/minio
         if-no-files-found: error
         retention-days: 1
-
