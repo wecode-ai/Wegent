@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.models.kind import Kind
@@ -96,8 +98,28 @@ def _reference_shell(test_db, shell: Kind, namespace: Namespace) -> None:
     test_db.commit()
 
 
+def _reference_shell_to_user(test_db, shell: Kind, user_id: int) -> None:
+    """Reference a Shell into a user's personal namespace."""
+    test_db.add(
+        ResourceMember(
+            resource_type="Shell",
+            resource_id=shell.id,
+            entity_type="user",
+            entity_id=str(user_id),
+            role="Reporter",
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+
+
 def _create_bot(
-    test_db, user, namespace: str, shell_namespace: str, name: str = "group-bot"
+    test_db,
+    user,
+    namespace: str,
+    shell_namespace: str,
+    name: str = "group-bot",
+    shell_name: str = "group-claude",
 ) -> Kind:
     """Create a Bot pointing at a Shell reference namespace."""
     bot = Kind(
@@ -112,7 +134,7 @@ def _create_bot(
             "spec": {
                 "ghostRef": {"name": f"{name}-ghost", "namespace": namespace},
                 "shellRef": {
-                    "name": "group-claude",
+                    "name": shell_name,
                     "namespace": shell_namespace,
                 },
             },
@@ -296,3 +318,49 @@ def test_bot_update_replaces_obsolete_group_reference_public_fallback(
     refreshed = test_db.get(Kind, bot.id)
     assert result["shell_type"] == "Codex"
     assert refreshed.json["spec"]["shellRef"]["namespace"] == "default"
+
+
+def test_bot_list_uses_bot_owner_reference_identity(test_db, test_user):
+    """Batch list resolution should use the Bot owner's reference identity."""
+    group = _create_group(test_db, test_user, "shared-owner-group")
+    owner_id = test_user.id + 1
+    owner_shell = _create_shell(
+        test_db,
+        test_user,
+        "owner-source",
+        name="shared-shell",
+        shell_type="ClaudeCode",
+        owner_user_id=owner_id,
+    )
+    viewer_shell = _create_shell(
+        test_db,
+        test_user,
+        "viewer-source",
+        name="shared-shell",
+        shell_type="Codex",
+        owner_user_id=test_user.id,
+    )
+    _reference_shell_to_user(test_db, owner_shell, owner_id)
+    _reference_shell_to_user(test_db, viewer_shell, test_user.id)
+    bot = _create_bot(
+        test_db,
+        SimpleNamespace(id=owner_id),
+        namespace=group.name,
+        shell_namespace="default",
+        name="shared-default-bot",
+        shell_name="shared-shell",
+    )
+
+    listed = next(
+        item
+        for item in BotKindsService(Kind).get_user_bots(
+            test_db,
+            user_id=test_user.id,
+            scope="group",
+            group_name=group.name,
+            limit=100,
+        )
+        if item["id"] == bot.id
+    )
+
+    assert listed["shell_type"] == "ClaudeCode"

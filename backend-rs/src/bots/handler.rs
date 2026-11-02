@@ -197,7 +197,8 @@ async fn bots_list(
         .zip(specs.iter())
         .map(|(bot, spec)| {
             let keys = bot_keys(spec);
-            let (ghost, shell, model) = resolve(&maps.ghosts, &maps.shells, &maps.models, &keys);
+            let (ghost, shell, model) =
+                resolve(&maps.ghosts, &maps.shells, &maps.models, &keys, bot.user_id);
             bot_item(bot, ghost, shell, model)
         })
         .collect();
@@ -224,7 +225,7 @@ async fn bots_list(
 /// The batch Ghost/Shell/Model caches (`_get_bot_components_batch`).
 struct ComponentMaps {
     ghosts: HashMap<RefKey, KindRow>,
-    shells: HashMap<RefKey, KindRow>,
+    shells: HashMap<(i64, String, String), KindRow>,
     models: HashMap<RefKey, KindRow>,
 }
 
@@ -239,7 +240,7 @@ async fn preload_components(
 ) -> Result<ComponentMaps, FastApiError> {
     let mut personal_ghost_keys: Vec<RefKey> = Vec::new();
     let mut group_ghost_keys: Vec<RefKey> = Vec::new();
-    let mut shell_keys: Vec<RefKey> = Vec::new();
+    let mut shell_keys: Vec<(i64, String, String)> = Vec::new();
     let mut personal_model_keys: Vec<RefKey> = Vec::new();
     let mut group_model_keys: Vec<RefKey> = Vec::new();
     let mut all_model_keys: Vec<RefKey> = Vec::new();
@@ -256,7 +257,10 @@ async fn preload_components(
             push_unique(target, key);
         }
         if let Some(key) = shell {
-            push_unique(&mut shell_keys, key);
+            let owned_key = (bot.user_id, key.0, key.1);
+            if !shell_keys.contains(&owned_key) {
+                shell_keys.push(owned_key);
+            }
         }
         if let Some(key) = model {
             push_unique(&mut all_model_keys, key.clone());
@@ -283,43 +287,93 @@ async fn preload_components(
         ghosts.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
     }
 
-    let mut shells: HashMap<RefKey, KindRow> = HashMap::new();
-    for row in repo::user_shells(&state.mysql, user_id, &shell_keys)
-        .await
-        .map_err(database_error)?
-    {
-        shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+    let mut shell_keys_by_owner: HashMap<i64, Vec<RefKey>> = HashMap::new();
+    for (owner_id, name, namespace) in &shell_keys {
+        shell_keys_by_owner
+            .entry(*owner_id)
+            .or_default()
+            .push((name.clone(), namespace.clone()));
     }
-    let missing_shells: Vec<RefKey> = shell_keys
+    let mut shells: HashMap<(i64, String, String), KindRow> = HashMap::new();
+    for (owner_id, owner_keys) in &shell_keys_by_owner {
+        for row in repo::user_shells(&state.mysql, *owner_id, owner_keys)
+            .await
+            .map_err(database_error)?
+        {
+            shells.insert(
+                (
+                    *owner_id,
+                    row.kinds_name.clone(),
+                    row.kinds_namespace.clone(),
+                ),
+                row,
+            );
+        }
+    }
+    let missing_shells: Vec<(i64, String, String)> = shell_keys
         .iter()
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
-    resolve_missing_shell_references(&state.mysql, user_id, &missing_shells, &mut shells).await?;
+    resolve_missing_shell_references(&state.mysql, &missing_shells, &mut shells).await?;
 
-    let missing_group_shells: Vec<RefKey> = shell_keys
+    let missing_group_shells: Vec<(i64, String, String)> = shell_keys
         .iter()
-        .filter(|(_, namespace)| namespace != "default")
+        .filter(|(_, _, namespace)| namespace != "default")
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
     if !missing_group_shells.is_empty() {
-        for row in repo::group_shells(&state.mysql, &missing_group_shells)
-            .await
-            .map_err(database_error)?
-        {
-            shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+        let owners: HashSet<i64> = missing_group_shells
+            .iter()
+            .map(|(owner_id, _, _)| *owner_id)
+            .collect();
+        let mut owner_groups: HashMap<i64, HashSet<String>> = HashMap::new();
+        for owner_id in owners {
+            owner_groups.insert(
+                owner_id,
+                sorted_group_names(state, owner_id)
+                    .await?
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        let mut group_keys: Vec<RefKey> = Vec::new();
+        for (owner_id, name, namespace) in &missing_group_shells {
+            if owner_groups
+                .get(owner_id)
+                .is_some_and(|groups| groups.contains(namespace))
+            {
+                let key = (name.clone(), namespace.clone());
+                if !group_keys.contains(&key) {
+                    group_keys.push(key);
+                }
+            }
+        }
+        let mut group_rows: HashMap<RefKey, KindRow> = HashMap::new();
+        if !group_keys.is_empty() {
+            for row in repo::group_shells(&state.mysql, &group_keys)
+                .await
+                .map_err(database_error)?
+            {
+                group_rows.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
+            }
+        }
+        for (owner_id, name, namespace) in &missing_group_shells {
+            if let Some(row) = group_rows.get(&(name.clone(), namespace.clone())) {
+                shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
+            }
         }
     }
 
-    let missing_public_shells: Vec<RefKey> = shell_keys
+    let missing_public_shells: Vec<(i64, String, String)> = shell_keys
         .iter()
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
     let mut seen_public_names = HashSet::new();
     let mut public_names = Vec::new();
-    for (name, _) in &missing_public_shells {
+    for (_, name, _) in &missing_public_shells {
         if seen_public_names.insert(name.clone()) {
             public_names.push(name.clone());
         }
@@ -329,9 +383,9 @@ async fn preload_components(
             .await
             .map_err(database_error)?
         {
-            for (name, namespace) in &missing_public_shells {
+            for (owner_id, name, namespace) in &missing_public_shells {
                 if name == &row.kinds_name {
-                    shells.insert((name.clone(), namespace.clone()), row.clone());
+                    shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
                 }
             }
         }
@@ -380,32 +434,27 @@ async fn preload_components(
 /// in their requested namespace.
 async fn resolve_missing_shell_references<M>(
     mysql: &M,
-    user_id: i64,
-    missing_keys: &[RefKey],
-    shells: &mut HashMap<RefKey, KindRow>,
+    missing_keys: &[(i64, String, String)],
+    shells: &mut HashMap<(i64, String, String), KindRow>,
 ) -> Result<(), FastApiError>
 where
     M: brz_mysql::Mysql,
 {
-    let mut namespaces: Vec<String> = Vec::new();
-    for (_, namespace) in missing_keys {
-        if !namespaces.contains(namespace) {
-            namespaces.push(namespace.clone());
-        }
+    let mut names_by_owner_namespace: HashMap<(i64, String), HashSet<&str>> = HashMap::new();
+    for (owner_id, name, namespace) in missing_keys {
+        names_by_owner_namespace
+            .entry((*owner_id, namespace.clone()))
+            .or_default()
+            .insert(name.as_str());
     }
-    for namespace in namespaces {
-        let names: HashSet<&str> = missing_keys
-            .iter()
-            .filter(|(_, candidate)| candidate == &namespace)
-            .map(|(name, _)| name.as_str())
-            .collect();
-        let referenced_shells = shell_resolution::referenced_shells(mysql, user_id, &namespace)
+    for ((owner_id, namespace), names) in names_by_owner_namespace {
+        let referenced_shells = shell_resolution::referenced_shells(mysql, owner_id, &namespace)
             .await
             .map_err(database_error)?;
         for row in referenced_shells {
             if names.contains(row.name.as_str()) {
                 shells
-                    .entry((row.name.clone(), namespace.clone()))
+                    .entry((owner_id, row.name.clone(), namespace.clone()))
                     .or_insert_with(|| kind_row_from_referenced_shell(row));
             }
         }
@@ -557,12 +606,12 @@ mod tests {
     async fn missing_shell_references_use_capability_reference_lookup() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let missing = vec![
-            ("group-claude".to_string(), "default".to_string()),
-            ("other-claude".to_string(), "default".to_string()),
+            (74, "group-claude".to_string(), "default".to_string()),
+            (74, "other-claude".to_string(), "default".to_string()),
         ];
         let mut shells = HashMap::new();
 
-        resolve_missing_shell_references(&mysql, 74, &missing, &mut shells)
+        resolve_missing_shell_references(&mysql, &missing, &mut shells)
             .await
             .unwrap();
 
@@ -575,6 +624,31 @@ mod tests {
                     .contains("resource_members.resource_type = 'Shell'"))
                 .count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_references_are_scoped_by_bot_owner() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let missing = vec![
+            (74, "group-claude".to_string(), "default".to_string()),
+            (75, "group-claude".to_string(), "default".to_string()),
+        ];
+        let mut shells = HashMap::new();
+
+        resolve_missing_shell_references(&mysql, &missing, &mut shells)
+            .await
+            .unwrap();
+
+        let queries = mysql.queries();
+        assert_eq!(
+            queries
+                .iter()
+                .filter(|query| query
+                    .sql
+                    .contains("resource_members.resource_type = 'Shell'"))
+                .count(),
+            2
         );
     }
 

@@ -23,7 +23,7 @@ from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
     get_shell_type,
-    get_shells_by_names_batch,
+    get_shells_by_owners_batch,
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
@@ -904,7 +904,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
                 )
                 shell = shell_map.get(
-                    (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
+                    (
+                        bot.user_id,
+                        bot_crd.spec.shellRef.name,
+                        bot_crd.spec.shellRef.namespace,
+                    )
                 )
                 # modelRef is optional, only get if it exists
                 if bot_crd.spec.modelRef:
@@ -1746,7 +1750,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         Returns:
           - bot_crds: {bot.id: Bot} mapping to avoid repeated parsing
           - ghost_map: {(name, namespace): Kind}
-          - shell_map: {(name, namespace): Kind}
+          - shell_map: {(owner_id, name, namespace): Kind}
           - model_map: {(name, namespace): Kind}
         """
         if not bots:
@@ -1774,7 +1778,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 personal_ghost_keys.add(ghost_key)
 
             shell_keys.add(
-                (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
+                (
+                    bot.user_id,
+                    bot_crd.spec.shellRef.name,
+                    bot_crd.spec.shellRef.namespace,
+                )
             )
             # modelRef is optional, only add if it exists
             if bot_crd.spec.modelRef:
@@ -1829,8 +1837,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
                 ghosts.extend(group_ghosts)
 
-        # Use unified shell query function that checks both user shells and public shells
-        shell_map = get_shells_by_names_batch(db, shell_keys, user_id)
+        # Use each Bot owner's identity when resolving referenced Shells.
+        shell_map = get_shells_by_owners_batch(db, shell_keys)
 
         # Query personal models (with user_id filter)
         if personal_model_keys:
@@ -1857,7 +1865,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 models.extend(group_models)
 
         ghost_map = {(g.name, g.namespace): g for g in ghosts}
-        # shell_map is already populated by get_shells_by_names_batch
+        # shell_map is already populated by get_shells_by_owners_batch
         model_map = {(m.name, m.namespace): m for m in models}
 
         # For models not found in kinds table (user models), try to find in public models (user_id=0)

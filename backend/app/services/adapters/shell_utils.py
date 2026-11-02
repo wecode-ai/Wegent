@@ -523,3 +523,31 @@ def get_shells_by_names_batch(
     logger.debug(f"Batch fetched {len(shell_map)} shells for {len(shell_keys)} keys")
 
     return shell_map
+
+
+def get_shells_by_owners_batch(
+    db: Session,
+    shell_keys: Set[Tuple[int, str, str]],
+) -> Dict[Tuple[int, str, str], Kind]:
+    """
+    Batch-fetch shells by (owner_id, name, namespace) keys, resolving each
+    owner's references with that owner's identity.
+
+    Args:
+        db: Database session
+        shell_keys: Set of (owner_id, name, namespace) tuples to query
+
+    Returns:
+        Dict mapping (owner_id, name, namespace) to Kind objects
+    """
+    keys_by_owner: Dict[int, Set[Tuple[str, str]]] = {}
+    for owner_id, name, namespace in shell_keys:
+        keys_by_owner.setdefault(owner_id, set()).add((name, namespace))
+
+    shell_map: Dict[Tuple[int, str, str], Kind] = {}
+    for owner_id, owner_keys in keys_by_owner.items():
+        for (name, namespace), shell in get_shells_by_names_batch(
+            db, owner_keys, owner_id
+        ).items():
+            shell_map[(owner_id, name, namespace)] = shell
+    return shell_map
