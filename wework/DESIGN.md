@@ -1011,6 +1011,28 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   locale rules in both hosts. Explicit transition properties avoid collisions
   with the Web animation plugin.
 
+  Tool detail and group expansion belong to a conversation, canonical turn and
+  stable member block IDs. Transcript reconciliation can change an assistant
+  view's guidance anchor while retaining the same tools; remounting that view
+  must read the existing tool state. Groups use member IDs rather than segment
+  positions. Messages without a canonical turn retain their message scope.
+  Completed-response shell expansion remains local to its assistant view and
+  includes expanded tools belonging to that view.
+
+  ```mermaid
+  sequenceDiagram
+    participant User
+    participant View as Assistant view
+    participant Store as Shared expansion state
+    participant Projection as Canonical turn projection
+    User->>View: Expand tool detail
+    View->>Store: Store conversation + turn + call ID
+    Projection->>View: Reconcile guidance anchor and replace view ID
+    View->>Store: Read the same conversation + turn + call ID
+    Store-->>View: Keep tool detail expanded during final text
+    View->>Store: Collapse only this view's member tools on shell close
+  ```
+
   `ComposerProseMirrorEditor` and its schema, Markdown parser/serializer,
   editing commands, mention/link node views and diagnostics belong to the shared
   composer module. Both hosts use the same tables, lists, selection, undo/redo,
@@ -1846,6 +1868,32 @@ implementation and WCAG conflict.
 - File paths, terminals, permissions, and external applications reflect the
   actual current environment.
 - Keep pane resize and open/close motion stable under window zoom.
+- 进程浏览器关闭时，进行中的 DOM 快照读取必须随原生窗口或渲染器销毁立即结算，
+  返回既有的窗口不存在状态；活窗口的读取错误仍须上抛。执行脚本前注册生命周期
+  监听，并在所有结算路径移除监听，不得以超时、重试或等待渲染器响应代替关闭事件。
+- Process Explorer snapshots must settle when their native window closes or its
+  renderer is destroyed, preserving the existing absent-window result. Register
+  lifecycle listeners before executing renderer code, remove them after every
+  settlement, and propagate failures from a live window.
+
+  ```mermaid
+  sequenceDiagram
+    participant Caller
+    participant Snapshot as Native snapshot collector
+    participant Window as Process Explorer
+    Caller->>Snapshot: Request window snapshot
+    Snapshot->>Window: Register closed and destroyed listeners
+    Snapshot->>Window: executeJavaScript
+    alt Renderer responds while window is live
+      Window-->>Snapshot: DOM snapshot or execution error
+    else Window closes or renderer is destroyed
+      Window-->>Snapshot: closed / destroyed
+      Note over Snapshot: Settle without awaiting the abandoned script
+    end
+    Snapshot->>Window: Remove both lifecycle listeners
+    Snapshot-->>Caller: Snapshot, absent-window result, or live execution error
+  ```
+
 - Verify changes through the isolated real-Electron flow in `AGENTS.md`, never a
   personal Wework window.
 

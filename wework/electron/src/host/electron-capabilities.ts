@@ -45,6 +45,7 @@ import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
@@ -247,25 +248,6 @@ export interface PluginDevelopmentService {
   start(sourceRoot: string): Promise<unknown>
   stop(): Promise<void>
   validate(sourceRoot: string): Promise<unknown>
-}
-
-export interface ProcessExplorerWindowSnapshot {
-  exists: boolean
-  visible: boolean
-  applicationPid: number
-  url: string
-  windowLabel: string
-  windowWidth: number
-  windowHeight: number
-  alwaysOnTop: boolean
-  menuBarVisible: boolean
-  testIds: string[]
-  text: string
-  layout: {
-    viewportWidth: number
-    tableClientWidth: number
-    tableScrollWidth: number
-  }
 }
 
 export interface ElectronE2EHost {
