@@ -4926,6 +4926,151 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
   })
 
+  test('starts automatic updates when a catalog refresh reads a changed account policy', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const read = vi.mocked(fetch).getMockImplementation()!
+    let policy: 'manual' | 'auto' = 'manual'
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const response = await read(input, init)
+      if (new URL(String(input), window.location.origin).pathname !== '/api/plugins/installed') {
+        return response
+      }
+      const body = await response.json()
+      for (const plugin of body.items) plugin.spec.updatePolicy = policy
+      return { ...response, json: async () => body } as Response
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-all'))
+    await screen.findByTestId('plugin-marketplace-row-101')
+    const refresh = await screen.findByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+
+    policy = 'auto'
+    await userEvent.click(refresh)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+  })
+
+  test.each([true, false])(
+    'defers automatic updates while a policy save overlaps a new release refresh (accepted: %s)',
+    async accepted => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceUpdatePolicy: 'auto',
+        autoUpdateBatchSizes: [1],
+        deviceAutoSyncSucceeds: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const read = vi.mocked(fetch).getMockImplementation()!
+      let finishSave!: () => void
+      const saveGate = new Promise<void>(resolve => {
+        finishSave = resolve
+      })
+      let saving = false
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
+          saving = true
+          await saveGate
+          if (!accepted) {
+            return new Response(JSON.stringify({ detail: 'Policy save rejected' }), { status: 400 })
+          }
+        }
+        return read(input, init)
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+      const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+      await userEvent.click(toggle)
+      await waitFor(() => expect(saving).toBe(true))
+      expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
+      try {
+        marketplace.publishMarketplaceUpdate()
+        fireEvent.focus(window)
+        await waitFor(() =>
+          expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+        )
+        expect(toggle).toBeDisabled()
+        expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+      } finally {
+        await act(async () => {
+          finishSave()
+          await saveGate
+        })
+      }
+      await waitFor(() => expect(toggle).toBeEnabled())
+      expect(toggle).toHaveAttribute('aria-checked', accepted ? 'false' : 'true')
+      await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(accepted ? 0 : 1))
+    }
+  )
+
+  test('resets policy saves across accounts without letting an old completion clear a new save', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const installed = getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))!
+      .installedPlugins[0]!
+    const finishSaves: Array<() => void> = []
+    const saveGates = [0, 1].map(() => new Promise<void>(resolve => finishSaves.push(resolve)))
+    const read = vi.mocked(fetch).getMockImplementation()!
+    let saveCount = 0
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
+        const gate = saveGates[saveCount++]
+        await gate
+        return new Response(
+          JSON.stringify({
+            ...installed,
+            spec: { ...installed.spec, updatePolicy: 'auto' },
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      return read(input, init)
+    })
+    try {
+      await userEvent.click(await screen.findByTestId('plugin-auto-update-toggle-101'))
+      await waitFor(() => expect(saveCount).toBe(1))
+
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+      const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+      await waitFor(() => expect(toggle).toBeEnabled())
+      await userEvent.click(toggle)
+      expect(toggle).toBeDisabled()
+
+      await act(async () => finishSaves[0]!())
+      await waitFor(() => expect(saveCount).toBe(2))
+      expect(toggle).toBeDisabled()
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+      await act(async () => finishSaves[1]!())
+      await waitFor(() => expect(toggle).toBeEnabled())
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    } finally {
+      view.unmount()
+      await act(async () => finishSaves.forEach(finish => finish()))
+    }
+  })
+
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({
