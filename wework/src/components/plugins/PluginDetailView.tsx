@@ -753,11 +753,12 @@ export function PluginDetailView({
       )}
     </div>
   ) : null
+  const actionDisabled = primaryActionDisabled || (isInstalled && !plugin.enabled)
   const primaryActionButton = (
     <button
       type="button"
       data-testid={`plugin-detail-toggle-${plugin.id}`}
-      disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
+      disabled={actionDisabled}
       className="plugin-detail-action-primary"
       onClick={onToggle}
     >
@@ -806,12 +807,13 @@ export function PluginDetailView({
               key={guide.id}
               type="button"
               data-testid={`plugin-prompt-${index}`}
+              disabled={actionDisabled}
               data-plugin-distribution={plugin.distribution}
               aria-label={t('workbench.plugin_detail_try_example', {
                 example: `${plugin.name} ${displayPrompt}`,
                 defaultValue: `使用示例：${plugin.name} ${displayPrompt}`,
               })}
-              className="plugin-task-example group"
+              className="plugin-task-example group disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => {
                 if (onPromptSelect) {
                   onPromptSelect(guide.prompt)

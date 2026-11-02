@@ -14,7 +14,7 @@ export interface LatestRequestGuard {
 /**
  * Keep async form loaders from applying stale responses.
  *
- * Opening another subscription or resetting the form invalidates the requests
+ * Opening another resource or resetting the form invalidates the requests
  * that are still in flight, so a slow response can never restore an old
  * selection or overwrite a freshly opened create form.
  */
