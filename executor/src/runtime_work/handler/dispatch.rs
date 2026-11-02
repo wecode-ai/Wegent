@@ -25,6 +25,9 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         match method {
+            "runtime.stand_in.assignment_tasks" => {
+                boxed_rpc(move || async move { self.stand_in_assignment_tasks(payload) })
+            }
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {
