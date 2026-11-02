@@ -77,6 +77,32 @@ beforeEach(() => {
   readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it('shows archived completion without requesting an unavailable archived transcript', () => {
+    const archived = mergeStandInNotifications(
+      [assignment],
+      [
+        {
+          ...runtimeItem,
+          task: { ...runtimeItem.task, status: 'archived', running: false },
+        },
+      ]
+    )[0]
+    render(
+      <StandInNotificationProcessing
+        notification={archived}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_completed'
+    )
+    expect(screen.queryByTestId('notification-stand-in-start-assignment')).toBeNull()
+    expect(transcript).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
   it.each([{ standInLookupPending: true }, { standInLookupError: 'History unavailable' }])(
     'never offers delegation before history is resolved: %j',
     lookup => {

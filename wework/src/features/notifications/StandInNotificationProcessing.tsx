@@ -62,8 +62,10 @@ export function StandInNotificationProcessing({
   const completedDeviceId = state?.deviceId
   const completedTaskId = state?.taskId
   const completedStatus = state?.status
+  const completedArchived = notification.runtimeItem?.task.status === 'archived'
   useEffect(() => {
     if (
+      completedArchived ||
       !completedDeviceId ||
       !completedTaskId ||
       !completedStatus ||
@@ -96,6 +98,7 @@ export function StandInNotificationProcessing({
     completedDeviceId,
     completedTaskId,
     completedStatus,
+    completedArchived,
     services?.runtimeWorkApi,
   ])
 
