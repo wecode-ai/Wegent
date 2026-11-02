@@ -1272,4 +1272,29 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
     expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
   })
+
+  test('clears the previous target before resolving another deep-link target', async () => {
+    const smartAppsApi = api([item()])
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={99} />)
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+    expect(screen.getByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+  })
 })

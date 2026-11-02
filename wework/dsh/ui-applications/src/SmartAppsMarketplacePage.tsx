@@ -291,6 +291,7 @@ export function SmartAppsMarketplacePage({
   const [targetLookupError, setTargetLookupError] = useState<string | null>(null)
   const [targetLookupPending, setTargetLookupPending] = useState(false)
   const [targetLookupRevision, setTargetLookupRevision] = useState(0)
+  const previousTargetSmartAppIdRef = useRef<number | null>(null)
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
   const targetLookupRequestRef = useRef(0)
   const refreshRequestRef = useRef(0)
@@ -376,9 +377,11 @@ export function SmartAppsMarketplacePage({
   })
   useEffect(() => {
     if (targetSmartAppId) return
+    previousTargetSmartAppIdRef.current = null
     handledTargetSmartAppIdRef.current = null
     targetLookupRequestRef.current += 1
     queueMicrotask(() => {
+      setSelected(null)
       setTargetInstallItem(null)
       setTargetLookupError(null)
       setTargetLookupPending(false)
@@ -386,6 +389,17 @@ export function SmartAppsMarketplacePage({
   }, [targetSmartAppId])
   useEffect(() => {
     if (!targetSmartAppId) return
+    if (previousTargetSmartAppIdRef.current !== targetSmartAppId) {
+      previousTargetSmartAppIdRef.current = targetSmartAppId
+      handledTargetSmartAppIdRef.current = null
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setSelected(null)
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+      })
+    }
     const installation = activeInstallations.find(
       candidate => candidate.smartAppId === targetSmartAppId
     )

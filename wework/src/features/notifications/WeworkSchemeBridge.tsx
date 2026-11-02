@@ -101,7 +101,7 @@ export function WeworkSchemeBridge() {
           const installation = installations.find(
             item => item.smartAppId === destination.smartAppId
           )
-          if (installation) {
+          if (installation?.state === 'running') {
             openHarnessAppTab(tabsRef.current, installation)
             return true
           }

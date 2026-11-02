@@ -348,6 +348,30 @@ describe('Wework scheme bridge', () => {
     expect(openHarnessAppTab).not.toHaveBeenCalled()
   })
 
+  it('routes a stopped Smart app through its targeted start flow', async () => {
+    const installation = {
+      id: 'research-local',
+      smartAppId: 42,
+      manifest: { displayName: 'Research desk' },
+      webUrl: null,
+      state: 'installed',
+    }
+    listHarnessApps.mockResolvedValue([installation])
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('auxiliary', {
+        title: '智能工作台',
+        contentRoute: '/sites?app_type=smart_app&smartAppId=42',
+      })
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
   it('acknowledges native links only after navigation, including StrictMode remounts', async () => {
     isElectronRuntime.mockReturnValue(true)
     const pending = [{ id: 1, url: 'wework://tasks/device/task' }]
