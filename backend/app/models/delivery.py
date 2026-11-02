@@ -342,7 +342,10 @@ def _preserve_independent_issue_metadata(
         for key in ("runner_binding", "runner_binding_conflict")
         if key in (persisted or {})
     }
-    target.metadata_json = {**merged, **protected}
+    result = {**merged, **protected}
+    target.metadata_json = (
+        None if target.metadata_json is None and not result else result
+    )
     # Restoring independent keys must not hide nested content edits from the ORM.
     flag_modified(target, "metadata_json")
 
