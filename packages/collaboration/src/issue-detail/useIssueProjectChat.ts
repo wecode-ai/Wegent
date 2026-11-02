@@ -9,12 +9,15 @@ function runtimeSequence(message: ProjectChatMessage): bigint {
     : BigInt(0)
 }
 
-function acceptsMessage(previous: ProjectChatMessage, incoming: ProjectChatMessage): boolean {
+function acceptsMessage(
+  previous: ProjectChatMessage,
+  incoming: ProjectChatMessage,
+  isDelta = false
+): boolean {
   const previousSequence = runtimeSequence(previous)
   const incomingSequence = runtimeSequence(incoming)
-  return previousSequence === incomingSequence
-    ? previous.updatedAt <= incoming.updatedAt
-    : previousSequence < incomingSequence
+  if (previousSequence !== incomingSequence) return previousSequence < incomingSequence
+  return (!isDelta || incomingSequence === BigInt(0)) && previous.updatedAt <= incoming.updatedAt
 }
 
 export function mergeIssueChatMessages(
@@ -76,7 +79,11 @@ export function useIssueProjectChat(
           setSnapshot(previous => {
             const state = previous.owner === owner ? previous : empty
             const message = state.messages.find(message => message.messageId === chunk.messageId)
-            if (message && !acceptsMessage(message, chunk)) return previous
+            if (
+              message &&
+              !acceptsMessage(message, chunk, chunk.metadata.contentMode !== 'snapshot')
+            )
+              return previous
             return {
               ...state,
               messages: mergeIssueChatMessages(state.messages, [

@@ -575,7 +575,18 @@ describe("shared Issue threads", () => {
     expect(mergeIssueChatMessages([outcomeOnly], [final])).toEqual([final]);
   });
 
-  it("keeps the final response when an older same-second delta arrives", async () => {
+  it.each([
+    {
+      name: "older than the final response",
+      sequence: "1793597834818561699",
+      snapshotStatus: "completed" as const,
+    },
+    {
+      name: "already included in a streaming snapshot",
+      sequence: "1793597834818561700",
+      snapshotStatus: "streaming" as const,
+    },
+  ])("ignores a delta $name", async ({ sequence, snapshotStatus }) => {
     let receive!: (message: ProjectChatMessage) => void;
     let receiveChunk!: (message: ProjectChatMessage) => void;
     const client = {
@@ -598,6 +609,7 @@ describe("shared Issue threads", () => {
     act(() =>
       receive({
         ...message,
+        status: snapshotStatus,
         content: "Final answer",
         metadata: { runtime_event_sequence: "1793597834818561700" },
       }),
@@ -606,9 +618,9 @@ describe("shared Issue threads", () => {
       receiveChunk({
         ...message,
         status: "streaming",
-        content: "Old partial",
+        content: " answer",
         metadata: {
-          runtime_event_sequence: "1793597834818561699",
+          runtime_event_sequence: sequence,
           contentMode: "delta",
         },
       }),
