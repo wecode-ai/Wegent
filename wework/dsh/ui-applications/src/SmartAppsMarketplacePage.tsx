@@ -91,6 +91,17 @@ interface SmartAppsMarketplacePageProps {
   onNavigate?: (path: string) => void
 }
 
+function emptyCatalog(api: SmartAppsApi | null, mode: 'marketplace' | 'owned') {
+  return {
+    api,
+    mode,
+    loaded: false,
+    items: [] as SmartAppMarketplaceItem[],
+    marketItems: [] as SmartAppMarketplaceItem[],
+    tags: [] as SmartAppMarketplaceTag[],
+  }
+}
+
 interface PendingInstall {
   item: SmartAppMarketplaceItem
   preview: HarnessAppPreview
@@ -251,17 +262,19 @@ export function SmartAppsMarketplacePage({
   onNavigate = navigateTo,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
-  const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
-  const [marketItems, setMarketItems] = useState<SmartAppMarketplaceItem[]>([])
+  const pendingCatalog = useMemo(() => emptyCatalog(api, mode), [api, mode])
+  const [catalogSnapshot, setCatalog] = useState(pendingCatalog)
+  const currentCatalog =
+    catalogSnapshot.api === api && catalogSnapshot.mode === mode ? catalogSnapshot : pendingCatalog
+  const { items, marketItems, tags } = currentCatalog
+  const loading = !currentCatalog.loaded
   const [installed, setInstalled] = useState<HarnessAppInstallation[]>([])
   const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
-  const [tags, setTags] = useState<SmartAppMarketplaceTag[]>([])
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<'all' | 'official' | 'public' | 'shared'>('all')
   const [tag, setTag] = useState('')
   const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [accessNotice, setAccessNotice] = useState<{
@@ -286,11 +299,11 @@ export function SmartAppsMarketplacePage({
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const refreshRequestRef = useRef(0)
-  const activeModeRef = useRef(mode)
+  const activeScopeRef = useRef({ api, mode })
 
   useLayoutEffect(() => {
-    activeModeRef.current = mode
-  }, [mode])
+    activeScopeRef.current = { api, mode }
+  }, [api, mode])
 
   const navigateFromSmartApps = useCallback(
     (path: string) => {
@@ -301,11 +314,14 @@ export function SmartAppsMarketplacePage({
   )
 
   const refresh = useCallback(async () => {
-    if (activeModeRef.current !== mode) return
+    const isActiveScope = () =>
+      activeScopeRef.current.api === api && activeScopeRef.current.mode === mode
+    if (!isActiveScope()) return
     const requestId = ++refreshRequestRef.current
-    const isCurrentRequest = () =>
-      requestId === refreshRequestRef.current && activeModeRef.current === mode
-    setLoading(true)
+    const isCurrentRequest = () => requestId === refreshRequestRef.current && isActiveScope()
+    setCatalog(previous =>
+      previous.api === api && previous.mode === mode ? previous : emptyCatalog(api, mode)
+    )
     setError(null)
     try {
       const localPromise = harnessAppsApi.list().catch(() => [])
@@ -313,8 +329,7 @@ export function SmartAppsMarketplacePage({
       if (!isCurrentRequest()) return
       setInstalled(local)
       if (!api) {
-        setItems([])
-        setMarketItems([])
+        setCatalog({ ...emptyCatalog(api, mode), loaded: true })
         return
       }
       const [catalog, marketplace, tagCatalog] = await Promise.all([
@@ -329,9 +344,14 @@ export function SmartAppsMarketplacePage({
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
       if (!isCurrentRequest()) return
-      setItems(catalog.items)
-      setMarketItems(marketplace?.items ?? catalog.items)
-      setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
+      setCatalog({
+        api,
+        mode,
+        loaded: true,
+        items: catalog.items,
+        marketItems: marketplace?.items ?? catalog.items,
+        tags: tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort),
+      })
     } catch (loadError) {
       if (!isCurrentRequest()) return
       setError(
@@ -342,7 +362,8 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      if (isCurrentRequest()) setLoading(false)
+      if (isCurrentRequest())
+        setCatalog(previous => (previous.loaded ? previous : { ...previous, loaded: true }))
     }
   }, [api, mode, query, source, t, tag])
 
