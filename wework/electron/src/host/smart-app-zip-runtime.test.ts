@@ -37,11 +37,14 @@ test('Electron extracts a deflated Smart App asset through EOF under backpressur
     await run(
       require('electron') as string,
       [
+        '--experimental-transform-types',
+        '--input-type=module',
         '-e',
-        `require(process.argv[1])(process.argv[2], { dir: process.argv[3] })
+        `import(process.argv[1])
+          .then(({ extractSmartAppArchive }) => extractSmartAppArchive(process.argv[2], process.argv[3]))
           .then(() => console.log('extracted'))
           .catch(error => { console.error(error); process.exitCode = 1 })`,
-        require.resolve('extract-zip'),
+        new URL('./smart-app-package-validator.ts', import.meta.url).href,
         archivePath,
         destination,
       ],

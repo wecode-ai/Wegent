@@ -194,7 +194,7 @@ describe('smart app operations', () => {
     events.stop()
   })
 
-  test('maps an invalid ZIP preview to a validation failure without private details', async () => {
+  test('preserves the ZIP validation error without sending private details to telemetry', async () => {
     mocks.preview.mockResolvedValue({
       ...preview,
       issues: ['private validation detail'],
@@ -203,7 +203,7 @@ describe('smart app operations', () => {
     const events = collectOperationResults()
 
     await expect(importSmartAppPackage('/private/workbench.zip')).rejects.toThrow(
-      'Invalid Smart App package'
+      'private validation detail'
     )
 
     expect(events.results).toEqual([
@@ -211,6 +211,20 @@ describe('smart app operations', () => {
     ])
     expect(JSON.stringify(events.results)).not.toContain('private')
     events.stop()
+  })
+
+  test('preserves extraction timeouts for marketplace installs and updates', async () => {
+    mocks.download.mockResolvedValue({
+      ...preview,
+      issues: ['Smart app ZIP extraction timed out'],
+      valid: false,
+    })
+
+    for (const intent of ['install', 'update'] as const) {
+      await expect(
+        prepareMarketplaceSmartApp(marketplaceApi(), marketplaceItem, intent)
+      ).rejects.toThrow('Smart app ZIP extraction timed out')
+    }
   })
 
   test('maps ZIP preview failures to the preview stage', async () => {

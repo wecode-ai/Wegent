@@ -207,11 +207,24 @@ test("platform sharding preserves four runners and every provider shard", () => 
   );
   assert.equal(report.with["if-no-files-found"], "error");
   assert.equal(oauth["timeout-minutes"], 10);
+  assert.equal(oauth.id, "dingtalk_oauth_e2e");
   for (const row of matrix.include) {
-    const enabled = (expression) =>
-      Boolean(runInNewContext(expression, { matrix: row, always: () => true }));
-    for (const step of [preparation, oauth, report])
+    const enabled = (expression, outcome = "success") =>
+      Boolean(
+        runInNewContext(expression, {
+          matrix: row,
+          steps: { dingtalk_oauth_e2e: { outcome } },
+          always: () => true,
+        }),
+      );
+    for (const step of [preparation, oauth])
       assert.equal(enabled(step.if), row.dingtalkOAuth);
+    for (const outcome of ["success", "failure", "cancelled", "skipped", ""]) {
+      assert.equal(
+        enabled(report.if, outcome),
+        row.dingtalkOAuth && outcome !== "skipped" && outcome !== "",
+      );
+    }
     const resolvedOptions = options.replace(
       /\$\{\{\s*(.*?)\s*\}\}/g,
       (_, expression) => runInNewContext(expression, { matrix: row }),
