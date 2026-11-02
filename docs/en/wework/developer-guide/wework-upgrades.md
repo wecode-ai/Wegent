@@ -76,7 +76,12 @@ host, retain its signed program and update that inactive release's program refer
 Preparation replaces no installed program files and preserves both current and prior rollback.
 
 Delivered launchers enter the new payload bootstrap first. Its native helper installs the
-selected host, then the bootstrap executes the installed application with the same PID.
+selected host, then a native relay spawns the installed application with a fresh PID.
+Never re-execute Electron at the same PID: RunningBoard's cached PID version can become
+stale and Control Center rejects status-item registration with `process has mismatched pid version`.
+The slot entry hides its Dock identity before handoff. The relay retains the legacy supervisor's
+process tree until the existing health marker is confirmed or the target exits, preserving
+the original activation transaction's failure handling.
 A retained legacy program copy references the original source's data owner. Activation uses
 the existing snapshot-preservation protocol so delivered cleaners also retain that profile.
 After the selected bootstrap loads with the matching version, it takes over recovery forwarding
@@ -90,6 +95,19 @@ continuing the original task after rollback. Source fixtures retain snapshots of
 bootstrap, release store, and native launcher rather than reimplementing their behavior.
 Failed activation also enters through the signed versioned source to cover cached legacy recovery.
 Mechanism evidence still cannot authorize production edges bound to different package hashes.
+
+Suite v9 also verifies that the system actually hosts the native status item after upgrade
+and rollback, beyond Electron having created a `Tray` object. Users with an existing Dock
+pin targeting a release slot must remove it and pin the installed application instead;
+the application never edits Dock preferences.
+
+`release-package-startup` retains a real first launch without warming the runtime cache.
+The Windows CI trace recorded 145 seconds of extraction and a controller connection around
+192 seconds after launch. This scenario assigns the existing 180-second budget separately
+to component preparation, runtime extraction, Core profile preparation, Core process startup,
+and renderer loading. Stalled, regressing, or over-budget phases still fail; preparation logs
+never substitute for the real controller connection. Ordinary starts, restarts, and upgrade
+scenarios retain their existing wait budgets.
 
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.
 
