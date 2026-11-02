@@ -1318,17 +1318,30 @@ impl LocalTaskStore {
     ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, message_id, client_message_id, project_id, task_id,
-                    sender_type, sender_id, sender_name, message_type, content,
-                    metadata, trigger_message_id, reply_to_message_id,
-                    thread_root_message_id, status, sequence_number, created_at, updated_at
-             FROM loop_item_comments
-             WHERE project_id = ?1 AND task_id = ?2 AND deleted_at IS NULL
-               AND sequence_number > ?3
-             ORDER BY sequence_number ASC",
+            "SELECT c.id, c.message_id, c.client_message_id, c.project_id, c.task_id,
+                    c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
+                    c.metadata, c.trigger_message_id, c.reply_to_message_id,
+                    c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
+                    e.status, e.observed_state, e.sync_state
+             FROM loop_item_comments c
+             LEFT JOIN loop_item_executions e
+               ON e.id = json_extract(c.metadata, '$.execution_id')
+              AND e.cloud_project_id = c.project_id AND e.loop_item_id = c.task_id
+              AND c.sender_type = 'agent' AND e.agent_id = c.sender_id
+             WHERE c.project_id = ?1 AND c.task_id = ?2 AND c.deleted_at IS NULL
+               AND c.sequence_number > ?3
+             ORDER BY c.sequence_number ASC",
         )?;
-        let rows =
-            statement.query_map(params![project_id, task_id, after_sequence], map_comment)?;
+        let rows = statement.query_map(params![project_id, task_id, after_sequence], |row| {
+            let mut comment = map_comment(row)?;
+            if let Some(status) = row.get::<_, Option<String>>(18)? {
+                let observed: String = row.get(19)?;
+                let sync: String = row.get(20)?;
+                comment.metadata["run_status"] =
+                    json!(local_execution_display_state(&status, &observed, &sync));
+            }
+            Ok(comment)
+        })?;
         let mut comments = Vec::new();
         for comment in rows {
             comments.push(comment?);

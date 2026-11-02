@@ -602,6 +602,47 @@ fn automatic_admission_keeps_model_readiness_and_native_approval_policy() {
 }
 
 #[test]
+fn execution_comment_reads_project_current_approval_without_copying_queue_state() {
+    let fixture = Fixture::new();
+    fixture.store.connection().unwrap().execute("UPDATE loop_items SET metadata=json_set(metadata,'$.execution_mode','manual_approval') WHERE id=?1",[&fixture.leader]).unwrap();
+    let receipt = fixture.dispatch("approval-presentation").unwrap();
+    let execution = fixture.row(&receipt);
+    let comments = fixture
+        .store
+        .list_comments(&fixture.project.id, &fixture.issue.id, 0)
+        .unwrap();
+    let pending = comments
+        .iter()
+        .find(|comment| comment.metadata["execution_id"] == execution.id)
+        .unwrap();
+    assert_eq!(pending.metadata["run_status"], "waiting_approval");
+    fixture.store.approve_execution(execution.id).unwrap();
+    let comments = fixture
+        .store
+        .list_comments(&fixture.project.id, &fixture.issue.id, 0)
+        .unwrap();
+    let approved = comments
+        .iter()
+        .find(|comment| comment.message_id == pending.message_id)
+        .unwrap();
+    assert_eq!(approved.metadata["run_status"], "queued");
+    let stored: String = fixture
+        .store
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT metadata FROM loop_item_comments WHERE message_id=?1",
+            [&pending.message_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(serde_json::from_str::<Value>(&stored)
+        .unwrap()
+        .get("run_status")
+        .is_none());
+}
+
+#[test]
 fn human_round_keeps_audit_identity_and_waits_for_original_delivery() {
     let mut fixture = Fixture::new();
     let mut groups = fixture.project.metadata["collaboration_groups"].clone();
