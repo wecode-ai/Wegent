@@ -35,6 +35,7 @@ import type {
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 import { CollaborationTemplateStore } from "../templates/store";
 import { builtinCollaborationTemplates } from "../templates/builtins";
+import type { CollaborationTemplateRemote } from "../templates/types";
 
 const workspace: CollaborationWorkspace = {
   id: "workspace-1",
@@ -3904,6 +3905,93 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).querySelector(".collaboration-resource-row-leader");
     expect(leader?.textContent).toBe(agent.name);
   });
+
+  it.each([true, false])(
+    "preserves available templates through navigation refresh (failure: %s)",
+    async (failNavigation) => {
+      const { api } = createApi();
+      const record = {
+        ...builtinCollaborationTemplates()[0],
+        id: 70,
+        ownerId: 8,
+        source: "downloaded" as const,
+      };
+      const remote: CollaborationTemplateRemote = {
+        discover: vi.fn(async () => ({
+          items: [],
+          hasMore: false,
+          nextCursor: null,
+        })),
+        list: vi.fn(async () => [
+          {
+            id: 70,
+            ownerId: 8,
+            name: "account-template",
+            namespace: "default",
+            displayName: "Account template",
+            description: "Installed account template",
+            version: "1.0.0",
+            revision: "1",
+          },
+        ]),
+        get: vi.fn(async () => record),
+        save: vi.fn(),
+        install: vi.fn(),
+        publish: vi.fn(),
+      };
+      const templateStore = new CollaborationTemplateStore({
+        scope: "backend:7",
+        ownerId: 7,
+        remote,
+        persistence: { read: async () => [], write: async () => {} },
+      });
+      const page = (refreshKey: string) => (
+        <PlatformHarness
+          api={api}
+          templateStore={templateStore}
+          refreshKey={refreshKey}
+          start={{ ...initialLocation, rootView: "templates" }}
+        />
+      );
+      await render(page("initial"));
+      await waitForUi(200);
+      await click(byTestId("template-tab-available"));
+      const details = byTestId("template-details-70");
+      const pendingProjects = deferred<CollaborationProject[]>();
+      const pendingWorkspaces = deferred<CollaborationWorkspace[]>();
+      vi.mocked(api.projects.list).mockReturnValue(pendingProjects.promise);
+      vi.mocked(api.workspaces!.list).mockReturnValue(
+        pendingWorkspaces.promise,
+      );
+
+      await render(page("refresh"));
+      expect(byTestId("template-details-70")).toBe(details);
+      await act(async () => {
+        if (failNavigation) {
+          pendingProjects.reject(new Error("Project navigation unavailable"));
+          pendingWorkspaces.reject(
+            new Error("Workspace navigation unavailable"),
+          );
+        } else {
+          pendingProjects.resolve([project]);
+          pendingWorkspaces.resolve([workspace]);
+        }
+      });
+      await flush();
+      expect(byTestId("template-details-70")).toBe(details);
+
+      vi.mocked(api.projects.list).mockResolvedValue([project]);
+      vi.mocked(api.workspaces!.list).mockResolvedValue([workspace]);
+      await render(page("recovered"));
+      await waitForUi(200);
+      expect(byTestId("template-details-70")).toBe(details);
+      expect(remote.list).toHaveBeenCalledOnce();
+      expect(remote.discover).toHaveBeenCalledOnce();
+      await click(details);
+      expect(remote.get).toHaveBeenCalledExactlyOnceWith(70);
+      expect(byTestId("template-use")).toBeTruthy();
+    },
+  );
 
   it.each([true, false])(
     "finishes root group creation before navigation refresh (partial failure: %s)",
