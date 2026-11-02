@@ -52,6 +52,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'false'
       )
       await control.command('click', follow)
+      await control.command('waitFor', `${follow}[aria-pressed="true"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(await control.command('getAttribute', follow, { value: 'aria-pressed' }), 'true')
       assert.equal(
         await control.command(
