@@ -452,13 +452,12 @@ export class SmartAppManager {
           : `market-${input.smartAppId}`
       const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
       const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
-      await extractSmartAppArchive(preview.archivePath, staging)
-      const packageRoot = await findSmartAppManifestRoot(staging)
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 })
-      if (await exists(target)) {
-        await rm(staging, { recursive: true, force: true })
-      } else {
-        await rename(packageRoot, target)
+      try {
+        await extractSmartAppArchive(preview.archivePath, staging)
+        const packageRoot = await findSmartAppManifestRoot(staging)
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+        if (!(await exists(target))) await rename(packageRoot, target)
+      } finally {
         await rm(staging, { recursive: true, force: true })
       }
       const installations = await this.readRegistry()

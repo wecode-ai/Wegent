@@ -21,6 +21,10 @@ import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
 import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
 import { verifyHarnessLifecycle } from '../modules/harness-app-lifecycle.mjs'
 import { verifyHarnessAppModels } from '../modules/harness-app-models.mjs'
+import {
+  createSmartAppArchiveRegression,
+  verifySmartAppArchiveRegression,
+} from '../modules/smart-app-archive-regression.mjs'
 
 export async function createDesktopScenario({
   checkpoint,
@@ -46,6 +50,9 @@ export async function createDesktopScenario({
     version: '0.0.9',
   })
   const officialSource = await createOfficialSource(resultDir, packagePath)
+  const archiveRegression =
+    checkpoint === 'harness-app-lifecycle' ? await createSmartAppArchiveRegression(resultDir) : null
+  let publishUpdatedRelease
   // Electron falls back to HOME on Linux when XDG user directories are unavailable.
   const downloadsPath =
     process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
@@ -53,6 +60,12 @@ export async function createDesktopScenario({
   let ownerRequest
   return {
     requiresCloudEnvironment: true,
+    // Reproduce a workbench launched from a DSH-backed terminal. Legacy apps must
+    // ignore the parent's authentication state while Core DSH keeps its own auth.
+    appEnvironment: {
+      WEWORK_DSH_BROWSER_AUTH: '1',
+      WEWORK_DSH_BROWSER_AUTH_FD: '99',
+    },
     async prepareApp({ appBinary }) {
       await verifyDefaultOnlyDshPackage(
         join(packagedResourcesRoot(appBinary), 'harness-runtime'),
@@ -62,6 +75,10 @@ export async function createDesktopScenario({
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
       await publishOfficialSmartApp(officialSource)
+      if (archiveRegression) {
+        await publishOfficialSmartApp(archiveRegression.sources[0])
+        publishUpdatedRelease = publishOfficialSmartApp
+      }
       ownerRequest = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
       const ownerCatalog = await ownerRequest('/api/smart-apps/marketplace')
       const officialItem = ownerCatalog.items.find(
@@ -260,6 +277,17 @@ export async function createDesktopScenario({
           }
         }
       } else if (checkpoint === 'harness-app-lifecycle') {
+        assert.ok(
+          archiveRegression && publishUpdatedRelease,
+          'Archive regression fixtures were not prepared'
+        )
+        await verifySmartAppArchiveRegression(control, {
+          fixture: archiveRegression,
+          ownerRequest,
+          publishUpdatedRelease,
+          electronUserDataDirectory,
+          uiTimeoutMs,
+        })
         await verifyHarnessLifecycle(control, {
           packagePath,
           uiTimeoutMs,
