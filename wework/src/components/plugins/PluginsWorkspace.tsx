@@ -1718,19 +1718,6 @@ export function PluginsWorkspace({
     const pluginId = plugin.id
     setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
     setPluginMarketplaceState(previous => ({ ...previous, error: null }))
-    setInstalledPlugins(previous =>
-      previous.map(item =>
-        String(item.id) === String(pluginId)
-          ? {
-              ...item,
-              raw: {
-                ...item.raw,
-                spec: { ...item.raw.spec, updatePolicy },
-              },
-            }
-          : item
-      )
-    )
 
     pluginApi
       .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
@@ -1743,9 +1730,6 @@ export function PluginsWorkspace({
       .catch(error => {
         attempt.fail('request')
         const errorMessage = getErrorMessage(error, 'Unknown error')
-        setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(pluginId) ? plugin : item))
-        )
         setPluginMarketplaceState(previous => ({
           ...previous,
           error: t('workbench.plugins_update_policy_failed', {
@@ -1895,7 +1879,9 @@ export function PluginsWorkspace({
   }
 
   const pluginMutationInFlight =
-    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
+    installingMarketplacePluginIds.size > 0 ||
+    uninstallingPluginIds.size > 0 ||
+    updatingPluginPolicyIds.size > 0
   const isReconcilingPlugins = usePluginRefreshReconciliation({
     request:
       reconciliationScope.accountKey === marketplaceCacheKeyValue &&
