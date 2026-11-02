@@ -19,12 +19,6 @@
       "source_commit": "d8807124fe7f4eef8181354e78090f32ec9c574e",
       "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41472780647/job/125370446625"
     },
-    "ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:executor-v1-b26d0b2246ae71d2c72425660fae2b8c2b0d97a010d9d01e49bfae66194d0c57": {
-      "image": "ghcr.io/ficohu/wegent-wework-macos-e2e-runtime@sha256:6e5ccf8a9631d7bc14fc1dcffa367f108aeb51d82d445bb83dbce8ba096cfe10",
-      "platform": "darwin/arm64",
-      "source_commit": "8fddcb27edf2a2bf82137c3355a5b76b23b15db4",
-      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41480110524/job/125395857591"
-    },
     "ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:backend-rs-v1-340dd1f5276717cb365befcecd8d59a97e935a53428cd6f2a5ddafae3ded13a4": {
       "image": "ghcr.io/ficohu/wegent-wework-macos-e2e-runtime@sha256:51c820555cacb40817657ab3a77ce1032cd1ce7b97a4c42abe4e28648f6325f2",
       "platform": "darwin/arm64",
@@ -42,6 +36,12 @@
       "platform": "linux/amd64",
       "source_commit": "45feceafde22fe880de960cffb0955f594aaf8ca",
       "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41507977988/job/125492111561"
+    },
+    "ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:executor-v1-f05e909f3a11ad7a19c3ba845770c9f5da0281b7139dd432ed3b65ed04c88b4d": {
+      "image": "ghcr.io/ficohu/wegent-wework-macos-e2e-runtime@sha256:714eff9a9b11c24c437dc8533f9f3e7a1882b6ce255cc2cca3d99aa0cd952b1f",
+      "platform": "darwin/arm64",
+      "source_commit": "b8f5b6b3dcf054343d937c9336f0099268816f0b",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41528413800/job/125562020465"
     }
   }
 }
