@@ -4919,6 +4919,42 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
   })
 
+  test('starts automatic updates when a catalog refresh reads a changed account policy', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const read = vi.mocked(fetch).getMockImplementation()!
+    let policy: 'manual' | 'auto' = 'manual'
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const response = await read(input, init)
+      if (new URL(String(input), window.location.origin).pathname !== '/api/plugins/installed') {
+        return response
+      }
+      const body = await response.json()
+      for (const plugin of body.items) plugin.spec.updatePolicy = policy
+      return { ...response, json: async () => body } as Response
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-all'))
+    await screen.findByTestId('plugin-marketplace-row-101')
+    const refresh = await screen.findByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+
+    policy = 'auto'
+    await userEvent.click(refresh)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+  })
+
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({
