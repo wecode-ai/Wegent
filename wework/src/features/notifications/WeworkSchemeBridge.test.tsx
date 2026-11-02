@@ -261,6 +261,19 @@ describe('Wework scheme bridge', () => {
     )
   })
 
+  it('rejects an unregistered DSH app without opening a route-shaped tab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://apps/harness-research-local')
+    })
+
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(openTab).not.toHaveBeenCalled()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
   it('opens an installed Smart app returned by its marketplace identity', async () => {
     const installation = {
       id: 'research-local',

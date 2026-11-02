@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
+import { HARNESS_APP_INSTALLATIONS_CHANGED_EVENT } from '@/features/harness-apps/harnessAppInstallationsChanged'
 import type { UnifiedModel } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
@@ -152,7 +153,7 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
       sizeBytes: 1024,
       expiresAt: '2026-08-20T00:10:00Z',
     }),
-    getItem: vi.fn(),
+    getItem: vi.fn().mockRejectedValue(new ApiError('Smart app not found', 404, 'not_found')),
     getAccess: vi.fn(),
     updateAccess: vi.fn(),
     searchUsers: vi.fn(),
@@ -1148,12 +1149,63 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByTestId('smart-app-details')).toHaveTextContent('研究工作台')
   })
 
+  test('loads a deep-link target directly when the catalog list is empty', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  test('clears the deep-link install prompt after the target is installed', async () => {
+    render(<SmartAppsMarketplacePage api={api([item()])} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+
+    const installation = {
+      ...importedInstallation,
+      id: 'research-target',
+      smartAppId: 7,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:3000',
+    }
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, {
+          detail: {
+            type: 'installed',
+            installationId: installation.id,
+            installation,
+          },
+        })
+      )
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+    )
+  })
+
   test('reports an unavailable target instead of leaving a blank deep link', async () => {
     render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={99} />)
 
     expect(
       await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-deep-link-retry')).toBeInTheDocument()
     expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+  })
+
+  test('retries a failed deep-link target lookup', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem)
+      .mockRejectedValueOnce(new ApiError('temporary failure', 503, 'unavailable'))
+      .mockResolvedValueOnce(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-deep-link-retry'))
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
   })
 })

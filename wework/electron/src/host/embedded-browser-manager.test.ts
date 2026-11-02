@@ -49,31 +49,36 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
   })
 
-  test('routes wework links clicked inside an embedded page to the host scheme handler', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-scheme-'))
-    const openScheme = vi.fn()
-    const manager = new EmbeddedBrowserManager(directory, () => {}, openScheme)
-    const contents = Object.assign(new FakeWebContents(), { session: electronMocks.browserSession })
-    manager.attach('browser-link', contents as unknown as WebContents)
-    try {
-      await manager.open({
-        label: 'browser-link',
-        url: 'https://example.test/',
-        bounds: { x: 0, y: 0, width: 800, height: 600 },
-        visible: true,
-        navigateExisting: true,
+  test.each(['will-navigate', 'will-redirect'])(
+    'routes wework links from %s inside an embedded page to the host scheme handler',
+    async eventName => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-scheme-'))
+      const openScheme = vi.fn()
+      const manager = new EmbeddedBrowserManager(directory, () => {}, openScheme)
+      const contents = Object.assign(new FakeWebContents(), {
+        session: electronMocks.browserSession,
       })
-      const event = { preventDefault: vi.fn() }
-      contents.emit('will-navigate', event, 'wework://apps/wegent')
+      manager.attach('browser-link', contents as unknown as WebContents)
+      try {
+        await manager.open({
+          label: 'browser-link',
+          url: 'https://example.test/',
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          visible: true,
+          navigateExisting: true,
+        })
+        const event = { preventDefault: vi.fn() }
+        contents.emit(eventName, event, 'wework://apps/wegent')
 
-      expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://apps/wegent')
-      expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/')
-    } finally {
-      manager.stop()
-      await rm(directory, { recursive: true, force: true })
+        expect(event.preventDefault).toHaveBeenCalledOnce()
+        expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://apps/wegent')
+        expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/')
+      } finally {
+        manager.stop()
+        await rm(directory, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   test('routes wework links opened in a new embedded page', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-scheme-window-'))

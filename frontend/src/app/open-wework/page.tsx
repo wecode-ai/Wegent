@@ -50,7 +50,7 @@ function WeworkHandoffContent() {
               <p className="mt-1 text-xs leading-5 text-text-secondary">
                 {t('not_installed_description')}
               </p>
-              <Button asChild variant="secondary" size="sm" className="mt-3 min-h-9">
+              <Button asChild variant="secondary" size="sm" className="mt-3 min-h-11">
                 <a
                   href={WEWORK_DOWNLOAD_URL}
                   target="_blank"

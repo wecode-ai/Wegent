@@ -287,7 +287,11 @@ export function SmartAppsMarketplacePage({
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const [targetInstallItem, setTargetInstallItem] = useState<SmartAppMarketplaceItem | null>(null)
+  const [targetLookupError, setTargetLookupError] = useState<string | null>(null)
+  const [targetLookupRevision, setTargetLookupRevision] = useState(0)
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
+  const targetLookupRequestRef = useRef(0)
+  const targetLookupInFlightRef = useRef<number | null>(null)
   const refreshRequestRef = useRef(0)
   const activeModeRef = useRef(mode)
 
@@ -372,43 +376,88 @@ export function SmartAppsMarketplacePage({
   useEffect(() => {
     if (targetSmartAppId) return
     handledTargetSmartAppIdRef.current = null
-    queueMicrotask(() => setTargetInstallItem(null))
+    targetLookupRequestRef.current += 1
+    queueMicrotask(() => {
+      setTargetInstallItem(null)
+      setTargetLookupError(null)
+    })
   }, [targetSmartAppId])
   useEffect(() => {
-    if (!targetSmartAppId || loading || handledTargetSmartAppIdRef.current === targetSmartAppId)
-      return
+    if (!targetSmartAppId) return
     const installation = activeInstallations.find(
       candidate => candidate.smartAppId === targetSmartAppId
     )
     if (installation) {
+      const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
       handledTargetSmartAppIdRef.current = targetSmartAppId
+      targetLookupRequestRef.current += 1
+      targetLookupInFlightRef.current = null
       queueMicrotask(() => {
         setTargetInstallItem(null)
+        setTargetLookupError(null)
+        if (!shouldOpen) return
         if (installation.state === 'running') openInstalledApp(installation)
         else startInstalledApp(installation)
       })
       return
     }
+    if (
+      handledTargetSmartAppIdRef.current === targetSmartAppId ||
+      targetLookupInFlightRef.current === targetSmartAppId
+    ) {
+      return
+    }
+    if (!api || loading) return
     const item = items.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
       handledTargetSmartAppIdRef.current = targetSmartAppId
+      targetLookupRequestRef.current += 1
+      targetLookupInFlightRef.current = null
       queueMicrotask(() => {
         setTargetInstallItem(item)
+        setTargetLookupError(null)
         setSelected(item)
       })
       return
     }
-    if (!api) return
-    handledTargetSmartAppIdRef.current = targetSmartAppId
-    queueMicrotask(() => {
-      setTargetInstallItem(null)
-      setError(
-        t(
-          'workbench.smart_apps_deep_link_unavailable',
-          '未找到此智能工作台，可能已下架或你没有访问权限。'
+    const requestId = ++targetLookupRequestRef.current
+    targetLookupInFlightRef.current = targetSmartAppId
+    let cancelled = false
+    void api
+      .getItem(targetSmartAppId)
+      .then(item => {
+        if (cancelled || requestId !== targetLookupRequestRef.current) return
+        handledTargetSmartAppIdRef.current = targetSmartAppId
+        setTargetInstallItem(item)
+        setTargetLookupError(null)
+        setSelected(item)
+      })
+      .catch(error => {
+        if (cancelled || requestId !== targetLookupRequestRef.current) return
+        targetLookupInFlightRef.current = null
+        setTargetInstallItem(null)
+        setTargetLookupError(
+          getSmartAppErrorMessage(
+            error,
+            t(
+              'workbench.smart_apps_deep_link_unavailable',
+              '未找到此智能工作台，可能已下架或你没有访问权限。'
+            ),
+            t
+          )
         )
-      )
-    })
+      })
+      .finally(() => {
+        if (requestId === targetLookupRequestRef.current) {
+          targetLookupInFlightRef.current = null
+        }
+      })
+    return () => {
+      cancelled = true
+      if (targetLookupInFlightRef.current === targetSmartAppId) {
+        targetLookupInFlightRef.current = null
+      }
+    }
   }, [
     activeInstallations,
     api,
@@ -418,6 +467,7 @@ export function SmartAppsMarketplacePage({
     startInstalledApp,
     t,
     targetSmartAppId,
+    targetLookupRevision,
   ])
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
@@ -1159,6 +1209,25 @@ export function SmartAppsMarketplacePage({
         <p role="alert" className="mt-4 rounded-lg bg-danger/10 p-3 text-sm text-danger">
           {createError ?? error}
         </p>
+      ) : null}
+
+      {targetLookupError ? (
+        <div
+          role="alert"
+          data-testid="smart-app-deep-link-error"
+          className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-danger/25 bg-danger/10 p-4 text-sm text-danger"
+        >
+          <span className="min-w-0">{targetLookupError}</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="min-h-11 shrink-0 sm:min-h-9"
+            data-testid="smart-app-deep-link-retry"
+            onClick={() => setTargetLookupRevision(revision => revision + 1)}
+          >
+            {t('workbench.retry', '重试')}
+          </Button>
+        </div>
       ) : null}
 
       {targetInstallItem ? (

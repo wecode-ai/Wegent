@@ -11,11 +11,11 @@ const ALLOWED_PARAMS = new Set(['projectId', 'itemId', 'commentId', 'url'])
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 const MAX_WEWORK_URL_LENGTH = 2048
 
-function validSegment(value: string | null): value is string {
+function validSegment(value: string | null, limit = 128): value is string {
   return (
     value !== null &&
     value.length > 0 &&
-    value.length <= 128 &&
+    value.length <= limit &&
     value !== '.' &&
     value !== '..' &&
     !CONTROL_CHARACTERS.test(value)
@@ -25,10 +25,27 @@ function validSegment(value: string | null): value is string {
 function decodeSegment(value: string, limit = 128): string | null {
   try {
     const decoded = decodeURIComponent(value)
-    return validSegment(decoded) && decoded.length <= limit ? decoded : null
+    return validSegment(decoded, limit) ? decoded : null
   } catch {
     return null
   }
+}
+
+function hasDotSegment(raw: string): boolean {
+  const pathStart = raw.indexOf('/', 'wework://'.length)
+  if (pathStart < 0) return false
+  return raw
+    .slice(pathStart)
+    .split('/')
+    .slice(1)
+    .some(part => {
+      try {
+        const decoded = decodeURIComponent(part)
+        return decoded === '.' || decoded === '..'
+      } catch {
+        return true
+      }
+    })
 }
 
 function parseWeworkDeepLink(raw: string): WeworkHandoffDestination | null {
@@ -42,6 +59,7 @@ function parseWeworkDeepLink(raw: string): WeworkHandoffDestination | null {
   ) {
     return null
   }
+  if (hasDotSegment(raw)) return null
   try {
     const url = new URL(raw)
     if (url.protocol !== 'wework:' || url.username || url.password || url.port) return null

@@ -212,6 +212,16 @@ export class EmbeddedBrowserManager {
     })
   }
 
+  private interceptWeworkNavigation(contents: WebContents): void {
+    const handleNavigation = (event: Electron.Event, url: string) => {
+      if (!url.startsWith('wework://')) return
+      event.preventDefault()
+      this.openWeworkScheme(url)
+    }
+    contents.on('will-navigate', handleNavigation)
+    contents.on('will-redirect', handleNavigation)
+  }
+
   setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
     validateRequestHeaderRule(rule)
     this.requestHeaderRules.set(rule.id, structuredClone(rule))
@@ -248,11 +258,7 @@ export class EmbeddedBrowserManager {
       else if (isBrowserUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
-    view.webContents.on('will-navigate', (event, url) => {
-      if (!url.startsWith('wework://')) return
-      event.preventDefault()
-      this.openWeworkScheme(url)
-    })
+    this.interceptWeworkNavigation(view.webContents)
     view.webContents.on(
       'did-fail-load',
       (_event, code: number, message: string, url: string, isMainFrame: boolean) => {
@@ -466,11 +472,7 @@ export class EmbeddedBrowserManager {
       }
       return { action: 'deny' }
     })
-    contents.on('will-navigate', (event, url) => {
-      if (!url.startsWith('wework://')) return
-      event.preventDefault()
-      this.openWeworkScheme(url)
-    })
+    this.interceptWeworkNavigation(contents)
     const emitPageState = () => this.emitPageState(entry)
     contents.on('did-start-loading', emitPageState)
     contents.on('did-stop-loading', emitPageState)

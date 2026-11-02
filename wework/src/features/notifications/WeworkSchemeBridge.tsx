@@ -72,15 +72,19 @@ export function WeworkSchemeBridge() {
       }
       if (destination.kind === 'app') {
         const app = resolveDshApp(destination.appId)
+        if (!app) {
+          console.warn('[Wework] Rejected an unregistered DSH app deep link')
+          return true
+        }
         if (
-          app?.requiresCloud &&
+          app.requiresCloud &&
           (!connectionRef.current?.isConnected || !connectionRef.current.token)
         ) {
           return deferForCloud(url, deferInRenderer, connectionRef.current)
         }
         const contentRoute =
-          app?.mode === 'native' ? app.path || '/' : `/app/${encodeURIComponent(destination.appId)}`
-        const title = app ? t(app.labelKey ?? app.id, app.label) : destination.appId
+          app.mode === 'native' ? app.path || '/' : `/app/${encodeURIComponent(destination.appId)}`
+        const title = t(app.labelKey ?? app.id, app.label)
         openAuxiliaryRoute(tabsRef.current, title, contentRoute)
         return true
       }
