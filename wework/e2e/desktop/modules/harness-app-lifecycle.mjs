@@ -281,6 +281,7 @@ export async function verifyHarnessLifecycle(
     'waitFor',
     `[data-testid="harness-app-start-${IMPORTED_INSTALLATION_ID}"]`,
     {
+      enabled: true,
       timeoutMs: 30_000,
     }
   )
