@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync, readFileSync, statfsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statfsSync } from 'node:fs'
 import { availableParallelism, cpus, freemem, loadavg, totalmem } from 'node:os'
 import { dirname, resolve } from 'node:path'
 
@@ -31,6 +31,48 @@ function cpuTimes() {
 
 let previousCpu = cpuTimes()
 let child
+let smallestDiskPressureTier = Infinity
+
+function diskUsage() {
+  const paths = [
+    'wework/test-results/desktop-e2e',
+    '.ci-artifacts',
+    'backend/.venv',
+    '/root/.cache',
+    '/root/go',
+    '/tmp',
+  ].filter(existsSync)
+  let output
+  let incomplete
+  try {
+    output = execFileSync('du', ['-k', '-x', '-d', '4', '--', ...paths], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 2 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch (error) {
+    output = String(error.stdout ?? '')
+    incomplete = { reason: error.code ?? error.name, status: error.status, signal: error.signal }
+  }
+  return {
+    incomplete,
+    directories: output
+      .trim()
+      .split('\n')
+      .map(line => {
+        const separator = line.indexOf('\t')
+        return {
+          allocatedBytes: Number(line.slice(0, separator)) * 1024,
+          path: line.slice(separator + 1),
+        }
+      })
+      .filter(entry => Number.isFinite(entry.allocatedBytes))
+      .sort((left, right) => right.allocatedBytes - left.allocatedBytes)
+      .slice(0, 40),
+  }
+}
+
 function sample(phase, exitCode) {
   const currentCpu = cpuTimes()
   const elapsed = currentCpu.total - previousCpu.total
@@ -51,8 +93,14 @@ function sample(phase, exitCode) {
     memoryTotalBytes: totalmem(),
     memoryFreeBytes: freemem(),
     diskAvailableBytes: disk.bavail * disk.bsize,
+    diskAvailableInodes: disk.ffree,
   }
   if (process.platform === 'linux') {
+    const pressureTier = Math.floor(Math.log2(Math.max(record.diskAvailableBytes, 1)))
+    if (record.diskAvailableBytes < 4 * 1024 ** 3 && pressureTier < smallestDiskPressureTier) {
+      smallestDiskPressureTier = pressureTier
+      record.diskUsage = diskUsage()
+    }
     record.linux = Object.fromEntries(
       [
         ['memory', '/proc/meminfo'],

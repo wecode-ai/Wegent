@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 
 const script = fileURLToPath(new URL('./run-with-resource-logging.mjs', import.meta.url))
 
-function run(args, env = {}) {
+function run(args, env = {}, preload) {
   const cwd = mkdtempSync(join(tmpdir(), 'runner-resource-test-'))
   try {
+    if (preload) {
+      const preloadPath = join(cwd, 'preload.mjs')
+      writeFileSync(preloadPath, preload)
+      env = { ...env, NODE_OPTIONS: `--import=${pathToFileURL(preloadPath).href}` }
+    }
     const result = spawnSync(process.execPath, [script, ...args], {
       cwd,
       encoding: 'utf8',
@@ -86,4 +91,34 @@ test('records process identities in a configurable artifact without command argu
     assert.match(record.processes, /PID\s+PPID/)
     assert.doesNotMatch(record.processes, /private-command-argument/)
   }
+})
+
+test('retains partial disk diagnostics without changing the child failure', () => {
+  const result = run(
+    [process.execPath, '-e', 'process.exit(23)'],
+    {},
+    `
+      import fs from 'node:fs'
+      import childProcess from 'node:child_process'
+      import { syncBuiltinESMExports } from 'node:module'
+      const statfs = fs.statfsSync
+      fs.statfsSync = path => ({ ...statfs(path), bavail: 0, ffree: 17 })
+      childProcess.execFileSync = () => {
+        const error = new Error('A directory disappeared during the scan')
+        error.status = 1
+        error.stdout = '8\\tfixture cache\\n'
+        throw error
+      }
+      Object.defineProperty(process, 'platform', { value: 'linux' })
+      syncBuiltinESMExports()
+    `
+  )
+  assert.equal(result.status, 23)
+  assert.equal(result.records[0].diskAvailableInodes, 17)
+  assert.deepEqual(result.records[0].diskUsage.directories, [
+    { allocatedBytes: 8192, path: 'fixture cache' },
+  ])
+  assert.equal(result.records[0].diskUsage.incomplete.status, 1)
+  assert.equal(result.records.at(-1).diskUsage, undefined)
+  assert.equal(result.records.at(-1).exitCode, 23)
 })
