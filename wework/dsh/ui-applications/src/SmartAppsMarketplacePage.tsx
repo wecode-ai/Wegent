@@ -294,6 +294,7 @@ export function SmartAppsMarketplacePage({
   const previousTargetSmartAppIdRef = useRef<number | null>(null)
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
   const catalogTargetSmartAppIdRef = useRef<number | null>(null)
+  const resolvedTargetApiRef = useRef<SmartAppsApi | null>(null)
   const targetLookupRequestRef = useRef(0)
   const downloadRequestRef = useRef(0)
   const refreshRequestRef = useRef(0)
@@ -382,6 +383,7 @@ export function SmartAppsMarketplacePage({
     previousTargetSmartAppIdRef.current = null
     handledTargetSmartAppIdRef.current = null
     catalogTargetSmartAppIdRef.current = null
+    resolvedTargetApiRef.current = null
     targetLookupRequestRef.current += 1
     downloadRequestRef.current += 1
     queueMicrotask(() => {
@@ -400,6 +402,7 @@ export function SmartAppsMarketplacePage({
       previousTargetSmartAppIdRef.current = targetSmartAppId
       handledTargetSmartAppIdRef.current = null
       catalogTargetSmartAppIdRef.current = null
+      resolvedTargetApiRef.current = api
       targetLookupRequestRef.current += 1
       downloadRequestRef.current += 1
       queueMicrotask(() => {
@@ -407,6 +410,16 @@ export function SmartAppsMarketplacePage({
         setPendingInstall(null)
         setModelKey('')
         setBusy(current => (current?.startsWith('download-') ? null : current))
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+      })
+    }
+    if (resolvedTargetApiRef.current !== api) {
+      resolvedTargetApiRef.current = api
+      catalogTargetSmartAppIdRef.current = null
+      queueMicrotask(() => {
+        setSelected(null)
         setTargetInstallItem(null)
         setTargetLookupError(null)
         setTargetLookupPending(false)

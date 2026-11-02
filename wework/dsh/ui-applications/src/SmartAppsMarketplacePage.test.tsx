@@ -1366,4 +1366,22 @@ describe('SmartAppsMarketplacePage', () => {
       )
     )
   })
+
+  test('re-resolves the target when the marketplace API changes', async () => {
+    const firstApi = api([])
+    vi.mocked(firstApi.getItem).mockResolvedValue(item())
+    const secondApi = api([])
+    const { rerender } = render(<SmartAppsMarketplacePage api={firstApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+
+    rerender(<SmartAppsMarketplacePage api={secondApi} targetSmartAppId={7} />)
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+    expect(secondApi.getItem).toHaveBeenCalledWith(7)
+  })
 })
