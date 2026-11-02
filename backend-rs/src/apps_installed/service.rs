@@ -453,7 +453,12 @@ where
             }
             continue;
         }
-        let (headers, _) = match session_headers(mysql, app, user).await {
+        let row = if app.auth_type == "none" {
+            None
+        } else {
+            db::find_connector_connection(mysql, &app.slug, user.users_id).await?
+        };
+        let (headers, attempted_access) = match session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             // `_upstream_tools` wraps configuration failures in its 502
             // `HTTPException`, which `list_tools` skips.
@@ -470,6 +475,13 @@ where
             match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
                 Ok(tools) => tools,
                 Err(error) => {
+                    super::refresh::record_directory_error(
+                        mysql,
+                        row.as_ref(),
+                        attempted_access.as_deref(),
+                        &error,
+                    )
+                    .await;
                     tracing::warn!(
                         connector = %app.slug,
                         %error,

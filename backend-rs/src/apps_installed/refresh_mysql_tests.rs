@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use brz_mysql::MysqlService;
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::db::{self, UserRow};
 use super::refresh::{self, DiscoveryState};
@@ -135,6 +136,10 @@ async fn read_spec(mysql: &MysqlService) -> Value {
 }
 
 fn oauth_app() -> ConnectorApp {
+    oauth_app_at("https://mcp.example.test/mcp")
+}
+
+fn oauth_app_at(url: &str) -> ConnectorApp {
     service::row_to_app(&db::KindRow {
         kinds_id: 1,
         kinds_user_id: 0,
@@ -146,7 +151,7 @@ fn oauth_app() -> ConnectorApp {
                 "kind": "ConnectorApp",
                 "spec": {
                     "name": SLUG,
-                    "mcpUrl": "https://mcp.example.test/mcp",
+                    "mcpUrl": url,
                     "authType": "oauth2",
                     "transport": "streamable-http",
                 }
@@ -173,6 +178,62 @@ fn user() -> UserRow {
         users_created_at: chrono::NaiveDateTime::default(),
         users_updated_at: chrono::NaiveDateTime::default(),
     }
+}
+
+async fn seed_current_grant(mysql: &MysqlService) {
+    seed_expired_grant(mysql, "2035-01-01T00:00:00").await;
+    crate::subscriptions_item::crypto::use_test_key();
+    let access = crate::subscriptions_item::crypto::encrypt_sensitive_data("A0").unwrap();
+    mysql
+        .execute(
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.accessTokenEncrypted', ?)",
+            (access.as_str(),),
+        )
+        .await
+        .unwrap();
+}
+
+/// Reject the initial MCP handshake and hold the first request until the test
+/// has the exact access-token snapshot used by the directory entry.
+async fn rejecting_mcp_server(
+    status: u16,
+) -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (attempted_tx, attempted_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buffer = [0_u8; 8192];
+        let _ = stream.read(&mut buffer).await.unwrap();
+        let _ = attempted_tx.send(());
+        let _ = release_rx.await;
+        let response = format!(
+            "HTTP/1.1 {status} Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+    });
+    (format!("http://{address}/mcp"), attempted_rx, release_tx)
+}
+
+async fn rotate_to_a1(mysql: &MysqlService) {
+    crate::subscriptions_item::crypto::use_test_key();
+    let access = crate::subscriptions_item::crypto::encrypt_sensitive_data("A1").unwrap();
+    let refresh = crate::subscriptions_item::crypto::encrypt_sensitive_data("R1").unwrap();
+    mysql
+        .execute(
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.accessTokenEncrypted', ?, \
+             '$.spec.refreshTokenEncrypted', ?, '$.spec.status', 'connected')",
+            (access.as_str(), refresh.as_str()),
+        )
+        .await
+        .unwrap();
 }
 
 /// The stale row a listing read before the grant rotation must not put the old
@@ -705,6 +766,125 @@ async fn a_current_tool_rejection_expires_only_the_used_grant() {
             assert_eq!(spec["accessTokenEncrypted"], json!("old-access"));
             assert_eq!(spec["refreshTokenEncrypted"], json!("old-refresh"));
             assert_eq!(spec["lastError"]["message"], json!("upstream 401"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// The installed-app directory must preserve the authorization error instead
+/// of silently removing a rejected app while leaving its status connected.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn installed_directory_rejection_expires_the_used_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_current_grant(&mysql).await;
+            let (url, attempted, release) = rejecting_mcp_server(401).await;
+            let apps = [oauth_app_at(&url)];
+            let listing = tokio::spawn({
+                let mysql = mysql.clone();
+                async move { service::installed_apps(&mysql, &apps, &user()).await }
+            });
+            attempted.await.unwrap();
+            release.send(()).unwrap();
+            let response = listing.await.unwrap().unwrap();
+            assert_eq!(response.apps.len(), 1);
+            assert_eq!(response.apps[0].connection.status, "expired");
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("expired"));
+            assert_eq!(
+                spec["lastError"]["message"],
+                json!("MCP server returned status 401")
+            );
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// The MCP directory must apply the same conditional rejection. A delayed
+/// response for A0 must not expire the A1 grant committed while it was in flight.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn mcp_directory_late_rejection_keeps_a_newer_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result =
+        tokio::spawn({
+            let mysql = mysql.clone();
+            async move {
+                seed_current_grant(&mysql).await;
+                let (url, attempted, release) = rejecting_mcp_server(403).await;
+                let apps = [oauth_app_at(&url)];
+                let listing = tokio::spawn({
+                    let mysql = mysql.clone();
+                    async move {
+                        crate::mcp::connectors::list_tools_for_user(&mysql, &apps, &user()).await
+                    }
+                });
+                attempted.await.unwrap();
+                rotate_to_a1(&mysql).await;
+                release.send(()).unwrap();
+                assert!(listing.await.unwrap().is_empty());
+
+                let spec = read_spec(&mysql).await;
+                assert_eq!(spec["status"], json!("connected"));
+                assert_eq!(spec["lastError"], json!(null));
+                let current = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                    .await
+                    .unwrap()
+                    .expect("the fixture connection exists");
+                let current = super::connection::ConnectorConnection::from_row(&current);
+                assert_eq!(current.access_token().unwrap(), "A1");
+                assert_eq!(current.refresh_token().as_deref(), Some("R1"));
+            }
+        })
+        .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// A non-auth discovery failure records its diagnostic without invalidating
+/// a credential that the upstream did not reject.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn directory_transport_failure_keeps_the_grant_connected() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_current_grant(&mysql).await;
+            let (url, attempted, release) = rejecting_mcp_server(500).await;
+            let apps = [oauth_app_at(&url)];
+            let listing = tokio::spawn({
+                let mysql = mysql.clone();
+                async move { service::installed_apps(&mysql, &apps, &user()).await }
+            });
+            attempted.await.unwrap();
+            release.send(()).unwrap();
+            let response = listing.await.unwrap().unwrap();
+            assert_eq!(response.apps[0].connection.status, "connected");
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("connected"));
+            assert_eq!(
+                spec["lastError"]["message"],
+                json!("MCP server returned status 500")
+            );
         }
     })
     .await;

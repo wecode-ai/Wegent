@@ -591,6 +591,44 @@ where
     }
 }
 
+/// Preserve discovery failures at both Rust directory entry points. Only an
+/// upstream 401/403 expires the exact credential presented by this request;
+/// transport and other status failures leave the grant retryable.
+pub(crate) async fn record_directory_error<M>(
+    mysql: &M,
+    row: Option<&crate::apps_installed::db::KindRow>,
+    attempted_access: Option<&str>,
+    error: &super::mcp::McpError,
+) where
+    M: Mysql,
+{
+    let Some(row) = row else {
+        return;
+    };
+    let result = match error {
+        super::mcp::McpError::Unauthorized(message) => {
+            let Some(attempted_access) = attempted_access else {
+                return;
+            };
+            reject_credential_if_current(mysql, row.kinds_id, attempted_access, Some(message)).await
+        }
+        super::mcp::McpError::Transport(message) => {
+            write_discovery_state(
+                mysql,
+                row,
+                &DiscoveryState {
+                    last_error: Some(message),
+                    ..Default::default()
+                },
+            )
+            .await
+        }
+    };
+    if let Err(error) = result {
+        tracing::warn!(%error, "connector directory error could not be recorded");
+    }
+}
+
 /// The `record_tool_error` payload (`{"message": ..., "at": ...}`).
 fn discovery_error(message: &str) -> String {
     crate::json_compat::python_json_value(&json!({

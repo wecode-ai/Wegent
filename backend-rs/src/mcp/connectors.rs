@@ -156,7 +156,21 @@ async fn list_tools(
         .into_iter()
         .filter(|app| in_surface(app, app_scope))
         .collect();
-    let Ok(connected) = service::connected_apps(&state.mysql, &scoped, &user).await else {
+    list_tools_for_user(&state.mysql, &scoped, &user).await
+}
+
+/// Discover one authenticated user's connector surface. This is the production
+/// MCP listing path, kept independent of transport authentication for focused
+/// compatibility tests.
+pub(crate) async fn list_tools_for_user<M>(
+    mysql: &M,
+    scoped: &[ConnectorApp],
+    user: &UserRow,
+) -> Vec<Value>
+where
+    M: brz_mysql::Mysql,
+{
+    let Ok(connected) = service::connected_apps(mysql, scoped, user).await else {
         tracing::error!("connector MCP listing could not read connections");
         return Vec::new();
     };
@@ -181,7 +195,7 @@ async fn list_tools(
             }
             continue;
         }
-        let row = db::find_connector_connection(&state.mysql, &app.slug, user.users_id)
+        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
             .await
             .ok()
             .flatten();
@@ -193,7 +207,7 @@ async fn list_tools(
             tools.extend(cached);
             continue;
         }
-        let (headers, _) = match service::session_headers(&state.mysql, app, &user).await {
+        let (headers, attempted_access) = match service::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
                 tracing::warn!(connector = %app.slug, %error, "skipping unavailable connector");
@@ -204,6 +218,13 @@ async fn list_tools(
             match mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers).await {
                 Ok(tools) => tools,
                 Err(error) => {
+                    refresh::record_directory_error(
+                        mysql,
+                        row.as_ref(),
+                        attempted_access.as_deref(),
+                        &error,
+                    )
+                    .await;
                     tracing::warn!(connector = %app.slug, %error, "skipping unavailable connector");
                     continue;
                 }
@@ -234,7 +255,7 @@ async fn list_tools(
         if let Some(row) = row.as_ref() {
             let discovered_at = chrono::Utc::now().to_rfc3339();
             let _ = refresh::write_discovery_state(
-                &state.mysql,
+                mysql,
                 row,
                 &refresh::DiscoveryState {
                     discovered_at: Some(&discovered_at),
