@@ -4,10 +4,12 @@
 
 'use client'
 
+import { Info } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { SearchableSelect } from '@/components/ui/searchable-select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   DEFAULT_FLAT_CHUNK_CONFIG,
@@ -34,6 +36,37 @@ function encodeSeparatorForDisplay(value: string | undefined): string {
 
 function decodeSeparatorFromDisplay(value: string): string {
   return value.replace(/\\r/g, '\r').replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+}
+
+function SettingLabel({
+  htmlFor,
+  children,
+  help,
+}: {
+  htmlFor: string
+  children: string
+  help: string
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <Label htmlFor={htmlFor}>{children}</Label>
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex h-11 w-11 items-center justify-center text-text-muted hover:text-text-primary"
+              aria-label={help}
+              data-testid={`splitter-help-${htmlFor}`}
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-sm text-left leading-relaxed">{help}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  )
 }
 
 export function SplitterSettingsSection({
@@ -257,27 +290,70 @@ export function SplitterSettingsSection({
   }
 
   const chunkStrategyItems = [
-    { value: 'flat', label: t('knowledge:document.splitter.flat') },
-    { value: 'hierarchical', label: t('knowledge:document.splitter.hierarchical') },
-    { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
+    {
+      value: 'flat',
+      label: t('knowledge:document.splitter.flat'),
+      content: (
+        <div>
+          <p>{t('knowledge:document.splitter.flat')}</p>
+          <p className="text-xs text-text-muted">
+            {t('knowledge:document.splitter.flatDescription')}
+          </p>
+        </div>
+      ),
+    },
+    {
+      value: 'hierarchical',
+      label: t('knowledge:document.splitter.hierarchical'),
+      content: (
+        <div>
+          <p>{t('knowledge:document.splitter.hierarchical')}</p>
+          <p className="text-xs text-text-muted">
+            {t('knowledge:document.splitter.hierarchicalDescription')}
+          </p>
+        </div>
+      ),
+    },
+    {
+      value: 'semantic',
+      label: t('knowledge:document.splitter.semantic'),
+      content: (
+        <div>
+          <p>{t('knowledge:document.splitter.semantic')}</p>
+          <p className="text-xs text-text-muted">
+            {t('knowledge:document.splitter.semanticDescription')}
+          </p>
+        </div>
+      ),
+    },
   ]
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="splitter-type">{t('knowledge:document.splitter.type')}</Label>
+        <SettingLabel htmlFor="splitter-type" help={t('knowledge:document.splitter.typeHelp')}>
+          {t('knowledge:document.splitter.type')}
+        </SettingLabel>
         <SearchableSelect
           value={chunkStrategy}
           onValueChange={handleStrategyChange}
           disabled={readOnly}
           items={chunkStrategyItems}
         />
+        <p className="text-xs text-text-muted">
+          {t(`knowledge:document.splitter.${chunkStrategy}Description`)}
+        </p>
       </div>
 
       {chunkStrategy === 'flat' && (
         <>
           <div className="space-y-2">
-            <Label htmlFor="chunk-size">{t('knowledge:document.splitter.chunkSize')}</Label>
+            <SettingLabel
+              htmlFor="chunk-size"
+              help={t('knowledge:document.splitter.chunkSizeHelp')}
+            >
+              {t('knowledge:document.splitter.chunkSize')}
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="chunk-size"
@@ -299,7 +375,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="chunk-overlap">{t('knowledge:document.splitter.chunkOverlap')}</Label>
+            <SettingLabel
+              htmlFor="chunk-overlap"
+              help={t('knowledge:document.splitter.chunkOverlapHelp')}
+            >
+              {t('knowledge:document.splitter.chunkOverlap')}
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="chunk-overlap"
@@ -321,7 +402,9 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="separator">{t('knowledge:document.splitter.separator')}</Label>
+            <SettingLabel htmlFor="separator" help={t('knowledge:document.splitter.separatorHelp')}>
+              {t('knowledge:document.splitter.separator')}
+            </SettingLabel>
             <Input
               id="separator"
               value={encodeSeparatorForDisplay(
@@ -342,9 +425,12 @@ export function SplitterSettingsSection({
       {chunkStrategy === 'hierarchical' && (
         <>
           <div className="space-y-2">
-            <Label htmlFor="parent-chunk-size">
+            <SettingLabel
+              htmlFor="parent-chunk-size"
+              help={t('knowledge:document.splitter.parentChunkSizeHelp')}
+            >
               {t('knowledge:document.splitter.parentChunkSize')}
-            </Label>
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="parent-chunk-size"
@@ -366,9 +452,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="child-chunk-size">
+            <SettingLabel
+              htmlFor="child-chunk-size"
+              help={t('knowledge:document.splitter.childChunkSizeHelp')}
+            >
               {t('knowledge:document.splitter.childChunkSize')}
-            </Label>
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="child-chunk-size"
@@ -390,9 +479,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="child-chunk-overlap">
+            <SettingLabel
+              htmlFor="child-chunk-overlap"
+              help={t('knowledge:document.splitter.childChunkOverlapHelp')}
+            >
               {t('knowledge:document.splitter.childChunkOverlap')}
-            </Label>
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="child-chunk-overlap"
@@ -418,9 +510,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="parent-separator">
+            <SettingLabel
+              htmlFor="parent-separator"
+              help={t('knowledge:document.splitter.parentSeparatorHelp')}
+            >
               {t('knowledge:document.splitter.parentSeparator')}
-            </Label>
+            </SettingLabel>
             <Input
               id="parent-separator"
               value={encodeSeparatorForDisplay(
@@ -440,9 +535,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="child-separator">
+            <SettingLabel
+              htmlFor="child-separator"
+              help={t('knowledge:document.splitter.childSeparatorHelp')}
+            >
               {t('knowledge:document.splitter.childSeparator')}
-            </Label>
+            </SettingLabel>
             <Input
               id="child-separator"
               value={encodeSeparatorForDisplay(
@@ -464,7 +562,12 @@ export function SplitterSettingsSection({
       {chunkStrategy === 'semantic' && (
         <>
           <div className="space-y-2">
-            <Label htmlFor="buffer-size">{t('knowledge:document.splitter.bufferSize')}</Label>
+            <SettingLabel
+              htmlFor="buffer-size"
+              help={t('knowledge:document.splitter.bufferSizeHelp')}
+            >
+              {t('knowledge:document.splitter.bufferSize')}
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="buffer-size"
@@ -483,9 +586,12 @@ export function SplitterSettingsSection({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="breakpoint-threshold">
+            <SettingLabel
+              htmlFor="breakpoint-threshold"
+              help={t('knowledge:document.splitter.breakpointThresholdHelp')}
+            >
               {t('knowledge:document.splitter.breakpointThreshold')}
-            </Label>
+            </SettingLabel>
             <div className="flex items-center gap-2">
               <Input
                 id="breakpoint-threshold"
@@ -509,7 +615,7 @@ export function SplitterSettingsSection({
         </>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1">
         <Checkbox
           id="file-aware"
           checked={fileAwareEnabled}
@@ -517,10 +623,12 @@ export function SplitterSettingsSection({
           disabled={readOnly}
           data-testid="file-aware-checkbox"
         />
-        <Label htmlFor="file-aware">{t('knowledge:document.splitter.fileAware')}</Label>
+        <SettingLabel htmlFor="file-aware" help={t('knowledge:document.splitter.fileAwareHelp')}>
+          {t('knowledge:document.splitter.fileAware')}
+        </SettingLabel>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1">
         <Checkbox
           id="title-enhancement"
           checked={titleEnhancementEnabled}
@@ -528,9 +636,12 @@ export function SplitterSettingsSection({
           disabled={readOnly || !fileAwareEnabled}
           data-testid="title-enhancement-checkbox"
         />
-        <Label htmlFor="title-enhancement">
+        <SettingLabel
+          htmlFor="title-enhancement"
+          help={t('knowledge:document.splitter.titleEnhancementHelp')}
+        >
           {t('knowledge:document.splitter.titleEnhancement')}
-        </Label>
+        </SettingLabel>
       </div>
     </div>
   )
