@@ -1,11 +1,12 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
-import { extract } from 'tar'
-import { hashReleaseAsset } from './lib/portable-desktop-release.mjs'
+import {
+  downloadPublishedDesktopArchive,
+  downloadPublishedDesktopRelease,
+} from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
   releaseUpgradePlan,
@@ -14,9 +15,12 @@ import {
   verifyReleaseUpgradePlan,
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
-import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINT_GROUP,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_SUITE_VERSION,
+} from '../e2e/desktop/upgrade-suite.mjs'
 
-const execute = promisify(execFile)
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const [assetsDirectory, platform, arch, channel, repository, releaseTag] = process.argv.slice(2)
 if (!assetsDirectory || !platform || !arch || !channel || !repository || !releaseTag)
@@ -24,7 +28,23 @@ if (!assetsDirectory || !platform || !arch || !channel || !repository || !releas
 if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
 if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
-const assets = resolve(assetsDirectory)
+const publishedTarget = process.env.WEWORK_UPGRADE_PUBLISHED_TARGET_TAG || ''
+if (publishedTarget && publishedTarget !== releaseTag)
+  throw new Error('The published target must match the selected release tag')
+const assets = publishedTarget
+  ? join(resolve(assetsDirectory), 'published-target')
+  : resolve(assetsDirectory)
+if (publishedTarget)
+  await downloadPublishedDesktopArchive({
+    repository,
+    version: publishedTarget.replace(/^wework-v/, ''),
+    platform,
+    arch,
+    directory: assets,
+  })
+const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
+if (diagnosticCheckpoint && !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+  throw new Error('Invalid upgrade diagnostic checkpoint')
 const diagnostics = resolve(
   process.env.WEWORK_UPGRADE_DIAGNOSTICS_DIR || join(root, 'test-results', 'release-upgrades')
 )
@@ -81,6 +101,14 @@ async function verifyChannel(catalogs, targetChannel) {
   }
   await saveReport()
   try {
+    if (diagnosticCheckpoint) {
+      if (!plan?.previous) throw new Error('Diagnostic replay requires a previous release')
+      report.checkpoint = diagnosticCheckpoint
+      const passed = await verifySource(plan.previous, targetChannel)
+      report.status = passed ? 'diagnostic-passed' : 'diagnostic-failed'
+      if (!passed) throw new Error('Upgrade diagnostic checkpoint failed')
+      return
+    }
     const requiredSources = (policy.requiredDirectUpgrades?.[release.version] ?? []).map(version =>
       upgradeSource(
         targetChannel === 'stable' ? [catalogs.stable] : Object.values(catalogs),
@@ -90,7 +118,7 @@ async function verifyChannel(catalogs, targetChannel) {
     const result = await verifyReleaseUpgradePlan(
       plan,
       async source => {
-        const edge = await verifySource(source, targetChannel)
+        const edge = await verifySource(source, targetChannel, plan?.previous)
         report.attempts.push({
           version: source.version,
           sha256: source.sha256,
@@ -119,7 +147,7 @@ async function verifyChannel(catalogs, targetChannel) {
       `Verified ${targetChannel}/${platform}/${arch} ${release.version}: minimum source ${minSourceVersion}`
     )
   } catch (error) {
-    report.status = 'blocked'
+    report.status = diagnosticCheckpoint ? 'diagnostic-failed' : 'blocked'
     throw error
   } finally {
     await saveReport()
@@ -127,51 +155,23 @@ async function verifyChannel(catalogs, targetChannel) {
 }
 
 async function downloadSource(source, targetChannel) {
-  const directory = join(temporary, `${targetChannel}-${source.version}`)
-  await mkdir(directory, { recursive: true })
-  const name = `WeWorkRelease_${source.version}_${platform}_${arch}.tar.gz`
-  const archive = join(directory, name)
-  await execute('gh', [
-    'release',
-    'download',
-    `wework-v${source.version}`,
-    '--repo',
+  return downloadPublishedDesktopRelease({
     repository,
-    '--pattern',
-    name,
-    '--output',
-    archive,
-  ])
-  if ((await hashReleaseAsset(archive)) !== source.sha256)
-    throw new Error('The historical source package changed')
-  const sourceRoot = join(directory, 'source')
-  await mkdir(sourceRoot)
-  await extract({ file: archive, cwd: sourceRoot, strict: true })
-  const descriptor = JSON.parse(await readFile(join(sourceRoot, 'wework-release.json'), 'utf8'))
-  if (
-    descriptor.version !== source.version ||
-    descriptor.fixture ||
-    descriptor.sourceSha !== source.sourceSha
-  )
-    throw new Error('Source release identity is invalid')
-  return {
-    ...source,
-    path: archive,
-    executable: resolve(sourceRoot, descriptor.executable),
-    executor: join(
-      sourceRoot,
-      descriptor.resources,
-      'bin',
-      platform === 'windows' ? 'wegent-executor.exe' : 'wegent-executor'
-    ),
-  }
+    version: source.version,
+    platform,
+    arch,
+    directory: join(temporary, `${targetChannel}-${source.version}`),
+    expected: source,
+  })
 }
 
-async function verifySource(source, targetChannel) {
+async function verifySource(source, targetChannel, previous) {
   console.log(
     `Verifying ${source.version} -> ${release.version} (${targetChannel}/${platform}/${arch})`
   )
   const from = await downloadSource(source, targetChannel)
+  if (previous && source.version !== previous.version)
+    from.installedSource = await downloadSource(previous, targetChannel)
   const directory = dirname(from.path)
   const pairPath = join(directory, 'pair.json')
   const evidenceFile = join(directory, 'evidence.json')
@@ -180,6 +180,8 @@ async function verifySource(source, targetChannel) {
     JSON.stringify({
       schemaVersion: 1,
       kind: 'release',
+      transport: 'default-update-route',
+      applicationId: 'io.wecode.wework',
       suiteVersion: UPGRADE_SUITE_VERSION,
       channel: targetChannel,
       from,
@@ -190,11 +192,13 @@ async function verifySource(source, targetChannel) {
     WEWORK_E2E_APP_BIN: from.executable,
     WEWORK_E2E_EXECUTOR_BIN: from.executor,
     WEWORK_E2E_UPGRADE_PAIR: pairPath,
-    WEWORK_E2E_UPGRADE_EVIDENCE: evidenceFile,
+    WEWORK_E2E_UPGRADE_EVIDENCE: diagnosticCheckpoint ? '' : evidenceFile,
+    WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT: 'app-rollback',
     WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
     WEWORK_E2E_RESULT_ROOT: join(diagnostics, targetChannel, source.version),
   })
   if (!passed) return null
+  if (diagnosticCheckpoint) return true
   const evidenceBytes = await readFile(evidenceFile)
   const edge = verifiedUpgradeEdge({
     from: source,
@@ -221,10 +225,19 @@ async function run(environment) {
   return new Promise((accept, reject) => {
     const child = spawn(
       process.execPath,
-      ['e2e/desktop/run-checkpoints.mjs', '--segment', 'app-rollback'],
+      [
+        'e2e/desktop/run-checkpoints.mjs',
+        '--parallel-segments',
+        diagnosticCheckpoint || `${UPGRADE_CHECKPOINT_GROUP},app-update-full`,
+      ],
       {
         cwd: root,
-        env: { ...process.env, ...environment },
+        env: {
+          ...process.env,
+          ...environment,
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: '1',
+          WEWORK_E2E_PARALLEL_SCOPE: 'core',
+        },
         stdio: 'inherit',
       }
     )

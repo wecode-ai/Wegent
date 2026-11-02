@@ -96,8 +96,6 @@ function shellEvents(body, callId, command, workspacePath) {
   return functionCall(callId, selection.name, selection.arguments)
 }
 
-const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`
-
 export function createDesktopScenario({
   resultDir,
   captureScreenshot,
@@ -203,11 +201,10 @@ export function createDesktopScenario({
           new URL('../../../../shared/data/collaboration-templates.json', import.meta.url)
         )
         const script = `const fs=require('node:fs'),a=require('node:assert/strict');const d=JSON.parse(fs.readFileSync(${JSON.stringify(canonicalPath)},'utf8'))[0].spec.resources.collaboration; a.equal(d.groups[0].roles[0].defaultKind,'agent');a.equal(d.project.taskAssignment.enabled,true);a.equal(d.project.taskAssignment.groupKey,d.groups[0].key);a.deepEqual(d.project.board.tags,${JSON.stringify(STAGES)});fs.writeFileSync(${JSON.stringify(`evidence-${index + 1}.md`)},${JSON.stringify(content)});console.log('STAGE_${index}_VERIFIED')`
-        respond(
-          response,
-          id,
-          shellEvents(body, callId, `node -e ${shellQuote(script)}`, nativeWorkspace)
-        )
+        // A script file preserves quotes and Unicode across native Windows and POSIX shells.
+        const scriptName = `template-stage-${index + 1}.cjs`
+        await writeFile(join(nativeWorkspace, scriptName), script)
+        respond(response, id, shellEvents(body, callId, `node ${scriptName}`, nativeWorkspace))
         return true
       }
       const index = phase
@@ -456,7 +453,10 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'Human acceptance was not persisted'
       )
-      await control.command('waitFor', selector(`cloud-task-activity-accept-${task.id}`), { visible: false, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', selector(`cloud-task-activity-accept-${task.id}`), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await capture('08-completed', '人工确认后需求完成')
       await writeFile(
         join(resultDir, 'template-lifecycle-evidence.json'),

@@ -484,9 +484,11 @@ export class RuntimeTaskLifecycleStore {
       previous.turn.phase === 'awaiting' &&
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true
-    // Executor confirmation can admit a turn first seen in streaming history.
+    // Native snapshots are ordered by revision and executor epoch. Legacy turn
+    // history must not reject their authoritative startup or settlement updates.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
+      !canonicalEvent.task.executionState &&
       !confirmsAcceptedSend &&
       (previous.turn.active
         ? previous.task !== null
@@ -506,6 +508,7 @@ export class RuntimeTaskLifecycleStore {
     }
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
+      !canonicalEvent.task.executionState &&
       canonicalEvent.task.running === true &&
       !confirmsAcceptedSend &&
       !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
