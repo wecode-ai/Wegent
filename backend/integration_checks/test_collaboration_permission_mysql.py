@@ -262,7 +262,10 @@ def test_independent_issues_initialize_assignments_without_gap_locks(
                 project = cloud_project_service.get(db, project_id, 1)
                 user = db.get(User, 1)
                 created = loop_item_provider_router.create(
-                    db, project, user, LoopItemCreate(title="Independent Issue")
+                    db,
+                    project,
+                    user,
+                    LoopItemCreate(title="Independent Issue", assignee_user_id=1),
                 )
                 return created.internal_item.id
 
@@ -508,7 +511,10 @@ def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
             project = cloud_project_service.get(db, project_id, 1)
             user = db.get(User, 1)
             result = loop_item_provider_router.create(
-                db, project, user, LoopItemCreate(title="Concurrent first assignment")
+                db,
+                project,
+                user,
+                LoopItemCreate(title="Concurrent first assignment", assignee_user_id=1),
             )
             return result.internal_item.id
 
