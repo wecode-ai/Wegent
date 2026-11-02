@@ -32,6 +32,9 @@ impl RuntimeWorkRpcHandler {
             | "runtime.coordination.status" => {
                 boxed_rpc(move || async move { self.coordination_rpc(method, payload).await })
             }
+            "runtime.stand_in.assignment_tasks" => {
+                boxed_rpc(move || async move { self.stand_in_assignment_tasks(payload) })
+            }
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {

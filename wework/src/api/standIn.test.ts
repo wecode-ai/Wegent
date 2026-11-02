@@ -65,6 +65,20 @@ function fixture() {
 }
 
 describe('device-local Stand-in settings', () => {
+  it('queries exact assignment execution history on the selected executor', async () => {
+    const request = vi.fn().mockResolvedValue({ items: [] })
+    const api = createStandInExecutorApi(request)
+    const assignments = [{ projectId: 'project', itemId: 'issue', humanAssignmentId: 'human' }]
+    expect(await api.assignmentTasks(7, 'mac', assignments)).toEqual({ items: [] })
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.stand_in.assignment_tasks',
+      {
+        userId: 7,
+        assignments,
+      },
+      'mac'
+    )
+  })
   it('defaults to the current Executor without device discovery or a shared binding', async () => {
     const { api, transport } = fixture()
     expect(await api.get('project')).toMatchObject({ executionDeviceId: 'mac' })

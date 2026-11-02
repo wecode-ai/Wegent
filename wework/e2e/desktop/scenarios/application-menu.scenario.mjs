@@ -3,6 +3,7 @@ import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
 
 const MENU_ITEM_IDS = [
   'application',
+  'application.about',
   'application.settings',
   'application.quit',
   'file',
@@ -207,8 +208,30 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
+      // Help > Report an issue opens the in-app feedback form instead of the
+      // GitHub issue tracker.
+      assert.equal(await activateMenuItem(control, 'help.issues'), true)
+      await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="task-feedback-close-button"]')
+      await waitForElementCount(
+        control,
+        '[data-testid="task-feedback-dialog-overlay"]',
+        0,
+        uiTimeoutMs
+      )
+
+      // About opens the in-app settings page instead of the native panel.
+      assert.equal(await activateMenuItem(control, 'application.about'), true)
+      await waitForRoute(control, '/settings/about', uiTimeoutMs)
+      await control.command('waitFor', '[data-testid="about-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+
       // Settings replaces the workspace surface, so task-only items must hide
-      // rather than remain clickable dead entries.
+      // rather than remain clickable dead entries. Returning to the general
+      // settings route also keeps the rest of this checkpoint unchanged.
       assert.equal(await activateMenuItem(control, 'application.settings'), true)
       await waitForRoute(control, '/settings', uiTimeoutMs)
       await waitForVisible(control, 'view.terminal', false, uiTimeoutMs)

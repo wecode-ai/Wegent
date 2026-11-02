@@ -3,6 +3,61 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn assignment_history_includes_archived_work_and_preserves_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let origin = json!({"initiatedBy":"stand_in","projectStore":"cloud","userId":7,
+        "cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"});
+    for (id, changed) in [
+        ("archived", json!({})),
+        ("other-user", json!({"userId":8})),
+        ("reassigned", json!({"humanAssignmentId":"new-human"})),
+        ("other-project", json!({"cloudProjectId":"other"})),
+        ("other-issue", json!({"loopItemId":"other"})),
+        ("local", json!({"projectStore":"local"})),
+        ("ordinary", json!({"initiatedBy":"user"})),
+        ("deleted", json!({})),
+    ] {
+        let mut task_origin = origin.clone();
+        task_origin
+            .as_object_mut()
+            .unwrap()
+            .extend(changed.as_object().unwrap().clone());
+        let link = RuntimeTaskLink {
+            local_task_id: id.into(),
+            status: "archived".into(),
+            runtime_handle: json!({"origin":task_origin}),
+            ..RuntimeTaskLink::default()
+        };
+        handler.upsert_local_task(link.clone());
+        if id == "deleted" {
+            handler.mark_archived_link_deleted(&link);
+        }
+    }
+    let payload = json!({"userId":7,"assignments":[{
+        "projectId":"project","itemId":"issue","humanAssignmentId":"human"
+    }]});
+    let result = handler
+        .dispatch("runtime.stand_in.assignment_tasks", payload)
+        .await
+        .unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+    assert_eq!(result["items"][0]["taskId"], "archived");
+    assert_eq!(result["items"][0]["status"], "archived");
+    assert_eq!(result["items"][0]["runtimeHandle"]["origin"], origin);
+    assert!(handler
+        .stand_in_assignment_tasks(json!({"assignments":[]}))
+        .is_err());
+    assert_eq!(
+        handler
+            .stand_in_assignment_tasks(json!({"userId":7,"assignments":[{}]}))
+            .unwrap()["items"],
+        json!([])
+    );
+}
+
+#[tokio::test]
 async fn round_work_validates_the_issue_event_without_replacing_member_identity() {
     let bindings = Arc::new(AtomicUsize::new(0));
     let calls = bindings.clone();

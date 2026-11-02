@@ -271,6 +271,11 @@ export interface StandInExecutorApi {
     deviceId: string,
     taskId: string
   ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
+  assignmentTasks(
+    userId: number,
+    deviceId: string,
+    assignments: Array<{ projectId: string; itemId: string; humanAssignmentId: string }>
+  ): Promise<{ items: RuntimeTaskSummary[] }>
   catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
   run(
     projectId: string,
@@ -461,6 +466,8 @@ export function createStandInExecutorApi(
       return saved
     },
     readTask: (deviceId, taskId) => request('runtime.tasks.get', { taskId }, deviceId),
+    assignmentTasks: (userId, deviceId, assignments) =>
+      request('runtime.stand_in.assignment_tasks', { userId, assignments }, deviceId),
     catalog: deviceId => request('runtime.runner.catalog', {}, deviceId),
     run: (projectId, issueId, userId, projectStore, deviceId, standInId) =>
       request(

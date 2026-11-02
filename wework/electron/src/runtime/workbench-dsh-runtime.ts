@@ -627,8 +627,12 @@ function runtimeEnvironment(
   nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
+  const inherited = withRuntimePath(environment, runtimeRoot, nodeCommand)
+  // Browser authentication belongs to this runtime's installed plugins, not its parent.
+  delete inherited.WEWORK_DSH_BROWSER_AUTH
+  delete inherited.WEWORK_DSH_BROWSER_AUTH_FD
   return {
-    ...withRuntimePath(environment, runtimeRoot, nodeCommand),
+    ...inherited,
     DSH_HOME: dshHome,
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
