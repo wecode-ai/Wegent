@@ -86,6 +86,19 @@ fn started_turn_history_stays_running_before_its_transcript_buffer_is_created() 
         .lock()
         .unwrap()
         .is_empty());
+    thread["turns"][0]["status"] = json!("interrupted");
+    thread["turns"][0]["timelineCompleted"] = json!(true);
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "interrupted");
+    handler.apply_native_lifecycle(
+        "task-1",
+        &request,
+        &notification("turn/completed", "turn-1"),
+    );
+    thread["turns"][0]["status"] = json!("completed");
+    thread["turns"][0]["timelineCompleted"] = json!(false);
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["status"], "completed");
     let _ = fs::remove_dir_all(root);
 }
 
