@@ -27,10 +27,17 @@ export async function inspectBeforeStart(child, expression) {
     child.once('error', finish)
   })
   const socket = new WebSocket(socketUrl)
+  socket.addEventListener('close', () => console.log('[desktop-e2e-inspector] disconnected'))
+  socket.addEventListener('message', event => {
+    const { method, params } = JSON.parse(event.data)
+    if (method === 'Debugger.paused') console.log('[desktop-e2e-inspector] paused', params.reason)
+    else if (method === 'Debugger.resumed') console.log('[desktop-e2e-inspector] resumed')
+  })
   try {
     await once(socket, 'open', { signal: AbortSignal.timeout(10_000) })
     let id = 0
     async function command(method, params = {}) {
+      console.log('[desktop-e2e-inspector] command', method)
       const requestId = ++id
       const response = new Promise((accept, reject) => {
         const timer = setTimeout(
@@ -40,6 +47,7 @@ export async function inspectBeforeStart(child, expression) {
         const received = event => {
           const message = JSON.parse(event.data)
           if (message.id !== requestId) return
+          console.log('[desktop-e2e-inspector] response', method, message.error ? 'error' : 'ok')
           finish(message.error && new Error(message.error.message), message.result)
         }
         function finish(error, result) {
@@ -78,6 +86,7 @@ export async function inspectBeforeStart(child, expression) {
       throw new Error(`Inspector setup failed: ${result.exceptionDetails.text}`)
     await command('Debugger.resume')
   } finally {
+    console.log('[desktop-e2e-inspector] disconnecting')
     socket.close()
   }
 }

@@ -75,9 +75,13 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     const step = jobs["verify-upgrades"].steps.find(
       (step) => step.name === name,
     );
+    const platforms =
+      "(matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'";
     assert.equal(
       step.if,
-      "(matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'",
+      name === "Upload verified release upgrade evidence"
+        ? `needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && (${platforms})`
+        : platforms,
     );
   }
   const reuse = jobs.publish.steps.find(
@@ -138,7 +142,10 @@ test("upgrade verification only consumes release artifacts and has no signing cr
     download.with["run-id"],
     "${{ needs.prepare-upgrade-inputs.outputs.run_id }}",
   );
-  assert.equal(jobs["prepare-release"].if, "inputs.verification_run_id == ''");
+  assert.equal(
+    jobs["prepare-release"].if,
+    "inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all'",
+  );
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(verification.if, /!cancelled\(\)/);
 });

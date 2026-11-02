@@ -12,7 +12,11 @@ import {
   verifyReleaseUpgradePlan,
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
-import { UPGRADE_CHECKPOINT_GROUP, UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINT_GROUP,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_SUITE_VERSION,
+} from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const [assetsDirectory, platform, arch, channel, repository, releaseTag] = process.argv.slice(2)
@@ -22,6 +26,9 @@ if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
 if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
 const assets = resolve(assetsDirectory)
+const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
+if (diagnosticCheckpoint && !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+  throw new Error('Invalid upgrade diagnostic checkpoint')
 const diagnostics = resolve(
   process.env.WEWORK_UPGRADE_DIAGNOSTICS_DIR || join(root, 'test-results', 'release-upgrades')
 )
@@ -78,6 +85,14 @@ async function verifyChannel(catalogs, targetChannel) {
   }
   await saveReport()
   try {
+    if (diagnosticCheckpoint) {
+      if (!plan?.previous) throw new Error('Diagnostic replay requires a previous release')
+      report.checkpoint = diagnosticCheckpoint
+      const passed = await verifySource(plan.previous, targetChannel)
+      report.status = passed ? 'diagnostic-passed' : 'diagnostic-failed'
+      if (!passed) throw new Error('Upgrade diagnostic checkpoint failed')
+      return
+    }
     const requiredSources = (policy.requiredDirectUpgrades?.[release.version] ?? []).map(version =>
       upgradeSource(
         targetChannel === 'stable' ? [catalogs.stable] : Object.values(catalogs),
@@ -116,7 +131,7 @@ async function verifyChannel(catalogs, targetChannel) {
       `Verified ${targetChannel}/${platform}/${arch} ${release.version}: minimum source ${minSourceVersion}`
     )
   } catch (error) {
-    report.status = 'blocked'
+    report.status = diagnosticCheckpoint ? 'diagnostic-failed' : 'blocked'
     throw error
   } finally {
     await saveReport()
@@ -161,12 +176,13 @@ async function verifySource(source, targetChannel, previous) {
     WEWORK_E2E_APP_BIN: from.executable,
     WEWORK_E2E_EXECUTOR_BIN: from.executor,
     WEWORK_E2E_UPGRADE_PAIR: pairPath,
-    WEWORK_E2E_UPGRADE_EVIDENCE: evidenceFile,
+    WEWORK_E2E_UPGRADE_EVIDENCE: diagnosticCheckpoint ? '' : evidenceFile,
     WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT: 'app-rollback',
     WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
     WEWORK_E2E_RESULT_ROOT: join(diagnostics, targetChannel, source.version),
   })
   if (!passed) return null
+  if (diagnosticCheckpoint) return true
   const evidenceBytes = await readFile(evidenceFile)
   const edge = verifiedUpgradeEdge({
     from: source,
@@ -196,7 +212,7 @@ async function run(environment) {
       [
         'e2e/desktop/run-checkpoints.mjs',
         '--parallel-segments',
-        `${UPGRADE_CHECKPOINT_GROUP},app-update-full`,
+        diagnosticCheckpoint || `${UPGRADE_CHECKPOINT_GROUP},app-update-full`,
       ],
       {
         cwd: root,

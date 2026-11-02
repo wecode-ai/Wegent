@@ -25,6 +25,17 @@ on:
         type: string
         required: false
         default: ""
+      verification_checkpoint:
+        description: "Diagnostic replay only: run one checkpoint without producing upgrade evidence"
+        type: choice
+        options:
+          - all
+          - app-upgrade
+          - app-rollback
+          - app-rollback-recovery
+          - app-upgrade-recovery
+          - app-update-full
+        default: all
 
 concurrency:
   group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
@@ -36,7 +47,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == ''
+    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all'
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -422,7 +433,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && (inputs.verification_run_id != '' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -433,6 +444,7 @@ jobs:
       channel: ${{ steps.inputs.outputs.channel }}
       release_tag: ${{ steps.inputs.outputs.release_tag }}
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
+      diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve completed release build artifacts
@@ -444,6 +456,7 @@ jobs:
           VERIFICATION_SHA: ${{ inputs.verification_run_id != '' && github.sha || needs.prepare-release.outputs.release_sha }}
           REPLAY: ${{ inputs.verification_run_id != '' }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          VERIFICATION_CHECKPOINT: ${{ inputs.verification_checkpoint }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
   verify-upgrades:
@@ -491,6 +504,7 @@ jobs:
           WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
+          WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
@@ -518,7 +532,7 @@ jobs:
           retention-days: 7
 
       - name: Upload verified release upgrade evidence
-        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
           name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}

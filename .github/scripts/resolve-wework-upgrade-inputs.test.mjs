@@ -45,7 +45,35 @@ test("reuses successful producers even when an earlier test driver failed", () =
     channel: "beta",
     release_tag: "wework-v0.6.4-beta.4",
     verification_sha: "a".repeat(40),
+    diagnostic_checkpoint: "",
   });
+});
+
+test("a focused diagnostic is limited to a non-publishing replay", () => {
+  const value = fixture();
+  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  assert.equal(
+    resolveUpgradeInputs(value.environment, value.execute)
+      .diagnostic_checkpoint,
+    "app-upgrade",
+  );
+  value.environment.REPLAY = "false";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /requires an existing build replay/,
+  );
+  value.environment.REPLAY = "true";
+  value.environment.VERIFICATION_CHECKPOINT = "unregistered-checkpoint";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /requires an existing build replay/,
+  );
+  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  value.environment.PUBLISH_RELEASE = "true";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /cannot publish/,
+  );
 });
 
 test("rejects publication, invalid provenance, failed producers, and incomplete artifacts", () => {

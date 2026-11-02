@@ -224,3 +224,5 @@ gh workflow run wework-app.yml --ref <test-driver-branch> -f verification_run_id
 ```
 
 This mode only downloads and verifies existing artifacts. It skips version preparation, compilation, packaging, signing, and publication, and rejects the publish option. The driver comes from the selected branch commit; package versions and identities come from the original artifacts, and evidence remains bound to their actual hashes.
+
+To diagnose a shared startup failure, add `-f verification_checkpoint=app-upgrade` to the replay command. This runs that checkpoint against the previous published release. Focused diagnostics require a non-publishing replay and generate neither upgrade policy nor authorization evidence; normal releases still run the complete suite.

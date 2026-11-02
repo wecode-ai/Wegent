@@ -1,8 +1,20 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { UPGRADE_PACKAGE_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
 
 export function resolveUpgradeInputs(environment, execute = execFileSync) {
+  const requestedCheckpoint = environment.VERIFICATION_CHECKPOINT || "all";
+  const diagnosticCheckpoint =
+    requestedCheckpoint === "all" ? "" : requestedCheckpoint;
+  if (
+    diagnosticCheckpoint &&
+    (environment.REPLAY !== "true" ||
+      !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+  )
+    throw new Error(
+      "A diagnostic checkpoint requires an existing build replay",
+    );
   const {
     SOURCE_RUN_ID: runId,
     GITHUB_REPOSITORY: repository,
@@ -80,6 +92,7 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     channel: version.includes("-beta.") ? "beta" : "stable",
     release_tag: `wework-v${version}`,
     verification_sha: verificationSha,
+    diagnostic_checkpoint: diagnosticCheckpoint,
   };
 }
 
