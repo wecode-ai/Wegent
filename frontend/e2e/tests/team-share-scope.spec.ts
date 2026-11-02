@@ -191,7 +191,10 @@ async function openQuickCreateDialog(page: Page): Promise<Locator> {
   await page.goto('/chat', { waitUntil: 'domcontentloaded' })
   const trigger = page.getByTestId('quick-create-agent').first()
   await expect(trigger).toBeVisible({ timeout: 30000 })
-  await trigger.click()
+  // The card animates continuously, so pointer clicks never settle; the native
+  // button is keyboard activatable.
+  await trigger.focus()
+  await trigger.press('Enter')
   const dialog = page.getByTestId('team-edit-dialog')
   await expect(dialog).toBeVisible({ timeout: 15000 })
   return dialog
