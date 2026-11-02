@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
@@ -167,13 +168,13 @@ test("platform sharding preserves four runners and every provider shard", () => 
       "-ryaml",
       "-rjson",
       "-e",
-      "job = YAML.load_file(ARGV[0])['jobs']['e2e-tests']; puts JSON.generate({matrix: job['strategy']['matrix'], services: job['services'].keys, steps: job['steps']})",
+      "job = YAML.load_file(ARGV[0])['jobs']['e2e-tests']; puts JSON.generate({matrix: job['strategy']['matrix'], services: job['services'].keys, options: job['container']['options'], steps: job['steps']})",
       ".github/workflows/e2e-tests.yml",
     ],
     { encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);
-  const { matrix, services, steps } = JSON.parse(result.stdout);
+  const { matrix, services, options, steps } = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(matrix), ["include"]);
   assert.deepEqual(
     matrix.include.map((row) => row.shardIndex).sort(),
@@ -184,6 +185,43 @@ test("platform sharding preserves four runners and every provider shard", () => 
     [1, 2, 3, 4],
   );
   assert(matrix.include.every((row) => row.shardTotal === 4));
+  assert.deepEqual(
+    matrix.include
+      .filter((row) => row.dingtalkOAuth)
+      .map((row) => row.shardIndex),
+    [2],
+  );
+  const preparation = steps.find(
+    (step) => step.name === "Prepare isolated DingTalk HTTPS download fixture",
+  );
+  const oauth = steps.find(
+    (step) => step.name === "Run DingTalk OAuth import and authorization E2E",
+  );
+  const report = steps.find(
+    (step) => step.name === "Upload DingTalk OAuth E2E results",
+  );
+  assert(preparation && oauth && report);
+  assert(
+    steps.indexOf(preparation) <
+      steps.findIndex((step) => step.name === "Start backend server"),
+  );
+  assert.equal(report.with["if-no-files-found"], "error");
+  assert.equal(oauth["timeout-minutes"], 10);
+  for (const row of matrix.include) {
+    const enabled = (expression) =>
+      Boolean(runInNewContext(expression, { matrix: row, always: () => true }));
+    for (const step of [preparation, oauth, report])
+      assert.equal(enabled(step.if), row.dingtalkOAuth);
+    const resolvedOptions = options.replace(
+      /\$\{\{\s*(.*?)\s*\}\}/g,
+      (_, expression) => runInNewContext(expression, { matrix: row }),
+    );
+    assert.equal(
+      resolvedOptions.includes("--cap-add=NET_ADMIN"),
+      row.dingtalkOAuth,
+    );
+    assert(!resolvedOptions.includes("--privileged"));
+  }
   assert(!services.includes("milvus"));
   assert(!services.includes("etcd"));
   const knowledgeSteps = steps.filter((step) =>

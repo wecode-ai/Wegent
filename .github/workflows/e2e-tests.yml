@@ -511,7 +511,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --add-host=host.docker.internal:host-gateway ${{ matrix.shardIndex == 1 && '--cap-add=NET_ADMIN' || '' }}
+      options: --add-host=host.docker.internal:host-gateway ${{ matrix.dingtalkOAuth && '--cap-add=NET_ADMIN' || '' }}
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     defaults:
@@ -525,15 +525,19 @@ jobs:
         include:
           - shardIndex: 1
             shardTotal: 4
+            dingtalkOAuth: false
             providerShardIndex: 3
           - shardIndex: 2
             shardTotal: 4
+            dingtalkOAuth: true
             providerShardIndex: 2
           - shardIndex: 3
             shardTotal: 4
+            dingtalkOAuth: false
             providerShardIndex: 1
           - shardIndex: 4
             shardTotal: 4
+            dingtalkOAuth: false
             providerShardIndex: 4
 
     services:
@@ -810,7 +814,7 @@ jobs:
         run: uv run --no-sync python tests/integration/issue_assignment_mysql.py
 
       - name: Prepare isolated DingTalk HTTPS download fixture
-        if: matrix.shardIndex == 1
+        if: matrix.dingtalkOAuth
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
       - name: Start backend server
@@ -1250,8 +1254,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Run 41478921743: OAuth took 162s on the 862s shard 1; shard 2 took 545s.
+      # Keep its HTTPS fixture, sole NET_ADMIN grant and report on the same runner.
       - name: Run DingTalk OAuth import and authorization E2E
-        if: matrix.shardIndex == 1
+        if: matrix.dingtalkOAuth
         timeout-minutes: 10
         working-directory: ./backend
         env:
@@ -1272,7 +1278,7 @@ jobs:
             --junitxml=reports/dingtalk-oauth-e2e.xml
 
       - name: Upload DingTalk OAuth E2E results
-        if: always() && matrix.shardIndex == 1
+        if: always() && matrix.dingtalkOAuth
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dingtalk-oauth-e2e-results
