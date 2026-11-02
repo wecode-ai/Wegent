@@ -36,6 +36,7 @@ import {
 } from '@/features/plugins/pluginInventorySources'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type {
+  InstalledPluginComponents,
   InstalledPluginListResponse,
   PluginMarketplaceItem,
   PluginPublicationRequestItem,
@@ -552,6 +553,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAuthPolicy: 'on_install' | 'on_use' | 'optional'
     marketplaceConnectorLocal: boolean
     marketplaceConnectorAccountAuth: boolean
+    installedMarketplaceConnectors: InstalledPluginComponents['connectors']
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
     marketplaceSourceProvider: 'codex' | 'wegent' | 'user'
@@ -933,7 +935,11 @@ function mockSystemSkillsFetch(
         releaseId: 1001,
         updatePolicy: marketplaceUpdatePolicy,
         componentStates: {},
-        components: marketplaceRow.components,
+        components: {
+          ...marketplaceRow.components,
+          connectors:
+            overrides.installedMarketplaceConnectors ?? marketplaceRow.components.connectors,
+        },
         interface: {
           ...marketplaceRow.interface,
           logo: overrides.installedMarketplaceLogo ?? marketplaceRow.interface.logo,
@@ -5370,6 +5376,73 @@ describe('PluginsWorkspace', () => {
       'runtime.local_connector_auth.start',
       expect.anything()
     )
+  })
+
+  test.each([
+    { name: 'catalog omits account auth', catalogAccountAuth: false, installedAuth: 'account' },
+    { name: 'catalog retains account auth', catalogAccountAuth: true, installedAuth: 'local' },
+    {
+      name: 'catalog retains a removed connector',
+      catalogAccountAuth: false,
+      installedAuth: 'none',
+    },
+  ] as const)('uses installed connector configuration when $name', async scenario => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceConnectorSlug: 'mail',
+      marketplaceConnectorLocal: true,
+      marketplaceConnectorAccountAuth: scenario.catalogAccountAuth,
+      installedMarketplaceConnectors:
+        scenario.installedAuth === 'none'
+          ? []
+          : [
+              {
+                slug: 'mail',
+                authPolicy: 'on_install',
+                localAuth: {
+                  kind: 'browser_oauth',
+                  health: ['scripts/local-auth.sh', 'health'],
+                  start: ['scripts/local-auth.sh', 'login'],
+                  poll: [],
+                },
+                ...(scenario.installedAuth === 'account'
+                  ? {
+                      accountAuth: {
+                        protocolVersion: 1,
+                        credentialType: 'oauth2',
+                        adapter: 'scripts/account-auth.py',
+                      },
+                    }
+                  : {}),
+              },
+            ],
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: () => Promise.resolve({ status: 'need_login' }),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+
+    if (scenario.installedAuth === 'local') {
+      expect(await screen.findByTestId('local-connector-auth-dialog')).toBeInTheDocument()
+      await waitFor(() =>
+        expect(requestLocalExecutor).toHaveBeenCalledWith(
+          'runtime.local_connector_auth.start',
+          expect.objectContaining({ pluginKey: 'documents', connectorSlug: 'mail' })
+        )
+      )
+    } else {
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Documents 已安装')
+      )
+      expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+      expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+        'runtime.local_connector_auth.start',
+        expect.anything()
+      )
+    }
   })
 
   test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {
