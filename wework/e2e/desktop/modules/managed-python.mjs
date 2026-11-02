@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative } from 'node:path'
+import { isAbsolute, join, relative, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
@@ -20,6 +20,21 @@ export function managedPythonPath(userDataDirectory) {
 
 export async function assertPathMissing(path, message) {
   await assert.rejects(access(path), { code: 'ENOENT' }, message)
+}
+
+export function assertManagedPythonHome(details, userDataDirectory, platform = process.platform) {
+  const paths = platform === 'win32' ? win32 : { isAbsolute, join, relative }
+  const installation = paths.relative(
+    paths.join(userDataDirectory, 'managed-runtimes', 'python', 'installations'),
+    details.prefix
+  )
+  assert.ok(
+    installation && !installation.startsWith('..') && !paths.isAbsolute(installation),
+    "Python must use this desktop instance's managed installation"
+  )
+  // uv 0.9.5's Windows trampoline sets PYTHONHOME to its real interpreter's
+  // directory. Require that exact managed prefix, never a task-supplied value.
+  assert.equal(details.pythonhome, platform === 'win32' ? details.prefix : null)
 }
 
 export async function inspectManagedPython(userDataDirectory, cwd) {

@@ -3,7 +3,7 @@ import { access, copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
 
 import { accountCommandEvents, accountCommandResult } from './account-auth-command.mjs'
-import { PYTHON_BOOTSTRAP_TIMEOUT_MS } from './managed-python.mjs'
+import { assertManagedPythonHome, PYTHON_BOOTSTRAP_TIMEOUT_MS } from './managed-python.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from './shared.mjs'
 import {
   assistantMessage,
@@ -80,7 +80,7 @@ export function createPluginPythonChat({
       )
       await writeFile(
         scriptPath,
-        `import base64, json, os, sys, runtime_probe_support\nprint('PLUGIN_PYTHON_RESULT:' + base64.b64encode(json.dumps({'version': sys.version.split()[0], 'executable': sys.executable, 'cwd': os.getcwd(), 'args': sys.argv[1:], 'pythonhome': os.environ.get('PYTHONHOME'), 'pythonpath': os.environ.get('PYTHONPATH'), 'no_site': sys.flags.no_site, 'bridge_token': 'WEWORK_PYTHON_RUNTIME_TOKEN' in os.environ}).encode()).decode())\nsys.exit(7 if '--exit-seven' in sys.argv else 0)\n`
+        `import base64, json, os, sys, runtime_probe_support\nprint('PLUGIN_PYTHON_RESULT:' + base64.b64encode(json.dumps({'version': sys.version.split()[0], 'executable': sys.executable, 'prefix': sys.base_prefix, 'cwd': os.getcwd(), 'args': sys.argv[1:], 'pythonhome': os.environ.get('PYTHONHOME'), 'pythonpath': os.environ.get('PYTHONPATH'), 'no_site': sys.flags.no_site, 'bridge_token': 'WEWORK_PYTHON_RUNTIME_TOKEN' in os.environ}).encode()).decode())\nsys.exit(7 if '--exit-seven' in sys.argv else 0)\n`
       )
       await mkdir(join(localPlugin, '.codex-plugin'), { recursive: true })
       await mkdir(join(localPlugin, 'skills', 'example', 'scripts'), { recursive: true })
@@ -186,7 +186,7 @@ export function createPluginPythonChat({
         )
       }
       assert.deepEqual(details.args, ['argument with spaces', '中文'])
-      assert.equal(details.pythonhome, null)
+      assertManagedPythonHome(details, electronUserDataDirectory)
       assert.equal(details.pythonpath, null)
       assert.equal(details.bridge_token, false)
       assert.equal(details.cwd, workspacePath)

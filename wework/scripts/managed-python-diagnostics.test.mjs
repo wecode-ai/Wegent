@@ -1,10 +1,11 @@
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
   assertManagedPythonReady,
+  assertManagedPythonHome,
   collectManagedPythonStatus,
   managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
@@ -15,6 +16,67 @@ const temporaryDirectories = []
 const STATUS_SELECTOR = '[data-testid="execution-environment-python-status"]'
 const SENSITIVE_DETAIL =
   'https://fixture-user:fixture-password@example.invalid/python?token=fixture-token'
+
+describe('managed Python child home', () => {
+  const home = join(tmpdir(), 'wework-home-verification')
+  const prefix = join(home, 'managed-runtimes', 'python', 'installations', 'cpython-3.12.12')
+
+  test('validates Windows drive paths on every test host', () => {
+    const windowsHome = 'C:\\Users\\test\\Wework'
+    const windowsPrefix = win32.join(
+      windowsHome,
+      'managed-runtimes',
+      'python',
+      'installations',
+      'cpython-3.12.12-windows-x86_64-none'
+    )
+    expect(() =>
+      assertManagedPythonHome(
+        { prefix: windowsPrefix, pythonhome: windowsPrefix },
+        windowsHome,
+        'win32'
+      )
+    ).not.toThrow()
+    expect(() =>
+      assertManagedPythonHome(
+        { prefix: windowsPrefix, pythonhome: 'task-python-home' },
+        windowsHome,
+        'win32'
+      )
+    ).toThrow()
+    expect(() =>
+      assertManagedPythonHome(
+        { prefix: 'D:\\system-python', pythonhome: 'D:\\system-python' },
+        windowsHome,
+        'win32'
+      )
+    ).toThrow()
+  })
+
+  test('requires the exact managed prefix supplied by the Windows uv trampoline', () => {
+    expect(() =>
+      assertManagedPythonHome({ prefix, pythonhome: prefix }, home, 'win32')
+    ).not.toThrow()
+    expect(() =>
+      assertManagedPythonHome({ prefix, pythonhome: 'task-python-home' }, home, 'win32')
+    ).toThrow()
+    expect(() => assertManagedPythonHome({ prefix, pythonhome: null }, home, 'win32')).toThrow()
+  })
+
+  test('rejects an external interpreter even when its home matches its prefix', () => {
+    const external = join(tmpdir(), 'system-python')
+    expect(() =>
+      assertManagedPythonHome({ prefix: external, pythonhome: external }, home, 'win32')
+    ).toThrow()
+  })
+
+  test('continues to require an unset home on Unix', () => {
+    expect(() =>
+      assertManagedPythonHome({ prefix, pythonhome: null }, home, 'darwin')
+    ).not.toThrow()
+    expect(() => assertManagedPythonHome({ prefix, pythonhome: prefix }, home, 'darwin')).toThrow()
+  })
+})
 
 afterEach(async () => {
   vi.restoreAllMocks()
