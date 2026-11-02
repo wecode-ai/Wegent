@@ -433,6 +433,33 @@ test('reuses a ready package without another catalog or archive request', async 
   expect(preparation).toHaveBeenCalledOnce()
 })
 
+test('revalidates the requested channel after an earlier check changes the prepared offer', async () => {
+  const { service, catalog, fetch, preparation } = await readyFixture()
+  catalog.releases[1].notes = 'Stable offer'
+  const stable = JSON.stringify({ upgradePolicy: catalog })
+  const held = Promise.withResolvers<Response>()
+  fetch.mockClear().mockReturnValueOnce(held.promise)
+  const checking = service.check('beta')
+  const downloading = service.download('stable')
+  catalog.channel = 'beta'
+  catalog.releases[1].notes = 'Beta offer'
+  fetch.mockResolvedValue(new Response(stable))
+  held.resolve(new Response(JSON.stringify({ upgradePolicy: catalog })))
+
+  expect(await checking).toMatchObject({ body: 'Beta offer' })
+  await downloading
+
+  expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+    expect.stringContaining('/components-beta-'),
+    expect.stringContaining('/components-stable-'),
+  ])
+  expect(service.downloadProgress()).toMatchObject({
+    phase: 'ready',
+    update: { body: 'Stable offer' },
+  })
+  expect(preparation).toHaveBeenCalledOnce()
+})
+
 test('rejects an obsolete installation version and revalidates a deferred installation', async () => {
   const { service, catalog, shutdown } = await readyFixture()
   expect(() => service.createInstallAction('1.2.0')).toThrow('not ready')

@@ -212,7 +212,12 @@ export class AppUpdateService {
     const refresh = Promise.resolve(this.checkTask?.promise)
       .catch(() => undefined)
       .then(async () => {
-        if (canReuse && this.prepared && (await this.profileStillCurrent()))
+        if (
+          canReuse &&
+          this.channel === channel &&
+          this.prepared &&
+          (await this.profileStillCurrent())
+        )
           return this.pendingUpdate
         return this.performCheck(channel)
       })

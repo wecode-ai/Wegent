@@ -1,7 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 10
-export const UPGRADE_FIXTURE_UPDATE_BASE_URL = 'http://127.0.0.1:48191'
+export const UPGRADE_SUITE_VERSION = 11
 export const UPGRADE_PREPARATION_PHASE_TIMEOUT_MS = 300_000
 export const UPGRADE_CHECKPOINTS = [
   'app-upgrade',

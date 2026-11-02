@@ -1,11 +1,9 @@
 import { packager } from '@electron/packager'
 import { spawn } from 'node:child_process'
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'yaml'
-import ts from 'typescript'
-import { UPGRADE_FIXTURE_UPDATE_BASE_URL } from '../../e2e/desktop/upgrade-suite.mjs'
 
 import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
 import { prepareSharedElectronZip } from '../../scripts/lib/electron-zip-cache.mjs'
@@ -14,8 +12,6 @@ import identityModule from './build-identity.cjs'
 import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
-import { resolveDesktopPackageTargets } from '../../scripts/lib/desktop-package-target.mjs'
-import { buildLauncher } from './build-launcher.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
 process.noAsar = true
@@ -26,30 +22,8 @@ const staging = join(electronRoot, '.package-staging')
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
-// Regression fixtures are independently packaged and signed. Never rewrite a built archive.
-const fixtureVersion = process.env.WEWORK_UPGRADE_FIXTURE_VERSION?.trim()
-const thinFixture = fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_THIN_SOURCE === '1'
-const output = fixtureVersion
-  ? join(
-      resolve(
-        process.env.WEWORK_UPGRADE_FIXTURE_OUTPUT ||
-          join(electronRoot, '..', 'test-results', 'upgrade-fixtures')
-      ),
-      'packaged'
-    )
-  : join(electronRoot, 'release')
-const fixtureDataSchema = Number(process.env.WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA || 1)
-const fixtureApplicationId = process.env.WEWORK_UPGRADE_FIXTURE_APP_ID?.trim()
-if (
-  fixtureVersion &&
-  !/^io\.wecode\.wework\.upgrade-fixture\.[a-z0-9-]+$/.test(fixtureApplicationId || '')
-)
-  throw new Error('Upgrade fixtures require an isolated application identity')
-if (fixtureVersion && !/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(fixtureVersion))
-  throw new Error('Invalid upgrade fixture version')
-if (!Number.isSafeInteger(fixtureDataSchema) || fixtureDataSchema < 1)
-  throw new Error('Invalid upgrade fixture data schema')
-const packageVersion = fixtureVersion || sourcePackage.version
+const output = join(electronRoot, 'release')
+const packageVersion = sourcePackage.version
 const identity = resolveBuildIdentity()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
@@ -83,62 +57,21 @@ await Promise.all(
   )
 )
 await cp(join(electronRoot, 'dist'), join(staging, 'dist'), { recursive: true })
-if (fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP === '1') {
-  const legacy = await readFile(
-    join(electronRoot, '../e2e/desktop/fixtures/legacy-release-bootstrap.ts'),
-    'utf8'
-  )
-  await writeFile(
-    join(staging, 'dist/bootstrap.js'),
-    ts.transpileModule(legacy, {
-      compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
-    }).outputText
-  )
-  const legacyStore = await readFile(
-    join(electronRoot, '../e2e/desktop/fixtures/legacy-release-store.ts'),
-    'utf8'
-  )
-  await writeFile(
-    join(staging, 'dist/runtime/release-store.js'),
-    ts.transpileModule(legacyStore, {
-      compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
-    }).outputText
-  )
-}
-const launcherPath =
-  fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP === '1'
-    ? await buildLauncher(
-        join(dirname(output), 'legacy-launcher', `${process.platform}-${process.arch}`),
-        resolveDesktopPackageTargets(process.env).cargoTarget,
-        join(electronRoot, '../e2e/desktop/fixtures/legacy-release-launcher.rs')
-      )
-    : join(
-        electronRoot,
-        'resources',
-        `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
-      )
+const launcherPath = join(
+  electronRoot,
+  'resources',
+  `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
+)
 await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
     {
       productName: identity.productName,
       version: packageVersion,
-      weworkUpgradeFixture: Boolean(fixtureVersion),
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
       ...builderConfig.extraMetadata,
-      ...(fixtureVersion
-        ? {
-            weworkAppId: fixtureApplicationId,
-            weworkUpdateBaseUrl: UPGRADE_FIXTURE_UPDATE_BASE_URL,
-            weworkDataSchema: fixtureDataSchema,
-            weworkReadableDataSchemas: Array.from(
-              { length: fixtureDataSchema },
-              (_, index) => index + 1
-            ),
-          }
-        : {}),
     },
     null,
     2
@@ -155,7 +88,7 @@ try {
     name: identity.productName,
     electronVersion: sourcePackage.devDependencies.electron,
     electronZipDir,
-    appBundleId: fixtureVersion ? fixtureApplicationId : identity.identifier,
+    appBundleId: identity.identifier,
     ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: packageVersion,
@@ -169,16 +102,12 @@ try {
     extraResource: [
       launcherPath,
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
-      ...(thinFixture
-        ? []
-        : [
-            join(electronRoot, 'resources', 'harness-runtime'),
-            join(electronRoot, 'resources', 'bin'),
-            join(electronRoot, 'resources', 'codex'),
-            join(electronRoot, 'resources', 'wework-core-plugins'),
-            join(electronRoot, 'resources', 'wework-app-static'),
-            join(electronRoot, 'resources', 'bundled-plugins'),
-          ]),
+      join(electronRoot, 'resources', 'harness-runtime'),
+      join(electronRoot, 'resources', 'bin'),
+      join(electronRoot, 'resources', 'codex'),
+      join(electronRoot, 'resources', 'wework-core-plugins'),
+      join(electronRoot, 'resources', 'wework-app-static'),
+      join(electronRoot, 'resources', 'bundled-plugins'),
       join(electronRoot, 'resources', 'components.json'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
@@ -193,24 +122,6 @@ try {
       process.platform === 'darwin'
         ? join(application, `${identity.productName}.app`, 'Contents', 'Resources')
         : join(application, 'resources')
-    if (fixtureVersion) {
-      if (thinFixture && process.platform === 'win32') {
-        await mkdir(join(resources, 'bin'), { recursive: true })
-        await cp(
-          join(electronRoot, 'resources', 'bin', 'wegent-executor.exe'),
-          join(resources, 'bin', 'wegent-executor.exe')
-        )
-      }
-      const path = join(resources, 'components.json')
-      const components = JSON.parse(await readFile(path, 'utf8'))
-      components.appVersion = packageVersion
-      components.dataSchema = fixtureDataSchema
-      components.readableDataSchemas = Array.from(
-        { length: fixtureDataSchema },
-        (_, index) => index + 1
-      )
-      await writeFile(path, JSON.stringify(components, null, 2) + '\n')
-    }
     await writeFile(
       join(resources, 'app-update.yml'),
       stringify({
