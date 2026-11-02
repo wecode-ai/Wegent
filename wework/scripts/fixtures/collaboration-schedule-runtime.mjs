@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 export function scheduleRuntimeControl(control, title) {
   const projectId = 'schedule-project'
   const origin = 'http://127.0.0.1:12345'
-  const issue = { id: 'schedule-issue', title, start_at: null, due_at: null }
+  const issue = {
+    id: 'schedule-issue',
+    title,
+    metadata: { start_at: null, due_at: null },
+  }
   const requests = []
   return {
     requests,
@@ -32,10 +36,10 @@ export function scheduleRuntimeControl(control, title) {
       }
       if (action === 'fill') {
         if (selector === '[data-testid="cloud-todo-detail-start-date"]') {
-          issue.start_at = options.value
+          issue.metadata.start_at = options.value
         }
         if (selector === '[data-testid="cloud-todo-detail-due-date"]') {
-          issue.due_at = options.value
+          issue.metadata.due_at = options.value
         }
       }
       return control.command(action, selector, options)

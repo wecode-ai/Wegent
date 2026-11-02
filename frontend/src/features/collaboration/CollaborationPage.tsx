@@ -47,6 +47,7 @@ import { CollaborationContextSidebar } from '@/features/collaboration/Collaborat
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
 import { useUser } from '@/features/common/UserContext'
+import LoadingState from '@/features/common/LoadingState'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   collaborationLocationPath,
@@ -129,7 +130,7 @@ export function CollaborationPage() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { getCurrentLanguage, t } = useTranslation('common')
   const api = useMemo(() => {
     const socketOptions = {
       socketBaseUrl: async () => {
@@ -367,6 +368,12 @@ export function CollaborationPage() {
       templateStore,
     ]
   )
+
+  // The account-scoped template provider remounts its children when its scope changes.
+  // Mount the interactive platform only after the initial account scope is ready.
+  if (!user || !templateStore) {
+    return <LoadingState message={t('loading')} />
+  }
 
   if (legacyProjectId) {
     return (

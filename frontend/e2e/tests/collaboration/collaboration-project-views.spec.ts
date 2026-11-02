@@ -102,7 +102,7 @@ projectTest(
     await page.getByTestId('cloud-todo-follow').click()
     await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'true')
     await page.reload()
-    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'true')
     const saved = await webApi<
       Resource & {
@@ -236,7 +236,7 @@ projectTest(
     await page.getByTestId(`cloud-todo-card-${created.id}`).click()
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
     await page.reload()
-    await page.getByTestId(`cloud-todo-card-${created.id}`).click()
+    await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
     const persisted = await webApi<Resource & { assignee_user_id: number | null }>(
       page,
@@ -672,6 +672,13 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         page,
         `/api/v1/cloud-projects/${projectId}`
       )
+      if (groupBy === 'assignee') {
+        const baseline = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+        await webApi(page, `/api/v1/loop-items/${issueId}`, {
+          method: 'PATCH',
+          body: { version: baseline.version, assignee_user_id: project.current_user_id },
+        })
+      }
       const create = async (
         title: string,
         extra: {
@@ -695,11 +702,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
             },
           }
         )
-        // Creation assigns the creator by default; initialize the intended lane explicitly.
-        return webApi<Resource>(page, `/api/v1/loop-items/${created.id}`, {
-          method: 'PATCH',
-          body: { version: created.version, assignee_user_id: extra.assignee_user_id ?? null },
-        })
+        return created
       }
       const first = await create('First')
       const second = await create('Second', { status: 'completed' })

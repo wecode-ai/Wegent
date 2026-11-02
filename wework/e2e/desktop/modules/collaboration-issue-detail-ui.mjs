@@ -6,9 +6,10 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summaryText = await control.command('getText', summary)
   assert.doesNotMatch(
     summaryText,
-    /负责人|可见范围/,
-    'The compact Issue property bar must not repeat property labels'
+    /创建人|报告人|可见范围/,
+    'Secondary properties belong in the more information popover'
   )
+  assert.equal(summaryText.match(/负责人/g)?.length, 1, 'Show the assignee label exactly once')
   assert.equal(
     await control.command('getAttribute', scope('[data-testid="cloud-todo-detail-assignee"]'), {
       value: 'aria-label',
@@ -16,13 +17,22 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
     '负责人',
     'The assignee icon control must remain accessible'
   )
+  await control.command('click', scope('[data-testid="cloud-todo-more-properties"]'))
+  const properties = '[data-testid="cloud-todo-more-properties-popover"]'
+  await control.command('waitFor', properties, { visible: true, timeoutMs })
   assert.equal(
-    await control.command('getAttribute', scope('[data-testid="cloud-issue-security-level"]'), {
-      value: 'aria-label',
-    }),
+    await control.command(
+      'getAttribute',
+      `${properties} [data-testid="cloud-issue-security-level"]`,
+      {
+        value: 'aria-label',
+      }
+    ),
     '任务可见范围',
     'The visibility icon control must remain accessible'
   )
+  await control.command('press', properties, { key: 'Escape' })
+  await control.command('waitFor', properties, { visible: false, timeoutMs })
 
   const status = scope('[data-testid="cloud-todo-detail-status"]')
   await control.command('hover', status, { visible: true })

@@ -1499,6 +1499,13 @@ async function verifyTrackedTaskSettledStatus(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForStableColumnPlacement(
+    control,
+    reviewColumnSelector,
+    runningColumnSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'The settled task did not finish moving from the running column to review'
+  )
   assert.doesNotMatch(
     await control.command('getText', runningColumnSelector),
     /WEWORK_DESKTOP_E2E_TASK/,
@@ -1506,10 +1513,10 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
-async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
+async function openBoardIssueDetailByText(control, activeBoardContentSelector, text, marker) {
   const boardCardId = await control.command(
     'markElementWithText',
-    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]`,
+    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]:not([data-testid^="cloud-todo-card-drop-runtime:"])`,
     {
       text,
       value: marker,
@@ -1520,11 +1527,7 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
-  const selector =
-    Number(await control.command('getElementCount', openTaskSelector)) > 0
-      ? openTaskSelector
-      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
+  const selector = `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
   await control.command('scrollIntoView', selector)
   await control.command('click', selector, { visible: true })
   await control.command(
@@ -1549,7 +1552,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     control,
     'The default Issue context test did not open its My Tasks tab'
   )
-  await openBoardTaskPageByText(
+  await openBoardIssueDetailByText(
     control,
     activeBoardContentSelector,
     'WEWORK_DESKTOP_E2E_TASK',
@@ -1659,7 +1662,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
-  await openBoardTaskPageByText(
+  await openBoardIssueDetailByText(
     control,
     activeBoardContentSelector,
     'WEWORK_DESKTOP_E2E_TASK',
@@ -2675,6 +2678,7 @@ export {
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
+  openBoardIssueDetailByText,
   enrichTrackedDefaultIssueTitle,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,

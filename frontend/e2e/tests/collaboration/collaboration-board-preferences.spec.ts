@@ -336,7 +336,7 @@ async function expectDeveloperCanMove(
   suffix: string
 ): Promise<void> {
   const title = `Developer reorder ${suffix}`
-  // Creating as the Developer exercises their own implicit creator assignment.
+  // Creation stays unassigned until a permitted cross-lane move assigns an owner.
   const first = await createIssue(page, projectId, `${title} first`)
   const second = await createIssue(page, projectId, `${title} second`)
   // Give both cards an explicit initial order; creation defaults may tie at zero.
@@ -382,13 +382,7 @@ async function expectDeveloperCanMove(
   for (const [group, sourceKey, targetKey, field, expected] of [
     ['status', 'pending', 'completed', 'status', 'completed'],
     ['priority', 'priority-none', 'priority-high', 'priority', 'high'],
-    [
-      'assignee',
-      `assignee-${second.assignee_user_id}`,
-      `assignee-${otherUserId}`,
-      'assignee_user_id',
-      otherUserId,
-    ],
+    ['assignee', 'assignee-unassigned', `assignee-${otherUserId}`, 'assignee_user_id', otherUserId],
   ] as const) {
     const moving = group === 'status' ? second : first
     if (group !== 'status') {

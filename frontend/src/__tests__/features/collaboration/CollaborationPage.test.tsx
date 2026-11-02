@@ -19,6 +19,8 @@ let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
 const mockGetProject = jest.fn()
 const mockListGroups = jest.fn()
+let mockUser: { id: number; user_name: string } | null = null
+const mockPlatformScopes: Array<string | undefined> = []
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -35,6 +37,7 @@ jest.mock('@wegent/collaboration', () => ({
     renderShell?: (shell: { main: React.ReactNode; sidebar: React.ReactNode }) => React.ReactNode
   }) => {
     capturedHost = host
+    mockPlatformScopes.push(host.templateStore?.library.scope)
     return renderShell?.({
       main: <div data-testid="shared-collaboration-main" />,
       sidebar: <div data-testid="shared-collaboration-sidebar">spaces</div>,
@@ -56,10 +59,7 @@ jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
-    user: {
-      id: 7,
-      user_name: 'current-user',
-    },
+    user: mockUser,
   }),
 }))
 
@@ -93,6 +93,8 @@ describe('CollaborationPage platform routing', () => {
     mockPathname = '/collaboration'
     mockSearchParams = new URLSearchParams()
     capturedHost = null
+    mockUser = { id: 7, user_name: 'current-user' }
+    mockPlatformScopes.length = 0
     mockGetProject.mockReset()
     mockGetProject.mockResolvedValue({
       id: 'project 1',
@@ -101,6 +103,20 @@ describe('CollaborationPage platform routing', () => {
     mockListGroups.mockReset()
     mockListGroups.mockReturnValue(new Promise(() => undefined))
     localStorage.clear()
+  })
+
+  it('mounts the interactive platform only after the initial account scope is ready', () => {
+    mockUser = null
+    const { rerender } = render(<CollaborationPage />)
+    expect(capturedHost).toBeNull()
+    expect(mockPlatformScopes).toEqual([])
+    expect(screen.getByText('loading')).toBeInTheDocument()
+
+    mockUser = { id: 7, user_name: 'current-user' }
+    rerender(<CollaborationPage />)
+    expect(screen.getByTestId('shared-collaboration-main')).toBeInTheDocument()
+    expect(mockPlatformScopes.length).toBeGreaterThan(0)
+    expect(mockPlatformScopes.every(scope => scope?.endsWith(':7'))).toBe(true)
   })
 
   it('renders the platform spaces root through the thin host shell', () => {

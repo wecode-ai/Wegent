@@ -118,7 +118,7 @@ export async function verifyCollaborationScheduleViews({
         { project_id: projectId, task_id: issue.id },
         timeoutMs
       )
-      return [saved.start_at?.slice(0, 10), saved.due_at?.slice(0, 10)]
+      return [saved.metadata.start_at?.slice(0, 10), saved.metadata.due_at?.slice(0, 10)]
     },
     [keys.initialStart, keys.initialEnd],
     'The local Issue date range did not save automatically',
