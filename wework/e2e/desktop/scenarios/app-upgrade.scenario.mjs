@@ -226,7 +226,8 @@ export async function createDesktopScenario(options) {
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
-          appProcessStarted: child => routeUpgradeRequests(child, origin),
+          appProcessStarted: child =>
+            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
         }
       : {}),
     appEnvironment,
@@ -659,6 +660,9 @@ export async function createDesktopScenario(options) {
           for (const [name, directory] of [
             ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
             ['release-logs', join(electronUserDataDirectory, 'logs')],
+            ...(legacyDataDirectory
+              ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
+              : []),
           ]) {
             await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
               if (error.code !== 'ENOENT') throw error

@@ -15,10 +15,24 @@ test('initializes the paused child before any application code runs', async () =
     output += chunk
   })
   const exited = once(child, 'exit')
+  const diagnostics = []
   try {
-    await inspectBeforeStart(child, 'globalThis.testSetup = "installed before entry"')
+    await inspectBeforeStart(
+      child,
+      'globalThis.testSetup = "installed before entry"',
+      (...details) => diagnostics.push(details)
+    )
     assert.deepEqual(await exited, [0, null])
     assert.equal(output.trim(), 'installed before entry')
+    assert.ok(
+      diagnostics.some(
+        details =>
+          details[0] === '[desktop-e2e-inspector] response' &&
+          details[1] === 'Debugger.resume' &&
+          details[2] === 'ok'
+      ),
+      'Retained diagnostics must distinguish a resumed application from a paused one'
+    )
   } finally {
     child.kill()
   }
