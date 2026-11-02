@@ -117,25 +117,6 @@ fn subscription_error(error: impl std::fmt::Display) -> FastApiError {
     FastApiError::internal()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn subscription_receipts_keep_the_persisted_mysql_precision() {
-        let since = Utc::now().naive_utc().trunc_subsecs(6);
-        let persisted = chrono::NaiveDateTime::parse_from_str(
-            &since.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
-            "%Y-%m-%d %H:%M:%S%.f",
-        )
-        .unwrap();
-        assert_eq!(
-            notifications::receipt_id("issue", 17, since, "event"),
-            notifications::receipt_id("issue", 17, persisted, "event")
-        );
-    }
-}
-
 #[tracing::instrument(name = "issue.poll_followed", skip_all)]
 pub(super) async fn check(state: &AppState) -> Result<usize> {
     let now = Utc::now().timestamp_millis();
@@ -291,4 +272,23 @@ async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
         }
     }
     Ok(delivered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscription_receipts_keep_the_persisted_mysql_precision() {
+        let since = Utc::now().naive_utc().trunc_subsecs(6);
+        let persisted = chrono::NaiveDateTime::parse_from_str(
+            &since.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+            "%Y-%m-%d %H:%M:%S%.f",
+        )
+        .unwrap();
+        assert_eq!(
+            notifications::receipt_id("issue", 17, since, "event"),
+            notifications::receipt_id("issue", 17, persisted, "event")
+        );
+    }
 }

@@ -89,19 +89,30 @@ def _assigned_issue(
     return assigned.json()["issue"]
 
 
-def test_implicit_creator_assignment_keeps_board_status_editable(
+@pytest.mark.parametrize("explicit_assignee", [False, True])
+def test_unassigned_or_explicit_creator_assignment_keeps_board_status_editable(
     test_client: TestClient,
     test_token: str,
     project: CloudProject,
+    explicit_assignee: bool,
 ) -> None:
     created = test_client.post(
         f"/api/v1/cloud-projects/{project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Implicit creator assignment"},
+        json={
+            "title": "Creator status control",
+            **(
+                {"assignee_user_id": project.created_by_user_id}
+                if explicit_assignee
+                else {}
+            ),
+        },
     )
     assert created.status_code == 201
     issue = created.json()
-    assert issue["assignee_user_id"] == project.created_by_user_id
+    expected_assignee = project.created_by_user_id if explicit_assignee else None
+    assert issue["assignee_user_id"] == expected_assignee
+    assert issue["reporter_user_id"] == project.created_by_user_id
     assert "human_work" not in issue
 
     updated = test_client.patch(
@@ -110,11 +121,11 @@ def test_implicit_creator_assignment_keeps_board_status_editable(
         json={
             "version": issue["version"],
             "status": "in_progress",
-            "assignee_user_id": project.created_by_user_id,
         },
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["status"] == "in_progress"
+    assert updated.json()["assignee_user_id"] == expected_assignee
 
 
 @pytest.mark.parametrize("initial_status", ["pending", "in_progress", "in_review"])
