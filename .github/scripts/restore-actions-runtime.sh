@@ -17,6 +17,7 @@ case "$component" in
 esac
 
 "$script_dir/download-actions-artifact.sh" "$artifact" "$temporary"
+verification_started=$SECONDS
 RUNTIME_HEAD_SHA="${ACTIONS_ARTIFACT_HEAD_SHA:?source SHA is required}" \
   node "$script_dir/runtime-artifact.mjs" verify \
     "$temporary" "$component" "$source_ref" "$binary"
@@ -24,3 +25,5 @@ mkdir -p "$(dirname "$destination")"
 install -m 0755 "$temporary/$binary" "$temporary/verified-runtime"
 mv "$temporary/verified-runtime" "${destination}.restore.$$"
 mv -f "${destination}.restore.$$" "$destination"
+printf '[actions-runtime] component=%s phase=verify-install seconds=%s\n' \
+  "$component" "$((SECONDS - verification_started))" >&2

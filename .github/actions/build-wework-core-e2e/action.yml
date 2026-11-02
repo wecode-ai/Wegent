@@ -80,6 +80,7 @@ runs:
           oras logout ghcr.io
         fi
         unset GITHUB_TOKEN
+        printf '[wework-build] phase=package-start\n'
         pnpm --filter wework ai:verify:electron:build || status=$?
         if [[ "$RUNTIME_ARTIFACTS" != "true" ]]; then
           if ! wait "$executor_pid"; then status=1; fi
