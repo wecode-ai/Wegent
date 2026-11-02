@@ -1,7 +1,9 @@
 import { expect, test, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { accountCommandResult } from '../e2e/desktop/modules/account-auth-command.mjs'
 import {
   requestAdvertisesShellCommand,
+  nodeScriptCommand,
   shellCommandPollResponse,
   shellCommandResponse,
 } from '../e2e/desktop/modules/shell-command-response.mjs'
@@ -14,6 +16,18 @@ const programmaticRequest = {
     },
   ],
 }
+
+test('executes Node scripts with quotes, Unicode and shell metacharacters intact', () => {
+  const payload = '阶段验收 \' " \\ $() ` \n'
+  const command = nodeScriptCommand(`process.stdout.write(${JSON.stringify(payload)})`)
+  const windows = process.platform === 'win32'
+  const output = execFileSync(
+    windows ? 'powershell.exe' : '/bin/sh',
+    windows ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command],
+    { encoding: 'utf8' }
+  )
+  expect(output).toBe(payload)
+})
 
 test('recognizes shell commands advertised through programmatic exec without top-level tools', () => {
   expect(requestAdvertisesShellCommand(programmaticRequest)).toBe(true)
