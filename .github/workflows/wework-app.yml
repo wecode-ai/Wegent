@@ -20,9 +20,14 @@ on:
         type: boolean
         required: false
         default: false
+      verification_run_id:
+        description: "Only verify signed artifacts from an existing Wework App run; never build or publish"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -31,6 +36,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
+    if: inputs.verification_run_id == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -413,12 +419,40 @@ jobs:
             exit 1
           fi
 
+  prepare-upgrade-inputs:
+    name: Resolve immutable upgrade inputs
+    needs: [prepare-release, build]
+    if: ${{ !cancelled() && (inputs.verification_run_id != '' || needs.build.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.inputs.outputs.run_id }}
+      version: ${{ steps.inputs.outputs.version }}
+      channel: ${{ steps.inputs.outputs.channel }}
+      release_tag: ${{ steps.inputs.outputs.release_tag }}
+      verification_sha: ${{ steps.inputs.outputs.verification_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve completed release build artifacts
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.verification_run_id || github.run_id }}
+          EXPECTED_VERSION: ${{ needs.prepare-release.outputs.version }}
+          VERIFICATION_SHA: ${{ inputs.verification_run_id != '' && github.sha || needs.prepare-release.outputs.release_sha }}
+          REPLAY: ${{ inputs.verification_run_id != '' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
+
   verify-upgrades:
     name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }})
     permissions:
       contents: read
-    needs: [prepare-release, build]
-    if: needs.prepare-release.outputs.release_kind != 'none'
+      actions: read
+    needs: prepare-upgrade-inputs
+    if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     defaults:
@@ -437,15 +471,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-release.outputs.release_sha }}
+          ref: ${{ needs.prepare-upgrade-inputs.outputs.verification_sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
       - name: Download prebuilt signed release inputs
         uses: actions/download-artifact@v6
         with:
-          name: wework-upgrade-input-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: wework-upgrade-input-${{ needs.prepare-upgrade-inputs.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/upgrade-input
+          run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Verify declared upgrade and rollback edges on real release packages
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
@@ -459,8 +495,8 @@ jobs:
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
             "${{ matrix.platform }}" "${{ matrix.arch }}" \
-            "${{ needs.prepare-release.outputs.channel }}" \
-            "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
+            "${{ needs.prepare-upgrade-inputs.outputs.channel }}" \
+            "$GITHUB_REPOSITORY" "${{ needs.prepare-upgrade-inputs.outputs.release_tag }}"
 
       - name: Retain release upgrade decisions and failure diagnostics
         if: always() && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
@@ -485,7 +521,7 @@ jobs:
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: wework-${{ needs.prepare-release.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
+          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/upgrade-input/wework-release-assets/upgrade-*.json
           if-no-files-found: error
           compression-level: 0

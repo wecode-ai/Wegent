@@ -49,8 +49,8 @@ macOS x64 adopts arm64's successful version paths and minimum source version wit
 release upgrade/rollback E2E. Its records retain x64 package hashes and download URLs, with
 `verification.kind=architecture-equivalence`, `arch=arm64`, and both arm64 package hashes
 declaring the evidence source. Source and target revisions must respectively match arm64;
-missing historical x64 package records block publication. The three-platform PR mechanism
-regression suite remains independent. Per-architecture release verification rules below apply
+missing historical x64 package records block publication. Ordinary PRs do not run packaged
+upgrade E2E. Per-architecture release verification rules below apply
 to macOS arm64 and Windows x64; macOS x64 uses this explicit architecture equivalence policy.
 
 Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json` endpoints and fields. Add `upgradePolicy` to the component manifest. Each target declares `minSourceVersion`; exact source-to-target edges carry delivered-package hashes and upgrade/rollback evidence.
@@ -198,3 +198,11 @@ Release jobs create complete portable packages, download the automatically selec
 Upload immutable target assets and evidence before promoting rolling manifests. Any required pair failure blocks promotion. Compatibility declarations, minimum versions, and unit tests cannot replace real release-pair evidence.
 
 Beta may import a Stable source only after verifying a new edge under Beta, without copying Stable's edges. Bind evidence to the channel and require an immutable package hash across channels. Stable catalogs reject Beta nodes and Beta minimum versions. Rollback restores the previous healthy local release rather than selecting an older release from the published catalog.
+
+After fixing a test driver, reuse unexpired signed artifacts from a run whose four platform builds all succeeded:
+
+```bash
+gh workflow run wework-app.yml --ref <test-driver-branch> -f verification_run_id=<original-build-run-id> -f publish_release=false
+```
+
+This mode only downloads and verifies existing artifacts. It skips version preparation, compilation, packaging, signing, and publication, and rejects the publish option. The driver comes from the selected branch commit; package versions and identities come from the original artifacts, and evidence remains bound to their actual hashes.

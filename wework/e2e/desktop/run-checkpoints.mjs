@@ -620,7 +620,7 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
         : runDesktopBuild,
       weworkDir,
     }),
-    resolveDesktopCodexBinary(),
+    resolveDesktopCodexBinary(nextEnvironment),
   ])
   console.log(
     `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
