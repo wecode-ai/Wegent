@@ -731,6 +731,7 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         JSON.stringify(item.raw.spec.interface),
         JSON.stringify(item.raw.spec.componentStates),
         item.raw.spec.sourcePayload?.localPresent,
+        JSON.stringify(item.raw.status.devices),
         pluginComponentsSignature(item.raw.spec.components),
       ].join(':')
     )

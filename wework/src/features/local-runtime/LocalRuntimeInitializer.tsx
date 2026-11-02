@@ -18,7 +18,7 @@ import {
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
@@ -37,10 +37,9 @@ interface LocalRuntimeInitializerProps {
   startupReady?: boolean
 }
 
-interface LocalRuntimeState {
-  phase: LocalRuntimePhase
-  error: string | null
-}
+type LocalRuntimeState =
+  | { phase: 'starting' | 'ready'; error: null }
+  | { phase: 'failed'; error: string; cause: unknown }
 
 interface LocalRuntimeErrorText {
   notRunning: string
@@ -111,6 +110,7 @@ async function resolveLocalRuntimeState(
     return {
       phase: 'failed',
       error: errorMessage(error, fallbackError),
+      cause: error,
     }
   }
 }
@@ -291,10 +291,10 @@ export function LocalRuntimeInitializer({
     if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
       return
     }
-    void invokeDesktopHost<void>('renderer.startupFailed').catch(error => {
+    void reportDesktopStartupFailure(state.cause, 'local_runtime_initialize').catch(error => {
       console.error('[Wework] Failed to report the local runtime startup error', error)
     })
-  }, [state.phase])
+  }, [state])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
