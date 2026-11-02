@@ -79,6 +79,59 @@ function workflow(name) {
   );
 }
 
+test("publication normalizes registry caches and manual seeds cannot overwrite shared caches", () => {
+  const directory = mkdtempSync(join(tmpdir(), "wegent-ci-publisher-"));
+  try {
+    const docker = join(directory, "docker");
+    writeFileSync(
+      docker,
+      '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$TEST_DOCKER_LOG"\nif [[ "$1 $2" == "buildx imagetools" ]]; then exit 1; fi\n',
+    );
+    chmodSync(docker, 0o755);
+    for (const ref of ["refs/heads/main", "refs/heads/topic"]) {
+      const log = join(
+        directory,
+        ref.endsWith("main") ? "main.log" : "manual.log",
+      );
+      const result = spawnSync(
+        "bash",
+        [".github/scripts/publish-ci-prebuild.sh", "executor"],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            GITHUB_REPOSITORY_OWNER: "Example",
+            GITHUB_REPOSITORY: "Example/Wegent",
+            GITHUB_REF: ref,
+            BASE_IMAGE: pinnedBase,
+            RUNTIME_IMAGE: "ghcr.io/example/runtime:test",
+            EXECUTOR_BUILD_CACHE:
+              "ghcr.io/Example/wegent-executor:buildcache-e2e",
+            TEST_DOCKER_LOG: log,
+          },
+          encoding: "utf8",
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const calls = readFileSync(log, "utf8").split("\n");
+      const builds = calls.filter((line) => line.startsWith("buildx build "));
+      assert.equal(builds.length, 2);
+      for (const build of builds) {
+        assert.ok(
+          build.includes(
+            "--cache-from type=registry,ref=ghcr.io/example/wegent-executor:buildcache-e2e",
+          ),
+        );
+        assert.equal(build.includes("--cache-to"), ref === "refs/heads/main");
+      }
+      assert.equal(calls.filter((line) => line.startsWith("push ")).length, 2);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("fork and trusted PRs reuse image hits while missing images build exactly once", () => {
   const producer = workflow("e2e-tests").jobs["build-executor-e2e-runtime"];
   for (const artifact of ["true", "false"]) {
@@ -172,6 +225,9 @@ test("download bundles are restored once and reject unexpected archive paths", (
       "wework/electron/package.json",
       "wework/electron/pnpm-lock.yaml",
       "wework/codex-binaries.lock.json",
+      "LICENSES/Apache-2.0.txt",
+      "wework/third_party/codex/NOTICE",
+      "wework/third_party/codex/RATATUI-LICENSE.txt",
       "wework/scripts/prepare-codex-binary.mjs",
       "wework/scripts/lib/process-lock.mjs",
       "wework/scripts/lib/electron-zip-cache.mjs",

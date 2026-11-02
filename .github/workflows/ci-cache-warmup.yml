@@ -50,6 +50,7 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "shared/assets/**"
+      - "LICENSES/Apache-2.0.txt"
       - "shared/uv.lock"
       - "wegent-cli/requirements.txt"
       - "wework/**"

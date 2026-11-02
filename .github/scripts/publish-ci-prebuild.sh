@@ -17,9 +17,11 @@ target="$(jq -r .target <<< "$metadata")"
 source_label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY:?repository is required}"
 cache=()
 if [[ "$component" == executor ]]; then
-  cache+=(--cache-from "type=registry,ref=${EXECUTOR_BUILD_CACHE:?Executor registry cache is required}")
+  cache_ref="${EXECUTOR_BUILD_CACHE:?Executor registry cache is required}"
+  cache_ref="${cache_ref,,}"
+  cache+=(--cache-from "type=registry,ref=$cache_ref")
   if [[ "${GITHUB_REF:-}" == refs/heads/main ]]; then
-    cache+=(--cache-to "type=registry,ref=$EXECUTOR_BUILD_CACHE,mode=max")
+    cache+=(--cache-to "type=registry,ref=$cache_ref,mode=max")
   fi
 fi
 if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then

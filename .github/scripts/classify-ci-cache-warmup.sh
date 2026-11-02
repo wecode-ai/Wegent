@@ -26,7 +26,7 @@ classify_path() {
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
-    .github/runtime-images/* | .github/scripts/ci-prebuilt-images.* | \
+    .github/runtime-images/* | .github/scripts/ci-prebuilt-images.* | LICENSES/Apache-2.0.txt | \
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \

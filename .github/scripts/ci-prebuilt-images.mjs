@@ -32,6 +32,8 @@ const definitions = {
       "wework/electron/package.json",
       "wework/electron/pnpm-lock.yaml",
       "wework/codex-binaries.lock.json",
+      "LICENSES/Apache-2.0.txt",
+      "wework/third_party/codex",
       "wework/scripts/prepare-codex-binary.mjs",
       "wework/scripts/lib/process-lock.mjs",
       "wework/scripts/lib/electron-zip-cache.mjs",
