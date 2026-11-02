@@ -47,3 +47,17 @@ test('obsolete main warmups cancel and branch dispatches cannot populate shared 
   assert.equal(evaluate(warmup.jobs.changes.if, { ref: 'refs/heads/main' }), true)
   assert.equal(evaluate(warmup.jobs.changes.if, { ref: 'refs/heads/topic', event_name: 'workflow_dispatch' }), false)
 })
+
+test('unit, lint and runtime producers survive unrelated label events', () => {
+  for (const [name, summary] of [['test', 'test-summary'], ['lint', 'lint-summary'], ['e2e-tests', 'platform-e2e-summary']]) {
+    const source = workflow(name)
+    const render = github => source.concurrency.group.replace(/\$\{\{(.*?)\}\}/g,
+      (_, expression) => String(evaluate(expression, github)))
+    assert.equal(render(context('synchronize')), render(context('labeled', 'ci:all')))
+    assert.notEqual(render(context('synchronize')), render(context('labeled', 'documentation')))
+    for (const job of ['changes', summary]) {
+      assert.equal(evaluate(source.jobs[job].if, context('synchronize')), true)
+      assert.equal(evaluate(source.jobs[job].if, context('labeled', 'documentation')), false)
+    }
+  }
+})

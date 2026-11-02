@@ -13,7 +13,7 @@ on:
 
 # Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 permissions:
@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     name: Detect Platform E2E Changes
     runs-on: ubuntu-latest
     outputs:
@@ -1977,7 +1978,7 @@ jobs:
       - build-executor-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:

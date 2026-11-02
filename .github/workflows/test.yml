@@ -19,11 +19,12 @@ on:
       - checks_requested
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     name: Detect CI Changes
     runs-on: ubuntu-latest
     outputs:
@@ -833,7 +834,7 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check test results

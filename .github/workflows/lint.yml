@@ -22,13 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -150,7 +150,7 @@ jobs:
 
   check-settings-config:
     name: Check Settings Configuration
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -223,7 +223,7 @@ jobs:
 
   check-alembic-heads:
     name: Check Alembic Multi-Head
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -248,7 +248,7 @@ jobs:
         check-settings-config,
         check-alembic-heads,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check lint results
