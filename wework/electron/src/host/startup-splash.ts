@@ -1,6 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
+import { STARTUP_PROGRESS_CHANNEL, type StartupProgressUpdate } from './startup-progress.js'
+
 export type StartupSplashEventName = 'created' | 'shown' | 'animation-ready' | 'closed'
 export type StartupSplashTheme = 'light' | 'dark'
 
@@ -28,6 +30,7 @@ interface SplashWebContents {
   capturePage: () => Promise<SplashImage>
   executeJavaScript: (code: string) => Promise<unknown>
   isDestroyed: () => boolean
+  send: (channel: string, payload: unknown) => void
 }
 
 export interface StartupSplashWindow {
@@ -137,6 +140,7 @@ export class StartupSplash {
   private closePromise: Promise<StartupSplashSnapshot> | null = null
   private showErrorPromise: Promise<void> | null = null
   private controlledClose = false
+  private latestProgress: StartupProgressUpdate | null = null
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
@@ -168,6 +172,18 @@ export class StartupSplash {
       this.closePromise = null
     })
     return this.closePromise
+  }
+
+  /**
+   * Mirrors the host startup stage into the splash. The latest update is kept
+   * so a splash that becomes visible after the stage started still shows it.
+   */
+  updateProgress(update: StartupProgressUpdate): void {
+    this.latestProgress = update
+    if (this.state !== 'visible') return
+    const contents = this.options.window.webContents
+    if (contents.isDestroyed()) return
+    contents.send(STARTUP_PROGRESS_CHANNEL, update)
   }
 
   showError(pluginName: string | null = null): Promise<void> {
@@ -238,6 +254,9 @@ export class StartupSplash {
       target.show()
       this.state = 'visible'
       this.record('shown')
+      if (this.latestProgress && !target.webContents.isDestroyed()) {
+        target.webContents.send(STARTUP_PROGRESS_CHANNEL, this.latestProgress)
+      }
     }
     return this.snapshot()
   }

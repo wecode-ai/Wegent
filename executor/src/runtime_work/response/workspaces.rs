@@ -118,12 +118,11 @@ pub(crate) fn workspace_response(
             .and_then(|(workspace, _)| workspace.as_ref())
             .map(|workspace| workspace.workspace_path.clone())
             .unwrap_or(path);
-        let execution_group = if link.preserve_execution_path {
-            workspace_group_path(&link.workspace_path)
+        link.workspace_path = if link.preserve_execution_path {
+            workspace_task_path(&link.workspace_path, "")
         } else {
-            group_path
+            workspace_task_path(&link.workspace_path, &group_path)
         };
-        link.workspace_path = workspace_task_path(&link.workspace_path, &execution_group);
         groups
             .entry(key)
             .or_insert_with(|| (None, Vec::new()))
@@ -390,6 +389,71 @@ mod tests {
             rows[0]["tasks"][0]["workspacePath"],
             crate::runtime_work::util::normalize_workspace_path("/other/checkout")
         );
+    }
+
+    #[test]
+    fn workspace_response_preserves_assigned_restore_directory_inside_a_repository() {
+        let checkout = tempfile::tempdir().expect("repository directory");
+        std::fs::create_dir_all(checkout.path().join(".git")).expect("repository metadata");
+        let restored = checkout
+            .path()
+            .join("executor-home")
+            .join("restored-workspaces")
+            .join("task-1");
+        std::fs::create_dir_all(&restored).expect("restored workspace");
+        let target = checkout.path().join("project");
+        std::fs::create_dir_all(&target).expect("target project");
+        let restored_path = normalize_workspace_path(&restored.to_string_lossy());
+        let target_path = normalize_workspace_path(&target.to_string_lossy());
+        let mut moved = task("restored", Some("target"));
+        moved.workspace_path = restored_path.clone();
+        moved.group_workspace_path = Some(target_path.clone());
+        moved.preserve_execution_path = true;
+        let mut target_project = project("target", None);
+        target_project.workspace_path = target_path.clone();
+
+        let rows = workspace_response(vec![moved], vec![target_project]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["workspacePath"], target_path);
+        assert_eq!(rows[0]["tasks"][0]["workspacePath"], restored_path);
+    }
+
+    #[test]
+    fn workspace_response_preserves_assigned_worktree_root_for_a_nested_cwd() {
+        let directory = tempfile::tempdir().expect("repository directory");
+        let git_dir = directory
+            .path()
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join("runtime-1");
+        let worktree = directory
+            .path()
+            .join("worktrees")
+            .join("runtime-1")
+            .join("workspace");
+        std::fs::create_dir_all(&git_dir).expect("worktree metadata");
+        std::fs::create_dir_all(worktree.join("src")).expect("nested worktree directory");
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .expect("worktree git pointer");
+        let mut moved = task("moved", Some("target"));
+        moved.workspace_path = worktree.join("src").to_string_lossy().into_owned();
+        moved.group_workspace_path = Some("/srv/work".to_owned());
+        moved.preserve_execution_path = true;
+
+        let rows = workspace_response(vec![moved], vec![project("target", None)]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0]["tasks"][0]["workspacePath"],
+            normalize_workspace_path(&worktree.to_string_lossy())
+        );
+        assert_eq!(rows[0]["tasks"][0]["workspaceKind"], "worktree");
+        assert_eq!(rows[0]["tasks"][0]["worktreeId"], "runtime-1");
     }
 
     #[test]
