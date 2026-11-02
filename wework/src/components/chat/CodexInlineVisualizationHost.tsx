@@ -250,7 +250,7 @@ function buildVisualizationDocument(
     send();
   })()</script>`
   const wheelScript = `<script>${createVisualizationWheelScript(token)}</script>`
-  return `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${base}${styles}${fragment}${resizeScript}${wheelScript}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${base}${styles}</head><body>${fragment}${resizeScript}${wheelScript}</body></html>`
 }
 
 function escapeHtmlAttribute(value: string): string {

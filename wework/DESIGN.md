@@ -1040,8 +1040,10 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   task-owned paths and an absolute `visualize` content reference in the final
   response. Codex keeps that reference in its normal transcript. Replaying a
   message reads the original file through the desktop file service and runs it
-  in an opaque-origin `allow-scripts` iframe. Fragments supply scoped styles and
-  local interactions using the documented host theme tokens; they do not depend
+  in an opaque-origin `allow-scripts` iframe. The host owns a complete HTML
+  document in standards mode and reports its intrinsic content height to size
+  the frame. Fragments supply scoped styles and local interactions using the
+  documented host theme tokens; they do not depend
   on a ChatGPT widget bridge. Inline fragments are response content; an explicit
   export is a separate deliverable. Loading failures remain visible and retryable.
   The visualization host is transparent and unframed; the generated content owns
@@ -1067,7 +1069,8 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Markdown->>Host: Parsed visualization reference
     Host->>Storage: Read complete HTML through desktop file service
     Storage-->>Host: Fragment or explicit read failure
-    Host->>Host: Render sandbox, report size, follow Wework theme
+    Host->>Host: Compose HTML document in standards mode
+    Host->>Host: Render sandbox, report content size, follow Wework theme
   ```
 
   ```mermaid

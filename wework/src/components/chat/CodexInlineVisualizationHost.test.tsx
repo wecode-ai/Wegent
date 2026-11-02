@@ -103,6 +103,12 @@ describe('CodexInlineVisualizationHost', () => {
     expect(documentBlob?.type).toBe('text/html;charset=utf-8')
 
     const document = await documentBlob?.text()
+    const parsedDocument = new DOMParser().parseFromString(document ?? '', 'text/html')
+    expect(parsedDocument.compatMode).toBe('CSS1Compat')
+    expect(parsedDocument.head.querySelector('base')?.href).toBe(
+      'file:///workspace/.codex/visualizations/2026/07/23/thread/'
+    )
+    expect(parsedDocument.body.querySelector('h2')?.textContent).toBe('月度趋势')
     expect(document).toContain('<h2>月度趋势</h2>')
     expect(document).toContain('--viz-series-1: var(--primary)')
     expect(document).toContain(

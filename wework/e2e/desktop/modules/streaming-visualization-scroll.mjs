@@ -96,7 +96,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       if (result) return result
       await pause(50)
     } while (Date.now() < deadline)
-    assert.fail(description)
+    assert.fail(typeof description === 'function' ? description() : description)
   }
 
   async function centerFrame(control) {
@@ -105,22 +105,40 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
   }
 
   async function verifyBlankAreaWheel(control) {
-    const pinned = await waitFor(async () => {
-      const outer = await outerMetrics(control)
-      const frame = await getSingleElementMetrics(control, FRAME, 'Pinned visualization frame')
-      const blank = await frameAction(control, 'metrics', '#blank')
-      const blankTop = frame.top + blank.rect.top
-      const blankBottom = frame.top + blank.rect.bottom
-      return distanceFromBottom(outer) <= 2 &&
-        frame.top >= outer.top - 1 &&
-        frame.bottom <= outer.bottom + 1 &&
-        blankTop >= outer.top &&
-        blankBottom <= outer.bottom
-        ? { outer, blankTop, blankBottom }
-        : null
-    }, 'The completed visualization was not fully visible at the automatically pinned conversation bottom')
+    let lastGeometry
+    const pinned = await waitFor(
+      async () => {
+        const outer = await outerMetrics(control)
+        const frame = await getSingleElementMetrics(control, FRAME, 'Pinned visualization frame')
+        const blank = await frameAction(control, 'metrics', '#blank')
+        const blankTop = frame.top + blank.rect.top
+        const blankBottom = frame.top + blank.rect.bottom
+        lastGeometry = {
+          outer,
+          frame,
+          blank,
+          blankTop,
+          blankBottom,
+          distanceFromBottom: distanceFromBottom(outer),
+          distanceFromTop: distanceFromTop(outer),
+        }
+        return distanceFromBottom(outer) <= 2 &&
+          frame.top >= outer.top - 1 &&
+          frame.bottom <= outer.bottom + 1 &&
+          blankTop >= outer.top &&
+          blankBottom <= outer.bottom
+          ? { outer, frame, blankTop, blankBottom }
+          : null
+      },
+      () =>
+        `The completed visualization was not fully visible at the automatically pinned conversation bottom: ${JSON.stringify(lastGeometry)}`
+    )
     assert.ok(distanceFromBottom(pinned.outer) <= 2)
     assert.ok(pinned.blankBottom > pinned.blankTop, 'The pinned HTML blank area was not visible')
+    assert.ok(
+      pinned.frame.height < 480,
+      `The compact visualization did not shrink below its initial iframe height: ${JSON.stringify(lastGeometry)}`
+    )
     await control.command('startScrollStabilitySampling', FRAME, {
       value: JSON.stringify({ durationMs: 1200, scrollerSelector: SCROLLER_SELECTOR }),
     })
