@@ -182,7 +182,7 @@ export async function verifySmartAppMarketplaceIdentity({
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', '[data-testid="smart-app-details"]', {
-    text: marketItem.summary,
+    text: marketItem.displayName,
     timeoutMs: uiTimeoutMs,
   })
   const installPromptSnapshot = JSON.parse(await control.command('snapshot', 'body'))
