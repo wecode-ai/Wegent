@@ -41,6 +41,9 @@ classify_path() {
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \
       .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
       .github/scripts/lib/apt-packages.sh | \
       .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \

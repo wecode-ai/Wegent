@@ -298,7 +298,7 @@ jobs:
     name: Warm Wework macOS Electron Build Cache
     needs: changes
     if: needs.changes.outputs.wework_target == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     permissions:
       contents: read
@@ -310,212 +310,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Compute macOS runtime source digests
-        id: macos-source
-        run: |
-          executor_digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
-          backend_digest="$(node .github/scripts/macos-e2e-source-digest.mjs backend-rs)"
-          echo "executor=$executor_digest" >> "$GITHUB_OUTPUT"
-          echo "backend-rs=$backend_digest" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Prepare shared macOS desktop E2E build
+        uses: ./.github/actions/build-wework-macos-e2e
         with:
           save-cache: "true"
+          publish: "true"
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up macOS x64 compiler cache
+        uses: ./.github/actions/setup-rust-cache
         with:
-          node-version: "24"
-
-      - name: Set up ORAS
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
-        with:
-          version: 1.3.1
-
-      - name: Log in to GHCR with ORAS
-        run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore shared macOS pnpm store
-        id: macos-pnpm-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-v2-${{ hashFiles('pnpm-lock.yaml', 'wework/electron/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-v2-
-            ${{ runner.os }}-pnpm-store-v1-
-
-      - name: Install dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm --dir wework/electron install --frozen-lockfile
-
-      - name: Save shared macOS pnpm store
-        if: steps.macos-pnpm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
-
-      - name: Restore shared Wework Electron build dependencies
-        id: wework-cargo-sources-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            backend-rs/target
-            ~/Library/Caches/electron
-          key: ${{ runner.os }}-wework-electron-app-v2-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-app-v2-
-            ${{ runner.os }}-wework-electron-app-v1-
-
-      - name: Restore macOS arm64 executor runtime
-        id: macos-executor-runtime-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ steps.macos-source.outputs.executor }}
-
-      - name: Restore macOS arm64 Rust backend runtime
-        id: macos-backend-rs-runtime-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ steps.macos-source.outputs.backend-rs }}
-
-      - name: Restore macOS arm64 runtimes from OCI
-        env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ steps.macos-source.outputs.executor }}
-          EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
-          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
-          BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
-        run: |
-          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
-          .github/scripts/restore-macos-e2e-runtime-oci.sh \
-            "$runtime_root/wegent-executor" \
-            wegent-executor \
-            "$EXECUTOR_SOURCE_REF" \
-            "$EXECUTOR_HEAD_REF"
-          .github/scripts/restore-macos-e2e-runtime-oci.sh \
-            "$runtime_root/wegent-backend-rs" \
-            wegent-backend-rs \
-            "$BACKEND_SOURCE_REF" \
-            "$BACKEND_HEAD_REF"
-
-      - name: Build Wework Electron E2E application
-        env:
-          CI: true
-          CARGO_PROFILE_DEV_DEBUG: "0"
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
-          WEWORK_BACKEND_RS_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
-          WEWORK_EXECUTOR_PROFILE: release
-        run: |
-          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
-          executor_runtime="$runtime_root/wegent-executor"
-          backend_runtime="$runtime_root/wegent-backend-rs"
-
-          .github/scripts/build-macos-e2e-runtimes.sh \
-            "$executor_runtime" \
-            "$backend_runtime" &
-          runtimes_pid=$!
-          WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime" \
-            WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS="900" \
-            CARGO_BUILD_TARGET=aarch64-apple-darwin \
-            pnpm --filter wework ai:verify:electron:build &
-          wework_pid=$!
-
-          status=0
-          wait "$wework_pid" || status=$?
-          wait "$runtimes_pid" || status=$?
-          if [[ "$status" -ne 0 ]]; then
-            exit "$status"
-          fi
-          test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
-          test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          test -x "$backend_runtime"
-
-      - name: Publish shared macOS Wework E2E build
-        env:
-          EXECUTOR_SOURCE_DIGEST: ${{ steps.macos-source.outputs.executor }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ steps.macos-source.outputs.backend-rs }}
-        run: |
-          reference_output="$(mktemp)"
-          GITHUB_OUTPUT="$reference_output" \
-            .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
-            "$GITHUB_REPOSITORY_OWNER" \
-            "$EXECUTOR_SOURCE_DIGEST" \
-            "$BACKEND_RS_SOURCE_DIGEST"
-          reference="$(sed -n 's/^reference=//p' "$reference_output")"
-          test -n "$reference"
-          .github/scripts/archive-wework-macos-e2e-build.sh
-          .github/scripts/publish-wework-core-e2e-build-oci.sh \
-            .ci-artifacts/wework-macos-e2e-build.tar.zst \
-            "$reference"
-
-      - name: Publish macOS arm64 runtimes to OCI
-        env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ steps.macos-source.outputs.executor }}
-          EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
-          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
-          BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
-        run: |
-          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
-          .github/scripts/publish-macos-e2e-runtime-oci.sh \
-            "$runtime_root/wegent-executor" \
-            "$EXECUTOR_SOURCE_REF" \
-            "$EXECUTOR_HEAD_REF"
-          .github/scripts/publish-macos-e2e-runtime-oci.sh \
-            "$runtime_root/wegent-backend-rs" \
-            "$BACKEND_SOURCE_REF" \
-            "$BACKEND_HEAD_REF"
-
-      - name: Save macOS arm64 executor runtime
-        if: steps.macos-executor-runtime-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ steps.macos-executor-runtime-cache.outputs.cache-primary-key }}
-
-      - name: Save macOS arm64 Rust backend runtime
-        if: steps.macos-backend-rs-runtime-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
-          key: ${{ steps.macos-backend-rs-runtime-cache.outputs.cache-primary-key }}
+          manifest-path: executor/Cargo.toml
+          targets: x86_64-apple-darwin
+          save-cache: "true"
 
       - name: Warm macOS x64 release executor compiler cache
-        working-directory: ./executor
+        working-directory: executor
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/executor/target
         run: cargo build --release --locked --target x86_64-apple-darwin --bin wegent-executor
-
-      - name: Save shared Wework Electron build dependencies
-        if: steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            backend-rs/target
-            ~/Library/Caches/electron
-          key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
   prepare-wework-desktop-image:
     name: Prepare Wework Desktop E2E Image

@@ -14,6 +14,9 @@ manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 
 git -c "safe.directory=$PWD" ls-files -s -- \
+  .github/actions/build-wework-macos-e2e \
+  .github/actions/setup-rust-cache \
+  .github/ci/rust-toolchain \
   .github/scripts/archive-wework-macos-e2e-build.sh \
   .github/scripts/build-macos-e2e-runtimes.sh \
   .github/scripts/resolve-wework-macos-e2e-build-ref.sh \

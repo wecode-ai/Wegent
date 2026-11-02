@@ -370,26 +370,28 @@ if ! grep -Fq 'SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"' "$sccache_action" ||
   fail "sccache must degrade safely and allow cache writes only from main"
 fi
 
+macos_build_action="$action_dir/build-wework-macos-e2e/action.yml"
+macos_build_source="$(cat "$macos_build_action")"
 macos_warmup_section="$(
   sed -n \
     '/^  warm-wework-macos-electron:/,/^  prepare-wework-desktop-image:/p' \
     "$warmup_workflow"
 )"
 if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'* ]] ||
-  [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
+  [[ "$macos_warmup_section" != *'runs-on: macos-15'* ]] ||
   [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
-  [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-electron-app-v2-'* ]] ||
-  [[ "$macos_warmup_section" != *'pnpm-store-v2-'* ]] ||
-  [[ "$macos_warmup_section" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
-  [[ "$macos_warmup_section" != *'executor/target'* ]] ||
-  [[ "$macos_warmup_section" != *'backend-rs/target'* ]] ||
-  [[ "$macos_warmup_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
-  [[ "$macos_warmup_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
-  [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
-  [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
+  [[ "$macos_build_source" != *'uses: ./.github/actions/setup-rust-cache'* ]] ||
+  [[ "$macos_build_source" != *'wework-electron-app-v3-'* ]] ||
+  [[ "$macos_build_source" != *'pnpm-store-v2-'* ]] ||
+  [[ "$macos_build_source" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
+  [[ "$macos_build_source" != *'executor/target'* ]] ||
+  [[ "$macos_build_source" != *'backend-rs/target'* ]] ||
+  [[ "$macos_build_source" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'build-macos-e2e-runtimes.sh'* ]] ||
+  [[ "$macos_build_source" != *'~/Library/Caches/electron'* ]] ||
+  [[ "$macos_build_source" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
   fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
 fi
 
@@ -680,15 +682,15 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   ! grep -Fq 'uses: ./.github/actions/build-wework-core-e2e' \
     "$warmup_workflow" ||
   ! grep -Fq 'publish-wework-core-e2e-build-oci.sh' "$warmup_workflow" ||
-  [[ "$memory_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
-  [[ "$memory_build_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
-  [[ "$memory_build_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
-  [[ "$memory_build_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
-  [[ "$memory_build_section" != *'resolve-wework-macos-e2e-build-ref.sh'* ]] ||
-  [[ "$memory_build_section" != *'restore-wework-macos-e2e-build.sh'* ]] ||
-  [[ "$memory_build_section" != *'archive-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$macos_build_source" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$macos_build_source" != *'build-macos-e2e-runtimes.sh'* ]] ||
+  [[ "$macos_build_source" != *'resolve-wework-macos-e2e-build-ref.sh'* ]] ||
+  [[ "$macos_build_source" != *'restore-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$macos_build_source" != *'archive-wework-macos-e2e-build.sh'* ]] ||
   [[ "$memory_build_section" != *'node wework/e2e/desktop/run-checkpoints.mjs'* ]] ||
-  ! grep -Fq 'Publish shared macOS Wework E2E build' "$warmup_workflow" ||
+  ! grep -Fq 'Archive and publish shared macOS Wework E2E build' "$macos_build_action" ||
   ! grep -Fq 'strip --strip-debug' \
     "$script_dir/archive-wework-core-e2e-build.sh"; then
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"

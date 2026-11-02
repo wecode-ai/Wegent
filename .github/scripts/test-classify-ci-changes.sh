@@ -2835,6 +2835,7 @@ fi
 wework_memory_job="$(
   sed -n '/^  wework-desktop-memory-e2e:/,$p' "$wework_workflow"
 )"
+wework_memory_job+="$(cat "$repo_root/.github/actions/build-wework-macos-e2e/action.yml")"
 memory_step_gate="$(
   sed -n '/^      - name: Run Wework desktop memory E2E$/{n;p;}' "$wework_workflow"
 )"

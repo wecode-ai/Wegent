@@ -31,6 +31,9 @@ classify_path() {
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \
       .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
       .github/scripts/resolve-backend-rs-e2e-runtime.sh | \
       .github/scripts/resolve-wework-core-e2e-build-ref.sh | \

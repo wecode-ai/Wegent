@@ -6,11 +6,11 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 const script = resolve(".github/scripts/macos-e2e-source-digest.mjs");
-// Generated with @actions/glob 0.5.0 hashFiles using the workflow's patterns.
+// Golden source hashFiles digests bound to the fixed toolchain and recipe fixtures.
 const compatibleDigests = {
-  executor: "20de4ea4a8bbab5dceb3a5be72a5a28140fabfcfff1d208a0b8b6d149033b58f",
+  executor: "478cef69916aab797fe26d54ab1fef757ee71e67ac3150cb63689bfc08b61253",
   "backend-rs":
-    "627e6d439866c93e892400d1181d3da9f7f88f8b3a4f01c51a795f24f96ab834",
+    "7ef5c940b3282003f65044c929ee7c0a61853fb2e32b82262cc96363f5b48973",
 };
 
 for (const component of Object.keys(compatibleDigests)) {
@@ -47,11 +47,20 @@ for (const component of Object.keys(compatibleDigests)) {
       };
       for (const [path, content] of Object.entries(inputs))
         write(path, content);
+      mkdirSync(join(root, '.github/ci'), { recursive: true });
+      mkdirSync(join(root, '.github/actions/setup-rust-cache'), { recursive: true });
+      writeFileSync(join(root, '.github/ci/rust-toolchain'), '1.99.1\n');
+      writeFileSync(join(root, '.github/actions/setup-rust-cache/action.yml'), 'shared rust cache recipe\n');
       execFileSync("git", ["init", "-q"], { cwd: root });
       stage();
       const original = digest();
       assert.equal(original, compatibleDigests[component]);
 
+      for (const [file, content] of [['.github/ci/rust-toolchain', '1.99.1\n'], ['.github/actions/setup-rust-cache/action.yml', 'shared rust cache recipe\n']]) {
+        writeFileSync(join(root, file), 'changed build context\n');
+        assert.notEqual(digest(), original);
+        writeFileSync(join(root, file), content);
+      }
       write("src/notes.md", "Changed non-Rust documentation\n");
       write("target/untracked.rs", "Ignored build output\n");
       assert.equal(digest(), original);

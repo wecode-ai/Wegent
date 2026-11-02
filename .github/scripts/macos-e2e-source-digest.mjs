@@ -41,4 +41,8 @@ for (const pattern of groups) {
 console.error(
   `Hashed ${fileCount} ${component} inputs in ${Date.now() - startedAt}ms`,
 );
-process.stdout.write(`${result.digest("hex")}\n`);
+const context = createHash("sha256").update(result.digest("hex"));
+for (const file of [".github/ci/rust-toolchain", ".github/actions/setup-rust-cache/action.yml"]) {
+  context.update(createHash("sha256").update(readFileSync(file)).digest());
+}
+process.stdout.write(`${context.digest("hex")}\n`);
