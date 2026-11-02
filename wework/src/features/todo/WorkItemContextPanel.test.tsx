@@ -160,7 +160,10 @@ describe('WorkItemContextPanel', () => {
       taskId: 'runtime-2',
     })
 
-    await user.click(screen.getByTestId('work-item-open-board'))
+    const openWorkspace = screen.getByRole('button', { name: '打开工作空间' })
+    expect(openWorkspace).toHaveAttribute('title', '打开工作空间')
+    expect(openWorkspace).toHaveTextContent('')
+    await user.click(openWorkspace)
     expect(onOpenBoard).toHaveBeenCalledOnce()
   })
 

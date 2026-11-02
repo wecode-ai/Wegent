@@ -2085,6 +2085,27 @@ show_status() {
     done
 }
 
+# Background services must outlive the terminal or tool session that starts them.
+spawn_background_service() {
+    local command=$1
+    local log_file=$2
+
+    uv run --no-project --python "$PYTHON_CMD" python - "$command" "$log_file" <<'PY'
+import subprocess
+import sys
+
+with open(sys.argv[2], "wb") as output:
+    process = subprocess.Popen(
+        ["bash", "-c", sys.argv[1]],
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+print(process.pid)
+PY
+}
+
 # Start a single service
 start_service() {
     local name=$1
@@ -2097,9 +2118,8 @@ start_service() {
 
     cd "$SCRIPT_DIR/$dir"
 
-    # Run in background and save PID
-    nohup bash -c "$cmd" > "$log_file" 2>&1 &
-    local pid=$!
+    local pid
+    pid=$(spawn_background_service "$cmd" "$log_file")
 
     # Wait for service to start
     sleep 2
@@ -2611,9 +2631,8 @@ start_services() {
             fi
         fi
 
-        # Start frontend in background
-        nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
-        local frontend_pid=$!
+        local frontend_pid
+        frontend_pid=$(spawn_background_service "$frontend_cmd" "$PID_DIR/frontend.log")
         echo $frontend_pid > "$PID_DIR/frontend.pid"
 
         sleep 3
@@ -2654,8 +2673,8 @@ start_services() {
             fi
         fi
 
-        nohup bash -c "$wework_cmd" > "$PID_DIR/wework.log" 2>&1 &
-        local wework_pid=$!
+        local wework_pid
+        wework_pid=$(spawn_background_service "$wework_cmd" "$PID_DIR/wework.log")
         echo $wework_pid > "$PID_DIR/wework.pid"
 
         sleep 3

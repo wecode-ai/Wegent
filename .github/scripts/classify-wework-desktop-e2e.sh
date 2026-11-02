@@ -21,6 +21,7 @@ core_segments=(
   collaboration-issue-archive
   collaboration-board-sorting
   collaboration-board-backlog
+  collaboration-issue-identity
   collaboration-board-move-recovery
   collaboration-home-preload
   board-transcript-followup
@@ -257,7 +258,7 @@ core_shards=(
   collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle
 )
 
-core_shards[1]+=',mcp-apps,project-space-tool-discovery'
+core_shards[1]+=',mcp-apps,project-space-tool-discovery,collaboration-issue-identity'
 core_shards[1]+=',human-interactions'
 # Keep new unmeasured checks off the heaviest measured shard so Windows can rebalance it.
 core_shards[2]+=',human-interactions-browser'
@@ -977,6 +978,13 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
       select_target "core:collaboration-board-sorting"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-identity.scenario.mjs | \
+      executor/tests/local_issue_identity_contract.rs | \
+      executor/src/task_runtime/external_issue* | executor/src/task_runtime/aitable_events.rs | \
+      shared/issue_follow_events.rs)
+      select_target "core:collaboration-issue-identity"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)

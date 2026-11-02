@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
 import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
@@ -1105,6 +1107,9 @@ async function verifyWorkspaceIssueCreation(control) {
     'The newly created Issue did not expose a stable board identity'
   )
   const createdIssueId = createdIssueTestId.slice('cloud-todo-card-'.length)
+  const projects = await requestExecutor(control, 'projects.list', {}, DEFAULT_STEP_TIMEOUT_MS)
+  const project = projects.find(candidate => candidate.name === projectName)
+  assert.ok(project, 'The shared Issue fixture project was not persisted')
   const issueDetailSelector = `${boardContentSelector} [data-testid="collaboration-issue-detail"]`
   await control.command('waitFor', issueDetailSelector, {
     text: 'WEWORK_DESKTOP_E2E_ISSUE_TITLE',
@@ -1176,6 +1181,20 @@ async function verifyWorkspaceIssueCreation(control) {
     await control.command('getValue', issueStatusSelector),
     'pending',
     'The Issue did not enter pending before returning to its board'
+  )
+  await waitForBoardValue(
+    async () => {
+      const saved = await requestExecutor(
+        control,
+        'todos.get',
+        { project_id: project.id, task_id: createdIssueId },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      return [saved.status, saved.description]
+    },
+    ['pending', issueDescription],
+    'The automatic status save must preserve the description until manual submission',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   await control.command(
     'clickWhenEnabled',
@@ -1541,14 +1560,31 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const originalTitle = await control.command('getValue', titleSelector)
+  const items = await requestExecutor(
+    control,
+    'todos.list',
+    { project_id: 'default-work-items' },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const issue = items.find(candidate => candidate.title === originalTitle)
+  assert.ok(issue, 'The tracked default Issue fixture was not persisted')
   await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
-  await control.command(
-    'clickWhenEnabled',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  await control.command('press', titleSelector, { key: 'Enter' })
+  await waitForBoardValue(
+    async () =>
+      (
+        await requestExecutor(
+          control,
+          'todos.get',
+          { project_id: 'default-work-items', task_id: issue.id },
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      ).title,
+    title,
+    'The tracked default Issue title did not save on Enter',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   await control.command(
     'waitFor',

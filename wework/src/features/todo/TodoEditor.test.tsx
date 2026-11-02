@@ -65,6 +65,14 @@ const baseItem = {
 
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
+function versionedIssueUpdates(initial: CloudLoopItem) {
+  let persisted = initial
+  return vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
+    persisted = { ...persisted, ...values, version: persisted.version + 1 }
+    return persisted
+  })
+}
+
 function editorElement(item: CloudLoopItem) {
   return (
     <TodoEditor
@@ -152,7 +160,11 @@ describe('TodoEditor external item sync', () => {
       const user = userEvent.setup()
       const item = { ...baseItem, status: 'inbox' }
       const pending = deferred<CloudLoopItem>()
-      const updateLoopItem = vi.fn(() => pending.promise)
+      const newer = deferred<CloudLoopItem>()
+      const updateLoopItem = vi
+        .fn()
+        .mockImplementationOnce(() => pending.promise)
+        .mockImplementationOnce(() => newer.promise)
       const editorApi = { ...api, updateLoopItem } as never
       const props = {
         mode: 'edit' as const,
@@ -166,7 +178,6 @@ describe('TodoEditor external item sync', () => {
       }
       const view = render(<TodoEditor {...props} />)
       await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
-      await user.click(screen.getByTestId('cloud-todo-save'))
       await waitFor(() => expect(updateLoopItem).toHaveBeenCalledOnce())
       if (change === 'draft') {
         await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'pending')
@@ -183,6 +194,12 @@ describe('TodoEditor external item sync', () => {
       expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(
         change === 'draft' ? 'pending' : 'in_review'
       )
+      if (change === 'draft') {
+        await act(async () => {
+          newer.resolve({ ...item, status: 'pending', version: 2 })
+          await newer.promise
+        })
+      }
     }
   )
 
@@ -208,32 +225,30 @@ describe('TodoEditor external item sync', () => {
         currentUserId={1}
       />
     )
-    await user.clear(screen.getByTestId('cloud-todo-detail-title'))
-    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Keep my draft')
+    const description = await screen.findByTestId('cloud-todo-detail-description')
+    await user.click(description)
+    await user.keyboard(' Keep my draft')
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
-    await user.click(screen.getByTestId('cloud-todo-save'))
 
     expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
       '机器人没有符合配置且获项目授权的执行环境'
     )
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
-    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Keep my draft')
+    expect(description).toHaveTextContent('Keep my draft')
     expect(onUpdated).not.toHaveBeenCalled()
 
     updateLoopItem.mockResolvedValueOnce({
       ...item,
-      title: 'Keep my draft',
       status: 'in_progress',
       version: 2,
     })
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
-    await user.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
     expect(updateLoopItem).toHaveBeenLastCalledWith(item.id, {
       version: 1,
-      title: 'Keep my draft',
       status: 'in_progress',
     })
+    expect(description).toHaveTextContent('Keep my draft')
     expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
   })
 
@@ -257,7 +272,6 @@ describe('TodoEditor external item sync', () => {
     )
     expect(screen.queryByTestId('human-issue-work-panel')).not.toBeInTheDocument()
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'completed')
-    await user.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
         version: 1,
@@ -290,12 +304,89 @@ describe('TodoEditor external item sync', () => {
     )
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
     await user.paste(saved.title)
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.keyboard('{Enter}')
     await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledWith(saved))
     expect(updateLoopItem.mock.calls).toEqual([
       [baseItem.id, { version: 1, title: saved.title }],
       [baseItem.id, { version: 2, title: saved.title }],
     ])
+  })
+
+  it('retains a rejected title for another blur without entering description editing', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = versionedIssueUpdates(baseItem)
+    updateLoopItem.mockRejectedValueOnce(new Error('Title update unavailable'))
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+      />
+    )
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    await user.clear(title)
+    await user.type(title, 'Retry this title')
+    expect(updateLoopItem).not.toHaveBeenCalled()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
+      'Title update unavailable'
+    )
+    expect(title).toHaveValue('Retry this title')
+    expect(screen.queryByTestId('cloud-todo-cancel-content-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+
+    await user.click(title)
+    await user.tab()
+
+    await waitFor(() =>
+      expect(updateLoopItem.mock.calls).toEqual([
+        [baseItem.id, { version: 1, title: 'Retry this title' }],
+        [baseItem.id, { version: 1, title: 'Retry this title' }],
+      ])
+    )
+    expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
+  })
+
+  it('opens an empty description explicitly and saves its content manually', async () => {
+    const user = userEvent.setup({ delay: null })
+    const item = { ...baseItem, description: '' }
+    const updateLoopItem = versionedIssueUpdates(item)
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+      />
+    )
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('cloud-todo-add-description'))
+    const description = await screen.findByTestId('cloud-todo-detail-description')
+    await user.click(description)
+    await user.keyboard('Write the first description')
+
+    expect(description).toHaveTextContent('Write the first description')
+    expect(updateLoopItem).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        description: expect.stringContaining('Write the first description'),
+      })
+    )
+    expect(screen.queryByTestId('cloud-todo-cancel-content-edit')).not.toBeInTheDocument()
   })
 
   it('retains the archive label and outside-click dismissal in the properties menu', async () => {
@@ -327,7 +418,7 @@ describe('TodoEditor external item sync', () => {
     expect(onArchive).toHaveBeenCalledOnce()
   })
 
-  it('keeps compact Issue properties unlabeled and explains the current status in a tooltip', async () => {
+  it('keeps the owner and schedule compact and explains the header status in a tooltip', async () => {
     const user = userEvent.setup()
     render(
       <TodoEditor
@@ -345,7 +436,7 @@ describe('TodoEditor external item sync', () => {
     )
 
     const summary = screen.getByTestId('cloud-todo-state-summary')
-    expect(summary).not.toHaveTextContent('负责人')
+    expect(summary).toHaveTextContent('负责人')
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('agent-1')
     expect(screen.getByRole('button', { name: '时间范围' })).toHaveTextContent('添加日期')
 
@@ -394,7 +485,6 @@ describe('TodoEditor external item sync', () => {
     expect(showPicker).toHaveBeenCalledOnce()
 
     await user.type(dueDateInput, '2026-10-31')
-    await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
@@ -406,11 +496,7 @@ describe('TodoEditor external item sync', () => {
 
   it('offers unused view tags and saves priority and tag edits from the properties menu', async () => {
     const user = userEvent.setup()
-    const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
-      ...baseItem,
-      ...values,
-      version: 2,
-    }))
+    const updateLoopItem = versionedIssueUpdates(baseItem)
     const editableApi = {
       ...api,
       updateLoopItem,
@@ -420,6 +506,7 @@ describe('TodoEditor external item sync', () => {
       <TodoEditor
         mode="edit"
         presentation="workspace-panel"
+        readFirst
         item={baseItem}
         project={{
           ...project,
@@ -455,17 +542,314 @@ describe('TodoEditor external item sync', () => {
     for (const tag of ['bug', 'release', '测试', '需求'])
       expect(screen.getByTestId(`cloud-todo-detail-tag-suggestion-${tag}`)).toBeVisible()
     await user.type(tagInput, 'release{Enter}')
-    await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() =>
-      expect(updateLoopItem).toHaveBeenCalledWith(
-        baseItem.id,
-        expect.objectContaining({
-          priority: 'urgent',
-          tags: ['release'],
-        })
+      expect(updateLoopItem.mock.calls).toEqual([
+        [baseItem.id, { version: 1, priority: 'urgent' }],
+        [baseItem.id, { version: 2, tags: ['release'] }],
+      ])
+    )
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+  })
+
+  it('saves a valid date range together after rejecting an invalid intermediate range', async () => {
+    const user = userEvent.setup()
+    const item = {
+      ...baseItem,
+      start_at: '2026-11-02',
+      due_at: '2026-11-04',
+    }
+    const updateLoopItem = versionedIssueUpdates(item)
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: '时间范围' }))
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-start-date'), {
+      target: { value: '2026-11-05' },
+    })
+    expect(screen.getByText('开始时间不能晚于结束时间')).toBeVisible()
+    expect(updateLoopItem).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
+      target: { value: '2026-11-06' },
+    })
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenNthCalledWith(1, item.id, {
+        version: 1,
+        start_at: '2026-11-05',
+        due_at: '2026-11-06',
+      })
+    )
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
+      target: { value: '' },
+    })
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenNthCalledWith(2, item.id, {
+        version: 2,
+        due_at: null,
+      })
+    )
+    expect(screen.queryByTestId('cloud-todo-cancel-content-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+  })
+
+  it('persists the original start date when it is restored during a pending automatic save', async () => {
+    const user = userEvent.setup()
+    const item = {
+      ...baseItem,
+      start_at: '2026-11-02',
+      due_at: '2026-11-06',
+    }
+    let persisted: CloudLoopItem = item
+    const pending = deferred<void>()
+    const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
+      if (values.start_at === '2026-11-03') await pending.promise
+      persisted = { ...persisted, ...values, version: persisted.version + 1 }
+      return persisted
+    })
+    const onUpdated = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={onUpdated}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: '时间范围' }))
+    const startDate = screen.getByTestId('cloud-todo-detail-start-date')
+    fireEvent.change(startDate, { target: { value: '2026-11-03' } })
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        start_at: '2026-11-03',
+      })
+    )
+    fireEvent.change(startDate, { target: { value: item.start_at } })
+    expect(startDate).toHaveValue(item.start_at)
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      pending.resolve()
+      await pending.promise
+    })
+
+    await waitFor(() =>
+      expect(updateLoopItem.mock.calls).toEqual([
+        [item.id, { version: 1, start_at: '2026-11-03' }],
+        [item.id, { version: 2, start_at: item.start_at }],
+      ])
+    )
+    await waitFor(() =>
+      expect(onUpdated).toHaveBeenLastCalledWith(
+        expect.objectContaining({ start_at: item.start_at, due_at: item.due_at, version: 3 })
       )
     )
+    expect(persisted).toEqual({ ...item, version: 3 })
+    expect(startDate).toHaveValue(item.start_at)
+    expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue(item.due_at)
+  })
+
+  it('refreshes conflicting priority without a parent rerender and saves the next choice at the fetched version', async () => {
+    const user = userEvent.setup()
+    const item = { ...baseItem, priority: 'none' as const }
+    const latest = { ...item, priority: 'urgent' as const, version: 2 }
+    let persisted: CloudLoopItem = latest
+    const updateLoopItem = vi
+      .fn(async (_id: string, values: Partial<CloudLoopItem>) => {
+        persisted = { ...persisted, ...values, version: persisted.version + 1 }
+        return persisted
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('task changed'), { code: 'version_conflict' }))
+    const getLoopItem = vi.fn(async () => latest)
+    const onUpdated = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={onUpdated}
+        onClose={vi.fn()}
+        api={{ ...api, getLoopItem, updateLoopItem } as never}
+      />
+    )
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    const priority = screen.getByTestId('cloud-todo-detail-priority')
+    await user.selectOptions(priority, 'high')
+
+    await waitFor(() => expect(priority).toHaveValue('urgent'))
+    expect(getLoopItem).toHaveBeenCalledExactlyOnceWith(item.id)
+    expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+      version: 1,
+      priority: 'high',
+    })
+    await user.selectOptions(priority, 'low')
+
+    await waitFor(() =>
+      expect(updateLoopItem.mock.calls).toEqual([
+        [item.id, { version: 1, priority: 'high' }],
+        [item.id, { version: 2, priority: 'low' }],
+      ])
+    )
+    await waitFor(() =>
+      expect(onUpdated).toHaveBeenLastCalledWith(
+        expect.objectContaining({ priority: 'low', version: 3 })
+      )
+    )
+    expect(priority).toHaveValue('low')
+    expect(persisted).toEqual({ ...latest, priority: 'low', version: 3 })
+  })
+
+  it('rolls back a failed start date while preserving and saving a newer due date', async () => {
+    const user = userEvent.setup()
+    const item = {
+      ...baseItem,
+      start_at: '2026-11-02',
+      due_at: '2026-11-04',
+    }
+    let persisted: CloudLoopItem = item
+    const pending = deferred<CloudLoopItem>()
+    const updateLoopItem = vi
+      .fn(async (_id: string, values: Partial<CloudLoopItem>) => {
+        persisted = { ...persisted, ...values, version: persisted.version + 1 }
+        return persisted
+      })
+      .mockImplementationOnce(() => pending.promise)
+    const onUpdated = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={onUpdated}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: '时间范围' }))
+    const startDate = screen.getByTestId('cloud-todo-detail-start-date')
+    const dueDate = screen.getByTestId('cloud-todo-detail-due-date')
+    fireEvent.change(startDate, { target: { value: '2026-11-03' } })
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        start_at: '2026-11-03',
+      })
+    )
+    fireEvent.change(dueDate, { target: { value: '2026-11-06' } })
+    expect(startDate).toHaveValue('2026-11-03')
+    expect(dueDate).toHaveValue('2026-11-06')
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      pending.reject(new Error('Start date update unavailable'))
+    })
+
+    await waitFor(() =>
+      expect(updateLoopItem.mock.calls).toEqual([
+        [item.id, { version: 1, start_at: '2026-11-03' }],
+        [item.id, { version: 1, due_at: '2026-11-06' }],
+      ])
+    )
+    await waitFor(() =>
+      expect(onUpdated).toHaveBeenLastCalledWith(
+        expect.objectContaining({ start_at: item.start_at, due_at: '2026-11-06', version: 2 })
+      )
+    )
+    expect(persisted).toEqual({ ...item, due_at: '2026-11-06', version: 2 })
+    expect(startDate).toHaveValue(item.start_at)
+    expect(dueDate).toHaveValue('2026-11-06')
+  })
+
+  it('saves metadata independently before manually saving description and notifying the selected owner', async () => {
+    const user = userEvent.setup({ delay: null })
+    let persisted = baseItem
+    const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
+      persisted = { ...persisted, ...values, version: persisted.version + 1 }
+      return persisted
+    })
+    const assignLoopItem = vi.fn(async () => {
+      persisted = {
+        ...persisted,
+        assignee_agent_id: null,
+        assignee_user_id: 7,
+        assignee_name: '张三',
+        version: persisted.version + 1,
+      }
+      return persisted
+    })
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={{ ...project, access_role: 'Developer' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        currentUserId={1}
+        api={
+          {
+            ...api,
+            updateLoopItem,
+            assignLoopItem,
+            listCloudProjectMembers: vi.fn(async () => [
+              { id: 7, user_id: 7, user_name: '张三', role: 'Developer' },
+            ]),
+          } as never
+        }
+      />
+    )
+    const description = await screen.findByTestId('cloud-todo-detail-description')
+    await user.click(description)
+    await user.keyboard(' Manual description')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:7'))
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'completed')
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(baseItem.id, {
+        version: 1,
+        status: 'completed',
+      })
+    )
+    expect(assignLoopItem).not.toHaveBeenCalled()
+    expect(description).toHaveTextContent('Manual description')
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', 'user:7')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(assignLoopItem).toHaveBeenCalledWith('11', baseItem.id, {
+        version: 3,
+        assigneeType: 'user',
+        assigneeId: '7',
+        notifyAssignee: true,
+      })
+    )
+    expect(updateLoopItem).toHaveBeenLastCalledWith(baseItem.id, {
+      version: 2,
+      description: expect.stringContaining('Manual description'),
+    })
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('completed')
   })
 
   it('keeps the more-properties menu actions operable', async () => {
@@ -552,7 +936,6 @@ describe('TodoEditor external item sync', () => {
     expect(trigger).toHaveFocus()
     await user.click(trigger)
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-draft-tag')).toBeInTheDocument()
-    await user.click(screen.getByTestId('cloud-todo-save'))
     await vi.waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
         baseItem.id,
@@ -1020,7 +1403,7 @@ describe('TodoEditor external item sync', () => {
 
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
     await user.paste('Local editable Issue')
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.keyboard('{Enter}')
 
     await vi.waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
@@ -1871,7 +2254,6 @@ describe('TodoEditor assignment chain', () => {
     await user.click(historyTrigger)
     expect(within(properties).getByTestId('cloud-todo-detail-tag-tag-保留草稿')).toBeVisible()
 
-    await user.click(screen.getByTestId('cloud-todo-save'))
     await vi.waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
         item.id,
@@ -2984,6 +3366,11 @@ describe('TodoEditor shared attachments', () => {
       />
     )
 
+    const attachments = await screen.findByTestId('cloud-todo-attachment-toggle')
+    expect(attachments).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('design.png')).not.toBeInTheDocument()
+    await user.click(attachments)
+    expect(attachments).toHaveAttribute('aria-expanded', 'true')
     expect(await screen.findByText('design.png')).toBeInTheDocument()
     expect(sharedApi.deliveries.list).toHaveBeenCalledWith('WEG-1')
     expect(sharedApi.taskBindings.list).toHaveBeenCalledWith('WEG-1', '11')
@@ -3000,14 +3387,13 @@ describe('TodoEditor shared attachments', () => {
 
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
     await user.type(screen.getByTestId('cloud-todo-detail-title'), '共享编辑')
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    await user.keyboard('{Enter}')
 
-    expect(updateIssue).toHaveBeenCalledWith(
-      'WEG-1',
-      expect.objectContaining({
-        version: 1,
-        title: '共享编辑',
-      })
+    await waitFor(() =>
+      expect(updateIssue).toHaveBeenCalledWith(
+        'WEG-1',
+        expect.objectContaining({ version: 1, title: '共享编辑' })
+      )
     )
   })
 

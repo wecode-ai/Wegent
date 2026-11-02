@@ -597,6 +597,7 @@ export function createWebSharedWorkspaceApi(
         if (filters?.assigneeType) query.set('assignee_type', filters.assigneeType)
         if (filters?.assigneeId != null) query.set('assignee_id', String(filters.assigneeId))
         if (filters?.executionState) query.set('execution_state', filters.executionState)
+        if (filters?.following) query.set('following', 'true')
         const suffix = query.size ? `?${query.toString()}` : ''
         const response = await client.get<{ items: CollaborationIssue[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/loop-items${suffix}`
@@ -640,6 +641,9 @@ export function createWebSharedWorkspaceApi(
       },
       get(issueId) {
         return client.get(`/v1/loop-items/${encoded(issueId)}`)
+      },
+      setFollowing(issueId, following) {
+        return client.put(`/v1/loop-items/${encoded(issueId)}/follow`, { following })
       },
       create(projectId, input) {
         return client.post(

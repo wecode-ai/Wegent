@@ -872,7 +872,16 @@ export function CollaborationApp({
                 table: (
                   <div className="collaboration-project-content">
                     <ProjectIssueTable
+                      key={`${project.id}:${project.current_user_id}`}
                       issues={issues}
+                      loadFollowed={() =>
+                        api.issues.list(String(project.id), { following: true })
+                      }
+                      followedLabel={translate("todo.my_followed")}
+                      followLoadErrorLabel={translate(
+                        "todo.follow_load_failed",
+                      )}
+                      retryLabel={translate("common.retry")}
                       assignmentsByIssueId={assignmentsByIssueId}
                       emptyLabel={messages.noIssues}
                       issueLabel={messages.issueTitle}

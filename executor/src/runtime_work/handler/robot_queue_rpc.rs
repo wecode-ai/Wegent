@@ -43,6 +43,26 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         let handler = self.clone();
+        let task_store_path = Arc::clone(&self.task_store_path);
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let result = match LocalTaskStore::open(task_store_path.as_ref())
+                    .and_then(crate::task_runtime::TaskRuntime::new)
+                {
+                    Ok(runtime) => runtime.poll_followed_external_issues().await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = result {
+                    log_executor_event(
+                        "local Issue event scan failed",
+                        &[("error", error.to_string())],
+                    );
+                }
+            }
+        });
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(LOCAL_ISSUE_PULL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -160,6 +160,9 @@ pub(crate) async fn insert(
     if let Value::Object(values) = values {
         row.extend(values);
     }
+    if kind == "task" && !row.contains_key("reporter_user_id") {
+        row.insert("reporter_user_id".into(), row["created_by_user_id"].clone());
+    }
     let id = row["id"].as_str().unwrap_or_default().to_owned();
     let mut args = Vec::with_capacity(columns.len());
     let names: Vec<_> = columns

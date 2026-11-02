@@ -24,9 +24,19 @@ New local and cloud collaboration projects include only the current user by defa
 
 ## Change an existing Issue's owner
 
-After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
+New Issues remain **Unassigned** unless you choose an owner. After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. **Assign to me** submits immediately. Description and ownership retain explicit saving; other properties save automatically. If saving fails, the draft and save action remain available for correction and resubmission.
 
 The `collaboration-local-agent-dispatch` desktop regression checks that the owner state row contains exactly one save action, that it disappears after saving, and that the assigned agent actually starts work.
+
+## Identity, following, and detail controls
+
+The detail header contains status and following controls. Ownership, Assign to me, and the date range share the row below the title. **More information** contains the creator, reporter, visibility, and secondary properties. The system records the creator and defaults the reporter to that person. Members with content-editing permission can change the reporter. Neither reporting nor following changes ownership or grants permissions.
+
+Select the bell to follow an Issue; a highlighted ringing bell indicates following. New comments, status changes, and ownership changes use existing notification channels, account preferences, and current access checks. Unfollowing stops notifications based on that relationship. The table's **Following** filter shows Issues the current account still follows and can access. Following persists across reloads.
+
+Titles save on blur or Enter. Status, priority, tags, and valid date ranges save automatically. A save conflict reads the latest Issue and reports the conflict while retaining pending description and ownership drafts. Attachments default to one collapsed row; expand it for previews. Upload remains available while collapsed.
+
+The web `collaboration-project-views.spec.ts` and desktop `collaboration-issue-identity` checkpoint cover identity defaults, persisted following, and filtering. Backend and Executor contract tests also cover permission and notification boundaries.
 
 ## Assign directly from a discussion
 

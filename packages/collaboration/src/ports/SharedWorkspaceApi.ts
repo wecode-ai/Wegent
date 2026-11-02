@@ -102,6 +102,7 @@ export interface WorkspaceIssueListFilters {
   assigneeType?: "user" | "agent" | "team";
   assigneeId?: string | number;
   executionState?: string;
+  following?: boolean;
 }
 
 export interface WorkspaceIssuePageInput {
@@ -162,6 +163,7 @@ export interface WorkspaceIssueUpdateInput {
   version: number;
   securityLevel?: "open" | "related";
   title?: string;
+  reporterUserId?: number;
   description?: string;
   status?: string;
   priority?: CollaborationPriority;
@@ -499,6 +501,10 @@ export interface SharedWorkspaceIssuesApi {
   >;
   getBoardSnapshot(projectId: string): Promise<WorkspaceBoardSnapshot>;
   get(issueId: string): Promise<CollaborationIssue>;
+  setFollowing(
+    issueId: string,
+    following: boolean,
+  ): Promise<{ following: boolean }>;
   create(
     projectId: string,
     input: WorkspaceIssueCreateInput,

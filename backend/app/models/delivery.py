@@ -100,6 +100,7 @@ class LoopNode(Base):
     sequence_number = Column(Integer, nullable=True)
     next_item_number = Column(Integer, nullable=True, default=1)
     created_by_user_id = Column(Integer, nullable=True, index=True)
+    reporter_user_id = Column(Integer, nullable=True)
     updated_by_user_id = Column(Integer, nullable=True)
     assignee_user_id = Column(Integer, nullable=True, index=True)
     user_id = Column(Integer, nullable=True, index=True)

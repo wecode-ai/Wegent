@@ -3,7 +3,7 @@ import {
   type IssueAssignmentReceiptState,
 } from './IssueAssignmentReceipts'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { LockKeyhole, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -25,6 +25,7 @@ import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/del
 import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
@@ -298,21 +299,20 @@ export function TodoEditor(props: TodoEditorProps) {
                 className="task-detail-personal-task"
                 data-testid="cloud-todo-personal-task-action"
               >
-                <span className="task-detail-personal-task-icon" aria-hidden="true">
-                  <LockKeyhole size={14} />
-                </span>
                 <span className="task-detail-personal-task-copy">
                   <strong>{t('todo.personal_task_title')}</strong>
                   <small>{t('todo.personal_task_description')}</small>
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="primary"
+                  size="sm"
                   data-testid="cloud-todo-personal-task-start"
                   onClick={onCreateTask}
                 >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
-                </button>
+                </Button>
               </section>
             )
           }
@@ -349,6 +349,7 @@ export function TodoEditor(props: TodoEditorProps) {
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
+    currentUserId: props.currentUserId,
     onCreateTask: props.onCreateTask,
     onAddAssigneeMember: props.onAddAssigneeMember,
     onAddAssigneeAgent: props.onAddAssigneeAgent,

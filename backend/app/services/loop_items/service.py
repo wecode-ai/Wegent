@@ -250,6 +250,17 @@ class LoopItemService:
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
+            "is_following": can_view_detail and item.id in context.followed_ids,
+            "created_by_user_name": (
+                context.users[item.created_by_user_id].user_name
+                if item.created_by_user_id in context.users
+                else None
+            ),
+            "reporter_user_name": (
+                context.users[item.reporter_user_id].user_name
+                if item.reporter_user_id in context.users
+                else None
+            ),
             "can_edit": permissions.edit_content,
             "security_level": item_security(item, access.project),
             "permissions": {
@@ -574,7 +585,6 @@ class LoopItemService:
         commit: bool = True,
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
-        assign_creator_if_unassigned: bool = True,
         apply_project_workflow: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
@@ -753,15 +763,6 @@ class LoopItemService:
                 str(collaboration_group["name"]),
             )
             payload["status"] = "in_progress"
-        elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
-            payload["assignee_user_id"] = user_id
-            self.record_assignment_change(
-                task_metadata,
-                user_id,
-                "user",
-                str(user_id),
-                None,
-            )
         elif payload.get("assignee_user_id"):
             self.record_assignment_change(
                 task_metadata,
@@ -800,6 +801,7 @@ class LoopItemService:
             cloud_project_id=project.id,
             sequence_number=sequence,
             created_by_user_id=user_id,
+            reporter_user_id=user_id,
             metadata_json=task_metadata or None,
             **payload,
         )
@@ -852,12 +854,7 @@ class LoopItemService:
                 workflow_step=None,
                 notify=values.notify_assignee,
                 initial_assignment=True,
-                trigger=(
-                    "default"
-                    if payload.get("assignee_user_id") == user_id
-                    and values.assignee_user_id is None
-                    else "automation" if automation_context is not None else "manual"
-                ),
+                trigger="automation" if automation_context is not None else "manual",
             )
         if agent_id:
             db.flush()
@@ -1114,6 +1111,19 @@ class LoopItemService:
         )
         db.add(comment)
         db.flush()
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            notify_issue_followers(
+                db,
+                project=project,
+                item=item,
+                actor_user_id=user_id,
+                event="comment",
+                comment_id=comment.id,
+                content=body,
+            )
         metadata = update_change_request_source(
             item.metadata_json, f"comment:{comment.id}", body
         )
@@ -1526,6 +1536,9 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        from app.services.issue_follow_notifications import issue_assignee
+
+        previous_assignee = issue_assignee(item)
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -1564,6 +1577,12 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+        if "reporter_user_id" in values.model_fields_set and (
+            values.reporter_user_id not in project_participant_ids(db, access.project)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Reporter is not a project member"
+            )
         if item.version != values.version:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1590,6 +1609,7 @@ class LoopItemService:
             )
             for field in (
                 "title",
+                "reporter_user_id",
                 "description",
                 "status",
                 "assignee_user_id",
@@ -1984,6 +2004,28 @@ class LoopItemService:
             )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
+        db.flush()
+        db.refresh(item)
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            if status_changed:
+                notify_issue_followers(
+                    db,
+                    project=project,
+                    item=item,
+                    actor_user_id=user_id,
+                    event="status",
+                )
+            if previous_assignee != issue_assignee(item):
+                notify_issue_followers(
+                    db,
+                    project=project,
+                    item=item,
+                    actor_user_id=user_id,
+                    event="assignee",
+                )
         if commit:
             db.commit()
         else:
@@ -2120,6 +2162,10 @@ class LoopItemService:
             user_id=user_id,
         )
         previous_assignee_user_id = item.assignee_user_id
+        previous_status = item.status
+        from app.services.issue_follow_notifications import issue_assignee
+
+        previous_assignee = issue_assignee(item)
         metadata = dict(item.metadata_json or {})
         assignment_created = False
         if values.assignee_type == "agent":
@@ -2399,16 +2445,30 @@ class LoopItemService:
             item,
             values.version,
             metadata,
-            commit=commit and position_order is None,
+            commit=False,
             **assignee_updates,
         )
         if position_order is not None:
             persist_sibling_order(position_order, updated_item_id=item.id)
-            if commit:
-                db.commit()
-            else:
-                db.flush()
-            db.refresh(updated)
+        from app.services.issue_follow_notifications import notify_issue_followers
+
+        if previous_status != updated.status:
+            notify_issue_followers(
+                db, project=project, item=updated, actor_user_id=user_id, event="status"
+            )
+        if previous_assignee != issue_assignee(updated):
+            notify_issue_followers(
+                db,
+                project=project,
+                item=updated,
+                actor_user_id=user_id,
+                event="assignee",
+            )
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+        db.refresh(updated)
         if cancelled_runs:
             from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,

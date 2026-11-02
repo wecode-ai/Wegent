@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { canEditCollaborationIssue } from "../permissions";
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
-import type { IssueStatusFailure } from './bulkIssueStatus'
+import type { IssueStatusFailure } from "./bulkIssueStatus";
 
 type IssueTableSortKey =
   | "title"
@@ -32,7 +32,7 @@ type IssueTableSort = {
 };
 
 export function ProjectIssueTable({
-  issues,
+  issues: allIssues,
   assignmentsByIssueId,
   emptyLabel,
   issueLabel,
@@ -56,7 +56,7 @@ export function ProjectIssueTable({
   batchStatusLabel = "Change status",
   batchApplyLabel = "Apply",
   batchDeleteLabel = "Archive selected",
-  batchFailedLabel = 'Status update failed',
+  batchFailedLabel = "Status update failed",
   availableStatuses,
   statusName = (status) => status,
   onCreate,
@@ -65,6 +65,10 @@ export function ProjectIssueTable({
   onBulkStatusChange,
   onBulkDelete,
   onOpen,
+  loadFollowed,
+  followedLabel = "Following",
+  followLoadErrorLabel = "Could not load followed issues",
+  retryLabel = "Retry",
 }: {
   issues: CollaborationIssue[];
   assignmentsByIssueId: Record<string, CollaborationAssignment[]>;
@@ -90,7 +94,7 @@ export function ProjectIssueTable({
   batchStatusLabel?: string;
   batchApplyLabel?: string;
   batchDeleteLabel?: string;
-  batchFailedLabel?: string
+  batchFailedLabel?: string;
   availableStatuses?: readonly string[];
   statusName?(status: string): string;
   onCreate?(): void;
@@ -102,7 +106,64 @@ export function ProjectIssueTable({
   ): Promise<IssueStatusFailure[]>;
   onBulkDelete?(issues: CollaborationIssue[]): void;
   onOpen(issue: CollaborationIssue): void;
+  loadFollowed?(): Promise<CollaborationIssue[]>;
+  followedLabel?: string;
+  followLoadErrorLabel?: string;
+  retryLabel?: string;
 }) {
+  const [followingOnly, setFollowingOnly] = useState(false);
+  const [followedIssues, setFollowedIssues] = useState<CollaborationIssue[]>(
+    [],
+  );
+  const [followLoading, setFollowLoading] = useState(false);
+  const [followError, setFollowError] = useState(false);
+  const [followReload, setFollowReload] = useState(0);
+  const [followScope, setFollowScope] = useState(projectKey);
+  const loadFollowedRef = useRef(loadFollowed);
+  loadFollowedRef.current = loadFollowed;
+  const followRevision = allIssues
+    .map((issue) => `${issue.id}:${issue.version}:${issue.is_following}`)
+    .join("|");
+  useEffect(() => {
+    setFollowingOnly(false);
+    setFollowScope(projectKey);
+    setFollowedIssues([]);
+    setFollowError(false);
+  }, [projectKey]);
+  useEffect(() => {
+    if (!followingOnly || !loadFollowedRef.current) {
+      setFollowLoading(false);
+      setFollowError(false);
+      return;
+    }
+    let active = true;
+    setFollowLoading(true);
+    setFollowError(false);
+    loadFollowedRef
+      .current()
+      .then((result) => {
+        if (active) setFollowedIssues(result);
+      })
+      .catch(() => {
+        if (active) setFollowError(true);
+      })
+      .finally(() => {
+        if (active) setFollowLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [followingOnly, projectKey, followRevision, followReload]);
+  const issues = useMemo(() => {
+    if (!followingOnly || followScope !== projectKey) return allIssues;
+    const currentById = new Map(allIssues.map((issue) => [issue.id, issue]));
+    return followedIssues.flatMap((issue) => {
+      const current = currentById.get(issue.id);
+      return current && current.is_following === false
+        ? []
+        : [current ?? issue];
+    });
+  }, [allIssues, followedIssues, followingOnly, followScope, projectKey]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -113,8 +174,8 @@ export function ProjectIssueTable({
   );
   const [batchStatus, setBatchStatus] = useState("");
   const [batchBusy, setBatchBusy] = useState(false);
-  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([])
-  const batchScope = useRef({})
+  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([]);
+  const batchScope = useRef({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const currentAssignmentByIssueId = useMemo(
     () =>
@@ -157,7 +218,7 @@ export function ProjectIssueTable({
     [availableStatuses, currentAssignmentByIssueId, issues],
   );
   useEffect(() => {
-    batchScope.current = {}
+    batchScope.current = {};
     setQuery("");
     setStatusFilter("");
     setAssigneeFilter("");
@@ -165,11 +226,11 @@ export function ProjectIssueTable({
     setSort(null);
     setSelectedIssueIds(new Set());
     setBatchStatus("");
-    setBatchFailures([])
-    setBatchBusy(false)
+    setBatchFailures([]);
+    setBatchBusy(false);
     return () => {
-      batchScope.current = {}
-    }
+      batchScope.current = {};
+    };
   }, [projectKey]);
   useEffect(() => {
     if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
@@ -316,24 +377,24 @@ export function ProjectIssueTable({
       return;
     }
     setBatchBusy(true);
-    setBatchFailures([])
-    const scope = batchScope.current
+    setBatchFailures([]);
+    const scope = batchScope.current;
     try {
-      const failures = await onBulkStatusChange(selectedIssues, batchStatus)
-      if (batchScope.current !== scope) return
-      setBatchFailures(failures)
-      setSelectedIssueIds(new Set(failures.map(failure => failure.issueId)))
-      if (failures.length === 0) setBatchStatus('')
+      const failures = await onBulkStatusChange(selectedIssues, batchStatus);
+      if (batchScope.current !== scope) return;
+      setBatchFailures(failures);
+      setSelectedIssueIds(new Set(failures.map((failure) => failure.issueId)));
+      if (failures.length === 0) setBatchStatus("");
     } catch (error) {
-      if (batchScope.current !== scope) return
+      if (batchScope.current !== scope) return;
       setBatchFailures(
-        selectedIssues.map(issue => ({
+        selectedIssues.map((issue) => ({
           issueId: issue.id,
           message: error instanceof Error ? error.message : batchFailedLabel,
-        }))
-      )
+        })),
+      );
     } finally {
-      if (batchScope.current === scope) setBatchBusy(false)
+      if (batchScope.current === scope) setBatchBusy(false);
     }
   };
   const toggleSort = (key: IssueTableSortKey) => {
@@ -371,13 +432,23 @@ export function ProjectIssueTable({
         ? "descending"
         : "none";
 
-  if (issues.length === 0) {
+  if (issues.length === 0 && !followingOnly) {
     return (
       <div
         className="collaboration-platform-empty"
         data-testid="collaboration-issue-table-empty"
       >
         <strong>{emptyLabel}</strong>
+        {loadFollowed ? (
+          <button
+            type="button"
+            data-testid="collaboration-issue-table-following-filter"
+            aria-pressed={false}
+            onClick={() => setFollowingOnly(true)}
+          >
+            {followedLabel}
+          </button>
+        ) : null}
         {onCreate && createLabel ? (
           <button
             type="button"
@@ -394,6 +465,16 @@ export function ProjectIssueTable({
   return (
     <div className="collaboration-issue-table-wrap">
       <div className="collaboration-issue-table-toolbar">
+        {loadFollowed ? (
+          <button
+            type="button"
+            data-testid="collaboration-issue-table-following-filter"
+            aria-pressed={followingOnly}
+            onClick={() => setFollowingOnly((value) => !value)}
+          >
+            {followedLabel}
+          </button>
+        ) : null}
         <label className="collaboration-issue-table-search">
           <Search aria-hidden="true" />
           <input
@@ -461,6 +542,19 @@ export function ProjectIssueTable({
           </button>
         ) : null}
       </div>
+      {followLoading ? <span role="status">…</span> : null}
+      {followError ? (
+        <div role="alert">
+          {followLoadErrorLabel}{" "}
+          <button
+            type="button"
+            data-testid="collaboration-issue-table-following-retry"
+            onClick={() => setFollowReload((value) => value + 1)}
+          >
+            {retryLabel}
+          </button>
+        </div>
+      ) : null}
       {batchFailures.length > 0 ? (
         <div
           role="alert"
@@ -469,10 +563,11 @@ export function ProjectIssueTable({
         >
           <strong>{batchFailedLabel}</strong>
           <ul>
-            {batchFailures.map(failure => (
+            {batchFailures.map((failure) => (
               <li key={failure.issueId}>
-                {issues.find(issue => issue.id === failure.issueId)?.title ?? failure.issueId}:{' '}
-                {failure.message}
+                {issues.find((issue) => issue.id === failure.issueId)?.title ??
+                  failure.issueId}
+                : {failure.message}
               </li>
             ))}
           </ul>

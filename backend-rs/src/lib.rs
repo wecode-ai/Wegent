@@ -27,6 +27,9 @@
 extern crate self as wegent_backend_rs;
 use std::sync::Arc;
 
+#[path = "../../shared/issue_follow_events.rs"]
+pub(crate) mod issue_follow_events;
+
 pub use application::Application;
 pub use attachments::context_store::{SubtaskContextRow, get_context_optional_with_user};
 pub use attachments::external_media::{

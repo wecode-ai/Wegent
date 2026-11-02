@@ -503,6 +503,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
       get(issueId) {
         return deliveryApi.getLoopItem(issueId).then(toIssue)
       },
+      setFollowing(issueId, following) {
+        return deliveryApi.setLoopItemFollowing(issueId, following)
+      },
       create(projectId, input) {
         return deliveryApi
           .createLoopItem(
@@ -533,6 +536,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
             withoutUndefined({
               version: input.version,
               title: input.title,
+              reporter_user_id: input.reporterUserId,
               description: input.description,
               status: input.status,
               priority: input.priority,

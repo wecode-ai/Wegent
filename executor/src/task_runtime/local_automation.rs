@@ -277,6 +277,18 @@ fn dispatch(
             ))
         }
     }
+    let updated =
+        get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    if task.assignee_user_id != updated.assignee_user_id
+        || task.assignee_agent_id != updated.assignee_agent_id
+        || task.metadata["collaboration_group"]["id"]
+            != updated.metadata["collaboration_group"]["id"]
+    {
+        issue_notifications::notify_followers(connection, task_id, "assignee", None, "")?;
+    }
+    if task.status != updated.status {
+        issue_notifications::notify_followers(connection, task_id, "status", None, "")?;
+    }
     Ok(())
 }
 

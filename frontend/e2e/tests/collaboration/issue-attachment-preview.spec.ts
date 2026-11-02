@@ -59,8 +59,8 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
       `/collaboration/workspaces/${workspace.id}/projects/${project.id}/issues/${issue.id}`
     )
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
-    await page.getByTestId('cloud-todo-detail-title').click()
-    await expect(page.getByTestId('cloud-todo-detail-title')).toBeEditable()
+    await page.getByTestId('cloud-todo-add-description').click()
+    await expect(page.getByTestId('cloud-todo-detail-description')).toBeEditable()
 
     // Observe the real thumbnail request, rather than accepting an upload badge.
     const contentResponse = page.waitForResponse(response =>
@@ -80,6 +80,13 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
     expect(uploaded.status()).toBe(201)
     const attachment = (await uploaded.json()) as { id: string; display_name: string }
     expect(attachment.display_name).toBe(filename)
+    const attachmentToggle = page.getByTestId('cloud-todo-attachment-toggle')
+    const thumbnail = page.getByTestId(`issue-detail-attachment-thumbnail-${attachment.id}`)
+    await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(attachmentToggle).toContainText('1')
+    await expect(thumbnail).toHaveCount(0)
+    await page.getByTestId('cloud-todo-attachment-toggle').click()
+    await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'true')
     const content = await contentResponse
     expect(content.status()).toBe(200)
     expect(content.headers()['content-type']).toBe('image/png')
@@ -88,10 +95,17 @@ test('uploads, reopens and removes a Chinese-named Issue image with decoded prev
     )
     expect(await content.body()).toEqual(imageBytes)
 
-    const thumbnail = page.getByTestId(`issue-detail-attachment-thumbnail-${attachment.id}`)
     await expectDecodedImage(thumbnail)
     await expect(thumbnail).toHaveAttribute('src', /^blob:/)
+    await attachmentToggle.click()
+    await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(thumbnail).toHaveCount(0)
+    await attachmentToggle.click()
+    await expectDecodedImage(thumbnail)
     await page.reload()
+    await expect(attachmentToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(thumbnail).toHaveCount(0)
+    await attachmentToggle.click()
     await expectDecodedImage(thumbnail)
 
     const previewResponse = page.waitForResponse(response =>

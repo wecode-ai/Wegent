@@ -4446,7 +4446,27 @@ export function CloudTodoWorkspace({
                       <AITableView api={aitableApi} project={selectedProject} />
                     ) : (
                       <ProjectIssueTable
+                        key={`${selectedProject.location}:${selectedProject.id}:${user.id}`}
                         issues={selectedProjectBoardItems}
+                        loadFollowed={async () => {
+                          const rows =
+                            selectedProject.location === 'cloud'
+                              ? await cloudWorkspaceApi!.issues.list(String(selectedProject.id), {
+                                  following: true,
+                                })
+                              : (
+                                  await selectedProjectApi!.listLoopItems(selectedProject.id, {
+                                    following: true,
+                                  })
+                                ).items
+                          return rows.map(item => ({
+                            ...item,
+                            project_store: selectedProject.project_store,
+                          }))
+                        }}
+                        followedLabel={t('todo.my_followed')}
+                        followLoadErrorLabel={t('todo.follow_load_failed')}
+                        retryLabel={t('todo.retry', '重试')}
                         assignmentsByIssueId={issueTableAssignmentsByIssue}
                         emptyLabel={t('todo.issue_table_empty', '暂无 Issue')}
                         issueLabel={t('todo.issue_column', 'Issue')}

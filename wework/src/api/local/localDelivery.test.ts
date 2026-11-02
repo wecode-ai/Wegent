@@ -74,6 +74,55 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test('uses the active identity for local projects and issue creators', async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'projects.list') return [{ ...projectRecord, created_by_user_id: 17 }]
+    if (method === 'todos.get' || method === 'todos.create' || method === 'todos.update')
+      return { ...taskRecord, created_by_user_id: 17 }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request, { currentUserId: 17, currentUserName: 'Ada' })
+  const project = (await api.listCloudProjects()).items[0]
+  expect(project.current_user_id).toBe(17)
+  expect(project.current_user_name).toBe('Ada')
+  expect(project.created_by_user_id).toBe(17)
+  expect(await api.listCloudProjectMembers(project.id)).toEqual([
+    expect.objectContaining({ user_id: 17, user_name: 'Ada', role: 'Owner' }),
+  ])
+  const issue = await api.getLoopItem(taskRecord.id)
+  expect(issue.created_by_user_name).toBe('Ada')
+  expect(issue.reporter_user_id).toBe(17)
+  await api.createLoopItem(project.id, { title: 'New issue' })
+  expect(request).toHaveBeenCalledWith(
+    'todos.create',
+    expect.objectContaining({ actor_user_id: 17 })
+  )
+  await api.updateLoopItem(taskRecord.id, { version: 1, reporter_user_id: 17 })
+  expect(request).toHaveBeenCalledWith(
+    'todos.update',
+    expect.objectContaining({
+      actor_user_id: 17,
+      todo: { version: 1, reporter_user_id: 17 },
+    })
+  )
+})
+
+test('shows the provider author when an external creator has no mapped user', async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'projects.list') return [projectRecord]
+    if (method === 'todos.get') {
+      return {
+        ...taskRecord,
+        created_by_user_id: 0,
+        metadata: { author: 'octocat', creator_label: null },
+      }
+    }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request, { currentUserId: 17, currentUserName: 'Ada' })
+  expect((await api.getLoopItem(taskRecord.id)).created_by_user_name).toBe('octocat')
+})
+
 test.each(['renamed', null])(
   'forwards atomic tag change target %s to local storage',
   async target => {
@@ -909,6 +958,7 @@ describe('local delivery API', () => {
     await api.createLoopItem('project-1', { title: 'First task' })
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'First task',
@@ -964,6 +1014,7 @@ describe('local delivery API', () => {
       })
     ).resolves.toMatchObject({ start_at: startAt, due_at: dueAt })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Scheduled task',
@@ -1013,6 +1064,7 @@ describe('local delivery API', () => {
     ).resolves.toMatchObject({ assignee_user_id: 7 })
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Assigned task',
@@ -1097,6 +1149,7 @@ describe('local delivery API', () => {
       tags: ['feature'],
     })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Modify Wegent',
@@ -1460,6 +1513,7 @@ describe('local delivery API', () => {
       task_id: 'runtime-1',
     })
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-1',
       todo: {
         title: 'Runtime task',
@@ -1498,6 +1552,7 @@ describe('local delivery API', () => {
     )
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'default-work-items',
       todo: {
         title: 'Runtime task',
@@ -1542,6 +1597,7 @@ describe('local delivery API', () => {
     ).resolves.toMatchObject({ item: { id: 'LOCAL-MOVED' } })
 
     expect(request).toHaveBeenCalledWith('todos.create', {
+      actor_user_id: 0,
       project_id: 'project-2',
       todo: {
         title: 'Runtime task',

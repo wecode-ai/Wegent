@@ -383,8 +383,17 @@ impl LocalTaskStore {
                     &format!("comment:{message_id}"),
                     content,
                 )?;
+                if status == "completed" && !content.is_empty() {
+                    issue_notifications::notify_followers(
+                        &transaction,
+                        &task_id,
+                        "comment",
+                        Some(&message_id),
+                        content,
+                    )?;
+                }
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
-                    transaction.execute(
+                    let changed = transaction.execute(
                         "UPDATE loop_items
                          SET status='in_review', completed_at=NULL,
                              version=version+1, updated_at=?1
@@ -405,6 +414,15 @@ impl LocalTaskStore {
                            )",
                         params![now(), task_id],
                     )?;
+                    if changed > 0 {
+                        issue_notifications::notify_followers(
+                            &transaction,
+                            &task_id,
+                            "status",
+                            None,
+                            "",
+                        )?;
+                    }
                 }
             }
         }

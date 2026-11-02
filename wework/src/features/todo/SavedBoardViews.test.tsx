@@ -10,6 +10,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
@@ -170,6 +171,78 @@ describe('saved project board views', () => {
     )
     expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument()
     expect(screen.getByTestId('board-view-picker')).toHaveFocus()
+  })
+
+  it('lists the selected custom or built-in view first without changing the project default or source order', async () => {
+    const user = userEvent.setup()
+    const save = vi.fn()
+    const initial: ProjectBoardViews = {
+      ...config,
+      default_view_id: 'release',
+      views: [
+        config.views[0],
+        { ...config.views[0], id: 'release', name: 'Release' },
+        { ...config.views[0], id: 'review', name: 'Review' },
+      ],
+    }
+    function Harness() {
+      const controller = useSavedBoardViews({
+        projectKey: 'one',
+        config: initial,
+        revision: 1,
+        translate,
+        save,
+      })
+      return (
+        <BoardViewNavigation
+          controller={controller}
+          canManage
+          statuses={statuses}
+          tags={['a']}
+          translate={translate}
+        />
+      )
+    }
+    render(<Harness />)
+    await user.click(screen.getByTestId('board-view-picker'))
+    let items = within(screen.getByTestId('board-view-menu')).getAllByRole('menuitemradio')
+    expect(items.map(item => item.dataset.testid)).toEqual([
+      'board-view-release',
+      'board-view-default',
+      'board-view-mixed',
+      'board-view-review',
+    ])
+    expect(items[0]).toHaveAttribute('aria-checked', 'true')
+    await user.click(screen.getByTestId('board-view-review'))
+    expect(screen.queryByTestId('board-view-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('board-view-picker')).toHaveTextContent('Review')
+    await user.click(screen.getByTestId('board-view-picker'))
+
+    items = within(screen.getByTestId('board-view-menu')).getAllByRole('menuitemradio')
+    expect(items.map(item => item.dataset.testid)).toEqual([
+      'board-view-review',
+      'board-view-default',
+      'board-view-mixed',
+      'board-view-release',
+    ])
+    expect(items[0]).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('board-view-release')).toHaveTextContent('默认')
+    expect(screen.getByTestId('board-view-review')).not.toHaveTextContent('默认')
+    await user.click(screen.getByTestId('board-view-default'))
+    await user.click(screen.getByTestId('board-view-picker'))
+
+    items = within(screen.getByTestId('board-view-menu')).getAllByRole('menuitemradio')
+    expect(items.map(item => item.dataset.testid)).toEqual([
+      'board-view-default',
+      'board-view-mixed',
+      'board-view-release',
+      'board-view-review',
+    ])
+    expect(items[0]).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('board-view-release')).toHaveTextContent('默认')
+    expect(initial.views.map(view => view.id)).toEqual(['mixed', 'release', 'review'])
+    expect(initial.default_view_id).toBe('release')
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('keeps status menus inside the unified dialog and stages workflow edits until save', async () => {

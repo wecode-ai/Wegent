@@ -61,6 +61,7 @@ COPY executor/src ./src
 COPY sdk/plugin-auth /build/sdk/plugin-auth
 COPY sdk/plugin-creator /build/sdk/plugin-creator
 COPY shared/assets /build/shared/assets
+COPY shared/issue_follow_events.rs /build/shared/issue_follow_events.rs
 RUN if [ -n "$CARGO_REGISTRIES_CRATES_IO_INDEX" ]; then \
         export CARGO_REGISTRIES_CRATES_IO_INDEX; \
     fi; \

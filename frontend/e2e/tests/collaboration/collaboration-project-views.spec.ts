@@ -5,11 +5,262 @@
 import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+import {
+  dragCollaborationIssueToColumn,
+  selectCollaborationProjectView,
+  webApi,
+} from '../../utils/collaboration-test-support'
+import { createApiClient } from '../../utils/api-client'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+for (const width of [1280, 390]) {
+  projectTest(
+    `lays out Issue people and following at ${width}px`,
+    async ({ page, scheduledProject: { path, issueId } }) => {
+      await page.setViewportSize({ width, height: 844 })
+      await page.goto(path)
+      await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+      const detail = page.getByTestId('cloud-todo-detail')
+      const header = detail.locator('header')
+      const follow = header.getByTestId('cloud-todo-follow')
+      const status = header.getByTestId('cloud-todo-detail-status')
+      const summary = detail.getByTestId('cloud-todo-state-summary')
+      const assignee = summary.getByTestId('cloud-todo-detail-assignee')
+      const schedule = summary.getByRole('button', { name: /^(时间范围|Schedule)$/ })
+      await expect(follow).toBeVisible()
+      await expect(follow).toHaveText('')
+      await expect(status).toBeVisible()
+      await expect(page.getByTestId('cloud-todo-identity-properties')).toHaveCount(0)
+      await expect(page.getByTestId('cloud-todo-reporter')).toHaveCount(0)
+      const panelBox = await detail.boundingBox()
+      expect(panelBox).not.toBeNull()
+      for (const control of [follow, assignee, schedule]) {
+        const box = await control.boundingBox()
+        expect(box).not.toBeNull()
+        expect(box!.x).toBeGreaterThanOrEqual(panelBox!.x)
+        expect(box!.x + box!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1)
+      }
+      const assigneeBox = (await assignee.boundingBox())!
+      const scheduleBox = (await schedule.boundingBox())!
+      expect(
+        Math.abs(assigneeBox.y + assigneeBox.height / 2 - scheduleBox.y - scheduleBox.height / 2)
+      ).toBeLessThanOrEqual(1)
+      expect(scheduleBox.x).toBeGreaterThan(assigneeBox.x + assigneeBox.width)
+      if (width < 768) {
+        expect((await follow.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      }
+      await detail.getByTestId('cloud-todo-more-properties').click()
+      const properties = page.getByTestId('cloud-todo-more-properties-popover')
+      const identities = properties.getByTestId('cloud-todo-identity-properties')
+      await expect(identities).toBeVisible()
+      await expect(properties.getByTestId('cloud-todo-identity-creator')).toHaveCount(1)
+      await expect(properties.getByTestId('cloud-todo-reporter')).toBeVisible()
+      await expect(header.getByTestId('cloud-todo-reporter')).toHaveCount(0)
+      for (const control of [identities, properties.getByTestId('cloud-todo-reporter')]) {
+        const box = await control.boundingBox()
+        expect(box).not.toBeNull()
+        expect(box!.x).toBeGreaterThanOrEqual(panelBox!.x)
+        expect(box!.x + box!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1)
+      }
+    }
+  )
+}
+
+projectTest(
+  'persists issue identities and follower updates with current access',
+  async ({ page, request, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const project = await webApi<Resource & { current_user_id: number }>(
+      page,
+      `/api/v1/cloud-projects/${projectId}`
+    )
+    const initial = await webApi<
+      Resource & {
+        created_by_user_id: number
+        reporter_user_id: number
+        assignee_user_id: number | null
+      }
+    >(page, `/api/v1/loop-items/${issueId}`)
+    expect(initial.reporter_user_id).toBe(initial.created_by_user_id)
+    expect(initial.assignee_user_id).toBeNull()
+    await page.goto(path)
+    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await page.getByTestId('cloud-todo-more-properties').click()
+    await page.getByRole('button', { name: /^(报告人|Reporter)$/ }).click()
+    await expect(page.getByTestId('cloud-todo-reporter-search')).toBeFocused()
+    await page.getByTestId(`cloud-todo-reporter-option-${project.current_user_id}`).click()
+    await expect
+      .poll(
+        async () =>
+          (await webApi<{ reporter_user_id: number }>(page, `/api/v1/loop-items/${issueId}`))
+            .reporter_user_id
+      )
+      .toBe(project.current_user_id)
+    await page.getByTestId('cloud-todo-follow').click()
+    await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'true')
+    await page.reload()
+    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'true')
+    const saved = await webApi<
+      Resource & {
+        created_by_user_id: number
+        reporter_user_id: number
+        assignee_user_id: number | null
+      }
+    >(page, `/api/v1/loop-items/${issueId}`)
+    expect(saved.created_by_user_id).toBe(initial.created_by_user_id)
+    expect(saved.reporter_user_id).toBe(project.current_user_id)
+    expect(saved.assignee_user_id).toBeNull()
+
+    const memberApi = createApiClient(request)
+    expect((await memberApi.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(
+      200
+    )
+    expect(
+      (await memberApi.post(`/api/v1/loop-items/${issueId}/comments`, { body: 'Follower comment' }))
+        .status
+    ).toBe(201)
+    const afterComment = await memberApi.get<Resource>(`/api/v1/loop-items/${issueId}`)
+    expect(afterComment.status).toBe(200)
+    const status = await memberApi.patch<Resource>(`/api/v1/loop-items/${issueId}`, {
+      version: afterComment.data!.version,
+      status: 'in_review',
+    })
+    expect(status.status).toBe(200)
+    const assigned = await memberApi.patch<Resource>(`/api/v1/loop-items/${issueId}`, {
+      version: status.data!.version,
+      assignee_user_id: project.current_user_id,
+      notify_assignee: false,
+    })
+    expect(assigned.status).toBe(200)
+    const notifications = await webApi<{
+      items: Array<{ kind: string; payload: { itemId?: string; event?: string } }>
+    }>(page, '/api/v1/wework-notifications?category=collaboration&limit=100')
+    expect(
+      notifications.items
+        .filter(row => row.kind === 'issue_follow' && row.payload.itemId === issueId)
+        .map(row => row.payload.event)
+        .sort()
+    ).toEqual(['assignee', 'comment', 'status'])
+    await page.getByTestId('cloud-todo-detail-close').click()
+    await selectCollaborationProjectView(page, 'table')
+    await page.getByTestId('collaboration-issue-table-following-filter').click()
+    await expect(page.getByTestId('collaboration-issue-table')).toContainText(initial.id)
+    await page
+      .getByTestId('collaboration-issue-table')
+      .getByRole('button', { name: new RegExp('Scheduled Issue') })
+      .click()
+    await page.getByTestId('cloud-todo-follow').click()
+    await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'false')
+    await page.getByTestId('cloud-todo-detail-close').click()
+    await expect(page.getByTestId('collaboration-issue-table')).not.toContainText(initial.id)
+    expect(
+      (await memberApi.post(`/api/v1/loop-items/${issueId}/comments`, { body: 'After unfollow' }))
+        .status
+    ).toBe(201)
+    const after = await webApi<typeof notifications>(
+      page,
+      '/api/v1/wework-notifications?category=collaboration&limit=100'
+    )
+    expect(
+      after.items.filter(row => row.kind === 'issue_follow' && row.payload.itemId === issueId)
+    ).toHaveLength(3)
+  }
+)
+
+projectTest(
+  'allows a viewer to follow but never grants access to a related issue',
+  async ({ page, request, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const users = await webApi<{ users: Array<{ id: number; user_name: string }> }>(
+      page,
+      `/api/users/search?q=${encodeURIComponent(REGULAR_USER.username)}&limit=20`
+    )
+    const member = users.users.find(user => user.user_name === REGULAR_USER.username)!
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/members/${member.id}`, {
+      method: 'PATCH',
+      body: { role: 'Viewer' },
+    })
+    const issue = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Restricted follower boundary' },
+    })
+    const memberApi = createApiClient(request)
+    expect((await memberApi.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(
+      200
+    )
+    expect(
+      (await memberApi.put(`/api/v1/loop-items/${issue.id}/follow`, { following: true })).status
+    ).toBe(200)
+    const privateIssue = await webApi<Resource & { assignee_user_id: number | null }>(
+      page,
+      `/api/v1/loop-items/${issue.id}`,
+      { method: 'PATCH', body: { version: issue.version, security_level: 'related' } }
+    )
+    expect(privateIssue.assignee_user_id).toBeNull()
+    expect((await memberApi.get(`/api/v1/loop-items/${issue.id}`)).status).toBe(404)
+    expect(
+      (await memberApi.put(`/api/v1/loop-items/${issue.id}/follow`, { following: false })).status
+    ).toBe(404)
+    await webApi(page, `/api/v1/loop-items/${issue.id}/comments`, {
+      method: 'POST',
+      body: { body: 'Private comment' },
+    })
+    const inbox = await memberApi.get<{
+      items: Array<{ kind: string; payload: { itemId?: string } }>
+    }>('/api/v1/wework-notifications?category=collaboration&limit=100')
+    expect(inbox.status).toBe(200)
+    expect(
+      inbox.data!.items.filter(
+        row => row.kind === 'issue_follow' && row.payload.itemId === issue.id
+      )
+    ).toHaveLength(0)
+  }
+)
+
+projectTest(
+  'keeps a newly created issue unassigned after reopening it',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const created = await webApi<Resource & { assignee_user_id: number | null }>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      { method: 'POST', body: { title: 'Unassigned issue', status: 'pending' } }
+    )
+    expect(created.assignee_user_id).toBeNull()
+
+    await page.goto(path)
+    await page.getByTestId(`cloud-todo-card-${created.id}`).click()
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
+    await page.reload()
+    await page.getByTestId(`cloud-todo-card-${created.id}`).click()
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute('data-value', '')
+    const persisted = await webApi<Resource & { assignee_user_id: number | null }>(
+      page,
+      `/api/v1/loop-items/${created.id}`
+    )
+    expect(persisted.assignee_user_id).toBeNull()
+    const project = await webApi<Resource & { current_user_id: number }>(
+      page,
+      `/api/v1/cloud-projects/${projectId}`
+    )
+    await page.getByTestId('cloud-todo-assign-to-me').click()
+    await expect
+      .poll(
+        async () =>
+          (
+            await webApi<{ assignee_user_id: number | null }>(
+              page,
+              `/api/v1/loop-items/${created.id}`
+            )
+          ).assignee_user_id
+      )
+      .toBe(project.current_user_id)
+  }
+)
 
 projectTest(
   'rejected robot starts preserve the board and detail status',
@@ -55,12 +306,21 @@ projectTest(
       .getByTestId('cloud-todo-column-inbox')
       .getByTestId(`cloud-todo-card-${created.id}`)
       .click()
+    const rejectedStatus = page.waitForResponse(
+      response =>
+        response.request().method() === 'PATCH' &&
+        response.url().endsWith(`/loop-items/${created.id}`) &&
+        response.request().postDataJSON()?.status === 'in_progress'
+    )
     await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
-    await page.getByTestId('cloud-todo-save').click()
+    expect((await rejectedStatus).ok()).toBe(false)
     await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
       /项目授权|project-authorized/
     )
     await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    expect(
+      await webApi<Resource & { status: string }>(page, `/api/v1/loop-items/${created.id}`)
+    ).toMatchObject({ status: 'inbox', version: inbox.version })
   }
 )
 

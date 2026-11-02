@@ -4,6 +4,9 @@
 
 use serde_json::Value;
 
+#[path = "external_issue_polling.rs"]
+mod external_issue_polling;
+
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,
@@ -25,6 +28,21 @@ pub struct TaskRuntime {
     local_store: LocalTaskStore,
     issue_provider: IssueProvider,
     aitable_provider: AITableProvider,
+}
+
+fn task_update_has_provider_changes(input: &TaskUpdate) -> bool {
+    input.position.is_some()
+        || input.title.is_some()
+        || input.description.is_some()
+        || input.status.is_some()
+        || input.priority.is_some()
+        || input.parent_id.is_some()
+        || input.tags.is_some()
+        || input.assignee_agent_id.is_some()
+        || input.assignee_user_id.is_some()
+        || input.assignee_group_id.is_some()
+        || input.execution_payload.is_some()
+        || input.workflow.is_some()
 }
 
 impl TaskRuntime {
@@ -219,9 +237,13 @@ impl TaskRuntime {
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.list_tasks(project_id),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
-                self.issue_provider.list(&project, provider).await
+                let items = self.issue_provider.list(&project, provider).await?;
+                self.local_store.overlay_external_issues(items)
             }
-            TaskProviderKind::DingtalkAitable => self.aitable_provider.list_board(&project).await,
+            TaskProviderKind::DingtalkAitable => {
+                let items = self.aitable_provider.list_board(&project).await?;
+                self.local_store.overlay_external_issues(items)
+            }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -454,10 +476,12 @@ impl TaskRuntime {
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.get_task(project_id, task_id),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
-                self.issue_provider.get(&project, provider, task_id).await
+                let item = self.issue_provider.get(&project, provider, task_id).await?;
+                self.local_store.overlay_external_issue(item)
             }
             TaskProviderKind::DingtalkAitable => {
-                self.aitable_provider.get_board(&project, task_id).await
+                let item = self.aitable_provider.get_board(&project, task_id).await?;
+                self.local_store.overlay_external_issue(item)
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
@@ -470,7 +494,7 @@ impl TaskRuntime {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_schedule(project_id, input, None, None, None)
             .await
     }
 
@@ -480,19 +504,37 @@ impl TaskRuntime {
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        actor_user_id: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self
-                .local_store
-                .create_task_with_schedule(project_id, input, start_at, due_at),
+            TaskProviderKind::Local => self.local_store.create_task_with_schedule(
+                project_id,
+                input,
+                start_at,
+                due_at,
+                actor_user_id,
+            ),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 if start_at.is_some() || due_at.is_some() {
                     return Err(TaskRuntimeError::UnsupportedProvider(format!(
                         "{provider:?} scheduling"
                     )));
                 }
-                self.issue_provider.create(&project, provider, input).await
+                self.local_store.validate_external_assignee(
+                    &project,
+                    input.assignee_agent_id.as_deref(),
+                    input.assignee_group_id.as_deref(),
+                )?;
+                let item = self
+                    .issue_provider
+                    .create(&project, provider, input)
+                    .await?;
+                if project.metadata["project_store"] == "backend" {
+                    return Ok(item);
+                }
+                self.local_store
+                    .update_external_identity(item, actor_user_id, None, None)
             }
             TaskProviderKind::DingtalkAitable => {
                 if start_at.is_some() || due_at.is_some() {
@@ -500,7 +542,20 @@ impl TaskRuntime {
                         "DingtalkAitable scheduling".to_owned(),
                     ));
                 }
-                self.aitable_provider.create_board(&project, input).await
+                let assignment = self.local_store.aitable_assignment(
+                    &project,
+                    input.assignee_user_id,
+                    input.assignee_agent_id.as_deref(),
+                    input.assignee_group_id.as_deref(),
+                )?;
+                let item = self.aitable_provider.create_board(&project, input).await?;
+                if project.metadata["project_store"] == "backend" {
+                    return Ok(item);
+                }
+                let item =
+                    self.local_store
+                        .update_external_identity(item, actor_user_id, None, None)?;
+                self.local_store.set_aitable_assignment(item, assignment)
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
@@ -514,8 +569,42 @@ impl TaskRuntime {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.update_task_with_schedule(project_id, task_id, input, None, None)
+        self.update_task_with_schedule(project_id, task_id, input, None, None, None)
             .await
+    }
+
+    pub async fn set_task_following(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        user_id: i64,
+        following: bool,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            return self
+                .local_store
+                .set_task_following(project_id, task_id, user_id, following);
+        }
+        if project.metadata["project_store"] == "backend" {
+            return Err(TaskRuntimeError::UnsupportedProvider(
+                "Backend Issue following must use the Backend".into(),
+            ));
+        }
+        let item = self.get_task(project_id, task_id).await?;
+        let baseline = if following {
+            self.external_event_baseline(&project, task_provider(&project)?, task_id)
+                .await?
+        } else {
+            Vec::new()
+        };
+        self.local_store.update_external_identity_with_baseline(
+            item,
+            None,
+            None,
+            Some((user_id, following)),
+            &baseline,
+        )
     }
 
     pub async fn update_task_with_schedule(
@@ -525,21 +614,60 @@ impl TaskRuntime {
         input: TaskUpdate,
         start_at: Option<Option<String>>,
         due_at: Option<Option<String>>,
+        actor_user_id: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
-        match task_provider(&project)? {
-            TaskProviderKind::Local => self
-                .local_store
-                .update_task_with_schedule(project_id, task_id, input, start_at, due_at),
+        let reporter_user_id = input.reporter_user_id;
+        if reporter_user_id.is_some() && reporter_user_id != actor_user_id {
+            return Err(TaskRuntimeError::Invalid(
+                "Reporter is not a local project member".into(),
+            ));
+        }
+        let provider = task_provider(&project)?;
+        let updated = match provider {
+            TaskProviderKind::Local => self.local_store.update_task_with_schedule(
+                project_id,
+                task_id,
+                input,
+                start_at,
+                due_at,
+                actor_user_id,
+            ),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 if start_at.is_some() || due_at.is_some() {
                     return Err(TaskRuntimeError::UnsupportedProvider(format!(
                         "{provider:?} scheduling"
                     )));
                 }
-                self.issue_provider
-                    .update(&project, provider, task_id, input)
-                    .await
+                self.local_store.validate_external_assignee(
+                    &project,
+                    input
+                        .assignee_agent_id
+                        .as_ref()
+                        .and_then(|id| id.as_deref()),
+                    input
+                        .assignee_group_id
+                        .as_ref()
+                        .and_then(|id| id.as_deref()),
+                )?;
+                let item =
+                    if reporter_user_id.is_some() && !task_update_has_provider_changes(&input) {
+                        let item = self.issue_provider.get(&project, provider, task_id).await?;
+                        if item.version != input.version {
+                            return Err(TaskRuntimeError::VersionConflict);
+                        }
+                        item
+                    } else {
+                        self.issue_provider
+                            .update(&project, provider, task_id, input)
+                            .await?
+                    };
+                if reporter_user_id.is_some() {
+                    self.local_store
+                        .update_external_identity(item, None, reporter_user_id, None)
+                } else {
+                    self.local_store.overlay_external_issue(item)
+                }
             }
             TaskProviderKind::DingtalkAitable => {
                 if start_at.is_some() || due_at.is_some() {
@@ -547,14 +675,56 @@ impl TaskRuntime {
                         "DingtalkAitable scheduling".to_owned(),
                     ));
                 }
-                self.aitable_provider
-                    .update_board(&project, task_id, input)
-                    .await
+                let assignment = if input.assignee_user_id.is_some()
+                    || input.assignee_agent_id.is_some()
+                    || input.assignee_group_id.is_some()
+                {
+                    Some(
+                        self.local_store.aitable_assignment(
+                            &project,
+                            input.assignee_user_id.flatten(),
+                            input
+                                .assignee_agent_id
+                                .as_ref()
+                                .and_then(|id| id.as_deref()),
+                            input
+                                .assignee_group_id
+                                .as_ref()
+                                .and_then(|id| id.as_deref()),
+                        )?,
+                    )
+                } else {
+                    None
+                };
+                let item =
+                    if reporter_user_id.is_some() && !task_update_has_provider_changes(&input) {
+                        let item = self.aitable_provider.get_board(&project, task_id).await?;
+                        if item.version != input.version {
+                            return Err(TaskRuntimeError::VersionConflict);
+                        }
+                        item
+                    } else {
+                        self.aitable_provider
+                            .update_board(&project, task_id, input)
+                            .await?
+                    };
+                let item = if reporter_user_id.is_some() || assignment.is_some() {
+                    self.local_store
+                        .update_external_identity(item, None, reporter_user_id, None)
+                } else {
+                    self.local_store.overlay_external_issue(item)
+                }?;
+                if let Some(assignment) = assignment {
+                    self.local_store.set_aitable_assignment(item, assignment)
+                } else {
+                    Ok(item)
+                }
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
-        }
+        }?;
+        Ok(updated)
     }
 
     pub fn assignment_receipts(
@@ -673,6 +843,7 @@ impl TaskRuntime {
                 })
             }
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
+                self.get_task(project_id, task_id).await?;
                 self.issue_provider
                     .add_comment(&project, provider, task_id, body)
                     .await
@@ -856,6 +1027,34 @@ impl TaskRuntime {
         create: LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
         self.local_store.create_comment(&create)
+    }
+
+    pub async fn create_visible_comment(
+        &self,
+        create: LocalCommentCreate,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        if create.task_id.is_empty() {
+            return self.create_comment(create);
+        }
+        let project = self.local_store.get_project(&create.project_id)?;
+        let item = self.get_task(&create.project_id, &create.task_id).await?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            self.create_comment(create)
+        } else {
+            self.local_store.create_external_comment(&create, &item)
+        }
+    }
+
+    pub async fn list_visible_comments(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        after_sequence: i64,
+    ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
+        if !task_id.is_empty() {
+            self.get_task(project_id, task_id).await?;
+        }
+        self.list_comments(project_id, task_id, after_sequence)
     }
 
     pub fn start_runtime_comment(
@@ -1369,6 +1568,208 @@ mod tests {
         Json(github_issues().await.0[0].clone())
     }
 
+    async fn get_assigned_github_issue(
+        State(labels): State<Arc<Mutex<Vec<String>>>>,
+    ) -> Json<serde_json::Value> {
+        let labels = labels.lock().unwrap();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        Json(github_issue_response(7, "Issue", "", "open", &refs))
+    }
+
+    async fn update_assigned_github_issue(
+        State(labels): State<Arc<Mutex<Vec<String>>>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        *labels.lock().unwrap() = body["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|label| label.as_str().unwrap().to_owned())
+            .collect();
+        get_assigned_github_issue(State(labels)).await
+    }
+
+    async fn github_assignment_events(
+        State(labels): State<Arc<Mutex<Vec<String>>>>,
+    ) -> Json<serde_json::Value> {
+        Json(json!(labels.lock().unwrap().iter().filter(|label|label.starts_with("wegent:assignee:")).map(|label|json!({"id":1,"event":"labeled","label":{"name":label},"created_at":chrono::Utc::now().to_rfc3339()})).collect::<Vec<_>>()))
+    }
+
+    async fn empty_github_events() -> Json<serde_json::Value> {
+        Json(json!([]))
+    }
+
+    #[tokio::test]
+    async fn github_assignee_is_persisted_and_following_is_independent() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let labels = Arc::new(Mutex::new(vec![
+            "bug".into(),
+            "wegent:status:pending".into(),
+        ]));
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/repos/acme/repo/issues/7",
+                        get(get_assigned_github_issue).patch(update_assigned_github_issue),
+                    )
+                    .route(
+                        "/repos/acme/repo/issues/7/timeline",
+                        get(github_assignment_events),
+                    )
+                    .with_state(labels),
+            )
+            .await
+            .unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store.create_project(ProjectCreate {
+            name: "GitHub".into(), project_key: Some("GH".into()), description: String::new(),
+            task_provider: TaskProviderKind::Github,
+            provider_config: json!({"repository":"acme/repo","domain":"127.0.0.1","api_base":format!("http://{address}"),"token":"test-token"}),
+        }).unwrap();
+        let runtime = TaskRuntime::new(store.clone()).unwrap();
+        runtime
+            .set_task_following(&project.id, "GH-7", 42, true)
+            .await
+            .unwrap();
+        let assigned = runtime
+            .update_task(
+                &project.id,
+                "GH-7",
+                TaskUpdate {
+                    version: 1,
+                    assignee_user_id: Some(Some(42)),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(assigned.assignee_user_id, Some(42));
+        assert_eq!(assigned.metadata["follower_user_ids"], json!([42]));
+        runtime.poll_followed_external_issues().await.unwrap();
+        let comment = LocalCommentCreate {
+            project_id: project.id.clone(),
+            task_id: "GH-7".into(),
+            client_message_id: None,
+            sender_type: "user".into(),
+            sender_id: "42".into(),
+            sender_name: "Ada".into(),
+            content: "Progress".into(),
+            metadata: json!({}),
+            reply_to_message_id: None,
+        };
+        let posted = runtime
+            .create_visible_comment(comment.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime
+                .list_visible_comments(&project.id, "GH-7", 0)
+                .await
+                .unwrap()[0]
+                .message_id,
+            posted.message_id
+        );
+        let mut missing = comment.clone();
+        missing.task_id = "GH-999".into();
+        assert!(runtime.create_visible_comment(missing).await.is_err());
+        assert!(store
+            .list_issue_notifications(42)
+            .unwrap()
+            .iter()
+            .any(|notification| notification["payload"]["event"] == "comment"
+                && notification["payload"]["commentId"] == posted.message_id));
+        assert_eq!(
+            runtime
+                .get_task(&project.id, "GH-7")
+                .await
+                .unwrap()
+                .assignee_user_id,
+            Some(42)
+        );
+        for invalid in [
+            TaskUpdate {
+                version: 1,
+                assignee_agent_id: Some(Some("missing".into())),
+                ..TaskUpdate::default()
+            },
+            TaskUpdate {
+                version: 1,
+                assignee_group_id: Some(Some("missing".into())),
+                ..TaskUpdate::default()
+            },
+        ] {
+            assert!(runtime
+                .update_task(&project.id, "GH-7", invalid)
+                .await
+                .is_err());
+            assert_eq!(
+                runtime
+                    .get_task(&project.id, "GH-7")
+                    .await
+                    .unwrap()
+                    .assignee_user_id,
+                Some(42)
+            );
+        }
+        let edited = runtime
+            .update_task(
+                &project.id,
+                "GH-7",
+                TaskUpdate {
+                    version: 1,
+                    tags: Some(vec!["new-tag".into()]),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.assignee_user_id, Some(42));
+        assert_eq!(edited.metadata["labels"], json!(["new-tag"]));
+        runtime
+            .set_task_following(&project.id, "GH-7", 42, false)
+            .await
+            .unwrap();
+        runtime.create_visible_comment(comment).await.unwrap();
+        assert_eq!(
+            runtime
+                .get_task(&project.id, "GH-7")
+                .await
+                .unwrap()
+                .assignee_user_id,
+            Some(42)
+        );
+        assert_eq!(store.list_issue_notifications(42).unwrap().len(), 2);
+        let cleared = runtime
+            .update_task(
+                &project.id,
+                "GH-7",
+                TaskUpdate {
+                    version: 1,
+                    assignee_user_id: Some(None),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.assignee_user_id, None);
+        assert_eq!(store.list_issue_notifications(42).unwrap().len(), 2);
+        server.abort();
+    }
+
+    #[test]
+    fn update_preserves_explicit_agent_unassignment() {
+        let update: TaskUpdate =
+            serde_json::from_value(json!({"version": 1, "assignee_agent_id": null})).unwrap();
+        assert_eq!(update.assignee_agent_id, Some(None));
+        let unchanged: TaskUpdate = serde_json::from_value(json!({"version": 1})).unwrap();
+        assert_eq!(unchanged.assignee_agent_id, None);
+    }
+
     fn github_issue_response(
         number: i64,
         title: &str,
@@ -1627,7 +2028,11 @@ mod tests {
                 listener,
                 Router::new()
                     .route("/repos/acme/repo/issues", get(github_issues))
-                    .route("/repos/acme/repo/issues/7", get(github_issue)),
+                    .route("/repos/acme/repo/issues/7", get(github_issue))
+                    .route(
+                        "/repos/acme/repo/issues/7/timeline",
+                        get(empty_github_events),
+                    ),
             )
             .await
             .unwrap();
@@ -1658,6 +2063,62 @@ mod tests {
         assert_eq!(issues[0].metadata["labels"], json!(["bug"]));
         let issue = runtime.get_task(&project.id, "GH-7").await.unwrap();
         assert_eq!(issue.title.as_deref(), Some("External issue"));
+        runtime
+            .set_task_following(&project.id, "GH-7", 42, false)
+            .await
+            .unwrap();
+        let count: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM loop_items WHERE resource_type='external_issue_identity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        let followed = runtime
+            .set_task_following(&project.id, "GH-7", 42, true)
+            .await
+            .unwrap();
+        assert_eq!(followed.metadata["follower_user_ids"], json!([42]));
+        assert!(followed.assignee_user_id.is_none());
+        let changed = runtime
+            .update_task_with_schedule(
+                &project.id,
+                "GH-7",
+                TaskUpdate {
+                    version: followed.version,
+                    reporter_user_id: Some(43),
+                    ..TaskUpdate::default()
+                },
+                None,
+                None,
+                Some(43),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed.metadata["reporter_user_id"], 43);
+        assert_eq!(changed.created_by_user_id, issue.created_by_user_id);
+        let reloaded = runtime.list_tasks(&project.id).await.unwrap();
+        assert_eq!(reloaded[0].metadata["follower_user_ids"], json!([42]));
+        assert_eq!(reloaded[0].metadata["reporter_user_id"], 43);
+        assert!(runtime
+            .set_task_following(&project.id, "GH-999", 42, true)
+            .await
+            .is_err());
+        runtime
+            .set_task_following(&project.id, "GH-7", 42, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime
+                .get_task(&project.id, "GH-7")
+                .await
+                .unwrap()
+                .metadata["follower_user_ids"],
+            json!([])
+        );
         assert!(matches!(
             store.get_task(&project.id, "GH-7"),
             Err(TaskRuntimeError::TaskNotFound)
@@ -1725,6 +2186,10 @@ mod tests {
                     .route(
                         "/repos/acme/repo/issues/10/comments",
                         axum::routing::post(create_github_comment),
+                    )
+                    .route(
+                        "/repos/acme/repo/issues/10/timeline",
+                        get(empty_github_events),
                     ),
             )
             .await
@@ -1766,6 +2231,10 @@ mod tests {
             )
             .await
             .unwrap();
+        runtime
+            .set_task_following(&project.id, &created.id, 42, true)
+            .await
+            .unwrap();
         let in_progress = runtime
             .update_task(
                 &project.id,
@@ -1801,6 +2270,16 @@ mod tests {
         assert_eq!(in_progress.metadata["labels"], json!(["bug"]));
         assert_eq!(completed.status.as_deref(), Some("completed"));
         assert_eq!(comment.id, "99");
+        assert!(store.list_issue_notifications(42).unwrap().is_empty());
+        runtime
+            .set_task_following(&project.id, &created.id, 42, false)
+            .await
+            .unwrap();
+        runtime
+            .add_comment(&project.id, &created.id, "Shipped")
+            .await
+            .unwrap();
+        assert!(store.list_issue_notifications(42).unwrap().is_empty());
         assert!(matches!(
             store.get_task(&project.id, "GH-10"),
             Err(TaskRuntimeError::TaskNotFound)

@@ -5,10 +5,11 @@
 
 from dataclasses import dataclass
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
+from app.models.issue_follower import IssueFollower
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -28,6 +29,7 @@ class LoopItemReadContext:
     messages: dict[tuple[str, str], ProjectChatMessage]
     human_bindings: dict[str, dict]
     visible_ids: set[str]
+    followed_ids: set[str]
 
     @classmethod
     def load(
@@ -38,8 +40,17 @@ class LoopItemReadContext:
         access: CloudProjectAccess,
     ) -> "LoopItemReadContext":
         item_ids = [item.id for item in items]
-        executions = _latest_executions(db, item_ids)
-        user_ids = {item.assignee_user_id for item in items if item.assignee_user_id}
+        executions, followed_ids = _latest_executions_and_follows(db, item_ids, user_id)
+        user_ids = {
+            user_id
+            for item in items
+            for user_id in (
+                item.assignee_user_id,
+                item.created_by_user_id,
+                item.reporter_user_id,
+            )
+            if user_id
+        }
         agent_ids = {item.assignee_agent_id for item in items if item.assignee_agent_id}
         team_ids = {item.assignee_team_id for item in items if item.assignee_team_id}
         agent_ids.update(row.agent_id for row in executions.values() if row.agent_id)
@@ -71,25 +82,42 @@ class LoopItemReadContext:
                 db, items, user_id, projects=[access.project]
             ),
             visible_ids=_visible_ids(db, items, user_id, access),
+            followed_ids=followed_ids,
         )
 
 
-def _latest_executions(
-    db: Session, item_ids: list[str]
-) -> dict[str, LoopItemExecution]:
+def _latest_executions_and_follows(
+    db: Session, item_ids: list[str], user_id: int
+) -> tuple[dict[str, LoopItemExecution], set[str]]:
     if not item_ids:
-        return {}
+        return {}, set()
     latest_ids = (
         db.query(func.max(LoopItemExecution.id))
         .filter(LoopItemExecution.loop_item_id.in_(item_ids))
         .group_by(LoopItemExecution.loop_item_id)
     )
-    return {
-        row.loop_item_id: row
-        for row in db.query(LoopItemExecution).filter(
-            LoopItemExecution.id.in_(latest_ids)
+    rows = (
+        db.query(LoopItem.id, LoopItemExecution, IssueFollower.issue_id)
+        .outerjoin(
+            LoopItemExecution,
+            and_(
+                LoopItemExecution.loop_item_id == LoopItem.id,
+                LoopItemExecution.id.in_(latest_ids),
+            ),
         )
-    }
+        .outerjoin(
+            IssueFollower,
+            and_(
+                IssueFollower.issue_id == LoopItem.id, IssueFollower.user_id == user_id
+            ),
+        )
+        .filter(LoopItem.id.in_(item_ids))
+        .all()
+    )
+    return (
+        {item_id: execution for item_id, execution, _ in rows if execution is not None},
+        {item_id for item_id, _, followed in rows if followed is not None},
+    )
 
 
 def _visible_ids(

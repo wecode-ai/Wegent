@@ -176,10 +176,10 @@ pub async fn request(
         target.to_owned()
     };
     let url = format!("{base}/api/v1/loop-items/{path}");
-    let mut request = if method == "GET" {
-        client.get(&url)
-    } else {
-        client.post(&url)
+    let mut request = match method {
+        "GET" => client.get(&url),
+        "PUT" => client.put(&url),
+        _ => client.post(&url),
     }
     .unwrap();
     if let Some(token) = token {

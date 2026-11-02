@@ -32,7 +32,6 @@ class LoopItemProviderRouter:
         *,
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
-        assign_creator_if_unassigned: bool = True,
         apply_project_workflow: bool = True,
         commit: bool = True,
     ) -> RoutedLoopItem:
@@ -69,7 +68,6 @@ class LoopItemProviderRouter:
             values,
             automation_context=automation_context,
             instruction=instruction,
-            assign_creator_if_unassigned=assign_creator_if_unassigned,
             apply_project_workflow=apply_project_workflow,
             commit=commit,
         )

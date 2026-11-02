@@ -4,12 +4,14 @@
 
 import {
   useEffect,
+  useId,
   useState,
   type ChangeEvent,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { ChevronRight } from "lucide-react";
 
 function classes(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -227,6 +229,10 @@ export function IssueDetailAttachments({
   onRemove,
 }: IssueDetailAttachmentsProps) {
   const [dragging, setDragging] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const attachmentCount = totalCount ?? attachments.length;
+  const showContent = !compact || expanded;
 
   const upload = (event: ChangeEvent<HTMLInputElement>) => {
     void onAdd(event.target.files);
@@ -248,6 +254,7 @@ export function IssueDetailAttachments({
     },
     onDrop(event: DragEvent<HTMLElement>) {
       event.preventDefault();
+      event.stopPropagation();
       setDragging(false);
       void onAdd(event.dataTransfer.files);
     },
@@ -257,27 +264,46 @@ export function IssueDetailAttachments({
     <section
       className={classes(
         compact
-          ? "task-detail-rail-section"
+          ? "task-detail-rail-section issue-detail-attachments-disclosure"
           : "shared-issue-detail-attachments",
         dragging && "is-dragging",
       )}
+      {...(editable && !busy ? dropHandlers : {})}
     >
       <div
         className={
           compact
-            ? "task-detail-section-label"
+            ? "task-detail-section-label issue-detail-attachments-heading"
             : "shared-issue-detail-section-header"
         }
       >
-        <h3>
-          {icons?.section}
-          {labels.title}
-        </h3>
-        {(totalCount ?? attachments.length) > 0 ? (
-          <span className={compact ? "count" : undefined}>
-            {totalCount ?? attachments.length}
-          </span>
-        ) : null}
+        {compact ? (
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-toggle`}
+            className="issue-detail-attachments-toggle"
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {icons?.section}
+            <span>{labels.title}</span>
+            <span className="count">{attachmentCount}</span>
+            <ChevronRight
+              className="issue-detail-attachments-chevron"
+              size={14}
+              aria-hidden="true"
+            />
+          </button>
+        ) : (
+          <>
+            <h3>
+              {icons?.section}
+              {labels.title}
+            </h3>
+            {attachmentCount > 0 ? <span>{attachmentCount}</span> : null}
+          </>
+        )}
         {editable && compact ? (
           <label className="add">
             {busy ? labels.uploading : labels.upload}
@@ -303,139 +329,141 @@ export function IssueDetailAttachments({
         </p>
       ) : null}
       <div
+        id={contentId}
+        hidden={!showContent}
         className={classes(
           compact
             ? "task-detail-attachment-body"
             : "shared-issue-detail-attachment-body",
         )}
-        {...dropHandlers}
       >
-        {attachments.length === 0 ? (
-          compact ? null : (
-            <p
-              className={
-                compact
-                  ? "task-detail-rail-empty"
-                  : "shared-issue-detail-attachment-empty"
-              }
-            >
-              {labels.empty}
-            </p>
-          )
-        ) : (
-          <div
-            className={
-              compact
-                ? "task-detail-rail-list"
-                : "shared-issue-detail-attachment-list"
-            }
-          >
-            {attachments.map((attachment) => (
-              <div
-                key={attachment.id}
+        {showContent &&
+          (attachments.length === 0 ? (
+            compact ? null : (
+              <p
                 className={
                   compact
-                    ? "task-detail-rail-file group"
-                    : "shared-issue-detail-attachment-row"
+                    ? "task-detail-rail-empty"
+                    : "shared-issue-detail-attachment-empty"
                 }
               >
-                <button
-                  type="button"
-                  data-testid={
-                    onOpen
-                      ? openTestId(attachment.id)
-                      : downloadTestId(attachment.id)
-                  }
-                  disabled={!onOpen || downloadingId === attachment.id}
-                  onClick={() => {
-                    if (onOpen) void onOpen(attachment);
-                  }}
+                {labels.empty}
+              </p>
+            )
+          ) : (
+            <div
+              className={
+                compact
+                  ? "task-detail-rail-list"
+                  : "shared-issue-detail-attachment-list"
+              }
+            >
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
                   className={
                     compact
-                      ? "task-detail-rail-download"
-                      : "shared-issue-detail-attachment-open"
-                  }
-                  title={attachment.displayName}
-                  aria-label={
-                    onOpen
-                      ? (labels.open?.(attachment.displayName) ??
-                        labels.download(attachment.displayName))
-                      : labels.download(attachment.displayName)
+                      ? "task-detail-rail-file group"
+                      : "shared-issue-detail-attachment-row"
                   }
                 >
-                  <span
+                  <button
+                    type="button"
+                    data-testid={
+                      onOpen
+                        ? openTestId(attachment.id)
+                        : downloadTestId(attachment.id)
+                    }
+                    disabled={!onOpen || downloadingId === attachment.id}
+                    onClick={() => {
+                      if (onOpen) void onOpen(attachment);
+                    }}
                     className={
                       compact
-                        ? "task-detail-rail-preview"
-                        : "shared-issue-detail-attachment-icon"
+                        ? "task-detail-rail-download"
+                        : "shared-issue-detail-attachment-open"
+                    }
+                    title={attachment.displayName}
+                    aria-label={
+                      onOpen
+                        ? (labels.open?.(attachment.displayName) ??
+                          labels.download(attachment.displayName))
+                        : labels.download(attachment.displayName)
                     }
                   >
-                    <IssueDetailAttachmentPreview
-                      attachment={attachment}
-                      loadPreview={loadPreview}
-                      fallback={
-                        downloadingId === attachment.id
-                          ? (icons?.loading ?? icons?.file)
-                          : (icons?.file ?? icons?.download)
-                      }
-                    />
-                  </span>
-                  <span className="issue-detail-attachment-caption">
                     <span
                       className={
                         compact
-                          ? "task-detail-rail-name"
-                          : "shared-issue-detail-attachment-name"
+                          ? "task-detail-rail-preview"
+                          : "shared-issue-detail-attachment-icon"
                       }
                     >
-                      {attachment.displayName}
+                      <IssueDetailAttachmentPreview
+                        attachment={attachment}
+                        loadPreview={loadPreview}
+                        fallback={
+                          downloadingId === attachment.id
+                            ? (icons?.loading ?? icons?.file)
+                            : (icons?.file ?? icons?.download)
+                        }
+                      />
                     </span>
-                    {downloadingId === attachment.id ? (
+                    <span className="issue-detail-attachment-caption">
                       <span
                         className={
                           compact
-                            ? "task-detail-rail-meta"
-                            : "shared-issue-detail-attachment-meta"
+                            ? "task-detail-rail-name"
+                            : "shared-issue-detail-attachment-name"
                         }
                       >
-                        {labels.downloading}
+                        {attachment.displayName}
                       </span>
-                    ) : null}
-                  </span>
-                </button>
-                {onDownload ? (
-                  <button
-                    type="button"
-                    data-testid={downloadTestId(attachment.id)}
-                    disabled={downloadingId === attachment.id}
-                    className="shared-issue-detail-attachment-delete"
-                    aria-label={labels.download(attachment.displayName)}
-                    onClick={() => void onDownload(attachment)}
-                  >
-                    {icons?.download ?? "↓"}
+                      {downloadingId === attachment.id ? (
+                        <span
+                          className={
+                            compact
+                              ? "task-detail-rail-meta"
+                              : "shared-issue-detail-attachment-meta"
+                          }
+                        >
+                          {labels.downloading}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
-                ) : null}
-                {editable ? (
-                  <button
-                    type="button"
-                    data-testid={removeTestId(attachment.id)}
-                    disabled={busy}
-                    onClick={() => void onRemove(attachment)}
-                    className={
-                      compact
-                        ? "task-detail-rail-delete"
-                        : "shared-issue-detail-attachment-delete"
-                    }
-                    aria-label={labels.remove(attachment.displayName)}
-                  >
-                    {icons?.remove ?? "×"}
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-        {editable && (!compact || attachments.length > 0) ? (
+                  {onDownload ? (
+                    <button
+                      type="button"
+                      data-testid={downloadTestId(attachment.id)}
+                      disabled={downloadingId === attachment.id}
+                      className="shared-issue-detail-attachment-delete"
+                      aria-label={labels.download(attachment.displayName)}
+                      onClick={() => void onDownload(attachment)}
+                    >
+                      {icons?.download ?? "↓"}
+                    </button>
+                  ) : null}
+                  {editable ? (
+                    <button
+                      type="button"
+                      data-testid={removeTestId(attachment.id)}
+                      disabled={busy}
+                      onClick={() => void onRemove(attachment)}
+                      className={
+                        compact
+                          ? "task-detail-rail-delete"
+                          : "shared-issue-detail-attachment-delete"
+                      }
+                      aria-label={labels.remove(attachment.displayName)}
+                    >
+                      {icons?.remove ?? "×"}
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ))}
+        {showContent && editable && (!compact || attachments.length > 0) ? (
           <label
             className={
               compact

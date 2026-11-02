@@ -7,7 +7,7 @@
 use super::{issues, store::Node};
 use crate::state::AppState;
 use anyhow::Result;
-use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlTransaction};
+use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlRow, MysqlTransaction};
 use brz_redis::Redis;
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ struct Channels {
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment"
+        "assignment" | "mention" | "execution" | "issue_dispatch_assignment" | "issue_follow"
     );
     let category = if collaboration {
         "collaboration"
@@ -118,6 +118,175 @@ pub(crate) async fn create_on(
     })
 }
 
+/// Create follower inbox entries in the same transaction as the Issue change.
+pub(crate) async fn followers_on(
+    tx: &mut impl MysqlTransaction,
+    state: &AppState,
+    project: &Node,
+    issue: &Node,
+    actor: i64,
+    event: &str,
+) -> MysqlResult<Vec<Pending>> {
+    if matches!(
+        project.metadata.0["task_provider"].as_str(),
+        Some("github" | "gitlab")
+    ) {
+        return Ok(Vec::new());
+    }
+    followers_for_event_on(tx, state, project, issue, actor, event, None).await
+}
+
+pub(crate) async fn followers_for_event_on(
+    tx: &mut impl MysqlTransaction,
+    state: &AppState,
+    project: &Node,
+    issue: &Node,
+    actor: i64,
+    event: &str,
+    external: Option<&crate::issue_follow_events::Event>,
+) -> MysqlResult<Vec<Pending>> {
+    #[derive(FromMysqlRow)]
+    struct Follower {
+        user_id: i32,
+        created_at: chrono::NaiveDateTime,
+    }
+    #[derive(FromMysqlRow)]
+    struct Visible {
+        id: String,
+    }
+    let followers: Vec<Follower> = tx
+        .fetch_all(
+            "SELECT user_id, created_at FROM issue_followers WHERE issue_id = ? FOR UPDATE",
+            (issue.id.as_str(),),
+        )
+        .await?;
+    let project_id: i64 = project
+        .id
+        .parse()
+        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+            reason: "Invalid project identity".into(),
+        })?;
+    let mut pending = Vec::new();
+    for follower in followers {
+        let receipt = external.map(|event| {
+            receipt_id(
+                &issue.id,
+                follower.user_id,
+                follower.created_at,
+                &event.identity,
+            )
+        });
+        if let Some(external) = external {
+            if external
+                .occurred_at
+                .is_some_and(|at| at + 999 < follower.created_at.and_utc().timestamp_millis())
+            {
+                continue;
+            }
+            let exists: Option<(i64,)> = tx
+                .fetch_optional(
+                    "SELECT 1 FROM loop_items WHERE id=?",
+                    (receipt.as_deref().unwrap(),),
+                )
+                .await?;
+            if exists.is_some() {
+                continue;
+            }
+        }
+        let access: Option<MysqlRow> = tx
+            .fetch_optional(
+                crate::cloud_projects::project_access_point_statement(follower.user_id, project_id),
+                (),
+            )
+            .await?;
+        let Some(access) = access else { continue };
+        let priority: i64 = access.get_required("anon_3_priority")?;
+        if priority > 4 {
+            continue;
+        }
+        if matches!(
+            project.metadata.0["task_provider"].as_str(),
+            Some("github" | "gitlab")
+        ) {
+            match crate::loop_tasks::assignments::provider_get(state, &issue.id, follower.user_id)
+                .await
+            {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.status(),
+                        brz_http_server::StatusCode::FORBIDDEN
+                            | brz_http_server::StatusCode::NOT_FOUND
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    return Err(brz_mysql::MysqlError::InvalidQuery {
+                        reason: format!("Issue access check failed: {error:?}"),
+                    });
+                }
+            }
+        } else if priority > 1 {
+            let default_security = if project.metadata.0["default_issue_security"] == "related" {
+                "related"
+            } else {
+                "open"
+            };
+            let filter = crate::loop_tasks::loop_repository::visible_item_filter_sql(
+                follower.user_id,
+                default_security,
+            );
+            let visible: Option<Visible> = tx.fetch_optional(
+                format!("SELECT loop_items.id AS id FROM loop_items WHERE loop_items.id = ? AND loop_items.resource_type = 'task' {filter} LIMIT 1"), (issue.id.as_str(),),
+            ).await?;
+            if visible.is_none() {
+                continue;
+            }
+            let _ = visible.map(|row| row.id);
+        }
+        let mut payload = target(state, project, issue, issue.assignee_user_id)
+            .await
+            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
+                reason: error.to_string(),
+            })?;
+        payload["event"] = json!(event);
+        if let Some(external) = external {
+            payload["commentId"] = json!(external.comment_id);
+        }
+        let title = match event {
+            "status" => "关注的 Issue 状态已变更",
+            "assignee" => "关注的 Issue 负责人已变更",
+            "comment" => "关注的 Issue 有新评论",
+            _ => {
+                return Err(brz_mysql::MysqlError::InvalidQuery {
+                    reason: "Unsupported follower event".into(),
+                });
+            }
+        };
+        pending.push(
+            create_on(
+                tx,
+                state,
+                follower.user_id.into(),
+                actor,
+                "issue_follow",
+                title,
+                external
+                    .filter(|event| !event.body.is_empty())
+                    .map(|event| event.body.as_str())
+                    .unwrap_or(&issue.title),
+                payload,
+            )
+            .await?,
+        );
+        if let Some(receipt) = receipt {
+            super::store::insert(tx, "issue_follow_event", json!({"id":receipt,"cloud_project_id":project.id,"loop_item_id":issue.id,"user_id":follower.user_id})).await?;
+        }
+    }
+    Ok(pending)
+}
+
 pub(crate) async fn target(
     state: &AppState,
     project: &Node,
@@ -153,6 +322,16 @@ pub(crate) async fn target(
         .unwrap()
         .retain(|_, value| !value.is_null() && value.as_str() != Some(""));
     Ok(payload)
+}
+
+pub(super) fn receipt_id(
+    issue: &str,
+    user: i32,
+    since: chrono::NaiveDateTime,
+    event: &str,
+) -> String {
+    crate::hex_sha256(format!("issue-follow:{issue}:{user}:{since}:{event}").as_bytes())[..36]
+        .to_owned()
 }
 
 fn direct_human_id(issue: &str, assignment: &str) -> String {
@@ -339,6 +518,28 @@ fn execution_tail(status: &str) -> &str {
 pub(crate) async fn deliver(state: &AppState, pending: Pending) {
     let notification = &pending.notification;
     let user = notification["user_id"].as_i64().unwrap_or(0);
+    if notification["kind"] == "issue_follow" {
+        let Some(issue) = notification["payload"]["itemId"].as_str() else {
+            return;
+        };
+        let Ok(user_id) = i32::try_from(user) else {
+            return;
+        };
+        let subscribed: Result<i64, _> = state
+            .mysql
+            .fetch_one(
+                "SELECT EXISTS(SELECT 1 FROM issue_followers WHERE issue_id=? AND user_id=?)",
+                (issue, user_id),
+            )
+            .await;
+        if !matches!(subscribed, Ok(1))
+            || crate::loop_tasks::assignments::require_issue_read_as(state, issue, user_id)
+                .await
+                .is_err()
+        {
+            return;
+        }
+    }
     if let Some(redis) = state.redis.as_ref() {
         let mut frames = Vec::new();
         if pending.stored {
@@ -458,6 +659,7 @@ mod tests {
             "execution",
             "mention",
             "issue_dispatch_assignment",
+            "issue_follow",
         ] {
             let selected = channels(
                 &json!({"wework_notification_preferences":{"collaboration":{"in_app":false,"system":false,"im":false},"general":{"in_app":true,"im":true}}}),

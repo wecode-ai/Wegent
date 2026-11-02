@@ -174,6 +174,12 @@ Regression entry points:
 
 Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
 
+## Issue identities and following
+
+The creator is immutable audit identity. The reporter defaults to the creator and changes require content-edit permission. Neither reporters nor followers become related parties for Issue visibility. Following and unfollowing require current detail access and grant no assignment, execution or resource authority, preserving CP07, CP13, CP14 and CP15.
+
+Cloud subscription writes lock the current Issue and verify that its resources still exist. Local identity, subscription and notification writes share a SQLite transaction. Comment, status and assignee events select current followers with current access; asynchronous delivery checks both again. The local runtime persists the collaboration in-app preference per account and checks it before inserting notifications in that transaction; disabled intervals are not replayed. External collectors persist stable event receipts, notifications and page progress together. Refollowing establishes a new subscription time and history baseline so events from an unsubscribed interval are not replayed. Focused assignment tests, Rust `issue_follow_http`, the local identity contract and CI-registered web/desktop identity scenarios cover these boundaries.
+
 ## Verification record
 
 Final verification is rerun against the no-DDL implementation. Counts from the withdrawn migration implementation are historical. The full backend suite already includes the focused permission tests.

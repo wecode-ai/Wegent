@@ -460,6 +460,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       archiveCloudProject: vi.fn(async () => undefined),
       archiveLoopItem: vi.fn(async () => undefined),
       getLoopItem: vi.fn(async () => item),
+      setLoopItemFollowing: vi.fn(async (_itemId, following: boolean) => ({ following })),
       approveLoopItemRun: vi.fn(async () => ({
         ...item,
         execution_state: 'queued',
@@ -813,6 +814,37 @@ describe('CloudTodoWorkspace', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     localStorage.clear()
+  })
+
+  it('edits the reporter and follows an issue without changing its assignee', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.assignLoopItem = vi.fn(async () => item)
+    const initial = { ...item, reporter_user_id: 1, is_following: false }
+    vi.mocked(workbenchServices.deliveryApi!.getLoopItem).mockResolvedValue(initial)
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({ items: [initial] })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    const follow = await screen.findByTestId('cloud-todo-follow')
+    await userEvent.click(follow)
+    await waitFor(() => expect(follow).toHaveAttribute('aria-pressed', 'true'))
+    expect(workbenchServices.deliveryApi!.setLoopItemFollowing).toHaveBeenCalledWith(item.id, true)
+    expect(workbenchServices.deliveryApi!.assignLoopItem).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-reporter'))
+    await userEvent.click(await screen.findByRole('option', { name: 'alice' }))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ reporter_user_id: 2 })
+      )
+    )
   })
 
   it('opens the requested Issue after a parent rerender cancels the pending focus effect', async () => {
@@ -3816,13 +3848,11 @@ describe('CloudTodoWorkspace', () => {
     await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
     await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         parent_id: 'WEG-2',
-        tags: [],
       })
     )
   })
@@ -3874,7 +3904,9 @@ describe('CloudTodoWorkspace', () => {
     await openIssueMoreProperties()
     expect(screen.getAllByText('Implement cloud MCP').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Implement cloud delivery').length).toBeGreaterThan(0)
-    expect(screen.getByTitle('local')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('cloud-todo-collaborators')).getByTitle('local')
+    ).toBeInTheDocument()
     expect(screen.getByText('参与者')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeInTheDocument()
   })
@@ -4010,7 +4042,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-description'))
     const file = new File(['context'], 'brief.txt', { type: 'text/plain' })
     await userEvent.upload(screen.getByTestId('cloud-todo-attachment-input'), file)
 
@@ -4020,8 +4052,12 @@ describe('CloudTodoWorkspace', () => {
         file
       )
     )
-    expect(screen.getByText('brief.txt')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-attachment-footer')).toHaveTextContent('附件1＋ 上传')
+    const attachments = screen.getByTestId('cloud-todo-attachment-toggle')
+    expect(attachments).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('brief.txt')).not.toBeInTheDocument()
+    await userEvent.click(attachments)
+    expect(screen.getByText('brief.txt')).toBeInTheDocument()
   })
 
   it('shows existing Issue attachments in the detail panel', async () => {
@@ -4080,6 +4116,17 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
 
+    const attachments = await screen.findByTestId('cloud-todo-attachment-toggle')
+    expect(attachments).toHaveAttribute('aria-expanded', 'false')
+    expect(attachments).toHaveTextContent('附件2')
+    expect(
+      screen.queryByTestId('cloud-todo-attachment-open-attachment-existing')
+    ).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).not.toHaveBeenCalled()
+
+    await userEvent.click(attachments)
+
+    expect(attachments).toHaveAttribute('aria-expanded', 'true')
     expect(await screen.findByText('feedback.png')).toBeInTheDocument()
     const imageCard = screen
       .getByTestId('cloud-todo-attachment-open-attachment-existing')
@@ -4099,6 +4146,26 @@ describe('CloudTodoWorkspace', () => {
       'attachment-pdf'
     )
 
+    const readsBeforeCollapse = vi.mocked(workbenchServices.deliveryApi!.readLoopItemAttachment)
+      .mock.calls.length
+    await userEvent.click(attachments)
+    expect(attachments).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByTestId('cloud-todo-attachment-open-attachment-existing')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('issue-detail-attachment-thumbnail-attachment-existing')
+    ).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).toHaveBeenCalledTimes(
+      readsBeforeCollapse
+    )
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://example.test/feedback')
+
+    await userEvent.click(attachments)
+    expect(attachments).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      await screen.findByTestId('issue-detail-attachment-thumbnail-attachment-existing')
+    ).toHaveAttribute('src', 'blob:https://example.test/feedback')
     await userEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-existing'))
 
     expect(await screen.findByTestId('cloud-file-preview-size')).toHaveTextContent('2.0 KB')
@@ -4156,6 +4223,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
+    await userEvent.click(await screen.findByTestId('cloud-todo-attachment-toggle'))
     await userEvent.click(
       await screen.findByTestId('cloud-todo-attachment-open-attachment-existing')
     )
@@ -5363,13 +5431,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.keyboard('{Enter}')
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
         version: 1,
         title: 'Updated TODO',
-        tags: [],
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)

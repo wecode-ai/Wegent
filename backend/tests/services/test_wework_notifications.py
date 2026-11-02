@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.models.issue_follower import IssueFollower
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -39,6 +40,54 @@ from tests.services.test_loop_item_assignment import (
 
 NOTIFICATION_CARD_CHANNEL_ID = 9_701
 PLAIN_CHANNEL_ID = 9_702
+
+
+@pytest.mark.parametrize("change", ["none", "unfollow", "lose_access", "deleted"])
+async def test_follow_delivery_rechecks_access_and_subscription(
+    test_db, test_user, change
+):
+    project = _make_project(test_db, test_user)
+    follower = _make_member(test_db, project, "delivery-follower", BaseRole.Viewer)
+    item = _make_item(test_db, project, test_user)
+    relation = IssueFollower(issue_id=item.id, user_id=follower.id)
+    test_db.add(relation)
+    test_db.commit()
+    row = create_notification(
+        test_db,
+        user_id=follower.id,
+        actor_user_id=test_user.id,
+        kind="issue_follow",
+        title="Comment",
+        body="Private detail",
+        project_id=project.id,
+        item_id=item.id,
+        payload={"projectId": project.id, "itemId": item.id},
+    )
+    test_db.commit()
+    if change == "unfollow":
+        test_db.delete(relation)
+    elif change == "lose_access":
+        item.metadata_json = {**(item.metadata_json or {}), "security_level": "related"}
+    elif change == "deleted":
+        item.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    test_db.commit()
+    emit = AsyncMock()
+    list_sessions = AsyncMock(return_value=[])
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch("app.core.socketio.get_sio", return_value=SimpleNamespace(emit=emit)),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            list_sessions,
+        ),
+    ):
+        await deliver_notification(row.id, {"in_app": True, "system": True, "im": True})
+    if change == "none":
+        emit.assert_awaited_once()
+        list_sessions.assert_awaited_once()
+    else:
+        emit.assert_not_called()
+        list_sessions.assert_not_called()
 
 
 @pytest.fixture(autouse=True)

@@ -422,11 +422,11 @@
   width: 100%;
   field-sizing: fixed;
   min-height: 40px;
-  font-size: 25px;
+  font-size: var(--text-heading-lg);
   margin-top: 0;
   padding: 0 0 14px;
   border-radius: 0;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.35;
 }
 

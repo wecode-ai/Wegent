@@ -106,6 +106,80 @@ describe("ProjectIssueTable", () => {
     return onOpen;
   }
 
+  it("loads all followed issues and removes an unfollowed issue immediately", async () => {
+    const followed = { ...issue, is_following: true };
+    const loadFollowed = vi.fn().mockResolvedValue([followed]);
+    const renderTable = (items: CollaborationIssue[]) =>
+      act(() =>
+        root.render(
+          <ProjectIssueTable
+            issues={items}
+            assignmentsByIssueId={{}}
+            emptyLabel="Empty"
+            issueLabel="Issue"
+            statusLabel="Status"
+            assignmentsLabel="Assignments"
+            updatedLabel="Updated"
+            projectKey="PRJ"
+            loadFollowed={loadFollowed}
+            onOpen={vi.fn()}
+          />,
+        ),
+      );
+    renderTable([followed, secondIssue]);
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-table-following-filter"]',
+        )!
+        .click();
+    });
+    expect(loadFollowed).toHaveBeenCalled();
+    expect(container.textContent).toContain(followed.title);
+    expect(container.textContent).not.toContain(secondIssue.title);
+
+    loadFollowed.mockResolvedValue([]);
+    await act(async () =>
+      renderTable([{ ...followed, is_following: false }, secondIssue]),
+    );
+    expect(container.textContent).not.toContain(followed.title);
+  });
+
+  it("clears pending filter state when leaving the followed view", async () => {
+    let resolve!: (issues: CollaborationIssue[]) => void;
+    const pending = new Promise<CollaborationIssue[]>((done) => {
+      resolve = done;
+    });
+    act(() =>
+      root.render(
+        <ProjectIssueTable
+          issues={[issue]}
+          assignmentsByIssueId={{}}
+          emptyLabel="Empty"
+          issueLabel="Issue"
+          statusLabel="Status"
+          assignmentsLabel="Assignments"
+          updatedLabel="Updated"
+          loadFollowed={() => pending}
+          onOpen={vi.fn()}
+        />,
+      ),
+    );
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-table-following-filter"]',
+    )!;
+    act(() => toggle.click());
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+
+    act(() => toggle.click());
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.textContent).toContain(issue.title);
+    await act(async () => resolve([]));
+    expect(container.textContent).toContain(issue.title);
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
   it("opens an issue through a native keyboard-accessible button", () => {
     const onOpen = render({ [issue.id]: [assignment] });
     const trigger = container.querySelector(
@@ -381,16 +455,20 @@ describe("ProjectIssueTable", () => {
     ).toBeNull();
   });
 
-  it.each(['all', 'partial', 'unexpected'] as const)(
-    'shows %s failures and keeps only failed issues selected for recovery',
-    async mode => {
-      const failures = (mode === 'all' ? [issue, secondIssue] : [secondIssue]).map(item => ({
+  it.each(["all", "partial", "unexpected"] as const)(
+    "shows %s failures and keeps only failed issues selected for recovery",
+    async (mode) => {
+      const failures = (
+        mode === "all" ? [issue, secondIssue] : [secondIssue]
+      ).map((item) => ({
         issueId: item.id,
-        message: 'Permission denied',
-      }))
-      const onBulkStatusChange = vi.fn().mockResolvedValue(failures)
-      if (mode === 'unexpected')
-        onBulkStatusChange.mockRejectedValueOnce(new Error('Network unavailable'))
+        message: "Permission denied",
+      }));
+      const onBulkStatusChange = vi.fn().mockResolvedValue(failures);
+      if (mode === "unexpected")
+        onBulkStatusChange.mockRejectedValueOnce(
+          new Error("Network unavailable"),
+        );
       act(() =>
         root.render(
           <ProjectIssueTable
@@ -401,54 +479,60 @@ describe("ProjectIssueTable", () => {
             statusLabel="Status"
             assignmentsLabel="Assignments"
             updatedLabel="Updated"
-            availableStatuses={['inbox', 'in_progress']}
+            availableStatuses={["inbox", "in_progress"]}
             onOpen={vi.fn()}
             onBulkStatusChange={onBulkStatusChange}
-          />
-        )
-      )
+          />,
+        ),
+      );
       act(() =>
         (
           container.querySelector(
-            '[data-testid="collaboration-issue-table-select-all"]'
+            '[data-testid="collaboration-issue-table-select-all"]',
           ) as HTMLInputElement
-        ).click()
-      )
+        ).click(),
+      );
       act(() => {
         const select = container.querySelector(
-          '[data-testid="collaboration-issue-table-batch-status"]'
-        ) as HTMLSelectElement
-        select.value = 'in_progress'
-        select.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+          '[data-testid="collaboration-issue-table-batch-status"]',
+        ) as HTMLSelectElement;
+        select.value = "in_progress";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       const apply = () =>
         (
           container.querySelector(
-            '[data-testid="collaboration-issue-table-batch-apply"]'
+            '[data-testid="collaboration-issue-table-batch-apply"]',
           ) as HTMLButtonElement
-        ).click()
-      await act(async () => apply())
+        ).click();
+      await act(async () => apply());
       const error = container.querySelector(
-        '[data-testid="collaboration-issue-table-batch-error"]'
-      )!
-      expect(error.getAttribute('role')).toBe('alert')
-      expect(error.textContent).toContain(secondIssue.title)
+        '[data-testid="collaboration-issue-table-batch-error"]',
+      )!;
+      expect(error.getAttribute("role")).toBe("alert");
+      expect(error.textContent).toContain(secondIssue.title);
       expect(error.textContent).toContain(
-        mode === 'unexpected' ? 'Network unavailable' : 'Permission denied'
-      )
+        mode === "unexpected" ? "Network unavailable" : "Permission denied",
+      );
       const selected = [
-        ...container.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]'),
-      ].filter(input => input.checked)
-      expect(selected).toHaveLength(mode === 'partial' ? 1 : 2)
-      onBulkStatusChange.mockResolvedValue([])
-      await act(async () => apply())
+        ...container.querySelectorAll<HTMLInputElement>(
+          'tbody input[type="checkbox"]',
+        ),
+      ].filter((input) => input.checked);
+      expect(selected).toHaveLength(mode === "partial" ? 1 : 2);
+      onBulkStatusChange.mockResolvedValue([]);
+      await act(async () => apply());
       expect(onBulkStatusChange.mock.calls[1][0]).toEqual(
-        mode === 'partial' ? [secondIssue] : [issue, secondIssue]
-      )
-      expect(container.querySelector('[role="alert"]')).toBeNull()
-      expect(container.querySelector('[data-testid="collaboration-issue-table-batch"]')).toBeNull()
-    }
-  )
+        mode === "partial" ? [secondIssue] : [issue, secondIssue],
+      );
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-issue-table-batch"]',
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("limits batch actions to selected issues that remain visible", async () => {
     const onBulkStatusChange = vi.fn().mockResolvedValue([]);

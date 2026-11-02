@@ -92,9 +92,10 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
-    shared/assets/*)
+    shared/assets/* | shared/issue_follow_events.rs)
       changed[wework_target]=true
       changed[docker]=true
+      changed[executor_rust]=true
       ;;
     frontend/e2e/fixtures/claudecode-executor/*)
       changed[docker]=true

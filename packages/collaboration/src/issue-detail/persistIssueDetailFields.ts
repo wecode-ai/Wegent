@@ -15,6 +15,10 @@ export async function persistIssueDetailFields(
   source: CollaborationIssue,
   values: IssueFields,
   port: Pick<SharedIssueDetailPort["issues"], "get" | "update">,
+  recovery?: {
+    onRefresh(issue: CollaborationIssue): void;
+    isActive(): boolean;
+  },
 ): Promise<CollaborationIssue> {
   const fields = (Object.keys(values) as Array<keyof IssueFields>).filter(
     (key) => values[key] !== undefined && !equal(values[key], source[key]),
@@ -27,7 +31,10 @@ export async function persistIssueDetailFields(
     return await port.update(source.id, { version: source.version, ...patch });
   } catch (error) {
     if (!isIssueVersionConflict(error)) throw error;
+    if (recovery && !recovery.isActive()) throw error;
     const latest = await port.get(source.id);
+    if (recovery && !recovery.isActive()) throw error;
+    recovery?.onRefresh(latest);
     if (
       fields.some(
         (key) =>

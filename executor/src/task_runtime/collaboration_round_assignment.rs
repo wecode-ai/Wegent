@@ -106,6 +106,7 @@ pub(super) fn apply_round_assignee(
             item_id,
         ],
     )?;
+    issue_notifications::notify_followers(connection, item_id, "assignee", None, "")?;
     Ok(())
 }
 

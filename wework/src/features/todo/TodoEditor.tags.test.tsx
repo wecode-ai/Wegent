@@ -25,13 +25,11 @@ const item = {
 } as CloudLoopItem
 const project = { id: '11', name: 'Wework', tags: ['发布', '体验'] } as CloudProject
 
-async function openEditor(
-  options: { canEdit?: boolean; saveError?: Error; readFirst?: boolean } = {}
-) {
-  const current = { ...item, can_edit: options.canEdit ?? true }
+async function openEditor(options: { canEdit?: boolean; readFirst?: boolean } = {}) {
+  let current = { ...item, can_edit: options.canEdit ?? true }
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
-    if (options.saveError) throw options.saveError
-    return { ...current, ...values, version: current.version + 1 }
+    current = { ...current, ...values, version: current.version + 1 }
+    return current
   })
   const api = {
     listDeliveries: vi.fn(async () => ({ items: [] })),
@@ -47,7 +45,7 @@ async function openEditor(
     <TodoEditor
       mode="edit"
       presentation="workspace-panel"
-      readFirst={options.readFirst}
+      readFirst={options.readFirst ?? true}
       item={current}
       project={project}
       allItems={[current]}
@@ -61,7 +59,7 @@ async function openEditor(
 }
 
 describe('workspace Issue tag editing', () => {
-  it('shows typed text, commits unique tags, removes them and saves the draft', async () => {
+  it('automatically saves unique tag additions and removals in version order', async () => {
     const { updateLoopItem, onUpdated } = await openEditor()
     const input = screen.getByRole('textbox', { name: '添加标签' })
     expect(input).toBeVisible()
@@ -69,6 +67,7 @@ describe('workspace Issue tag editing', () => {
     expect(input.closest('.task-detail-rail-value-content')).not.toHaveClass('truncate')
     await userEvent.type(input, '新标签')
     expect(input).toHaveValue('新标签')
+    expect(updateLoopItem).not.toHaveBeenCalled()
     await userEvent.keyboard('{Enter}')
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-新标签')).toBeVisible()
     await userEvent.type(input, '新标签,')
@@ -76,15 +75,15 @@ describe('workspace Issue tag editing', () => {
     await userEvent.type(input, '临时标签,')
     await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-tag-remove-临时标签'))
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-临时标签')).not.toBeInTheDocument()
-    expect(updateLoopItem).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
-      expect(updateLoopItem).toHaveBeenCalledWith(
-        item.id,
-        expect.objectContaining({ version: 1, tags: ['新标签'] })
-      )
+      expect(updateLoopItem.mock.calls).toEqual([
+        [item.id, { version: 1, tags: ['新标签'] }],
+        [item.id, { version: 2, tags: ['新标签', '临时标签'] }],
+        [item.id, { version: 3, tags: ['新标签'] }],
+      ])
     )
     expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ tags: ['新标签'] }))
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
   })
 
   it('offers project tags and commits on blur without stealing focus', async () => {
@@ -103,15 +102,22 @@ describe('workspace Issue tag editing', () => {
   })
 
   it('does not commit a tag when Enter confirms IME composition', async () => {
-    await openEditor()
+    const { updateLoopItem } = await openEditor()
     const input = screen.getByTestId('cloud-todo-detail-tag-input')
     await userEvent.click(input)
     fireEvent.change(input, { target: { value: '验证' } })
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
     expect(input).toHaveValue('验证')
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-验证')).not.toBeInTheDocument()
+    expect(updateLoopItem).not.toHaveBeenCalled()
     await userEvent.keyboard('{Enter}')
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(item.id, {
+        version: 1,
+        tags: ['验证'],
+      })
+    )
   })
 
   it('does not dismiss reopened properties when a delayed edit frame runs', async () => {
@@ -124,13 +130,7 @@ describe('workspace Issue tag editing', () => {
     try {
       await userEvent.click(screen.getByTestId('cloud-todo-detail-tag-input'))
       const title = screen.getByTestId('cloud-todo-detail-title')
-      act(() => {
-        title.dispatchEvent(
-          new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' })
-        )
-        title.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }))
-        title.click()
-      })
+      await userEvent.click(title)
       expect(title).toHaveFocus()
       fireEvent.click(screen.getByTestId('cloud-todo-more-properties'))
       expect(screen.getByTestId('cloud-todo-more-properties-popover')).toBeVisible()
@@ -174,15 +174,18 @@ describe('workspace Issue tag editing', () => {
     }
   })
 
-  it('keeps tags available for retry after a rejected save', async () => {
-    const { updateLoopItem } = await openEditor({ saveError: new Error('保存标签失败') })
+  it('rolls back rejected tags and permits adding them again', async () => {
+    const { updateLoopItem } = await openEditor()
+    updateLoopItem.mockRejectedValueOnce(new Error('保存标签失败'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '验证{Enter}')
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     expect(await screen.findByText('保存标签失败')).toBeVisible()
-    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
-    expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
-    expect(screen.getByTestId('cloud-todo-save')).toBeEnabled()
+    expect(screen.queryByTestId('cloud-todo-detail-tag-tag-验证')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     expect(updateLoopItem).toHaveBeenCalledTimes(1)
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-tag-input'), '验证{Enter}')
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('cloud-todo-detail-tag-tag-验证')).toBeVisible()
+    expect(screen.queryByText('保存标签失败')).not.toBeInTheDocument()
   })
 
   it('does not offer tag editing without edit permission', async () => {
@@ -202,7 +205,6 @@ describe('workspace Issue tag editing', () => {
     expect(onClose).not.toHaveBeenCalled()
     await userEvent.click(trigger)
     expect(screen.getByTestId('cloud-todo-detail-tag-tag-待保存')).toBeVisible()
-    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
       expect(updateLoopItem).toHaveBeenCalledWith(
         item.id,

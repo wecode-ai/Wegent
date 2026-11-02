@@ -106,11 +106,18 @@ pub struct TaskUpdate {
     pub position: Option<TaskPosition>,
     pub version: i64,
     pub title: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_reporter"
+    )]
+    pub reporter_user_id: Option<i64>,
     pub description: Option<String>,
     pub status: Option<String>,
     pub priority: Option<String>,
     pub parent_id: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_group_id")]
     pub assignee_agent_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_user_id")]
     pub assignee_user_id: Option<Option<i64>>,
@@ -118,6 +125,18 @@ pub struct TaskUpdate {
     pub assignee_group_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
     pub workflow: Option<Option<Value>>,
+}
+
+fn deserialize_reporter<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    let user = i64::deserialize(deserializer)?;
+    if user < 0 {
+        return Err(serde::de::Error::custom(
+            "reporter_user_id cannot be negative",
+        ));
+    }
+    Ok(Some(user))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

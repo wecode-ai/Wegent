@@ -77,6 +77,7 @@ class LoopItemUpdate(BaseModel):
     version: int = Field(ge=1)
     security_level: Literal["open", "related"] | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
+    reporter_user_id: int | None = Field(default=None, ge=1)
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
@@ -98,6 +99,11 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if (
+            "reporter_user_id" in self.model_fields_set
+            and self.reporter_user_id is None
+        ):
+            raise ValueError("reporter_user_id cannot be null")
         if "security_level" in self.model_fields_set and self.security_level is None:
             raise ValueError("security_level cannot be null")
         values = [
@@ -187,6 +193,9 @@ class LoopItemResponse(BaseModel):
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
+    reporter_user_id: int | None = None
+    reporter_user_name: str | None = None
+    is_following: bool = False
     can_view_detail: bool = True
     security_level: Literal["open", "related"] = "open"
     can_edit: bool = True

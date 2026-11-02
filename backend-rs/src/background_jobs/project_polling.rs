@@ -38,6 +38,14 @@ struct Subscription {
     lease: String,
 }
 
+pub(super) fn provider_token(
+    key: &str,
+    source: &str,
+    config: &Value,
+) -> std::result::Result<String, String> {
+    credentials::provider_token(key, source, config).map_err(|error| error.to_string())
+}
+
 #[tracing::instrument(name = "project.poll_subscriptions", skip_all)]
 pub(super) async fn check(state: &AppState) -> Result<usize> {
     let now = Utc::now().naive_utc();

@@ -196,7 +196,6 @@ class ProjectAutomationExecution:
             ),
             automation_context=context,
             instruction=instruction,
-            assign_creator_if_unassigned=False,
         )
         item_id = routed.values.get("id")
         if not item_id:
@@ -1285,7 +1284,6 @@ class ProjectAutomationProcessor:
                     "event_id": event.event_id,
                     "subscription_id": event.subscription_id,
                 },
-                assign_creator_if_unassigned=False,
             )
             task = created.internal_item or db.get(LoopItem, created.values.get("id"))
             if task is None:

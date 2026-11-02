@@ -74,10 +74,11 @@ export function WorkItemContextPanel({
               type="button"
               data-testid="work-item-open-board"
               onClick={onOpenBoard}
-              className="flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              className="issue-detail-header-icon"
+              aria-label={t('workbench.open_workspace', '打开工作空间')}
+              title={t('workbench.open_workspace', '打开工作空间')}
             >
-              {t('workbench.open_workspace', '打开工作空间')}
-              <ArrowUpRight className="h-3.5 w-3.5" />
+              <ArrowUpRight size={16} aria-hidden="true" />
             </button>
           }
           selectedTaskId={currentTask.taskId}

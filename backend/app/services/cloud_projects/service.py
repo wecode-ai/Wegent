@@ -333,6 +333,17 @@ class CloudProjectService(CloudProjectMemberService):
                         item.status = ""
                         item.completed_at = None
                         item.version += 1
+                        from app.services.issue_follow_notifications import (
+                            notify_issue_followers,
+                        )
+
+                        notify_issue_followers(
+                            db,
+                            project=project,
+                            item=item,
+                            actor_user_id=user_id,
+                            event="status",
+                        )
                 metadata["board_config"] = values.board_config.model_dump()
                 updates.pop("board_config", None)
             if (

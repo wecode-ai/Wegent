@@ -372,6 +372,11 @@ export function createWeworkPlatformApi(
       async get(issueId) {
         return (await localIssue(issueId)) ?? cloudApi.issues.get(issueId)
       },
+      async setFollowing(issueId, following) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.setFollowing(issueId, following)
+          : cloudApi.issues.setFollowing(issueId, following)
+      },
       async create(projectId, input) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.issues.create(projectId, input)

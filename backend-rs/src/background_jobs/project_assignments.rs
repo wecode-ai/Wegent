@@ -267,6 +267,8 @@ pub(super) async fn assign(
         let mut notifications=Vec::new();
         let (assignment_id,created)=record(tx,&issue,kind,&id,&name,owner,notify,trigger).await?;
         let previous_user=issue.assignee_user_id;
+        let previous_assignee=(issue.assignee_user_id,issue.assignee_team_id,issue.assignee_agent_id.clone(),issue.metadata.0["collaboration_group"]["id"].clone());
+        let previous_status=issue.status.clone();
         let mut metadata=issue.meta();
         history(&mut metadata,owner,if kind=="human"{"user"}else{kind},&id,&name);
         let revision=metadata["content_revision"].as_i64().filter(|value|*value>0).unwrap_or(1)+1;metadata["content_revision"]=json!(revision);
@@ -277,6 +279,8 @@ pub(super) async fn assign(
         }else{issue.status.clone()};
         tx.execute("UPDATE loop_items SET assignee_user_id=?,assignee_team_id=?,assignee_agent_id=?,status=?,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(user,team,agent,status.as_str(),Json(metadata.clone()),owner,issue.id.as_str())).await?;
         issue.status=status;issue.metadata=Json(metadata);issue.assignee_user_id=user;issue.assignee_team_id=team;issue.assignee_agent_id=agent.to_owned();
+        if previous_status != issue.status {notifications.extend(notifications::followers_on(tx,state,project,&issue,owner,"status").await?);}
+        if previous_assignee != (issue.assignee_user_id,issue.assignee_team_id,issue.assignee_agent_id.clone(),issue.metadata.0["collaboration_group"]["id"].clone()) {notifications.extend(notifications::followers_on(tx,state,project,&issue,owner,"assignee").await?);}
         let execution=if created&&issue.status!="completed" {if let Some(admission)=admission.as_ref(){
             let execution=queue::enqueue_on(tx,state,&issue,run,admission).await?;
             match notifications::execution_on(tx,state,project,&issue,execution.id,admission.owner,&execution.status,"").await{Ok(Some(pending))=>notifications.push(pending),Ok(None)=>{},Err(error)=>tracing::error!(%error,"supplementary execution notification failed")}

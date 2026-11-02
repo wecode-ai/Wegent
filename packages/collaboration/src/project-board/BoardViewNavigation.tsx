@@ -33,6 +33,11 @@ export function BoardViewNavigation({
   const editing = controller.editing
   const view = controller.view
   const builtIn = { id: 'default', name: t('todo.board_view_builtin'), columns: [] }
+  const availableViews = [builtIn, ...controller.views]
+  const menuViews = [
+    ...availableViews.filter(candidate => candidate.id === controller.selectedId),
+    ...availableViews.filter(candidate => candidate.id !== controller.selectedId),
+  ]
   const itemStyle =
     'flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary outline-none hover:bg-muted focus:bg-muted disabled:opacity-50 md:min-h-8'
   return (
@@ -80,7 +85,7 @@ export function BoardViewNavigation({
               }}
             >
               <p className="px-2 py-1.5 text-xs text-text-muted">{t('todo.board_view_switch')}</p>
-              {[builtIn, ...controller.views].map(candidate => (
+              {menuViews.map(candidate => (
                 <button
                   key={candidate.id}
                   type="button"

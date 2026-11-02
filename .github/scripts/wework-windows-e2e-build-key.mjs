@@ -25,6 +25,7 @@ export function windowsBuildKey({ cwd = process.cwd(), toolchain }) {
       'executor',
       'backend-rs',
       'shared/assets',
+      'shared/issue_follow_events.rs',
       'wework',
       ':(exclude)wework/e2e/**',
       ':(exclude)wework/test-results/**',

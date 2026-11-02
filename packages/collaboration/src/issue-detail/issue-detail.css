@@ -87,6 +87,58 @@
   margin-top: 8px;
 }
 
+.issue-detail-attachments-disclosure > .issue-detail-attachments-heading {
+  min-height: 28px;
+  margin: 0;
+}
+
+.issue-detail-attachments-toggle {
+  display: flex;
+  min-width: 0;
+  min-height: 28px;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--color-text-muted));
+  padding: 0 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.issue-detail-attachments-toggle:hover {
+  background: rgb(var(--color-bg-muted));
+  color: rgb(var(--color-text-primary));
+}
+
+.issue-detail-attachments-toggle:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+}
+
+.issue-detail-attachments-chevron {
+  flex-shrink: 0;
+}
+
+.issue-detail-attachments-toggle[aria-expanded="true"]
+  .issue-detail-attachments-chevron {
+  transform: rotate(90deg);
+}
+
+.issue-detail-attachments-disclosure
+  .task-detail-attachment-body:not([hidden]) {
+  margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .issue-detail-attachments-toggle {
+    min-height: 44px;
+  }
+}
+
 .shared-issue-detail-attachment-list {
   display: flex;
   gap: 8px;

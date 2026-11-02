@@ -62,6 +62,10 @@ mod stand_in_proposals;
 #[path = "stand_in_memories.rs"]
 mod stand_in_memories;
 
+#[path = "external_issue_identity.rs"]
+mod external_issue_identity;
+#[path = "issue_notifications.rs"]
+pub(super) mod issue_notifications;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
 
@@ -103,6 +107,21 @@ pub struct LocalTaskStore {
 }
 
 impl LocalTaskStore {
+    pub(crate) fn validate_external_assignee(
+        &self,
+        project: &LoopItem,
+        agent: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<(), TaskRuntimeError> {
+        if let Some(agent) = agent {
+            let connection = self.connection()?;
+            collaboration_agent(&connection, &project.id, agent)?;
+        }
+        if let Some(group) = group {
+            collaboration_group(project, group)?;
+        }
+        Ok(())
+    }
     pub(crate) fn default_path() -> PathBuf {
         local_database_path()
     }
@@ -529,7 +548,39 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_schedule(project_id, input, None, None, None)
+    }
+
+    pub fn set_task_following(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        user_id: i64,
+        following: bool,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = get_item_from(&transaction, task_id, "task")?
+            .filter(|item| item.cloud_project_id.as_deref() == Some(project_id))
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let mut metadata = current.metadata;
+        let mut followers = metadata["follower_user_ids"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        followers.retain(|value| value.as_i64() != Some(user_id));
+        if following {
+            followers.push(json!(user_id));
+        }
+        metadata["follower_user_ids"] = json!(followers);
+        transaction.execute(
+            "UPDATE loop_items SET metadata = ?1 WHERE id = ?2 AND resource_type = 'task'",
+            params![metadata.to_string(), task_id],
+        )?;
+        let item =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        transaction.commit()?;
+        Ok(item)
     }
 
     pub fn create_task_with_schedule(
@@ -538,6 +589,7 @@ impl LocalTaskStore {
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        actor_user_id: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
@@ -548,6 +600,7 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let creator_user_id = actor_user_id.unwrap_or(project.created_by_user_id);
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
@@ -588,7 +641,7 @@ impl LocalTaskStore {
             input.status
         };
         let completed_at = (status == "completed").then(|| now.clone());
-        let mut metadata = json!({"tags": input.tags});
+        let mut metadata = json!({"tags": input.tags, "reporter_user_id": creator_user_id});
         issue_badges::update_source(
             &mut metadata,
             "issue",
@@ -609,7 +662,7 @@ impl LocalTaskStore {
         if let Some(group) = assigned_group.as_ref() {
             record_assignment_change(
                 &mut metadata,
-                project.created_by_user_id,
+                creator_user_id,
                 Some("group"),
                 input.assignee_group_id.as_deref(),
                 group.get("name").and_then(Value::as_str),
@@ -617,7 +670,7 @@ impl LocalTaskStore {
         } else if let Some(agent) = assigned_agent.as_ref() {
             record_assignment_change(
                 &mut metadata,
-                project.created_by_user_id,
+                creator_user_id,
                 Some("agent"),
                 Some(&agent.id),
                 agent.title.as_deref().or(agent.name.as_deref()),
@@ -626,7 +679,7 @@ impl LocalTaskStore {
             let user_id = user_id.to_string();
             record_assignment_change(
                 &mut metadata,
-                project.created_by_user_id,
+                creator_user_id,
                 Some("user"),
                 Some(&user_id),
                 None,
@@ -643,9 +696,9 @@ impl LocalTaskStore {
                 id, resource_type, project_space, cloud_project_id, parent_id,
                 title, description, sequence_number, status, priority, sort_order,
                 metadata, version, created_at, updated_at, completed_at,
-                assignee_agent_id, assignee_user_id
+                assignee_agent_id, assignee_user_id, created_by_user_id
              ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       0, ?9, 1, ?10, ?10, ?11, ?12, ?13)",
+                       0, ?9, 1, ?10, ?10, ?11, ?12, ?13, ?14)",
             params![
                 id,
                 project_id,
@@ -660,6 +713,7 @@ impl LocalTaskStore {
                 completed_at,
                 assigned_agent.as_ref().map(|agent| agent.id.as_str()),
                 input.assignee_user_id,
+                creator_user_id,
             ],
         )?;
         assignment_receipts::sync_assignment_receipt(&transaction, project_id, &id, &metadata)?;
@@ -703,7 +757,7 @@ impl LocalTaskStore {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.update_task_with_schedule(project_id, task_id, input, None, None)
+        self.update_task_with_schedule(project_id, task_id, input, None, None, None)
     }
 
     pub fn update_task_with_schedule(
@@ -713,7 +767,9 @@ impl LocalTaskStore {
         input: TaskUpdate,
         start_at: Option<Option<String>>,
         due_at: Option<Option<String>>,
+        actor_user_id: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        let reporter_user_id = input.reporter_user_id;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current =
@@ -723,6 +779,11 @@ impl LocalTaskStore {
         }
         if current.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if reporter_user_id.is_some() && reporter_user_id != actor_user_id {
+            return Err(TaskRuntimeError::Invalid(
+                "Reporter is not a local project member".into(),
+            ));
         }
         if let Some(title) = input.title.as_deref() {
             validate_name(title, "task title")?;
@@ -783,6 +844,9 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        if let Some(reporter_user_id) = reporter_user_id {
+            metadata["reporter_user_id"] = json!(reporter_user_id);
+        }
         if content_updated {
             issue_badges::update_source(
                 &mut metadata,
@@ -908,6 +972,9 @@ impl LocalTaskStore {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)
         };
         let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
+        let follower_assignment_changed = assignee_changed
+            || assignee_user_id != current.assignee_user_id
+            || previous_group_id.as_deref() != metadata["collaboration_group"]["id"].as_str();
         let starts_runtime_dispatch = (collaboration_group_changed
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
@@ -945,6 +1012,12 @@ impl LocalTaskStore {
         )?;
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if status_changed {
+            issue_notifications::notify_followers(&transaction, task_id, "status", None, "")?;
+        }
+        if follower_assignment_changed {
+            issue_notifications::notify_followers(&transaction, task_id, "assignee", None, "")?;
         }
         assignment_receipts::sync_assignment_receipt(&transaction, project_id, task_id, &metadata)?;
         if let Some(position) = input.position.as_ref() {
@@ -1318,6 +1391,13 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let comment = insert_comment(&transaction, create, "completed")?;
+        issue_notifications::notify_followers(
+            &transaction,
+            &create.task_id,
+            "comment",
+            Some(&comment.message_id),
+            &create.content,
+        )?;
         transaction.commit()?;
         Ok(comment)
     }
@@ -1417,8 +1497,14 @@ impl LocalTaskStore {
         status: &str,
         content: &str,
     ) -> Result<Option<LocalComment>, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let execution = execution_row(&connection, execution_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous = transaction.query_row(
+            "SELECT status, content FROM loop_item_comments WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id') = ?1 ORDER BY id ASC LIMIT 1",
+            [execution_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+        let execution = execution_row(&transaction, execution_id)?;
         let runtime_address = match (&execution.runtime_device_id, &execution.runtime_task_id) {
             (Some(device_id), Some(task_id)) => Some(json!({
                 "deviceId": device_id,
@@ -1426,7 +1512,7 @@ impl LocalTaskStore {
             })),
             _ => None,
         };
-        let changed = connection.execute(
+        let changed = transaction.execute(
             "UPDATE loop_item_comments
              SET status = ?1, content = ?2, updated_at = ?3
              WHERE deleted_at IS NULL
@@ -1434,10 +1520,10 @@ impl LocalTaskStore {
             params![status, content, now(), execution_id],
         )?;
         if changed == 0 {
-            create_execution_comment(&connection, execution_id, status, content)?;
+            create_execution_comment(&transaction, execution_id, status, content)?;
         }
         if let Some(address) = &runtime_address {
-            connection.execute(
+            transaction.execute(
                 "UPDATE loop_item_comments
                  SET metadata = json_set(metadata, '$.runtime_address', json(?1))
                  WHERE deleted_at IS NULL
@@ -1445,7 +1531,7 @@ impl LocalTaskStore {
                 params![address.to_string(), execution_id],
             )?;
         }
-        let message_id = connection.query_row(
+        let message_id = transaction.query_row(
             "SELECT message_id FROM loop_item_comments
              WHERE deleted_at IS NULL
                AND json_extract(metadata, '$.execution_id') = ?1
@@ -1453,13 +1539,28 @@ impl LocalTaskStore {
             params![execution_id],
             |row| row.get::<_, String>(0),
         )?;
-        let comment = comment_row(&connection, &message_id)?;
+        let comment = comment_row(&transaction, &message_id)?;
         issue_badges::update_stored_source(
-            &connection,
+            &transaction,
             &comment.task_id,
             &format!("comment:{message_id}"),
             &comment.content,
         )?;
+        if status == "completed"
+            && !content.is_empty()
+            && previous.as_ref().map_or(true, |(status, body)| {
+                status != "completed" || body.is_empty()
+            })
+        {
+            issue_notifications::notify_followers(
+                &transaction,
+                &comment.task_id,
+                "comment",
+                Some(&message_id),
+                content,
+            )?;
+        }
+        transaction.commit()?;
         Ok(Some(comment))
     }
 
@@ -2212,6 +2313,8 @@ impl LocalTaskStore {
             .and_then(|payload| payload.get("dispatch_role"))
             .and_then(Value::as_str);
         if !matches!(dispatch_role, Some("manager" | "member")) {
+            let previous_status = get_item_from(&transaction, &current.loop_item_id, "task")?
+                .and_then(|item| item.status);
             transaction.execute(
                 "UPDATE loop_items
                  SET status = 'in_review',
@@ -2234,6 +2337,17 @@ impl LocalTaskStore {
                    )",
                 params![timestamp, current.loop_item_id],
             )?;
+            let current_status = get_item_from(&transaction, &current.loop_item_id, "task")?
+                .and_then(|item| item.status);
+            if previous_status != current_status {
+                issue_notifications::notify_followers(
+                    &transaction,
+                    &current.loop_item_id,
+                    "status",
+                    None,
+                    "",
+                )?;
+            }
         }
         transaction.commit()?;
         drop(connection);
@@ -4787,7 +4901,7 @@ fn move_runtime_comment_task_to_in_progress(
     connection: &Connection,
     task_id: &str,
 ) -> Result<(), TaskRuntimeError> {
-    connection.execute(
+    let changed = connection.execute(
         "UPDATE loop_items
          SET status='in_progress', completed_at=NULL,
              version=version+1, updated_at=?1
@@ -4795,6 +4909,9 @@ fn move_runtime_comment_task_to_in_progress(
            AND status IN ('inbox', 'pending', 'in_review')",
         params![now(), task_id],
     )?;
+    if changed > 0 {
+        issue_notifications::notify_followers(connection, task_id, "status", None, "")?;
+    }
     Ok(())
 }
 
@@ -5091,7 +5208,10 @@ fn dispatch_collaboration_group_assignment(
     .map(Some)
 }
 
-fn collaboration_group(project: &LoopItem, group_id: &str) -> Result<Value, TaskRuntimeError> {
+pub(super) fn collaboration_group(
+    project: &LoopItem,
+    group_id: &str,
+) -> Result<Value, TaskRuntimeError> {
     project
         .metadata
         .get("collaboration_groups")
@@ -5294,6 +5414,14 @@ fn update_agent_comment(
     content: &str,
     updated_at: &str,
 ) -> Result<(), TaskRuntimeError> {
+    let mut pending_statement = connection.prepare(
+        "SELECT task_id, message_id FROM loop_item_comments WHERE deleted_at IS NULL AND status IN ('pending','streaming') AND json_extract(metadata, '$.execution_id') = ?1",
+    )?;
+    let pending_comments = pending_statement
+        .query_map([execution_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     connection.execute(
         "UPDATE loop_item_comments
          SET status = ?1, content = ?2, updated_at = ?3
@@ -5313,6 +5441,17 @@ fn update_agent_comment(
             &format!("comment:{message_id}"),
             content,
         )?;
+    }
+    if status == "completed" && !content.is_empty() {
+        for (task_id, message_id) in pending_comments {
+            issue_notifications::notify_followers(
+                connection,
+                &task_id,
+                "comment",
+                Some(&message_id),
+                content,
+            )?;
+        }
     }
     Ok(())
 }
@@ -5738,6 +5877,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6108,10 +6248,20 @@ mod tests {
             Some(user_comment.message_id.as_str())
         );
 
+        store
+            .set_task_following(&project.id, &task.id, 1, true)
+            .unwrap();
         let updated = store
             .update_agent_comment_for_execution(execution.id, "completed", "搞定")
             .unwrap()
             .unwrap();
+        store
+            .update_agent_comment_for_execution(execution.id, "completed", "搞定")
+            .unwrap();
+        let notifications = store.list_issue_notifications(1).unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0]["payload"]["event"], "comment");
+        assert_eq!(notifications[0]["body"], "搞定");
         store
             .connection()
             .unwrap()
@@ -6128,6 +6278,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6399,6 +6550,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6520,6 +6672,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6638,6 +6791,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -6703,6 +6857,7 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7639,6 +7794,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7711,6 +7867,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -7865,6 +8022,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8119,6 +8277,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        reporter_user_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8237,6 +8396,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        reporter_user_id: None,
                         position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
@@ -8327,6 +8487,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -8597,6 +8758,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
@@ -9355,6 +9517,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    reporter_user_id: None,
                     position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,

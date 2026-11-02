@@ -120,6 +120,7 @@ pub(crate) struct SpaceContextGrant {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SpaceMcpRequestContext {
     grant: Option<SpaceContextGrant>,
+    actor_user_id: Option<i64>,
     backend_url: Option<String>,
     auth_token: Option<String>,
     surface: WeworkMcpSurface,
@@ -151,6 +152,7 @@ impl SpaceMcpRequestContext {
             && other.grant.is_none()
             && self.backend_url == other.backend_url
             && self.auth_token == other.auth_token
+            && self.actor_user_id == other.actor_user_id
     }
 
     pub(crate) fn new(
@@ -160,6 +162,7 @@ impl SpaceMcpRequestContext {
     ) -> Self {
         Self {
             grant,
+            actor_user_id: None,
             backend_url,
             auth_token,
             surface: WeworkMcpSurface::ProjectSpace,
@@ -172,6 +175,7 @@ impl SpaceMcpRequestContext {
     pub(crate) fn notifications(backend_url: Option<String>, auth_token: Option<String>) -> Self {
         Self {
             grant: None,
+            actor_user_id: None,
             backend_url,
             auth_token,
             surface: WeworkMcpSurface::Notifications,
@@ -223,7 +227,7 @@ impl SpaceMcpRequestContext {
 pub(crate) fn space_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<SpaceMcpClientConfig, String> {
-    let context = SpaceMcpRequestContext::new(
+    let mut context = SpaceMcpRequestContext::new(
         space_context_grant(request)?,
         request
             .backend_url
@@ -242,6 +246,13 @@ pub(crate) fn space_mcp_client_config(
             .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
             .filter(|value| !value.trim().is_empty()),
     );
+    let user_id = request
+        .extra
+        .get("user_id")
+        .or_else(|| request.extra.get("user")?.get("id"));
+    context.actor_user_id = user_id
+        .and_then(|id| id.as_i64().or_else(|| id.as_str()?.parse().ok()))
+        .filter(|id| *id >= 0);
     let registered = super::mcp_http::register_space_mcp_context(context)?;
     Ok(SpaceMcpClientConfig {
         url: registered.endpoint.url,
@@ -1136,7 +1147,7 @@ async fn call_tool_with_runtime_context(
             let input = parse(raw);
             match (project_id, input) {
                 (Ok(project_id), Ok(input)) => runtime
-                    .create_task(project_id, input)
+                    .create_task_with_schedule(project_id, input, None, None, context.actor_user_id)
                     .await
                     .and_then(|item| serde_json::to_value(item).map_err(invalid_json)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
@@ -1152,7 +1163,14 @@ async fn call_tool_with_runtime_context(
             let input = parse(raw);
             match (project_id, task_id, input) {
                 (Ok(project_id), Ok(task_id), Ok(input)) => runtime
-                    .update_task(project_id, task_id, input)
+                    .update_task_with_schedule(
+                        project_id,
+                        task_id,
+                        input,
+                        None,
+                        None,
+                        context.actor_user_id,
+                    )
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
@@ -1654,26 +1672,28 @@ async fn local_update_issue_status(
                     "Collaboration manager execution is unavailable".to_owned(),
                 )
             })?;
-        runtime.create_comment(LocalCommentCreate {
-            project_id: project_id.to_owned(),
-            task_id: issue_id.to_owned(),
-            client_message_id: None,
-            sender_type: "agent".to_owned(),
-            sender_id: manager.agent_id,
-            sender_name: manager.agent_name,
-            content: comment.to_owned(),
-            metadata: json!({
-                "dispatch_role": "manager",
-                "execution_id": manager.id,
-                "runtime_address": {
-                    "deviceId": manager.runtime_device_id,
-                    "taskId": manager_runtime_task_id,
-                },
-                "activity_type": "manager_status_comment",
-                "target_status": status,
-            }),
-            reply_to_message_id: None,
-        })?;
+        runtime
+            .create_visible_comment(LocalCommentCreate {
+                project_id: project_id.to_owned(),
+                task_id: issue_id.to_owned(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: manager.agent_id,
+                sender_name: manager.agent_name,
+                content: comment.to_owned(),
+                metadata: json!({
+                    "dispatch_role": "manager",
+                    "execution_id": manager.id,
+                    "runtime_address": {
+                        "deviceId": manager.runtime_device_id,
+                        "taskId": manager_runtime_task_id,
+                    },
+                    "activity_type": "manager_status_comment",
+                    "target_status": status,
+                }),
+                reply_to_message_id: None,
+            })
+            .await?;
     }
     serde_json::to_value(updated).map_err(invalid_json)
 }
@@ -4592,6 +4612,58 @@ mod tests {
         }
         assert!(context_scope_error(&grant, &json!({"space_id": "space-2"})).is_some());
         assert!(context_scope_error(&grant, &json!({"item_id": "ISSUE-2"})).is_some());
+    }
+
+    #[tokio::test]
+    async fn local_mcp_creation_records_the_request_user() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Local identities".to_owned(),
+                project_key: Some("IDENTITY".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let mut context = SpaceMcpRequestContext::new(None, None, None);
+        context.actor_user_id = Some(17);
+        let result = call_tool_with_context(
+            &runtime,
+            "create_board_item",
+            json!({"space_id":project.id,"item":{"title":"From an agent"}}),
+            &context,
+        )
+        .await;
+        assert_eq!(result["isError"], false, "{result}");
+        let item: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(item["created_by_user_id"], 17);
+        assert_eq!(item["metadata"]["reporter_user_id"], 17);
+        assert!(item["assignee_user_id"].is_null());
+        context.actor_user_id = Some(18);
+        let updated = call_tool_with_context(
+            &runtime,
+            "update_board_item",
+            json!({"space_id":project.id,"item_id":item["id"],"item":{"version":item["version"],"reporter_user_id":18}}),
+            &context,
+        ).await;
+        assert_eq!(updated["isError"], false, "{updated}");
+        let item: Value =
+            serde_json::from_str(updated["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(item["created_by_user_id"], 17);
+        assert_eq!(item["metadata"]["reporter_user_id"], 18);
+    }
+
+    #[test]
+    fn local_mcp_contexts_do_not_share_different_user_identities() {
+        let mut first = SpaceMcpRequestContext::new(None, None, None);
+        let mut second = first.clone();
+        first.actor_user_id = Some(17);
+        second.actor_user_id = Some(18);
+        assert!(!first.shares_unbound_authority(&second));
     }
 
     #[tokio::test]

@@ -12,7 +12,7 @@ desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.m
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
-backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile')"
+backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', 'shared/issue_follow_events.rs', '.github/runtime-images/backend-rs-e2e.Dockerfile')"
 for runtime_workflow in e2e-tests.yml wework-e2e.yml ci-cache-warmup.yml; do
   if ! grep -Fq "$backend_rs_runtime_inputs" "$repo_root/.github/workflows/$runtime_workflow"; then
     printf 'Backend Rust runtime producer and consumers must hash the same source inputs: %s\n' \
@@ -527,6 +527,14 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs"
+
+assert_desktop_case "issue identity is invoked by its core CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-issue-identity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-identity.scenario.mjs"
 
 assert_desktop_case "Windows background policy runs its native checkpoint" \
   'wework_desktop_e2e=true
@@ -1463,7 +1471,7 @@ wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/native-window-startup,/native-window-startup,startup-network-change,}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
-full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
+full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery,collaboration-issue-identity}"
 full_desktop_expected="${full_desktop_expected/runtime-input-answer-persistence/runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle}"
 
 for path in \

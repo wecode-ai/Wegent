@@ -86,6 +86,10 @@ export interface WorkspaceSessionApi {
 export type ProjectSpaceLocation = 'local' | 'cloud'
 export type DeliveryApi = ReturnType<typeof createDeliveryApi>
 export type LocalProjectSpaceApi = DeliveryApi & {
+  issueNotificationsUserId?: number
+  listIssueNotifications?(): Promise<import('@/api/notifications').WeworkNotification[]>
+  readIssueNotifications?(notificationId?: string): Promise<void>
+  setIssueNotificationPreference?(inApp: boolean): Promise<void>
   importLocalCodeProject?(input: {
     runtimeProjectKey: string
     name: string

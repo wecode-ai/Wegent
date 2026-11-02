@@ -1,15 +1,17 @@
 """Project chat timestamps must identify the same instant in every transport."""
 
 from datetime import UTC, datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.db import timezone as database_timezone
 from app.models.delivery import LoopItem
+from app.models.issue_follower import IssueFollower
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.project_chat import ProjectChatAgentStart
 from app.services.project_chat.service import project_chat_service
 from tests.services.test_project_chat_service import create_project
@@ -168,6 +170,54 @@ def test_persisted_execution_activity_follows_start_and_completion_history(
     assert datetime.fromisoformat(
         row.metadata_json["activity_at"]
     ) >= datetime.fromisoformat(restart_transition["at"])
+
+
+def test_followers_are_notified_when_runtime_starts_and_finishes(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Runtime status",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        assignee_agent_id="12",
+        metadata_json={},
+    )
+    test_db.add(task)
+    test_db.flush()
+    test_db.add(IssueFollower(issue_id=task.id, user_id=test_user.id))
+    test_db.commit()
+    with patch("app.core.async_utils.schedule_async_task"):
+        project_chat_service.start_agent_response(
+            test_db,
+            user_id=test_user.id,
+            request=ProjectChatAgentStart(
+                projectId=project.id,
+                taskId=task.id,
+                agentId="12",
+                runtimeDeviceId="follow-device",
+                runtimeTaskId="follow-task",
+            ),
+        )
+        project_chat_service.finish_runtime_activity(
+            test_db,
+            runtime_device_id="follow-device",
+            runtime_task_id="follow-task",
+            status_value="completed",
+            content="Done",
+        )
+    notifications = (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=test_user.id, kind="issue_follow")
+        .all()
+    )
+    assert [row.payload["event"] for row in notifications] == [
+        "status",
+        "status",
+        "comment",
+    ]
+    assert notifications[-1].body == "Done"
 
 
 @pytest.mark.parametrize("offset_minutes", [0, 330, -330])

@@ -196,10 +196,112 @@ test.describe('Collaboration module', () => {
     const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
+    await page.getByTestId('cloud-todo-more-properties').click()
+    const properties = page.getByTestId('cloud-todo-more-properties-popover')
+    await expect(properties).toBeVisible()
+    await expect(properties.getByTestId('cloud-todo-reporter')).toBeVisible()
+    const propertyGeometry = await properties.evaluate(popover => {
+      const bounds = popover.getBoundingClientRect()
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        clientWidth: popover.clientWidth,
+        scrollWidth: popover.scrollWidth,
+        rows: Array.from(popover.querySelectorAll('.task-detail-rail-prop')).map(row => {
+          const label = row.querySelector('.task-detail-rail-key')!.getBoundingClientRect()
+          const value = row.querySelector('.task-detail-rail-value')!.getBoundingClientRect()
+          const content = row
+            .querySelector('.task-detail-rail-value-content')!
+            .getBoundingClientRect()
+          return {
+            labelLeft: label.left,
+            labelRight: label.right,
+            valueLeft: value.left,
+            valueRight: value.right,
+            contentLeft: content.left,
+            contentRight: content.right,
+          }
+        }),
+        icons: [
+          '[data-testid="cloud-todo-reporter"] > svg',
+          '[data-testid="cloud-todo-identity-creator"] > svg',
+          '.task-detail-state-security > svg',
+        ].map(selector => popover.querySelector(selector)!.getBoundingClientRect().left),
+        names: Array.from(popover.querySelectorAll('.issue-identity-person > span')).map(name => {
+          const text = name.getBoundingClientRect()
+          const column = name.closest('.task-detail-rail-value')!.getBoundingClientRect()
+          const style = getComputedStyle(name)
+          return {
+            left: text.left,
+            right: text.right,
+            columnLeft: column.left,
+            columnRight: column.right,
+            overflowX: style.overflowX,
+            textOverflow: style.textOverflow,
+          }
+        }),
+      }
+    })
+    expect(propertyGeometry.rows.length).toBeGreaterThanOrEqual(6)
+    const firstRow = propertyGeometry.rows[0]
+    for (const row of propertyGeometry.rows) {
+      expect(row.labelLeft).toBeGreaterThanOrEqual(propertyGeometry.left)
+      expect(Math.abs(row.labelLeft - firstRow.labelLeft)).toBeLessThanOrEqual(1)
+      expect(Math.abs(row.valueLeft - firstRow.valueLeft)).toBeLessThanOrEqual(1)
+      expect(Math.abs(row.contentLeft - firstRow.contentLeft)).toBeLessThanOrEqual(1)
+      expect(row.valueLeft).toBeGreaterThanOrEqual(row.labelRight)
+      expect(row.contentLeft).toBeGreaterThanOrEqual(row.valueLeft)
+      expect(row.contentRight).toBeLessThanOrEqual(row.valueRight + 1)
+      expect(row.valueRight).toBeLessThanOrEqual(propertyGeometry.right + 1)
+    }
+    for (const iconLeft of propertyGeometry.icons) {
+      expect(Math.abs(iconLeft - propertyGeometry.icons[0])).toBeLessThanOrEqual(1)
+    }
+    expect(propertyGeometry.names).toHaveLength(2)
+    for (const name of propertyGeometry.names) {
+      expect(name.left).toBeGreaterThanOrEqual(name.columnLeft)
+      expect(name.right).toBeLessThanOrEqual(name.columnRight + 1)
+      expect(name.overflowX).toBe('hidden')
+      expect(name.textOverflow).toBe('ellipsis')
+    }
+    expect(propertyGeometry.scrollWidth).toBeLessThanOrEqual(propertyGeometry.clientWidth + 1)
+    await page.keyboard.press('Escape')
+    await expect(properties).toBeHidden()
+
     await page.getByTestId('cloud-todo-detail-title').click()
     await page.getByTestId('cloud-todo-detail-title').fill(updatedIssueTitle)
+    const renamed = page.waitForResponse(
+      response =>
+        response.request().method() === 'PATCH' &&
+        response.url().endsWith(`/loop-items/${issueId}`) &&
+        response.request().postDataJSON()?.title === updatedIssueTitle
+    )
+    await page.getByTestId('cloud-todo-detail-title').blur()
+    const renamedResponse = await renamed
+    expect(renamedResponse.ok()).toBe(true)
+    expect(renamedResponse.request().postDataJSON()).toEqual({
+      version: expect.any(Number),
+      title: updatedIssueTitle,
+    })
+    const renamedIssue = await renamedResponse.json()
+    expect(renamedIssue).toMatchObject({ title: updatedIssueTitle })
+    const statusSaved = page.waitForResponse(
+      response =>
+        response.request().method() === 'PATCH' &&
+        response.url().endsWith(`/loop-items/${issueId}`) &&
+        response.request().postDataJSON()?.status === 'pending'
+    )
     await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
-    await page.getByTestId('cloud-todo-save').click()
+    const statusResponse = await statusSaved
+    expect(statusResponse.ok()).toBe(true)
+    expect(statusResponse.request().postDataJSON()).toEqual({
+      version: renamedIssue.version,
+      status: 'pending',
+    })
+    expect(await statusResponse.json()).toMatchObject({
+      title: updatedIssueTitle,
+      status: 'pending',
+    })
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
 
     await writeSharedComposer(page.getByTestId('collaboration-issue-comment'), comment)
