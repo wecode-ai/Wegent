@@ -22,6 +22,11 @@ impl RuntimeWorkRpcHandler {
         let Ok(_guard) = gate.try_lock() else {
             return Ok(());
         };
+        let current = store.stand_in_work(user, id).map_err(settings_error)?;
+        if current["status"] != "sending" {
+            *work = current;
+            return Ok(());
+        }
         let ids = store
             .stand_in_messages(user, id)
             .map_err(settings_error)?
@@ -75,8 +80,9 @@ impl RuntimeWorkRpcHandler {
                 .update_stand_in_dispatch(user, id, &ids, "sent", None)
                 .map_err(settings_error)?;
             *work = store.stand_in_work(user, id).map_err(settings_error)?;
-        } else if !self.is_busy_local_task(id) {
-            // Runtime persists the task before launching it; no task or queued run means no acceptance.
+        } else {
+            // The dispatch gate excludes an in-flight sender. An older busy turn
+            // cannot prove acceptance of this batch without its durable receipt.
             store
                 .update_stand_in_dispatch(
                     user,
@@ -504,6 +510,44 @@ mod tests {
     }
 
     #[test]
+    fn stand_in_recovery_refreshes_a_stale_sending_snapshot_after_dispatch_settles() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = RuntimeWorkRpcHandler {
+            store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
+            task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+            ..RuntimeWorkRpcHandler::new("mac", "unused")
+        };
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &json!({"id":"group","kind":"group","profile":"corp:user"}),
+                &json!({"id":"one","text":"Review"}),
+                None,
+            )
+            .unwrap();
+        let id = work["id"].as_str().unwrap();
+        let ids = vec![store.stand_in_messages(7, id).unwrap()[0]["recordId"]
+            .as_str()
+            .unwrap()
+            .to_owned()];
+        store
+            .update_stand_in_dispatch(7, id, &ids, "sending", None)
+            .unwrap();
+        let mut stale = store.stand_in_work(7, id).unwrap();
+        store
+            .update_stand_in_dispatch(7, id, &ids, "sent", None)
+            .unwrap();
+        handler
+            .reconcile_connection_dispatch(&store, 7, &mut stale)
+            .unwrap();
+        assert_eq!(stale["status"], "sent");
+        assert!(stale["error"].is_null());
+        assert!(store.stand_in_work(7, id).unwrap()["error"].is_null());
+    }
+
+    #[test]
     fn source_messages_are_displayed_without_exposing_runtime_instructions() {
         let mut payload = json!({"message":"Internal orchestration","clientUserMessageId":"batch","executionRequest":{"prompt":"Internal orchestration"}});
         set_connection_message_presentation(
@@ -577,6 +621,10 @@ mod tests {
             local_task_id: id.clone(),
             ..Default::default()
         });
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        handler.start_local_task_execution(id.clone(), cancel, stopped);
+        assert!(handler.is_busy_local_task(&id));
         store
             .update_stand_in_dispatch(7, &id, &ids, "sending", None)
             .unwrap();

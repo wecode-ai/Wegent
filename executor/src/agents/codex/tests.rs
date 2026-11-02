@@ -231,7 +231,8 @@ approval_mode = "approve"
             fs::read_to_string(home.join("config.toml"))
                 .unwrap()
                 .contains("home_only"),
-            "The synthetic MCP fixture was overwritten during launch configuration"
+            "The synthetic MCP fixture was overwritten during launch configuration: home={} team_id={team_id} origin_type={origin_type}",
+            home.display()
         );
         assert!(config
             .config_overrides

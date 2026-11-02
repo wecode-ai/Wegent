@@ -104,8 +104,26 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
     );
 }
 
-#[tokio::test]
-async fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
+#[test]
+fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
+    let _lock = crate::test_env::lock();
+    let environment = tempfile::tempdir().unwrap();
+    let _env: Vec<_> = [
+        "HOME",
+        "CODEX_HOME",
+        "WEGENT_CODEX_HOME",
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_WORKBENCH_HOME",
+        "WEGENT_CAPABILITIES_HOME",
+    ]
+    .into_iter()
+    .map(|key| {
+        let directory = environment.path().join(key);
+        fs::create_dir_all(&directory).unwrap();
+        super::super::tests::ScalarEnv::set(key, directory.to_str().unwrap())
+    })
+    .collect();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
     settings["primary"]["enabled"] = json!(true);
@@ -154,6 +172,7 @@ async fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
     assert_eq!(snapshot["events"][0]["id"], event["id"]);
     assert!(handler.local_task_link(&task_id(7)).is_none());
     assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
+    });
 }
 
 #[tokio::test]
