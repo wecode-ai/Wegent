@@ -474,6 +474,45 @@ fn advancing_a_release_preserves_runtime_preferences_and_legacy_defaults() {
     assert_eq!(payload["spec"]["updatePolicy"], "auto");
 }
 
+#[test]
+fn advancing_historical_release_takes_account_auth_from_target_manifest() {
+    let plugin = plugin_row(1);
+    let mut release = release_row(12, 1);
+    let auth = serde_json::json!({
+        "protocolVersion": 1, "credentialType": "password",
+        "adapter": "scripts/account-auth.py"
+    });
+    release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "connectors": [{"slug": "gitlab-intra", "accountAuth": auth}]
+    })));
+    release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "components": {"connectors": [
+            {"slug": "gitlab-intra", "localAuth": {"kind": "browser_oauth"}},
+            {"slug": "removed", "accountAuth": auth}
+        ]}
+    })));
+    let payload = installed_payload(&plugin, &release, &InstalledSpec::default());
+    let connectors = &payload["spec"]["components"]["connectors"];
+    assert_eq!(connectors[0]["accountAuth"], auth);
+    assert_eq!(connectors[0]["localAuth"]["kind"], "browser_oauth");
+    assert!(connectors[1].get("accountAuth").is_none());
+    assert!(
+        release.scan_report_json.0.to_value()["components"]["connectors"][0]
+            .get("accountAuth")
+            .is_none()
+    );
+
+    release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+        "connectors": []
+    })));
+    let payload = installed_payload(&plugin, &release, &InstalledSpec::default());
+    assert!(
+        payload["spec"]["components"]["connectors"][0]
+            .get("accountAuth")
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn successive_bounded_batches_drain_candidates_without_repeating_updates() {
     let catalog = catalog_for(&[1, 2, 3]);

@@ -720,11 +720,38 @@ fn installed_payload(
     current: &InstalledSpec,
 ) -> Value {
     let scan_report = release.scan_report_json.0.to_value();
-    let components = scan_report
+    let mut components = scan_report
         .get("components")
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    // Historical scans omitted accountAuth. The immutable target manifest is
+    // authoritative, including when a release removes an auth declaration.
+    let manifest = release.manifest_json.0.to_value();
+    if let Some(connectors) = components
+        .get_mut("connectors")
+        .and_then(Value::as_array_mut)
+    {
+        for connector in connectors {
+            let account_auth = manifest
+                .get("connectors")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find(|item| {
+                        item.get("slug").and_then(Value::as_str).is_some()
+                            && item.get("slug") == connector.get("slug")
+                    })
+                })
+                .and_then(|item| item.get("accountAuth"))
+                .filter(|value| !value.is_null());
+            if let Some(connector) = connector.as_object_mut() {
+                connector.remove("accountAuth");
+                if let Some(account_auth) = account_auth {
+                    connector.insert("accountAuth".to_string(), account_auth.clone());
+                }
+            }
+        }
+    }
     let interface = release.interface_json.0.to_value();
 
     let mut spec = serde_json::Map::new();
