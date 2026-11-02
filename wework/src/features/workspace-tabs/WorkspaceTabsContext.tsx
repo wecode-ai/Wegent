@@ -41,6 +41,7 @@ import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/project
 import { writeSettingsReturnPath } from './settingsReturnPath'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
+import { dispatchWorkspaceTabReceived } from './workspaceTabTransfer'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
 import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
@@ -419,6 +420,9 @@ export function WorkspaceTabsProvider({
         if (!localStorage.getItem(key)) return
         flushSync(() => dispatch({ type: 'receive', tab: receivedTab }))
         navigateTo(workspaceTabRoute(receivedTab))
+        // Preference synchronization may have mounted this tab before its return.
+        // Commit its received drafts before acknowledging the source window.
+        flushSync(() => dispatchWorkspaceTabReceived(receivedTab.id))
         localStorage.removeItem(key)
       })().catch(error => {
         console.error('Failed to accept returned workspace tab', error)

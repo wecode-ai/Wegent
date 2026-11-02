@@ -205,14 +205,14 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `${CONTENT} [data-testid="collaboration-tab-board"]`
       )
-      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]')
       assert.notEqual(
         (await rpc(control, 'runtime.project_coordinator.binding.get', target)).binding?.enabled,
         true
       )
       await captureScreenshot(control, 'project-coordination-01-explicit-enable-entry.png')
-      await control.command('click', '[data-testid="project-coordination-enable"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-enable"]')
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
       const enabled = await rpc(control, 'runtime.project_coordinator.binding.get', target)
       assert.equal(enabled.binding.userId, USER)
@@ -236,7 +236,7 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, 'project-coordination-02-silent-source-no-work.png')
-      await control.command('click', '[data-testid="project-coordination-check"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-check"]')
       await control.command(
         'waitFor',
         `[data-testid="project-coordination-question-${issue.id}"]`,
@@ -266,7 +266,10 @@ export function createDesktopScenario({
         control,
         'project-coordination-03-private-question-original-issue.png'
       )
-      await control.command('click', `[data-testid="project-coordination-question-${issue.id}"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="project-coordination-question-${issue.id}"]`
+      )
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-issue-detail"]`, {
         text: issue.title,
       })
@@ -284,7 +287,7 @@ export function createDesktopScenario({
           metadata: {},
         },
       })
-      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('clickWhenEnabled', '[data-testid="project-coordination-check"]')
       const bindings = await until(
         () => rpc(control, 'executions.list', { project_id: project.id, include_terminal: true }),
@@ -305,8 +308,8 @@ export function createDesktopScenario({
         'The dispatch receipt settles'
       )
       assert.equal(status.error, null)
-      await control.command('click', '[data-testid="project-coordinator-work-list"]')
-      await control.command('click', `[data-testid="cloud-todo-card-${issue.id}"]`)
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-work-list"]')
+      await control.command('clickWhenEnabled', `[data-testid="cloud-todo-card-${issue.id}"]`)
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-issue-detail"]`, {
         text: issue.title,
       })
@@ -315,7 +318,10 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, 'project-coordination-05-one-original-issue-work.png')
       await control.command('waitFor', `[data-testid="cloud-task-activity-approve-${issue.id}"]`)
-      await control.command('click', `[data-testid="cloud-task-activity-approve-${issue.id}"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="cloud-task-activity-approve-${issue.id}"]`
+      )
       const completed = await until(
         () => rpc(control, 'executions.list', { project_id: project.id, include_terminal: true }),
         rows => rows.some(row => row.id === bindings[0].id && row.status === 'completed'),
@@ -359,9 +365,9 @@ export function createDesktopScenario({
         'The human accepts the result through the original Issue flow'
       )
       await captureScreenshot(control, 'project-coordination-05c-human-accepted-result.png')
-      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
-      await control.command('click', '[data-testid="project-coordination-check"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-check"]')
       await until(
         () => rpc(control, 'runtime.project_coordinator.processing.get', target),
         state => !state.running,
@@ -380,34 +386,37 @@ export function createDesktopScenario({
         expectNewDeviceIdentity: true,
       })
       await control.command('waitFor', '[data-testid="telemetry-consent-decline"]')
-      await control.command('click', '[data-testid="telemetry-consent-decline"]')
+      await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
       )
-      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]', {
         text: '接管',
       })
       await captureScreenshot(control, 'project-coordination-06-other-device-binding.png')
       const before = await rpc(control, 'runtime.project_coordinator.binding.get', target)
-      await control.command('click', '[data-testid="project-coordination-enable"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-enable"]')
       await control.command('waitFor', '[data-testid="project-coordination-takeover-confirm"]')
       assert.equal(
         (await rpc(control, 'runtime.project_coordinator.binding.get', target)).binding.generation,
         before.binding.generation
       )
       await captureScreenshot(control, 'project-coordination-07-explicit-takeover-confirmation.png')
-      await control.command('click', '[data-testid="project-coordination-takeover-confirm"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="project-coordination-takeover-confirm"]'
+      )
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
       const taken = await rpc(control, 'runtime.project_coordinator.binding.get', target)
       assert.equal(taken.binding.userId, USER)
       assert.notEqual(taken.binding.deviceId, enabled.binding.deviceId)
       assert.notEqual(taken.binding.generation, before.binding.generation)
       await captureScreenshot(control, 'project-coordination-08-single-active-binding.png')
-      await control.command('click', '[data-testid="project-coordination-stop"]')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-stop"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]', {
         text: '启用',
       })

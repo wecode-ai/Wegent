@@ -115,6 +115,11 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
+  // Cached messages can appear before the shared initial history read settles.
+  await control.command(
+    'waitFor',
+    `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
+  )
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   // The closing drawer retains its conversation until the exit animation ends.
   // Inject the next read failure only after that previous reader is unmounted.
