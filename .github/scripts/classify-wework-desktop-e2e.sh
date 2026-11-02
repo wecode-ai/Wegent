@@ -1983,6 +1983,8 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/ci/rust-toolchain | \
+      .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/actions/setup-rust-cache/* | \
       .github/actions/setup-sccache/* | \
       .github/actions/setup-node-workspace/* | \

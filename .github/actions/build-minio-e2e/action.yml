@@ -8,6 +8,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Restore published real object storage
+      id: published
+      shell: bash
+      run: |
+        .github/scripts/restore-ci-downloads.sh
+        if [[ -x "$RUNNER_TEMP/wework-minio/bin/minio" ]]; then
+          echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Restore pinned MinIO build
       id: minio
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -16,14 +25,14 @@ runs:
         key: ${{ runner.os }}-${{ runner.arch }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-static-v1
 
     - name: Set up Go for real object storage
-      if: steps.minio.outputs.cache-hit != 'true'
+      if: steps.minio.outputs.cache-hit != 'true' && steps.published.outputs.cache-hit != 'true'
       uses: actions/setup-go@v6
       with:
         go-version: "1.25.9"
         cache: false
 
     - name: Build real object storage
-      if: steps.minio.outputs.cache-hit != 'true'
+      if: steps.minio.outputs.cache-hit != 'true' && steps.published.outputs.cache-hit != 'true'
       shell: bash
       env:
         GOBIN: ${{ runner.temp }}/wework-minio/bin

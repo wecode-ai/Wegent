@@ -26,7 +26,9 @@ classify_path() {
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
-    .github/scripts/wework-windows-e2e-build-key.mjs | \
+    .github/runtime-images/* | .github/scripts/ci-prebuilt-images.* | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
+      .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \
@@ -102,7 +104,7 @@ classify_path() {
       changed[docker]=true
       changed[wework_target]=true
       ;;
-    executor/*)
+    executor/* | sdk/plugin-auth/* | sdk/plugin-creator/*)
       changed[docker]=true
       changed[executor_rust]=true
       changed[wework_target]=true

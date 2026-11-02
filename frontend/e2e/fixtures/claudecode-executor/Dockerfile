@@ -1,4 +1,5 @@
 ARG BASE_IMAGE=ghcr.io/wecode-ai/wegent-base-python3.12:latest
+ARG DEPS_IMAGE=builder-deps
 
 FROM ${BASE_IMAGE} AS builder-base
 
@@ -22,7 +23,7 @@ RUN mkdir -p src/bin \
     && printf 'fn main() {}\n' > src/bin/wegent-executor.rs \
     && cargo build --release --locked --bin wegent-executor
 
-FROM builder-deps AS builder
+FROM ${DEPS_IMAGE} AS builder
 
 COPY executor/src ./src
 COPY sdk/plugin-auth /workspace/src/sdk/plugin-auth

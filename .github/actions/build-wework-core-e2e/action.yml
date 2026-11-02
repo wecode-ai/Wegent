@@ -16,6 +16,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Restore published Electron and Codex downloads
+      shell: bash
+      run: .github/scripts/restore-ci-downloads.sh
+
     - name: Set up Node workspace
       uses: ./.github/actions/setup-node-workspace
       with:

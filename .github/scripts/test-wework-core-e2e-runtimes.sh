@@ -42,8 +42,12 @@ ruby -ryaml -e '
   raise "Backend Rust OCI references must use the shared resolver" unless runtime_steps.all? { |s| s.fetch("run").include?(resolver) }
   steps = producer.fetch("steps").to_h { |s| [s.fetch("name"), s] }
   build = steps.fetch("Build Backend Rust E2E runtime").fetch("run")
-  raise "Backend Rust must compile the attachment S3 example" unless build.include?("--example attachment_s3_e2e")
-  raise "Backend Rust must compile the attachment hosting example" unless build.include?("--example attachment_hosting_e2e")
+  builder_recipe = ".github/runtime-images/backend-rs-builder.Dockerfile"
+  raise "Backend Rust must build with its hashed Noble recipe" unless build.include?("--file #{builder_recipe}") && digests.first.include?(builder_recipe)
+  builder = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-builder.Dockerfile"))
+  raise "Backend Rust builder must use Noble" unless builder.include?("FROM ubuntu:24.04")
+  raise "Backend Rust must compile the attachment S3 example" unless builder.include?("--example attachment_s3_e2e")
+  raise "Backend Rust must compile the attachment hosting example" unless builder.include?("--example attachment_hosting_e2e")
   publish = steps.fetch("Publish content-addressed Backend Rust E2E image")
   raise "Backend Rust image publication must use its hashed recipe" unless publish.fetch("run").include?("--file #{recipe}")
   dockerfile = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-e2e.Dockerfile"))
