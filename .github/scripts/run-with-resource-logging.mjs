@@ -32,20 +32,23 @@ function cpuTimes() {
 let previousCpu = cpuTimes()
 let child
 let smallestDiskPressureTier = Infinity
+let initialDiskAvailableBytes
+let sampledDiskGrowth = false
 
-function diskUsage() {
+function diskUsage(depth) {
   const paths = [
     'wework/test-results/desktop-e2e',
     '.ci-artifacts',
     'backend/.venv',
     '/root/.cache',
     '/root/go',
+    '/__t',
     '/tmp',
   ].filter(existsSync)
   let output
   let incomplete
   try {
-    output = execFileSync('du', ['-k', '-x', '-d', '4', '--', ...paths], {
+    output = execFileSync('du', ['-k', '-x', '-d', String(depth), '--', ...paths], {
       encoding: 'utf8',
       timeout: 10_000,
       maxBuffer: 2 * 1024 * 1024,
@@ -78,6 +81,7 @@ function sample(phase, exitCode) {
   const currentCpu = cpuTimes()
   const elapsed = currentCpu.total - previousCpu.total
   const disk = statfsSync('.')
+  initialDiskAvailableBytes ??= disk.bavail * disk.bsize
   const record = {
     timestamp: new Date().toISOString(),
     phase,
@@ -94,13 +98,28 @@ function sample(phase, exitCode) {
     memoryTotalBytes: totalmem(),
     memoryFreeBytes: freemem(),
     diskAvailableBytes: disk.bavail * disk.bsize,
+    diskTotalBytes: disk.blocks * disk.bsize,
+    diskInitialAvailableBytes: initialDiskAvailableBytes,
+    diskAvailableDecreaseBytes: Math.max(0, initialDiskAvailableBytes - disk.bavail * disk.bsize),
     diskAvailableInodes: disk.ffree,
   }
   if (process.platform === 'linux') {
     const pressureTier = Math.floor(Math.log2(Math.max(record.diskAvailableBytes, 1)))
-    if (record.diskAvailableBytes < 4 * 1024 ** 3 && pressureTier < smallestDiskPressureTier) {
-      smallestDiskPressureTier = pressureTier
-      record.diskUsage = diskUsage()
+    const desktopRun = Boolean(process.env.WEWORK_E2E_PARALLEL_CHECKPOINTS)
+    const lowFree =
+      record.diskAvailableBytes < 4 * 1024 ** 3 && pressureTier < smallestDiskPressureTier
+    const growth =
+      desktopRun && !sampledDiskGrowth && record.diskAvailableDecreaseBytes >= 8 * 1024 ** 3
+    const baseline = desktopRun && phase === 'start'
+    if (baseline || lowFree || growth) {
+      if (lowFree) smallestDiskPressureTier = pressureTier
+      if (growth) sampledDiskGrowth = true
+      record.diskUsage = {
+        triggers: [baseline && 'baseline', lowFree && 'low_free', growth && 'growth'].filter(
+          Boolean
+        ),
+        ...diskUsage(baseline && !lowFree ? 1 : 4),
+      }
     }
     record.linux = Object.fromEntries(
       [

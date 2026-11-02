@@ -2155,6 +2155,25 @@ class LoopItemExecutionService:
                 row.status,
             )
             return project_chat_service.to_view(row, db=db)
+        if (
+            execution.status == STATUS_CLAIMED
+            and row is not None
+            and row.status == "streaming"
+            and row.runtime_device_id == execution.runtime_device_id
+            and row.runtime_task_id == conversation_task_id
+            and (row.metadata_json or {}).get("execution_id") == execution.id
+            and (row.metadata_json or {}).get("run_status") == "running"
+        ):
+            # A claimed group may already have a running manager conversation.
+            activity_status = "streaming"
+            run_status = "running"
+            logger.info(
+                "[LoopItemExecution] Activity open preserved running conversation "
+                "execution=%s message=%s runtime_task=%s",
+                execution.id,
+                row.message_id,
+                conversation_task_id,
+            )
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
             if task is not None and task.status == "completed":

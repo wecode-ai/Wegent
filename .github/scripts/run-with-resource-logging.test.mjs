@@ -129,3 +129,44 @@ for (const { name, output, directories } of [
     assert.equal(result.records.at(-1).exitCode, 23)
   })
 }
+
+for (const { remainingGiB, triggers } of [
+  { remainingGiB: 73, triggers: ['growth'] },
+  { remainingGiB: 1, triggers: ['low_free', 'growth'] },
+]) {
+  test(`captures disk growth once with ${remainingGiB} GiB remaining`, () => {
+    const result = run(
+      [process.execPath, '-e', 'process.exit(23)'],
+      { WEWORK_E2E_PARALLEL_CHECKPOINTS: '4' },
+      `
+        import fs from 'node:fs'
+        import childProcess from 'node:child_process'
+        import { syncBuiltinESMExports } from 'node:module'
+        const statfs = fs.statfsSync
+        let samples = 0
+        let scans = 0
+        fs.statfsSync = path => {
+          const current = statfs(path)
+          const available = (samples++ === 0 ? 85 : ${remainingGiB}) * 1024 ** 3
+          return { ...current, bavail: available / current.bsize }
+        }
+        childProcess.execFileSync = (_command, args) =>
+          String(++scans) + '\\tdepth-' + args[3] + '\\n'
+        Object.defineProperty(process, 'platform', { value: 'linux' })
+        syncBuiltinESMExports()
+      `
+    )
+    assert.equal(result.status, 23)
+    assert.deepEqual(result.records[0].diskUsage.triggers, ['baseline'])
+    assert.deepEqual(result.records[0].diskUsage.directories, [
+      { allocatedBytes: 1024, path: 'depth-1' },
+    ])
+    const end = result.records.at(-1)
+    assert.equal(end.diskInitialAvailableBytes, 85 * 1024 ** 3)
+    assert.equal(end.diskAvailableBytes, remainingGiB * 1024 ** 3)
+    assert.equal(end.diskAvailableDecreaseBytes, (85 - remainingGiB) * 1024 ** 3)
+    assert.deepEqual(end.diskUsage.triggers, triggers)
+    assert.deepEqual(end.diskUsage.directories, [{ allocatedBytes: 2048, path: 'depth-4' }])
+    assert.equal(end.exitCode, 23)
+  })
+}
