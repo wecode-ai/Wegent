@@ -950,6 +950,9 @@ path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
 methods = ["GET", "PUT"]
 path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id"
 [[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id"
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/me/project-coordinator-bindings"
 # `GET /api/v1/cloud-projects/{project_id}/collaboration-groups` — the

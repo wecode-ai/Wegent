@@ -10,12 +10,83 @@ use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 const FIELD: &str = "projectCoordination";
 const CONFLICT: &str = "project coordination conflict";
 
+#[path = "project_coordination_dispatch.rs"]
+mod dispatch;
+
+pub(crate) fn binding_matches(binding: &Value, context: &Value, actor: i64) -> bool {
+    binding["enabled"] == true
+        && binding["userId"] == actor
+        && context["userId"] == actor
+        && ["generation", "deviceId"].iter().all(|key| {
+            context[*key]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+                && binding[*key] == context[*key]
+        })
+}
+
+pub(crate) async fn require_execution_binding(
+    state: &AppState,
+    project_id: &str,
+    actor: i64,
+    origin: &Value,
+) -> anyhow::Result<()> {
+    require_execution_binding_on(&mut &state.mysql, project_id, actor, origin).await
+}
+
+pub(crate) async fn require_execution_binding_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    project_id: &str,
+    actor: i64,
+    origin: &Value,
+) -> anyhow::Result<()> {
+    use anyhow::{Context, bail};
+    let Some(context) = origin.get("project_coordination") else {
+        return Ok(());
+    };
+    if context["projectId"] != project_id {
+        bail!("Project coordination context is invalid");
+    }
+    let group = context["groupId"]
+        .as_str()
+        .context("Project coordination group is missing")?;
+    let project = store::get_on(query, "project", project_id)
+        .await?
+        .context("Project is unavailable")?;
+    if project.status != "active"
+        || !binding_matches(&project.metadata.0[FIELD][group], context, actor)
+    {
+        bail!("Project coordination binding is revoked or superseded");
+    }
+    let device = crate::device_identity::resolve_owned_device_alias_on(
+        query,
+        actor,
+        context["deviceId"].as_str().unwrap(),
+    )
+    .await?
+    .and_then(|device| crate::device_identity::identity_from_device(&device))
+    .context("Project coordination device is unavailable")?;
+    if device.runtime_device_id != context["deviceId"] {
+        bail!("Project coordination device identity changed");
+    }
+    Ok(())
+}
+
 fn can_execute(role: &str) -> bool {
     matches!(role, "Owner" | "Maintainer" | "Developer")
 }
 
 fn can_administer(role: &str) -> bool {
     matches!(role, "Owner" | "Maintainer")
+}
+
+fn group_error(error: anyhow::Error) -> FastApiError {
+    match error.downcast::<brz_mysql::MysqlError>() {
+        Ok(error) => crate::cloud_projects::internal_error(error),
+        Err(_) => FastApiError::forbidden(
+            "The collaboration group or its resources are unavailable to this member",
+        ),
+    }
 }
 
 fn conflict(message: &str) -> FastApiError {
@@ -128,11 +199,7 @@ async fn set_project_coordinator_binding(
             })?;
         let group = groups::authorize(state, project_id, group_id, i64::from(actor.0.id))
             .await
-            .map_err(|_| {
-                FastApiError::forbidden(
-                    "The collaboration group or its resources are unavailable to this member",
-                )
-            })?;
+            .map_err(group_error)?;
         if group["leader"]["kind"] != "agent" {
             return Err(FastApiError::detail(
                 StatusCode::BAD_REQUEST,
@@ -317,6 +384,16 @@ mod tests {
                 http::Method::GET,
                 2,
             ),
+            (
+                "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id",
+                http::Method::GET,
+                2,
+            ),
+            (
+                "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id",
+                http::Method::PUT,
+                64,
+            ),
         ] {
             assert!(
                 table.matches(
@@ -324,6 +401,7 @@ mod tests {
                     &path
                         .replace(":project_id", "1001")
                         .replace(":group_id", "101")
+                        .replace(":command_id", "command")
                 )
             );
             assert_eq!(

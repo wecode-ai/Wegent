@@ -2,7 +2,7 @@
 use super::*;
 use brz_mysql::MysqlService;
 
-async fn seed(mysql: &MysqlService) {
+pub(super) async fn seed(mysql: &MysqlService) {
     let integers = [
         "sequence_number",
         "next_item_number",
@@ -117,7 +117,18 @@ async fn verify(mysql: &MysqlService) {
         .unwrap()
         .unwrap();
     assert_eq!(role, "Developer");
+    assert_eq!(
+        crate::background_jobs::project::authority::execution_priority(mysql, "1001", 7)
+            .await
+            .unwrap(),
+        2
+    );
     mysql.execute("INSERT INTO resource_members (resource_type,resource_id,entity_type,entity_id,status,role) VALUES ('CloudProject',1001,'user','7','approved','Viewer')",()).await.unwrap();
+    assert!(
+        crate::background_jobs::project::authority::execution_priority(mysql, "1001", 7)
+            .await
+            .is_err()
+    );
     let takeover =
         json!({"enabled":true,"expectedGeneration":first["binding"]["generation"],"takeover":true});
     let denied = persist_binding(mysql, 7, "1001", "101", "device-a", &takeover)
@@ -192,6 +203,24 @@ async fn verify(mysql: &MysqlService) {
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
 async fn binding_cas_and_immediate_role_revocation_use_the_project_contract() {
+    with_schema(4, |mysql| async move { verify(&mysql).await }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn coordination_dispatch_is_atomic_idempotent_and_version_fenced() {
+    with_schema(1, |mysql| async move {
+        seed(&mysql).await;
+        super::dispatch::verify_dispatch_transactions(&mysql).await;
+    })
+    .await;
+}
+
+async fn with_schema<F, Fut>(capacity: u32, verify: F)
+where
+    F: FnOnce(MysqlService) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
     let address: std::net::SocketAddr = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
         .expect("set disposable MySQL fixture address")
         .parse()
@@ -202,19 +231,18 @@ async fn binding_cas_and_immediate_role_revocation_use_the_project_contract() {
     );
     let url = |name: &str| format!("mysql://root@{address}/{name}?ssl-mode=disabled");
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();
-    let name = format!(
-        "coordination_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let name = format!("coordination_{}", notifications::uuid().replace('-', ""));
     admin
         .execute(format!("CREATE DATABASE {name}"), ())
         .await
         .unwrap();
-    let mysql = MysqlService::connect(&url(&name)).await.unwrap();
-    let outcome = tokio::spawn(async move { verify(&mysql).await }).await;
+    let mysql = MysqlService::connect_with_options(
+        &url(&name),
+        brz_mysql::MysqlServiceOptions::default().with_max_connections(capacity),
+    )
+    .await
+    .unwrap();
+    let outcome = tokio::spawn(verify(mysql)).await;
     admin
         .execute(format!("DROP DATABASE {name}"), ())
         .await

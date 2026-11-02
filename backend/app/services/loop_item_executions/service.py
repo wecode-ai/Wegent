@@ -47,6 +47,7 @@ from app.services.loop_item_executions.profile import (
     validate_wework_execution_target,
 )
 from app.services.loop_item_executions.runtime_identity import (
+    execution_actor_options,
     execution_conversation_task_id,
     execution_runtime_task_id,
     execution_runtime_turn_id,
@@ -3521,11 +3522,7 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             ).payload
             member_runtime_profiles = self._collaboration_member_runtime_profiles(
                 db,
@@ -3586,11 +3583,7 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             )
             execution_request = compiled.payload.get("executionRequest")
             model_config = (
@@ -3854,11 +3847,7 @@ class LoopItemExecutionService:
                     )
                 ),
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             ).payload
             self._detach_collaboration_member_payload(payload)
             profiles.append(
