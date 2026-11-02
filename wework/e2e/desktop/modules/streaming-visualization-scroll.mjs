@@ -94,6 +94,10 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
   const directory = join(workspacePath, 'outputs', 'visualizations', 'scroll-e2e')
   const file = join(directory, 'wheel-fixture.html')
   let stage = 'initial'
+  let phase = 'setup'
+  let samplingStarted = false
+  let nestedAttempt = null
+  const nativeWheels = []
 
   async function frameAction(control, action, selector, extra = {}) {
     const origin = await control.command('getLocationOrigin', 'body')
@@ -118,7 +122,56 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
   const outerMetrics = control =>
     getSingleElementMetrics(control, SCROLLER_SELECTOR, 'Visualization conversation viewport')
   const panelMetrics = control => frameAction(control, 'metrics', '#panel')
-  const wheel = (control, selector, deltaY) => frameAction(control, 'wheel', selector, { deltaY })
+  const wheel = async (control, selector, deltaY) => {
+    const input = await frameAction(control, 'wheel', selector, { deltaY })
+    nativeWheels.push({ selector, ...input })
+    if (nativeWheels.length > 20) nativeWheels.shift()
+    return input
+  }
+
+  async function failureDiagnostics(control) {
+    const reads = {
+      outer: async () => {
+        const outer = await outerMetrics(control)
+        return {
+          ...outer,
+          distanceFromTop: distanceFromTop(outer),
+          distanceFromBottom: distanceFromBottom(outer),
+        }
+      },
+      frame: () => getSingleElementMetrics(control, FRAME, 'Failed visualization frame'),
+      blank: () => frameAction(control, 'metrics', '#blank'),
+      panel: () => panelMetrics(control),
+      root: () => frameAction(control, 'metrics', 'html'),
+      wheelEvents: async () => {
+        const value = await frameAction(control, 'attribute', '#scroll-fixture', {
+          value: 'data-wheel-events',
+        })
+        return value === null ? null : JSON.parse(value)
+      },
+      sampler: async () => JSON.parse(await control.command('getScrollStabilitySample', FRAME)),
+    }
+    const results = await Promise.allSettled(Object.values(reads).map(async read => read()))
+    return {
+      phase,
+      nestedAttempt,
+      nativeWheels,
+      ...Object.fromEntries(
+        Object.keys(reads).map((key, index) => {
+          const result = results[index]
+          return [
+            key,
+            result.status === 'fulfilled'
+              ? result.value
+              : {
+                  readError:
+                    result.reason instanceof Error ? result.reason.message : String(result.reason),
+                },
+          ]
+        })
+      ),
+    }
+  }
 
   async function waitFor(check, description) {
     const deadline = Date.now() + uiTimeoutMs
@@ -127,7 +180,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       if (result) return result
       await pause(50)
     } while (Date.now() < deadline)
-    assert.fail(typeof description === 'function' ? await description() : description)
+    assert.fail(typeof description === 'function' ? description() : description)
   }
 
   async function centerFrame(control) {
@@ -171,17 +224,28 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       pinned.frame.height < 480,
       `The compact visualization did not shrink below its initial iframe height: ${JSON.stringify(lastGeometry)}`
     )
+    samplingStarted = true
     await control.command('startScrollStabilitySampling', FRAME, {
-      value: JSON.stringify({ durationMs: 1200, scrollerSelector: SCROLLER_SELECTOR }),
+      value: JSON.stringify({ durationMs: uiTimeoutMs, scrollerSelector: SCROLLER_SELECTOR }),
     })
     for (let index = 0; index < 6; index += 1) {
       await wheel(control, '#blank', -24)
       await pause(80)
     }
-    const sample = await waitFor(async () => {
-      const sample = JSON.parse(await control.command('getScrollStabilitySample', FRAME))
-      return sample.done ? sample : null
-    }, 'Visualization wheel stability sampling did not finish')
+    // Observe the full negative window after all native input has been sent.
+    await pause(1200)
+    const beforeStop = JSON.parse(await control.command('getScrollStabilitySample', FRAME))
+    assert.equal(
+      beforeStop.done,
+      false,
+      'Visualization wheel sampling expired before the complete input and observation window'
+    )
+    const sample = JSON.parse(await control.command('stopScrollStabilitySampling', FRAME))
+    samplingStarted = false
+    assert.ok(
+      sample.frames.every(frame => frame.time < uiTimeoutMs),
+      'Visualization wheel sampling expired before explicit completion'
+    )
     assert.equal(sample.missingFrames, 0, 'The visualization disappeared during native wheel input')
     assert.ok(
       sample.frames.length >= 5,
@@ -232,31 +296,18 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       const deltaY = Math.min(100, remaining)
       const nativeWheel = await wheel(control, '#panel', deltaY)
       let lastTop = previousTop
-      let lastPanel = panel
       let stableSamples = 0
+      nestedAttempt = { index, previousTop, deltaY, nativeWheel, panel }
       panel = await waitFor(
         async () => {
           const next = await panelMetrics(control)
-          lastPanel = next
+          nestedAttempt.panel = next
           stableSamples = Math.abs(next.scrollTop - lastTop) <= 0.5 ? stableSamples + 1 : 0
           lastTop = next.scrollTop
           return next.scrollTop > previousTop + 1 && stableSamples >= 2 ? next : null
         },
-        async () => {
-          const outer = await outerMetrics(control)
-          const records = await frameAction(control, 'attribute', '#scroll-fixture', {
-            value: 'data-wheel-events',
-          })
-          return `Native wheel input did not scroll the nested HTML panel: ${JSON.stringify({
-            index,
-            previousTop,
-            deltaY,
-            panel: lastPanel,
-            outer,
-            nativeWheel,
-            wheelEvents: records === null ? null : JSON.parse(records),
-          })}`
-        }
+        () =>
+          `Native wheel input did not scroll the nested HTML panel: ${JSON.stringify(nestedAttempt)}`
       )
       const outer = await outerMetrics(control)
       assert.ok(
@@ -349,25 +400,46 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
     },
 
     async verify(control) {
-      await openNewChatWithE2EModel(control, uiTimeoutMs)
-      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-        {
-          enabled: true,
-          timeoutMs: uiTimeoutMs,
-          visible: true,
+      try {
+        await openNewChatWithE2EModel(control, uiTimeoutMs)
+        await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+          {
+            enabled: true,
+            timeoutMs: uiTimeoutMs,
+            visible: true,
+          }
+        )
+        await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
+        await waitForVisualizationBlob(control, FRAME, uiTimeoutMs)
+        await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+        phase = 'blank'
+        await verifyBlankAreaWheel(control)
+        phase = 'nested-panel'
+        await verifyNestedPanelWheel(control)
+        phase = 'prevented-control'
+        await verifyPreventedWheel(control)
+        assert.equal(stage, 'complete')
+      } catch (error) {
+        const diagnostics = await failureDiagnostics(control)
+        const suffix = `\nVisualization wheel diagnostics: ${JSON.stringify(diagnostics)}`
+        if (error instanceof Error) {
+          const originalStack = error.stack
+          error.message += suffix
+          error.stack = `${originalStack ?? error.name}${suffix}`
+          throw error
         }
-      )
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', FRAME, { timeoutMs: uiTimeoutMs })
-      await waitForVisualizationBlob(control, FRAME, uiTimeoutMs)
-      await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-      await verifyBlankAreaWheel(control)
-      await verifyNestedPanelWheel(control)
-      await verifyPreventedWheel(control)
-      assert.equal(stage, 'complete')
+        throw new Error(`${String(error)}${suffix}`, { cause: error })
+      } finally {
+        if (samplingStarted) {
+          await Promise.allSettled([
+            Promise.resolve().then(() => control.command('stopScrollStabilitySampling', FRAME)),
+          ])
+        }
+      }
     },
   }
 }
