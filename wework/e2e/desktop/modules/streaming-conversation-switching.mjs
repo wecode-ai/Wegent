@@ -164,6 +164,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           1,
           'Restoration duplicated a background update'
         )
+        await assertRestoredMessageLayout(control)
         // A running task's warm cache already contains its entire streamed turn. Reload the
         // renderer so pagination must fetch records absent from the displayed native page.
         await reloadMainWindow(control, 'The cold conversation renderer did not reconnect')
@@ -247,5 +248,29 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     },
+  }
+}
+
+async function assertRestoredMessageLayout(control) {
+  const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  const listSelector = `${content} > div:has(> [data-message-row] > article[data-message-id])`
+  const [list] = JSON.parse(await control.command('getElementMetrics', listSelector))
+  const rows = JSON.parse(
+    await control.command('getElementMetrics', `${listSelector} > [data-message-row]`)
+  )
+  assert.ok(list?.height > 0, 'The restored conversation has no measured container')
+  assert.ok(rows.length >= 2, 'The restored layout must include the prompt and running response')
+  for (const [index, row] of rows.entries()) {
+    assert.ok(row.height > 0, `Restored message row ${index} has no height`)
+    assert.ok(
+      row.top >= list.top - 1 && row.bottom <= list.bottom + 1,
+      `Restored message row ${index} escaped its virtual container: ${JSON.stringify({ row, list })}`
+    )
+    if (index > 0) {
+      assert.ok(
+        row.top >= rows[index - 1].bottom - 1,
+        `Restored message rows ${index - 1} and ${index} overlap: ${JSON.stringify(rows)}`
+      )
+    }
   }
 }
