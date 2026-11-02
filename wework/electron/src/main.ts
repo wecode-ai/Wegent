@@ -174,6 +174,7 @@ import {
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
@@ -2587,7 +2588,9 @@ function reportLogCleanup(result: LogCleanupResult): void {
 }
 
 function desktopComponentResourcesRoot(): string {
-  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication
+    ? (installedMacosReleaseResources() ?? process.resourcesPath)
+    : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
   return !packagedApplication && configuredComponentResourcesRoot
     ? resolve(configuredComponentResourcesRoot)

@@ -61,3 +61,52 @@ test('offline refresh reports an error without requesting mutations', async () =
   await waitFor(() => expect(initial.onError).toHaveBeenCalledOnce())
   expect(reconcilePluginRefresh).not.toHaveBeenCalled()
 })
+
+test('remains busy while waiting for the shared device lease and until reconciliation finishes', async () => {
+  vi.useFakeTimers()
+  const release = beginPluginDeviceSync('device')!
+  let finish!: () => void
+  vi.mocked(reconcilePluginRefresh).mockImplementation(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  const view = renderHook(usePluginRefreshReconciliation, {
+    initialProps: { ...options(), request: 1 },
+  })
+  try {
+    expect(view.result.current).toBe(true)
+    expect(reconcilePluginRefresh).not.toHaveBeenCalled()
+    release()
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    expect(view.result.current).toBe(true)
+    await act(async () => finish())
+    expect(view.result.current).toBe(false)
+  } finally {
+    view.unmount()
+    release()
+    vi.useRealTimers()
+  }
+})
+
+test('clears queued refresh activity when the shared device lease times out', async () => {
+  vi.useFakeTimers()
+  const release = beginPluginDeviceSync('device')!
+  const initial = { ...options(), request: 1 }
+  const view = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  try {
+    expect(view.result.current).toBe(true)
+    await act(async () => vi.advanceTimersByTimeAsync(30_000))
+    expect(initial.onError).toHaveBeenCalledExactlyOnceWith(
+      new Error('Plugin synchronization is busy; refresh again')
+    )
+    expect(view.result.current).toBe(false)
+    expect(reconcilePluginRefresh).not.toHaveBeenCalled()
+  } finally {
+    view.unmount()
+    release()
+    vi.useRealTimers()
+  }
+})

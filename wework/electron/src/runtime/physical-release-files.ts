@@ -14,7 +14,11 @@ const SCRIPT = `
   const tar = operation === 'extract' ? require(tarModule) : null
   process.noAsar = true
   const fs = require('node:fs/promises')
-  if (operation === 'copy') await fs.cp(source, destination, {recursive:true,verbatimSymlinks:true})
+  if (operation === 'copy') await fs.cp(source, destination, {
+    recursive:true,
+    verbatimSymlinks:true,
+    mode:process.platform === 'darwin' ? require('node:fs').constants.COPYFILE_FICLONE : 0,
+  })
   else if (operation === 'remove') await fs.rm(source, {recursive:true,force:true})
   else if (operation === 'extract') await tar.extract({file:source,cwd:destination,strict:true})
   else throw new Error('Invalid physical release operation')
