@@ -1034,7 +1034,63 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   response text and processing blocks, guidance segments, interrupted-run timing,
   failure details, retry controls, generated-image galleries and final artifacts.
   Its native adapter supplies image loading/downloading and inline visualization
-  services. `MessageHoverActions` owns copy/edit/fork controls and localized time
+  services. The Executor advertises the inline visualization contract through
+  Codex developer instructions on thread start, resume, and fork; text-only
+  auxiliary threads do not receive it. Generated fragments use unique durable
+  task-owned paths and an absolute `visualize` content reference in the final
+  response. Codex keeps that reference in its normal transcript. Replaying a
+  message reads the original file through the desktop file service and runs it
+  in an opaque-origin `allow-scripts` iframe. Fragments supply scoped styles and
+  local interactions using the documented host theme tokens; they do not depend
+  on a ChatGPT widget bridge. Inline fragments are response content; an explicit
+  export is a separate deliverable. Loading failures remain visible and retryable.
+  The visualization host is transparent and unframed; the generated content owns
+  its cards and borders so the conversation never adds a second enclosing panel.
+  The sandbox contains native scroll chaining at its document root. Wheel input
+  stays native while an internal scroll region can consume it; at a boundary the
+  bridge consumes the internal remainder and forwards only the remaining pixel
+  delta. The host dispatches wheel input through the existing conversation scroll
+  controller before moving its actual viewport, so user scrolling cannot be
+  mistaken for a layout change and snapped back to the bottom. Custom controls
+  that cancel wheel events and internal overscroll containment keep ownership.
+
+  ```mermaid
+  sequenceDiagram
+    participant Executor
+    participant Codex as Codex CLI / app-server
+    participant Storage as Task files + Codex transcript
+    participant Markdown as Shared message renderer
+    participant Host as Desktop visualization host
+    Executor->>Codex: Start / resume / fork with visualization instructions
+    Codex->>Storage: Write unique HTML fragment and final absolute reference
+    Storage->>Markdown: Stream or replay unchanged assistant message
+    Markdown->>Host: Parsed visualization reference
+    Host->>Storage: Read complete HTML through desktop file service
+    Storage-->>Host: Fragment or explicit read failure
+    Host->>Host: Render sandbox, report size, follow Wework theme
+  ```
+
+  ```mermaid
+  sequenceDiagram
+    participant Wheel as Sandbox wheel input
+    participant Region as Internal scroll regions
+    participant Bridge as Opaque-origin message bridge
+    participant Controller as Shared conversation scroll controller
+    participant Viewport as Actual conversation viewport
+    Wheel->>Region: Plan scroll consumption along event path
+    alt Entire delta stays inside sandbox
+      Region->>Region: Preserve native scrolling or control interaction
+    else Delta reaches conversation
+      Wheel->>Wheel: Cancel native chaining
+      Wheel->>Region: Consume available internal distance
+      Wheel->>Bridge: Post remaining pixel delta with frame token
+      Bridge->>Bridge: Validate source, token and finite deltas
+      Bridge->>Controller: Dispatch wheel to record user intent
+      Bridge->>Viewport: Scroll once after intent is recorded
+    end
+  ```
+
+  `MessageHoverActions` owns copy/edit/fork controls and localized time
   labels. `MessageList` owns the complete message-row composition, visibility,
   virtual measurements, text selection and edit lifecycle. `UserMessage` and
   `UserMessageEditForm` preserve native rich Markdown, image/document attachment

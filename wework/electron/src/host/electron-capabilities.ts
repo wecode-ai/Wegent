@@ -8,6 +8,7 @@ import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
+import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
 import {
   app,
   BrowserWindow,
@@ -981,6 +982,9 @@ export function createElectronCapabilityRouter(
     mcpDiscoveryFault ??= new McpDiscoveryNetworkFault(contents.session)
     return mcpDiscoveryFault.configure(params.enabled)
   })
+  router.register('e2e.inlineVisualizationFrame', params =>
+    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+  )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
