@@ -235,9 +235,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.equal(created.parent_id, fixture.front.id)
       await capture('09-created-child-linked')
       await click('cloud-todo-detail-close')
-      let lastBoundaryCase
       for (let index = 1; index <= 8; index += 1) {
-        lastBoundaryCase = await create(`会话恢复边界用例 ${index}`, fixture.front.id, ['test'])
+        await create(`会话恢复边界用例 ${index}`, fixture.front.id, ['test'])
       }
 
       await reloadMainWindow(control, 'Parent board preference did not reload')
@@ -259,11 +258,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'A long sub-issue list must scroll internally instead of displacing the remaining detail'
       )
       await capture('10b-long-children-list')
-      await control.command('scrollIntoView', test(`issue-hierarchy-child-${lastBoundaryCase.id}`))
-      await control.command('waitFor', test(`issue-hierarchy-child-${lastBoundaryCase.id}`), {
+      await control.command(
+        'scrollIntoView',
+        test(`issue-hierarchy-child-${fixture.grandchild.id}`)
+      )
+      await control.command('waitFor', test(`issue-hierarchy-child-${fixture.grandchild.id}`), {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      const [scrolledList] = JSON.parse(
+        await control.command('getElementMetrics', test('issue-hierarchy-children-list'))
+      )
+      const [lastChild] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          test(`issue-hierarchy-child-${fixture.grandchild.id}`)
+        )
+      )
+      assert.ok(scrolledList.scrollTop > 0, 'The sub-issue list must actually scroll')
+      assert.ok(
+        lastChild.top >= scrolledList.top - 1 && lastChild.bottom <= scrolledList.bottom + 1,
+        'The initially offscreen sub-issue must enter the list viewport'
+      )
       await capture('10c-long-children-scrolled')
       await click('cloud-todo-detail-close')
       await control.command('setMainWindowSize', 'body', {
