@@ -28,7 +28,7 @@ Suite v7 runs `app-upgrade` through the normal default layout in an isolated Hom
 rollback. After writers stop, it uses production snapshot, profile-retention, and activation code
 to establish an unstarted legacy activation. It checks source usability after restart, automatic
 target-owned repair, task preservation and continuation, and rollback. The test runner's initial app environment allows only OS session settings and test control/model services;
-product path, binary, identity, and update-source overrides are absent. Suite v9 downloads
+product path, binary, identity, and update-source overrides are absent. Suite v10 downloads
 actual historical archives without rebuilding or editing them, and uses the default layout
 for every upgrade checkpoint. Incompatible pairs retain snapshot-restoration assertions.
 
@@ -75,7 +75,12 @@ host, retain its signed program and update that inactive release's program refer
 Preparation replaces no installed program files and preserves both current and prior rollback.
 
 Delivered launchers enter the new payload bootstrap first. Its native helper installs the
-selected host, then the bootstrap executes the installed application with the same PID.
+selected host, then a native relay spawns the installed application with a fresh PID.
+Never re-execute Electron at the same PID: RunningBoard's cached PID version can become
+stale and Control Center rejects status-item registration with `process has mismatched pid version`.
+The slot entry hides its Dock identity before handoff. The relay retains the legacy supervisor's
+process tree until the existing health marker is confirmed or the target exits, preserving
+the original activation transaction's failure handling.
 A retained legacy program copy references the original source's data owner. Activation uses
 the existing snapshot-preservation protocol so delivered cleaners also retain that profile.
 After the selected bootstrap loads with the matching version, it takes over recovery forwarding
@@ -85,10 +90,23 @@ Preparation leaves the active source record unchanged; cancellation removes only
 
 Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
 outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
-continuing the original task after rollback. Suite v9 retains the delivered bootstrap,
+continuing the original task after rollback. Suite v10 retains the delivered bootstrap,
 release store, and native launcher by downloading old packages without rebuilding them.
 Failed activation also enters through the signed versioned source to cover cached legacy recovery.
 Mechanism evidence still cannot authorize production edges bound to different package hashes.
+
+Suite v10 also verifies that the system actually hosts the native status item after upgrade
+and rollback, beyond Electron having created a `Tray` object. Users with an existing Dock
+pin targeting a release slot must remove it and pin the installed application instead;
+the application never edits Dock preferences.
+
+`release-package-startup` retains a real first launch without warming the runtime cache.
+The Windows CI trace recorded 145 seconds of extraction and a controller connection around
+192 seconds after launch. This scenario assigns the existing 180-second budget separately
+to component preparation, runtime extraction, Core profile preparation, Core process startup,
+and renderer loading. Stalled, regressing, or over-budget phases still fail; preparation logs
+never substitute for the real controller connection. Ordinary starts, restarts, and upgrade
+scenarios retain their existing wait budgets.
 
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.
 
@@ -114,7 +132,7 @@ Incompatible restoration retains the rejected slot so subsequent cleanup cannot 
 | Mechanism E2E                | Prebuilt real package pairs | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
 | Release-pair E2E             | Immutable delivered source and target archives         | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes |
 
-Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. Suite v9 requires prebuilt pairs: the runner fails immediately when artifacts are missing and never compiles, packages, or signs. Reuse the release candidate archive and download immutable historical releases, checking versions, source revisions, and SHA-256. Versions are test data, not branches selecting assertions.
+Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. Suite v10 requires prebuilt pairs: the runner fails immediately when artifacts are missing and never compiles, packages, or signs. Reuse the release candidate archive and download immutable historical releases, checking versions, source revisions, and SHA-256. Versions are test data, not branches selecting assertions.
 
 Suite v5 gives host preparation, extraction, and runtime preparation separate five-minute budgets. Phases must advance monotonically; a stalled or failed phase fails verification. Do not apply one operation's budget to every sequential operation combined. The target records profile copying, component preparation, runtime materialization, and profile preparation with start/end timestamps and durations in `logs/release-preparation.log`; retain it in CI artifacts.
 
@@ -132,7 +150,7 @@ Provide a verified `WEWORK_E2E_UPGRADE_PAIR`; the runner resolves the source app
 
 Packaged upgrade E2E runs only in the `Wework App` release workflow, including release dry runs. Ordinary PRs and `ci:all` do not run a separate upgrade job. The release gate invokes the shared `upgrade-and-rollback` group and `app-update-full`; every checkpoint must pass before generating and promoting exact-pair upgrade policy. Keep acceptance versions in `upgrade-suite.mjs`; older-suite proof cannot authorize new edges.
 
-Suite v9 retains downloaded historical entry points without rebuilding them. Before its own child enters application code, the driver routes requests for the default update catalog to real loopback HTTP transport. It supplies no update-feed or other product configuration overrides and does not disable TLS or signature checks. When an older source and the previous published release are both available, their own preparation entries establish the unstarted transaction while retaining profile and component-ownership assertions.
+Suite v10 retains downloaded historical entry points without rebuilding them. Before its own child enters application code, the driver routes requests for the default update catalog to real loopback HTTP transport. It supplies no update-feed or other product configuration overrides and does not disable TLS or signature checks. When an older source and the previous published release are both available, their own preparation entries establish the unstarted transaction while retaining profile and component-ownership assertions.
 
 The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 

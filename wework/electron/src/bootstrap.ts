@@ -107,6 +107,13 @@ async function routeRelease(): Promise<boolean> {
     if (metadata.version !== active.version)
       throw new Error('The installed host does not match the selected release version')
     await store.repairMacosActivationSource(active)
+    if (
+      process.platform === 'darwin' &&
+      active.macosInstallation &&
+      resolve(process.execPath) !== resolve(active.executable)
+    ) {
+      app.setActivationPolicy('prohibited')
+    }
     await enterInstalledMacosRelease(store, active, process.resourcesPath)
   }
   // Only the independent launcher grants a child this one-use handoff.
