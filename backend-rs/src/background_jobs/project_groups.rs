@@ -324,7 +324,7 @@ pub(super) async fn assign(
             tx.execute("UPDATE loop_items SET status='queued',version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(follower_notifications)
         }else{
             let leader=authority::integer(&group["leader"]["id"]).ok_or_else(||brz_mysql::MysqlError::InvalidQuery{reason:"Collaboration group human leader is invalid".into()})?;
-            let mut payload=notifications::target(state,project,&issue,leader).await.map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?;
+            let mut payload=notifications::target_on(tx,project,&issue,leader).await?;
             let assignment_key=format!("group:{id}:{key}");
             let existing:Option<Id>=tx.fetch_optional("SELECT 1 AS id FROM wework_notifications WHERE user_id=? AND kind='assignment' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.collaborationGroupAssignmentKey'))=? LIMIT 1",(leader,assignment_key.as_str())).await?;
             payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,&issue,&group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);

@@ -11,6 +11,7 @@ use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlRow, MysqlTransaction};
 use brz_redis::Redis;
 use chrono::Utc;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 #[path = "project_notifications_im.rs"]
 mod im;
@@ -136,6 +137,11 @@ pub(crate) async fn followers_on(
     followers_for_event_on(tx, state, project, issue, actor, event, None).await
 }
 
+pub(crate) struct ExternalFollowEvent<'a> {
+    pub event: &'a crate::issue_follow_events::Event,
+    pub authorized_readers: &'a HashSet<i32>,
+}
+
 pub(crate) async fn followers_for_event_on(
     tx: &mut impl MysqlTransaction,
     state: &AppState,
@@ -143,8 +149,10 @@ pub(crate) async fn followers_for_event_on(
     issue: &Node,
     actor: i64,
     event: &str,
-    external: Option<&crate::issue_follow_events::Event>,
+    external: Option<ExternalFollowEvent<'_>>,
 ) -> MysqlResult<Vec<Pending>> {
+    let authorized_readers = external.as_ref().map(|value| value.authorized_readers);
+    let external = external.map(|value| value.event);
     #[derive(FromMysqlRow)]
     struct Follower {
         user_id: i32,
@@ -208,24 +216,8 @@ pub(crate) async fn followers_for_event_on(
             project.metadata.0["task_provider"].as_str(),
             Some("github" | "gitlab")
         ) {
-            match crate::loop_tasks::assignments::provider_get(state, &issue.id, follower.user_id)
-                .await
-            {
-                Ok(()) => {}
-                Err(error)
-                    if matches!(
-                        error.status(),
-                        brz_http_server::StatusCode::FORBIDDEN
-                            | brz_http_server::StatusCode::NOT_FOUND
-                    ) =>
-                {
-                    continue;
-                }
-                Err(error) => {
-                    return Err(brz_mysql::MysqlError::InvalidQuery {
-                        reason: format!("Issue access check failed: {error:?}"),
-                    });
-                }
+            if !authorized_readers.is_some_and(|readers| readers.contains(&follower.user_id)) {
+                continue;
             }
         } else if priority > 1 {
             let default_security = if project.metadata.0["default_issue_security"] == "related" {
@@ -245,11 +237,7 @@ pub(crate) async fn followers_for_event_on(
             }
             let _ = visible.map(|row| row.id);
         }
-        let mut payload = target(state, project, issue, issue.assignee_user_id)
-            .await
-            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
-                reason: error.to_string(),
-            })?;
+        let mut payload = target_on(tx, project, issue, issue.assignee_user_id).await?;
         payload["event"] = json!(event);
         if let Some(external) = external {
             payload["commentId"] = json!(external.comment_id);
@@ -287,12 +275,12 @@ pub(crate) async fn followers_for_event_on(
     Ok(pending)
 }
 
-pub(crate) async fn target(
-    state: &AppState,
+pub(crate) async fn target_on(
+    tx: &mut impl MysqlTransaction,
     project: &Node,
     issue: &Node,
     assignee: i64,
-) -> Result<Value> {
+) -> MysqlResult<Value> {
     #[derive(FromMysqlRow)]
     struct User {
         user_name: String,
@@ -300,9 +288,7 @@ pub(crate) async fn target(
     let name: Option<User> = if assignee == 0 {
         None
     } else {
-        state
-            .mysql
-            .fetch_optional("SELECT user_name FROM users WHERE id=?", (assignee,))
+        tx.fetch_optional("SELECT user_name FROM users WHERE id=?", (assignee,))
             .await?
     };
     let key = if !issue.name.trim().is_empty() {
@@ -384,11 +370,7 @@ pub(super) async fn direct_human_on(
     let actor_name: Option<User> = tx
         .fetch_optional("SELECT user_name FROM users WHERE id=?", (actor,))
         .await?;
-    let mut payload = target(state, project, issue, user).await.map_err(|error| {
-        brz_mysql::MysqlError::InvalidQuery {
-            reason: error.to_string(),
-        }
-    })?;
+    let mut payload = target_on(tx, project, issue, user).await?;
     if let Some(actor) = actor_name {
         payload["actorName"] = json!(actor.user_name);
     }
@@ -463,11 +445,7 @@ pub(crate) async fn execution_on(
     {
         return Ok(None);
     }
-    let mut payload = target(state, project, issue, issue.assignee_user_id)
-        .await
-        .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
-            reason: error.to_string(),
-        })?;
+    let mut payload = target_on(tx, project, issue, issue.assignee_user_id).await?;
     payload["status"] = json!(status);
     payload["executionId"] = json!(execution_id.to_string());
     let item = if issue.title.is_empty() {
@@ -669,3 +647,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "project_notifications_tests.rs"]
+mod transaction_tests;

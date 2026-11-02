@@ -16,6 +16,7 @@ use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
 use chrono::{SubsecRound, Utc};
 use serde_json::json;
+use std::collections::HashSet;
 
 #[derive(FromMysqlRow)]
 struct Candidate {
@@ -154,6 +155,33 @@ pub(super) async fn check(state: &AppState) -> Result<usize> {
     Ok(count)
 }
 
+// Provider checks may use the application pool and network. Complete them before
+// locking Issue rows; project access is checked again inside the write transaction.
+async fn external_readers(state: &AppState, issue_id: &str) -> Result<HashSet<i32>> {
+    let followers: Vec<(i32,)> = state
+        .mysql
+        .fetch_all(
+            "SELECT user_id FROM issue_followers WHERE issue_id=?",
+            (issue_id,),
+        )
+        .await?;
+    let mut readers = HashSet::new();
+    for (user_id,) in followers {
+        match crate::loop_tasks::assignments::provider_get(state, issue_id, user_id).await {
+            Ok(()) => {
+                readers.insert(user_id);
+            }
+            Err(error)
+                if matches!(
+                    error.status(),
+                    StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+                ) => {}
+            Err(error) => return Err(anyhow!("Issue access check failed: {error:?}")),
+        }
+    }
+    Ok(readers)
+}
+
 async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
     let Some(mut issue) = store::get(&state.mysql, "task", &candidate.id).await? else {
         return Ok(0);
@@ -199,6 +227,11 @@ async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
         let next_stream = if last_page { index + 1 } else { index };
         let finished = next_stream == events::streams(&source).len();
         let next = json!({"stream":if finished {0}else{next_stream},"page":if last_page {1}else{page+1},"next_at":Utc::now().timestamp_millis()+if finished {300_000}else{0}});
+        let readers = if decoded.is_empty() {
+            HashSet::new()
+        } else {
+            external_readers(state, &issue.id).await?
+        };
         let result = state
             .mysql
             .with_transaction(async |tx| {
@@ -229,7 +262,10 @@ async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
                             &current,
                             0,
                             &event.kind,
-                            Some(event),
+                            Some(notifications::ExternalFollowEvent {
+                                event,
+                                authorized_readers: &readers,
+                            }),
                         )
                         .await?,
                     );

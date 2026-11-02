@@ -86,6 +86,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'listPage',
     'getBoardSnapshot',
     'get',
+    'setFollowing',
     'create',
     'update',
     'assign',
