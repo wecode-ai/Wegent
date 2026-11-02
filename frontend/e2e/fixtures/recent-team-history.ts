@@ -71,13 +71,17 @@ export class HistoryAccount {
   }
 
   async team(label: string): Promise<HistoryTeam> {
+    // Every candidate supports every mode, so filtering cannot hide history leaks.
+    return this.teamWithModes(label, HISTORY_MODES)
+  }
+
+  async teamWithModes(label: string, modes: readonly HistoryMode[]): Promise<HistoryTeam> {
     const team = checked(
       await this.api.post<HistoryTeam>('/api/teams', {
         name: `${this.prefix}-${label}`,
         namespace: 'default',
         bots: [{ bot_id: this.botId, role: 'worker', bot_prompt: '' }],
-        // Every candidate supports every mode, so filtering cannot hide history leaks.
-        bind_mode: [...HISTORY_MODES],
+        bind_mode: [...modes],
         requires_workspace: false,
       }),
       201

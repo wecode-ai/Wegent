@@ -1,4 +1,4 @@
-import type { ProjectChatMessage } from "@wegent/chat-core";
+import type { ProjectChatMessage, ProjectChatClient } from "@wegent/chat-core";
 import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { RuntimePaneQueuedMessage } from "@wegent/chat-core/conversation-queue";
 import { remoteAttachmentIds } from "@wegent/chat-core/runtime-attachments";
@@ -80,6 +80,60 @@ export interface TaskCardReplyInput<
   sendFailedText: string;
 }
 
+/** Server-owned comment continuation, shared by Issue composers and the global inbox. */
+export async function dispatchTaskCommentReply(input: {
+  client: ProjectChatClient;
+  projectId: string;
+  taskId: string;
+  rootMessageId: string;
+  reply: RuntimePaneQueuedMessage;
+  prepareComment?: TaskCardReplyInput<
+    unknown,
+    CommentExecutionTask
+  >["prepareComment"];
+  onMessages(messages: ProjectChatMessage[]): void;
+  onPersisted?(message: ProjectChatMessage): void;
+  onError(error: string): void;
+  sendFailedText: string;
+}): Promise<TaskCardDispatchResult> {
+  let persisted = false;
+  try {
+    if (!input.reply.content.trim() || !input.client.executeTaskComment)
+      throw new Error(input.sendFailedText);
+    const attachments = input.reply.attachments ?? [];
+    const text = input.prepareComment
+      ? await input.prepareComment(input.reply.content, attachments)
+      : input.reply.content;
+    const message = await input.client.send({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      clientMessageId: input.reply.id,
+      text,
+      mentions: (input.reply.mentions ?? []).filter(
+        (mention) => mention.type === "user",
+      ),
+      replyToMessageId: input.rootMessageId,
+      model: null,
+    });
+    persisted = true;
+    input.onPersisted?.(message);
+    input.onMessages([message]);
+    input.onMessages(
+      await input.client.executeTaskComment({
+        projectId: input.projectId,
+        taskId: input.taskId,
+        triggerMessageId: message.messageId,
+        attachmentIds: remoteAttachmentIds(attachments),
+      }),
+    );
+    return { ok: true, persisted };
+  } catch (cause) {
+    const error = cause instanceof Error ? cause.message : input.sendFailedText;
+    input.onError(error);
+    return { ok: false, persisted, error };
+  }
+}
+
 /** The PC reply flow, shared by native and browser hosts. */
 export async function dispatchTaskCardReply<
   Project,
@@ -95,6 +149,19 @@ export async function dispatchTaskCardReply<
     startFailedText,
     sendFailedText,
   } = input;
+  if (client.executeTaskComment)
+    return dispatchTaskCommentReply({
+      client,
+      projectId: project.id,
+      taskId: task.id,
+      rootMessageId: card.root.messageId,
+      reply,
+      prepareComment: input.prepareComment,
+      onMessages,
+      onPersisted: input.onPersisted,
+      onError: input.onError,
+      sendFailedText,
+    });
   const previousAgent = [card.root, ...card.replies]
     .filter((message) => message.sender.type === "agent")
     .at(-1);
@@ -121,7 +188,6 @@ export async function dispatchTaskCardReply<
   };
   if (!reply.content.trim())
     return { ok: false, persisted, error: sendFailedText };
-  const serverExecution = client.executeTaskComment;
   try {
     const text = input.prepareComment
       ? await input.prepareComment(reply.content, attachments)
@@ -135,7 +201,7 @@ export async function dispatchTaskCardReply<
       // runtime address. Mention-driven enqueue is reserved for a new root
       // comment; including the mention here would create a second session.
       mentions: [
-        ...(!serverExecution && agent && !input.selfManagedExecution
+        ...(agent && !input.selfManagedExecution
           ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
           : []),
         // Members the reply composer mentioned are addressed, not enqueued.
@@ -147,16 +213,7 @@ export async function dispatchTaskCardReply<
     persisted = true;
     input.onPersisted?.(message);
     onMessages([message]);
-    if (serverExecution) {
-      onMessages(
-        await serverExecution({
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: message.messageId,
-          attachmentIds: remoteAttachmentIds(attachments),
-        }),
-      );
-    } else if (agent) {
+    if (agent) {
       if (input.selfManagedExecution && !address)
         throw new Error(startFailedText);
       if (agent.runtime === "wegent") {

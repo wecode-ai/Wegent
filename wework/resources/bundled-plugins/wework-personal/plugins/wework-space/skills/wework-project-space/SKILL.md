@@ -1,13 +1,13 @@
 ---
 name: wework-project-space
-description: Read or update the Wework project space, current Issue, attachments, deliveries, members, or board items when a Wework project or Issue context is active.
+description: Discover, read or update Wework project spaces, Issues, attachments, deliveries, members or board items, with or without a bound project or Issue.
 ---
 
 # Wework project space
 
-Use the `wework_space` MCP tools for project-space work.
+Use the `wework_space` MCP tools for project-space work. Discover deferred tools before reporting them unavailable; their schemas and business data are loaded when needed.
 
-1. Call `get_current_context` before answering questions about the current Issue.
+1. Call `get_current_context` before answering questions about the current Issue. If it returns `bound: false`, use `list_spaces` and explicit target IDs to discover accessible projects and Issues. A personal conversation does not require a preselected project or a cloud link in the prompt.
 2. Call `get_board_item` with that context before interpreting the Issue description.
    Read `list_board_item_comments` as well for PR links, follow-up requirements and review feedback. It returns the latest 200 comments by default; use `limit` (up to 500) and `after_sequence` to page forward. Write with `add_board_item_comment` to the same visible Issue activity.
 3. Use `list_item_attachments` and `read_item_attachment` to inspect Issue attachments.

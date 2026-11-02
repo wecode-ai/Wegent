@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { X } from 'lucide-react'
 import { dequal } from 'dequal'
@@ -66,7 +67,7 @@ export function StandInPrimaryProfile({
         }
       })
       .catch(cause => {
-        if (active) setRuntimeError(String(cause))
+        if (active) setRuntimeError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false

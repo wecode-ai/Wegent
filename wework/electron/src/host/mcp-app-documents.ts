@@ -63,10 +63,7 @@ const sandboxDomain = 'web-sandbox.oaiusercontent.com'
 
 /** Each document has its own origin, never the workbench's cookies or host bridge. */
 export class McpAppDocuments {
-  private readonly documents = new Map<
-    string,
-    { url: string; html: string; csp: string; expiry: NodeJS.Timeout }
-  >()
+  private readonly documents = new Map<string, { url: string; html: string; csp: string }>()
 
   owns(url: string): boolean {
     try {
@@ -105,21 +102,12 @@ export class McpAppDocuments {
       url,
       html,
       csp: mcpAppContentSecurityPolicy(metadata),
-      expiry: setTimeout(() => this.release(id), 90000).unref(),
     })
     return { id, url }
   }
 
   release(id: string): void {
-    const document = this.documents.get(id)
     this.documents.delete(id)
-    if (document) clearTimeout(document.expiry)
-  }
-
-  renew(id: string): void {
-    const document = this.documents.get(id)
-    if (!document) throw new Error('MCP App document has expired')
-    document.expiry.refresh()
   }
 
   dispose(): void {

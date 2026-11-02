@@ -1,6 +1,6 @@
 import type { RuntimeContextUsage, RuntimeTokenUsageBreakdown } from './runtime'
 
-export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
+export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 75
 export type RuntimeContextUsageMetrics = {
   usedTokens: number
   totalTokens: number

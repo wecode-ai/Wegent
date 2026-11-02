@@ -130,7 +130,7 @@ Static checks provide fast feedback for deterministic errors. Service availabili
 
 ## Five verification gates
 
-Installed Smart apps launch DSH with `--port 0`, letting the operating system assign the loopback port when the server binds. Wework reuses the runtime's listening announcement and readiness probes, then persists the actual address from `WorkbenchRuntimeSnapshot.url`. It does not probe and release a free port before launch, avoiding port allocation races between concurrent processes.
+Installed Smart apps and isolated verification runtimes launch DSH with `--port 0`, letting the operating system assign the loopback port when the server binds. Wework reuses the runtime's listening announcement and readiness probes, then persists the actual address from `WorkbenchRuntimeSnapshot.url`. It does not probe and release a free port before launch, avoiding port allocation races between concurrent processes. Isolated verification reads the actual runtime address after startup and uses it for page checks, browser authentication cookies and Remote probes. Runtime unit tests cover address propagation and cleanup; the `harness-app-development` desktop CI checkpoint covers real verification and export.
 
 Startup, token handoff, and stop are serialized by installation ID without blocking other installations. An immediate reopen waits for the old runtime to stop and release its routes before registering new ones. Catalog refreshes must not cancel an in-flight launch, and background tabs keep their pending startup owner connected until startup settles or the tab is actually removed.
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -122,12 +122,9 @@ pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework �
 - Never enter passwords, authentication codes, payment details, or other secrets unless the user explicitly authorizes that exact action in the current conversation.
 - Do not use computer use for Wework built-in browser tasks; use the `browser_*` tools instead."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
-- "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
-- `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
-- For the current bound Issue, call `get_current_context` first. Read its description with `get_board_item` and its discussion with `list_board_item_comments`, including PR links and feedback posted in comments. Use `add_board_item_comment` to write to the same visible Issue activity. Read attachments with `list_item_attachments`, then `read_item_attachment`.
-- Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For a manager-bound Issue, call `get_board_item` and `get_assignment_candidates` to inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
-- Manager and member runs are automatically recorded in the Issue activity. When the manager calls `update_issue_status`, its `comment` field is optional and is the only extra status explanation to publish. Do not duplicate the same result with `add_board_item_comment`.
+- Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
+- For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
+- Never use MCP resources, browser, Shell, `curl`, local storage or provider APIs to bypass these tools or their access errors.
 "#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
@@ -175,7 +172,10 @@ mod local_connector_auth;
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
 
+mod local_notifications;
+mod native_turn;
 mod notification;
+pub(crate) use native_turn::completed_native_codex_turn;
 pub use notification::CodexNotification;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<CodexNotification>;
@@ -301,6 +301,11 @@ mod mcp_apps;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
+
+#[path = "codex/mcp_reload.rs"]
+mod mcp_reload;
+#[cfg(test)]
+use mcp_reload::config_reload_resume_thread_id;
 
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
@@ -692,8 +697,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let empty_launch_environment = BTreeMap::new();
         let launch_environment = launch_config
@@ -726,8 +730,10 @@ impl CodexAppServerClient {
                 &self.binary,
                 state.next_id,
                 &process_launch_config,
+                Arc::clone(&state.runtime_notifications),
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -786,6 +792,25 @@ impl CodexAppServerClient {
         Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
+    pub(crate) async fn subscribe_runtime_notifications(
+        &self,
+    ) -> Result<mpsc::Receiver<CodexNotification>, String> {
+        Ok(self
+            .ensure_process()
+            .await?
+            .notifications
+            .subscribe_runtime())
+    }
+
+    async fn publish_runtime_notification(&self, message: CodexNotification) -> Result<(), String> {
+        self.existing_process()
+            .await?
+            .notifications
+            .send_runtime(message)
+            .await;
+        Ok(())
+    }
+
     pub(crate) async fn subscribe_thread_notifications(
         &self,
         thread_id: &str,
@@ -816,8 +841,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         Ok(state
             .process
@@ -858,6 +882,7 @@ impl CodexAppServerClient {
         state.active_threads.remove(thread_id);
         let generation = state.thread_generations.get(thread_id).copied()?;
         if !retain_subscription {
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
             return Some((generation, Vec::new()));
@@ -871,7 +896,7 @@ impl CodexAppServerClient {
             let Some((oldest_thread_id, oldest_generation)) = state
                 .idle_thread_generations
                 .iter()
-                .filter(|(thread, _)| !state.has_mcp_app_lease(thread))
+                .filter(|(thread, _)| !state.has_mcp_app_session(thread))
                 .min_by_key(|(_, generation)| **generation)
                 .map(|(thread_id, generation)| (thread_id.clone(), *generation))
             else {
@@ -916,11 +941,10 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let mut state = self.state.lock().await;
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
         }
-        drop(_lifecycle_guard);
-
         self.request_thread_unsubscribe(thread_id).await
     }
 
@@ -940,7 +964,7 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let state = self.state.lock().await;
-            if state.has_mcp_app_lease(thread_id)
+            if state.has_mcp_app_session(thread_id)
                 || state.active_threads.contains_key(thread_id)
                 || state.thread_generations.get(thread_id) != Some(&generation)
             {
@@ -956,6 +980,7 @@ impl CodexAppServerClient {
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
+                state.thread_mcp_configurations.remove(thread_id);
                 state.thread_generations.remove(thread_id);
                 state.idle_thread_generations.remove(thread_id);
             }
@@ -1037,8 +1062,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let mut initialize_elapsed = None;
         let process_environment =
@@ -1064,10 +1088,15 @@ impl CodexAppServerClient {
                 ..CodexLaunchConfig::default()
             };
             let initialize_started_at = Instant::now();
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &launch_config,
+                Arc::clone(&state.runtime_notifications),
+            )
+            .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1092,8 +1121,7 @@ impl CodexAppServerClient {
             .as_mut()
             .is_some_and(|process| process.has_exited())
         {
-            state.process = None;
-            state.process_environment.clear();
+            stop_codex_app_server_process(&mut state, None).await;
         }
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
@@ -1119,8 +1147,10 @@ impl CodexAppServerClient {
                 &self.binary,
                 state.next_id,
                 &process_launch_config,
+                Arc::clone(&state.runtime_notifications),
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1264,11 +1294,13 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    runtime_notifications: RuntimeNotificationSubscribers,
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
-    mcp_app_leases: HashMap<(String, String), Instant>,
+    mcp_app_sessions: HashSet<(String, String, String)>,
     thread_generations: HashMap<String, u64>,
+    thread_mcp_configurations: HashMap<String, Map<String, Value>>,
     idle_thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
@@ -1282,6 +1314,7 @@ async fn stop_codex_app_server_process(
     pending_error: Option<&str>,
 ) -> bool {
     state.process_environment.clear();
+    state.thread_mcp_configurations.clear();
     let Some(mut process) = state.process.take() else {
         return false;
     };
@@ -1289,6 +1322,8 @@ async fn stop_codex_app_server_process(
         fail_all_pending(&process.pending, error.to_owned()).await;
     }
     process.reader_task.abort();
+    let _ = (&mut process.reader_task).await;
+    notify_shared_process_closed(&process.notifications, "codex app-server stopped").await;
     terminate_codex_app_server_child(&mut process.child).await;
     true
 }
@@ -1297,11 +1332,13 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            runtime_notifications: Arc::new(StdMutex::new(Vec::new())),
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
-            mcp_app_leases: HashMap::new(),
+            mcp_app_sessions: HashSet::new(),
             thread_generations: HashMap::new(),
+            thread_mcp_configurations: HashMap::new(),
             idle_thread_generations: HashMap::new(),
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
@@ -1313,23 +1350,46 @@ impl Default for CodexAppServerSharedState {
 
 type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
+type RuntimeNotificationSubscribers = Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>;
+
 #[derive(Clone)]
 struct CodexNotificationHub {
+    process_generation: u64,
     all: broadcast::Sender<CodexNotification>,
+    runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
 }
 
 impl CodexNotificationHub {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::for_runtime(Arc::new(StdMutex::new(Vec::new())))
+    }
+
+    fn for_runtime(runtime: RuntimeNotificationSubscribers) -> Self {
+        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
         Self {
             all,
+            process_generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
     fn subscribe_all(&self) -> broadcast::Receiver<CodexNotification> {
         self.all.subscribe()
+    }
+
+    fn subscribe_runtime(&self) -> mpsc::Receiver<CodexNotification> {
+        let (sender, receiver) = mpsc::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
+        let mut subscribers = self
+            .runtime
+            .lock()
+            .expect("runtime notification registry poisoned");
+        subscribers.retain(|subscriber| !subscriber.is_closed());
+        subscribers.push(sender);
+        receiver
     }
 
     fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<CodexNotification> {
@@ -1346,8 +1406,37 @@ impl CodexNotificationHub {
             .subscribe()
     }
 
-    fn send(&self, message: Value) {
-        let message = CodexNotification::from(message);
+    async fn send(&self, message: Value) {
+        let message =
+            CodexNotification::from(message).with_process_generation(self.process_generation);
+        if matches!(
+            message["method"].as_str(),
+            Some("turn/started" | "turn/completed")
+        ) {
+            log_executor_event(
+                "codex native turn boundary received",
+                &[
+                    (
+                        "method",
+                        message["method"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    ("process_generation", self.process_generation.to_string()),
+                    ("native_sequence", message.sequence().to_string()),
+                    (
+                        "thread_id",
+                        stream_thread_id(message_params(&message)).unwrap_or_default(),
+                    ),
+                    (
+                        "turn_id",
+                        message["params"]["turn"]["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                ],
+            );
+        }
+        self.send_runtime(message.clone()).await;
         let _ = self.all.send(message.clone());
         let thread_id =
             stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
@@ -1364,6 +1453,22 @@ impl CodexNotificationHub {
         }
         for sender in threads.values() {
             let _ = sender.send(message.clone());
+        }
+    }
+
+    async fn send_runtime(&self, message: CodexNotification) {
+        let message = message.with_process_generation(self.process_generation);
+        let subscribers = {
+            let mut subscribers = self
+                .runtime
+                .lock()
+                .expect("runtime notification registry poisoned");
+            subscribers.retain(|subscriber| !subscriber.is_closed());
+            subscribers.clone()
+        };
+        // The lifecycle owner applies backpressure instead of dropping native events.
+        for subscriber in subscribers {
+            let _ = subscriber.send(message.clone()).await;
         }
     }
 }
@@ -1429,6 +1534,7 @@ async fn start_persistent_codex_app_server(
     binary: &str,
     next_id: u64,
     request_launch_config: &CodexLaunchConfig,
+    runtime_notifications: RuntimeNotificationSubscribers,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
@@ -1471,7 +1577,7 @@ async fn start_persistent_codex_app_server(
                 &[("process_id", process_id)],
             );
             let pending = Arc::new(Mutex::new(HashMap::new()));
-            let notifications = CodexNotificationHub::new();
+            let notifications = CodexNotificationHub::for_runtime(runtime_notifications);
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 Arc::clone(&pending),
@@ -1582,7 +1688,8 @@ async fn read_persistent_codex_app_server_stdout(
                 notify_shared_process_closed(
                     &notifications,
                     "codex app-server exited while shared process was running",
-                );
+                )
+                .await;
                 fail_all_pending(
                     &pending,
                     "codex app-server exited while shared process was running".to_owned(),
@@ -1596,7 +1703,8 @@ async fn read_persistent_codex_app_server_stdout(
                     notify_shared_process_closed(
                         &notifications,
                         &format!("failed to parse codex JSON-RPC message: {error}"),
-                    );
+                    )
+                    .await;
                     fail_all_pending(
                         &pending,
                         format!("failed to parse codex JSON-RPC message: {error}"),
@@ -1609,7 +1717,8 @@ async fn read_persistent_codex_app_server_stdout(
                 notify_shared_process_closed(
                     &notifications,
                     &format!("failed to read codex JSON-RPC message: {error}"),
-                );
+                )
+                .await;
                 fail_all_pending(
                     &pending,
                     format!("failed to read codex JSON-RPC message: {error}"),
@@ -1630,7 +1739,9 @@ async fn read_persistent_codex_app_server_stdout(
 
         log_codex_mcp_startup_status(&message);
 
-        notifications.send(external_work::project_review_notification(message));
+        notifications
+            .send(external_work::project_review_notification(message))
+            .await;
     }
 }
 
@@ -1684,13 +1795,15 @@ fn log_codex_mcp_startup_status(message: &Value) {
     );
 }
 
-fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
-    notifications.send(json!({
-        "method": "codex/app-server/exited",
-        "params": {
-            "message": message,
-        }
-    }));
+async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
+    notifications
+        .send(json!({
+            "method": "codex/app-server/exited",
+            "params": {
+                "message": message,
+            }
+        }))
+        .await;
 }
 
 async fn fail_all_pending(
@@ -1803,33 +1916,6 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
-fn config_reload_resume_thread_id<'a>(
-    thread_plan: &'a CodexThreadPlan,
-    request: &ExecutionRequest,
-) -> Option<&'a str> {
-    let CodexThreadStart::Request {
-        operation: "thread/resume",
-        params,
-    } = &thread_plan.start
-    else {
-        return None;
-    };
-    let has_project_space_config =
-        params
-            .get("config")
-            .and_then(Value::as_object)
-            .is_some_and(|config| {
-                config
-                    .keys()
-                    .any(|key| key.starts_with("mcp_servers.wework_space."))
-            });
-    (has_project_space_config
-        || crate::runtime_work::stand_in_requires_confirmation(request)
-        || crate::runtime_work::external_work_kind(request).is_some())
-    .then(|| params.get("threadId").and_then(Value::as_str))
-    .flatten()
-}
-
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1883,7 +1969,16 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(thread_id) = options.direct_thread_id.take() {
             options.resume_thread_id = Some(thread_id);
         }
-        return run_codex_app_server_turn_with_cancel(&client.binary, request, options).await;
+        let runtime_notifications = CodexNotificationHub::for_runtime(Arc::clone(
+            &client.state.lock().await.runtime_notifications,
+        ));
+        return run_codex_app_server_turn_with_runtime(
+            &client.binary,
+            request,
+            options,
+            Some(runtime_notifications),
+        )
+        .await;
     }
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
@@ -1929,9 +2024,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        if let Some(thread_id) = config_reload_resume_thread_id(&thread_plan, request) {
-            client.release_thread_subscription(thread_id).await?;
-        }
+        client
+            .reload_thread_configuration_if_needed(&thread_plan, request)
+            .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -1946,6 +2041,12 @@ async fn run_codex_app_server_turn_on_shared_client(
                 );
             }
         }
+        let requested_mcp_configuration = match &thread_plan.start {
+            CodexThreadStart::Request { params, .. } => {
+                Some(mcp_reload::mcp_thread_configuration(params))
+            }
+            CodexThreadStart::Direct(_) => None,
+        };
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1994,11 +2095,23 @@ async fn run_codex_app_server_turn_on_shared_client(
             client.mark_thread_active(&thread_id).await;
             subscribed_thread_id = Some(thread_id.clone());
         }
+        if let Some(mcp_configuration) = requested_mcp_configuration {
+            client
+                .state
+                .lock()
+                .await
+                .thread_mcp_configurations
+                .insert(thread_id.clone(), mcp_configuration);
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let runtime_notifications = client.existing_process().await?.notifications;
+        let local_notifications = local_notifications::LocalNotificationSource::new(
+            Some(runtime_notifications.clone()), notifications.clone(),
+        );
         let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
             &thread_id,
-            notifications.as_ref(),
+            Some(&local_notifications.sender),
         );
         let mut notification_rx = match early_notification_rx {
             Some(notification_rx) => notification_rx,
@@ -2097,6 +2210,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                runtime_notifications: Some(runtime_notifications),
                 overload_continuation_params: overload_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
                 ),
@@ -2236,6 +2350,15 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
+    run_codex_app_server_turn_with_runtime(binary, request, options, None).await
+}
+
+async fn run_codex_app_server_turn_with_runtime(
+    binary: &str,
+    request: ExecutionRequest,
+    options: CodexAppServerTurnOptions,
+    runtime_notifications: Option<CodexNotificationHub>,
+) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
@@ -2295,7 +2418,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
             stdout,
             Some((&prepared.request.task_id, &prepared.request.subtask_id)),
         );
-        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1);
+        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
+            .with_runtime_notifications(runtime_notifications.clone());
         let mut state = CodexRunState::default();
 
         with_rpc_timeout(
@@ -2351,8 +2475,14 @@ pub async fn run_codex_app_server_turn_with_cancel(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        let _retry_subscription =
-            local_model_proxy::retry_notifications::subscribe(&thread_id, notifications.as_ref());
+        let local_notifications = local_notifications::LocalNotificationSource::new(
+            runtime_notifications.clone(),
+            notifications.clone(),
+        );
+        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
+            &thread_id,
+            Some(&local_notifications.sender),
+        );
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -2454,6 +2584,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    if let Some(runtime) = runtime_notifications.as_ref() {
+        notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
+    }
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
         failed_fields.push(("error", error.clone()));
@@ -2476,6 +2609,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    runtime_notifications: Option<CodexNotificationHub>,
     overload_turn_recovering: Option<CodexActiveTurnCallback>,
     overload_continuation_params: Value,
     active_turn_id: Option<String>,
@@ -2509,7 +2643,10 @@ async fn read_shared_turn_notifications(
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
-    let mut overload_recovery = overload_recovery::OverloadRecovery::default();
+    let mut overload_recovery = overload_recovery::OverloadRecovery::new(
+        options.runtime_notifications.clone(),
+        options.notifications.clone(),
+    );
     let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
         // A user can resume and finish a Goal while overload backoff is sleeping.
@@ -2524,10 +2661,12 @@ async fn read_shared_turn_notifications(
                     let response = deferred_goal_snapshot.take().unwrap();
                     overload_recovery::sync_goal_snapshot(
                         state,
+                        options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
                         thread_id,
                         &response,
-                    );
+                    )
+                    .await;
                     options.wait_for_goal_continuation = false;
                     if options.active_turn_id.is_none() {
                         return Ok(last_outcome.unwrap_or(ExecutionOutcome::Cancelled {
@@ -2760,9 +2899,12 @@ async fn read_shared_turn_notifications(
                         callback();
                     }
                     options.active_turn_id = None;
-                    if let Some(sender) = &options.notifications {
-                        let _ = sender.send(notification.into());
-                    }
+                    local_notifications::publish(
+                        options.runtime_notifications.as_ref(),
+                        options.notifications.as_ref(),
+                        notification,
+                    )
+                    .await;
                     overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
@@ -2797,10 +2939,12 @@ async fn read_shared_turn_notifications(
                         } else {
                             overload_recovery::sync_goal_snapshot(
                                 state,
+                                options.runtime_notifications.as_ref(),
                                 options.notifications.as_ref(),
                                 thread_id,
                                 &response,
-                            );
+                            )
+                            .await;
                             // Activating an idle Goal starts its native continuation.
                             // Do not race it with a second turn/start request.
                             options.wait_for_goal_continuation = state.goal_is_active();
@@ -2823,13 +2967,11 @@ async fn read_shared_turn_notifications(
                 }
             }
         }
-        elicitation::prepare(&mut message);
-        if options.stand_in_single_approval {
-            restrict_stand_in_approval(&mut message);
-        }
-        let auto_approve_mcp_tool_call =
-            options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
-        if !auto_approve_mcp_tool_call {
+        if prepare_runtime_notification(
+            &mut message,
+            options.auto_approve_mcp_tool_calls,
+            options.stand_in_single_approval,
+        ) {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message.clone());
             }
@@ -2903,10 +3045,12 @@ async fn read_shared_turn_notifications(
                 if let Some(response) = deferred_goal_snapshot.take() {
                     overload_recovery::sync_goal_snapshot(
                         state,
+                        options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
                         thread_id,
                         &response,
-                    );
+                    )
+                    .await;
                 }
                 return Ok(outcome);
             }
@@ -3214,8 +3358,11 @@ fn spawn_shared_approval_response(
                 (json!({}), "cancelled")
             };
             let result = codex_approval_result(&message, &response)?;
+            let settled: CodexNotification =
+                elicitation::settled(&message, status, Some(&response)).into();
+            client.publish_runtime_notification(settled.clone()).await?;
             if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                let _ = sender.send(elicitation::settled(&message, status, Some(&response)).into());
+                let _ = sender.send(settled);
             }
             client.send_response(request_id, result).await
         }
@@ -3421,8 +3568,7 @@ fn spawn_shared_mcp_server_elicitation_response(
     let correlation_key = interaction_value_key(&request_id)
         .ok_or_else(|| "mcpServer/elicitation/request has invalid JSON-RPC id".to_owned())?;
     // Keep settlement visibility identical to the initial request notification.
-    let notifications = notifications
-        .filter(|_| !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message)));
+    let visible = !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message));
     let client = client.clone();
     let message = message.clone();
     tokio::spawn(async move {
@@ -3435,11 +3581,15 @@ fn spawn_shared_mcp_server_elicitation_response(
             )
             .await?
             {
-                if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                    let _ = sender.send(
+                if visible {
+                    let settled: CodexNotification =
                         elicitation::settled(&message, result.status, result.response.as_ref())
-                            .into(),
-                    );
+                            .into();
+                    client.publish_runtime_notification(settled.clone()).await?;
+                    if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade())
+                    {
+                        let _ = sender.send(settled);
+                    }
                 }
                 client.send_response(request_id, result.result).await?;
             }
@@ -3545,6 +3695,14 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
+    // Preserve the extended-length Windows path for binaries in component caches.
+    #[cfg(windows)]
+    let resolved_binary = fs::canonicalize(&resolved_binary)
+        .map_err(|error| {
+            format!("resolve codex app-server executable {resolved_binary:?}: {error}")
+        })?
+        .to_string_lossy()
+        .into_owned();
     let codex_home = launch_config
         .env
         .get(CODEX_HOME_ENV)
@@ -3558,7 +3716,15 @@ fn spawn_codex_app_server(
     }
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .map_err(|error| {
+            format!(
+                "failed to start codex app-server: {error}; binary={resolved_binary:?} \
+                 (file={}), home={:?} (directory={})",
+                Path::new(&resolved_binary).is_file(),
+                codex_home,
+                codex_home.is_dir(),
+            )
+        })
 }
 
 fn codex_app_server_command(
@@ -3604,10 +3770,14 @@ fn codex_app_server_command(
     command
 }
 
+const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
+When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [
         user_instructions.trim(),
         task_instructions.trim(),
+        WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
@@ -4445,33 +4615,41 @@ fn codex_image_generation_enabled(model_config: &Value) -> Option<bool> {
 }
 
 fn codex_model_context_window(model_config: &Value) -> Option<i64> {
-    model_config
-        .get("model_context_window")
-        .or_else(|| model_config.get("context_window"))
-        .or_else(|| model_config.get("contextWindow"))
-        .and_then(value_i64)
-        .filter(|value| *value > 0)
+    ["model_context_window", "context_window", "contextWindow"]
+        .iter()
+        .filter_map(|key| model_config.get(key))
+        .find_map(|value| value_i64(value).filter(|value| *value > 0))
+        .or_else(|| {
+            let catalog_model_id = non_empty_config(model_config, "codex_catalog_model_id")
+                .or_else(|| non_empty_config(model_config, "codexCatalogModelId"))?;
+            codex_model_catalog::model_context_window(&catalog_model_id)
+        })
 }
 
 fn codex_model_max_output_tokens(model_config: &Value) -> Option<i64> {
-    model_config
-        .get("max_output_tokens")
-        .or_else(|| model_config.get("maxOutputTokens"))
-        .and_then(value_i64)
-        .filter(|value| *value > 0)
+    local_model_proxy::model_max_output_tokens(model_config)
+        .and_then(|value| i64::try_from(value).ok())
 }
+
+/// Percentage of the usable input budget at which Codex must compact.
+///
+/// The remaining 20% leaves room for the next request's system/tool overhead so a
+/// conversation does not grow all the way to the upstream context-length limit.
+const CODEX_AUTO_COMPACT_PERCENT: i64 = 80;
 
 /// Token threshold at which Codex must compact before the upstream rejects the turn.
 ///
 /// Upstream providers count the completion budget against the same window as the input,
 /// and the configured output ceiling travels with every request, so the usable input
-/// budget is `context_window - max_output_tokens`. Without this override Codex derives its
-/// auto-compaction threshold from the raw context window (90%, and 95% as a hard cap),
-/// which stays far above the input budget and lets conversations grow until the upstream
-/// fails the turn with a context-length error.
+/// budget is `context_window - max_output_tokens`. Compacting at 80% of that budget keeps
+/// the threshold below the upstream limit while avoiding the raw-window behavior (90% of
+/// the full window, 95% as a hard cap) that grows past the usable input budget.
 fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> Option<i64> {
     let max_output_tokens = codex_model_max_output_tokens(model_config)?;
-    (max_output_tokens < context_window).then(|| context_window - max_output_tokens)
+    (max_output_tokens < context_window).then(|| {
+        let input_budget = context_window - max_output_tokens;
+        (i128::from(input_budget) * i128::from(CODEX_AUTO_COMPACT_PERCENT) / 100) as i64
+    })
 }
 
 fn configured_codex_provider(
@@ -5322,9 +5500,6 @@ fn managed_wework_mcp_config_overrides(
             &mut overrides,
         );
     }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok((overrides, env));
-    }
     append_managed_mcp_config(
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::space_mcp_client_config(request)?,
@@ -5371,7 +5546,7 @@ fn append_managed_mcp_config(
             ));
         }
     }
-    if config.context_bound {
+    if config.auto_approve {
         overrides.push(format!(
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")
@@ -6079,6 +6254,28 @@ fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
 }
 
+pub(crate) fn prepare_codex_runtime_notification(
+    request: &ExecutionRequest,
+    message: &mut Value,
+) -> bool {
+    prepare_runtime_notification(
+        message,
+        codex_auto_approve_mcp_tool_calls(request),
+        crate::runtime_work::stand_in_requires_confirmation(request),
+    )
+}
+
+fn prepare_runtime_notification(
+    message: &mut Value,
+    auto_approve_mcp_tool_calls: bool,
+    single_approval: bool,
+) -> bool {
+    if single_approval {
+        restrict_stand_in_approval(message);
+    }
+    !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message))
+}
+
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
     if let Some(profile) = external_work::profile(request) {
         return profile;
@@ -6315,7 +6512,7 @@ fn insert_codex_developer_instructions(
         )
     };
     if crate::runtime_work::stand_in_requires_confirmation(request) {
-        instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the work list and conversation input area. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
+        instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the original conversation. The shared pending inbox links to that authorization context. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input_async when available, otherwise request_user_input, with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }
     params.insert(
         "developerInstructions".to_owned(),

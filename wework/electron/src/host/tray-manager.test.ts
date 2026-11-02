@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  activateTrayAction,
   ElectronTrayManager,
   type TrayAction,
   type TrayAdapter,
@@ -7,6 +8,38 @@ import {
   type TrayMenuState,
   type TrayMenuTemplateItem,
 } from './tray-manager.js'
+
+describe('tray navigation readiness', () => {
+  test.each([
+    { type: 'open-settings', source: 'tray-menu' },
+    { type: 'open-task', source: 'tray-menu', taskId: 'task' },
+  ] as const)('defers $type until the main window is ready', async action => {
+    let ready!: () => void
+    const activation = new Promise<void>(resolve => {
+      ready = resolve
+    })
+    const publish = vi.fn()
+    const dispatch = activateTrayAction(action, () => activation, publish)
+    expect(publish).not.toHaveBeenCalled()
+    ready()
+    await dispatch
+    expect(publish).toHaveBeenCalledExactlyOnceWith(action)
+  })
+
+  test('does not navigate after failed window activation', async () => {
+    const publish = vi.fn()
+    await expect(
+      activateTrayAction(
+        { type: 'open-settings', source: 'tray-menu' },
+        async () => {
+          throw new Error('activation failed')
+        },
+        publish
+      )
+    ).rejects.toThrow('activation failed')
+    expect(publish).not.toHaveBeenCalled()
+  })
+})
 
 function state(overrides: Partial<TrayMenuState> = {}): TrayMenuState {
   return {

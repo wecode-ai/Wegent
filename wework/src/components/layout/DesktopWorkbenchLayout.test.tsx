@@ -4303,8 +4303,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
     const scroller = screen.getByTestId('desktop-workbench-content')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'top')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
@@ -4314,12 +4314,15 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: -200,
+      value: 400,
       writable: true,
       configurable: true,
     })
 
-    fireEvent.scroll(scrollContainer)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+    fireEvent.wheel(scroller, { deltaY: -200 })
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
@@ -4546,6 +4549,31 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar')).toHaveAttribute('aria-hidden', 'false')
     expect(screen.queryByTestId('desktop-sidebar-preview')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-sidebar-hover-edge')).not.toBeInTheDocument()
+  })
+
+  test('closes the sidebar preview from its own leave event rather than the hover edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
+    const edge = screen.getByTestId('desktop-sidebar-hover-edge')
+    const preview = screen.getByTestId('desktop-sidebar-preview')
+    fireEvent.pointerEnter(edge)
+    expect(preview).toHaveAttribute('aria-hidden', 'false')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerLeave(edge)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350)
+      })
+      expect(preview).toHaveAttribute('aria-hidden', 'false')
+
+      fireEvent.pointerLeave(preview)
+      expect(preview).toHaveAttribute('aria-hidden', 'true')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('keeps sidebar controls out of the page chrome in Electron', async () => {
@@ -7459,7 +7487,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('toggles an empty project without changing the center selection', async () => {
@@ -7597,11 +7625,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
-    expect(contentFrame).toHaveClass(
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
     expect(document.body).toHaveAttribute('data-wework-panel-resizing', 'true')
@@ -8035,6 +8059,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
     expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
+  })
+
+  test('keeps the sidebar and side chat translucent behind the workbench background', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+        backgroundInSidebar: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('bg-background/25')
+    const paneGroups = screen.getAllByTestId(/^workbench-pane-pane-/)
+    expect(paneGroups.length).toBeGreaterThan(0)
+    paneGroups.forEach(group => expect(group).toHaveClass('bg-transparent'))
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(
+      within(screen.getByTestId('right-workspace-chat-panel')).getByTestId(
+        'right-workspace-chat-composer-shell'
+      )
+    ).toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
@@ -8495,12 +8547,7 @@ describe('DesktopWorkbenchLayout', () => {
     const topBar = screen.getByTestId('workbench-topbar')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(topBar).toHaveStyle({ width: '100%' })
-    expect(contentFrame).toHaveClass(
-      'flex-none',
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
     expect(contentFrame).toHaveStyle({ width: '100%' })
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
@@ -8520,12 +8567,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(contentFrame).toHaveClass(
-      'flex-none',
-      'transition-[width]',
-      'duration-[240ms]',
-      'ease-[cubic-bezier(0.2,0,0,1)]'
-    )
+    expect(contentFrame).toHaveClass('transition-none')
     expect(contentFrame).not.toHaveClass('border-r')
     await waitFor(() => {
       expect(contentFrame).toHaveStyle({ width: '420px' })
@@ -10362,6 +10404,54 @@ describe('DesktopWorkbenchLayout', () => {
     }
   )
 
+  test('opens a UNC reference without a workspace using its native share root', async () => {
+    const localDevice = createLocalSkillDevice()
+    const filePath = String.raw`\\server\share\report.md`
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '//server/share/report.md',
+      name: 'report.md',
+      content: 'opened standalone UNC reference',
+      truncated: false,
+      size: 31,
+      modifiedAt: null,
+    })
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, standaloneDeviceId: localDevice.device_id }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [localDevice],
+          currentStandaloneDeviceId: localDevice.device_id,
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '//server/share', entries: [] }),
+          readWorkspaceTextFile,
+        }}
+        messages={[
+          {
+            id: 'assistant-standalone-unc-file',
+            role: 'assistant',
+            content: `[report.md](${encodeURI(filePath)})`,
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened standalone UNC reference'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '//server/share/report.md',
+      '//server/share'
+    )
+  })
+
   test.each(['file', 'skill'] as const)(
     'reports home-directory lookup failures when opening a %s reference',
     async kind => {
@@ -11736,6 +11826,44 @@ describe('DesktopWorkbenchLayout', () => {
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
     expect(environmentInfoPanel).toHaveClass('w-0', 'overflow-hidden')
     expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-0')
+  })
+
+  test('commits the conversation width and pinned environment space together when toggling the right panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
+    const frame = screen.getByTestId('desktop-workbench-scroll-frame')
+    const spacer = screen.getByTestId('environment-info-panel-spacer')
+    const environmentPanel = screen.getByTestId('environment-info-panel-container')
+    const toggle = screen.getByTestId('toggle-right-workspace-panel-button')
+    expect(frame).toHaveStyle({ width: '100%' })
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'true')
+
+    await userEvent.click(toggle)
+    expect(frame).toHaveStyle({ width: '420px' })
+    expect(spacer).not.toHaveClass('w-[320px]')
+    expect(environmentPanel).not.toHaveClass('w-[320px]')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'false')
+    expect(frame).toHaveClass('transition-none')
+
+    await userEvent.click(toggle)
+    expect(frame).toHaveStyle({ width: '100%' })
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveAttribute('data-docked', 'true')
+    expect(frame).toHaveClass('transition-none')
+    expect(frame).not.toHaveClass('transition-[width]', 'will-change-[width]')
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(spacer).not.toHaveClass('w-[320px]')
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(spacer).toHaveClass('w-[320px]', 'transition-none')
+    expect(environmentPanel).toHaveClass('w-[320px]', 'transition-none')
   })
 
   test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {

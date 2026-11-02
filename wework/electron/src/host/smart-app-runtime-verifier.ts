@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import semver from 'semver'
@@ -56,6 +55,7 @@ export interface VerifySmartAppRuntimeOptions {
 
 export interface SmartAppRuntimeHandle {
   start(): Promise<void>
+  url(): string
   stop(): Promise<void>
 }
 
@@ -73,7 +73,6 @@ export interface SmartAppRuntimeVerifierDependencies {
     cookieHeader?: string
   }) => Promise<{ issues: SmartAppVerificationIssue[] }>
   copyProject: (projectRoot: string, destination: string) => Promise<void>
-  reservePort: () => Promise<number>
 }
 
 const DEFAULT_DEPENDENCIES: SmartAppRuntimeVerifierDependencies = {
@@ -83,7 +82,6 @@ const DEFAULT_DEPENDENCIES: SmartAppRuntimeVerifierDependencies = {
   verifyPage: verifySmartAppPage,
   runProbe: runSmartAppRuntimeProbe,
   copyProject: copySmartAppDeliveryFiles,
-  reservePort,
 }
 
 export async function verifySmartAppRuntime(
@@ -105,7 +103,6 @@ export async function verifySmartAppRuntime(
     const isolatedProject = join(temporaryRoot, 'project')
     await dependencies.copyProject(options.projectRoot, isolatedProject)
     const environment = isolatedVerificationEnvironment(options.environment, home)
-    const port = await dependencies.reservePort()
     const launch = await traceSmartAppVerification('runtime.prepare', () =>
       dependencies.prepareLaunch({
         runtimeRoot: options.runtimeRoot,
@@ -114,7 +111,7 @@ export async function verifySmartAppRuntime(
         packagePath: isolatedProject,
         manifest: options.manifest,
         environment,
-        port,
+        port: 0,
         modelBaseUrl: null,
         contextBaseUrl: null,
         contextToken: null,
@@ -154,9 +151,10 @@ export async function verifySmartAppRuntime(
     await traceSmartAppVerification('runtime.start', () =>
       abortable(activeRuntime.start(), options.signal)
     )
+    const baseUrl = activeRuntime.url()
     const page = await traceSmartAppVerification('runtime.page', () =>
       dependencies.verifyPage({
-        baseUrl: launch.url,
+        baseUrl,
         path: options.contract.runtime.path,
         readySelector: options.contract.runtime.readySelector,
         signal: options.signal,
@@ -173,7 +171,7 @@ export async function verifySmartAppRuntime(
       let cookieHeader: string | undefined
       if (launch.environment.WEWORK_DSH_BROWSER_AUTH === '1') {
         const { session } = await import('electron')
-        const cookies = await dshBrowserAuthenticationCookies(session.defaultSession, launch.url)
+        const cookies = await dshBrowserAuthenticationCookies(session.defaultSession, baseUrl)
         cookieHeader = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
       }
       return dependencies.runProbe({
@@ -181,7 +179,7 @@ export async function verifySmartAppRuntime(
         runtimeRoot: options.runtimeRoot,
         environment,
         script,
-        baseUrl: launch.url,
+        baseUrl,
         ...(cookieHeader ? { cookieHeader } : {}),
       })
     }
@@ -251,22 +249,6 @@ function runRuntimeCommand(
     child.once('exit', code => {
       if (code === 0) resolvePromise()
       else reject(new Error(`DSH preflight exited with code ${code ?? 'unknown'}`))
-    })
-  })
-}
-
-function reservePort(): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to reserve a loopback port'))
-        return
-      }
-      server.close(error => (error ? reject(error) : resolvePromise(address.port)))
     })
   })
 }

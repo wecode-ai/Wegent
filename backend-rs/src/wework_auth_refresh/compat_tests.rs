@@ -4,6 +4,7 @@
 
 //! Independent Python signatures and expected results, with a fixed clock.
 use super::*;
+use jsonwebtoken::Validation;
 use serde_json::{Value, json};
 
 #[derive(Deserialize)]

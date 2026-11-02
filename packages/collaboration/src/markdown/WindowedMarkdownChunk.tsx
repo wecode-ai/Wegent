@@ -15,14 +15,18 @@ import {
   type MarkdownWindowingScope,
 } from './MarkdownWindowingScope'
 import { getScrollViewportElement } from '../conversation/scrollViewportElement'
+import { splitMarkdownCodeBlocks } from './markdownCodeBlocks'
+import { diagramPreviewHeight } from './diagramLayout'
+import {
+  isNearMarkdownViewport as isNearViewport,
+  MARKDOWN_ROOT_MARGIN as ROOT_MARGIN,
+  windowViewport,
+} from './markdownViewport'
 import {
   getConversationDiagnosticContext,
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
 } from '../conversation/conversationDiagnostics'
-
-const PRE_RENDER_DISTANCE = 1_600
-const ROOT_MARGIN = `${PRE_RENDER_DISTANCE}px 0px`
 
 interface ChunkLayout {
   content: string
@@ -74,7 +78,7 @@ export function WindowedMarkdownChunk({
   const reservedHeight =
     retainedLayout?.content === content
       ? retainedLayout.height
-      : estimateMarkdownChunkHeight(content)
+      : estimateMarkdownChunkHeight(content, scope?.rootFontSize)
 
   const saveRenderedLayout = useCallback(
     (rect: DOMRect) => {
@@ -99,7 +103,7 @@ export function WindowedMarkdownChunk({
         scope?.getHeight(current.content, rect.width) ??
         (previous?.content === current.content && previous.width === rect.width
           ? previous.height
-          : estimateMarkdownChunkHeight(current.content))
+          : estimateMarkdownChunkHeight(current.content, scope?.rootFontSize))
       setRetainedLayout(previous =>
         previous?.content === current.content &&
         previous.width === rect.width &&
@@ -274,6 +278,7 @@ export function WindowedMarkdownChunk({
     <div
       ref={chunkRef}
       data-markdown-window-chunk
+      data-markdown-chunk-index={chunkIndex}
       className="flow-root"
       style={shouldRender ? undefined : { minHeight: reservedHeight }}
     >
@@ -292,29 +297,18 @@ export function WindowedMarkdownChunk({
   )
 }
 
-function estimateMarkdownChunkHeight(content: string): number {
-  return Math.max(120, Math.min(1_200, content.split('\n').length * 24))
+function estimateMarkdownChunkHeight(content: string, rootFontSize = 16): number {
+  let diagramHeight = 0
+  let textLines = 0
+  for (const block of splitMarkdownCodeBlocks(content)) {
+    if (block.kind === 'code' && block.diagram) diagramHeight += diagramPreviewHeight(rootFontSize)
+    else textLines += block.kind === 'text' ? block.content.split('\n').length : block.lineCount
+  }
+  return Math.max(120, diagramHeight + Math.min(1_200, textLines * 24))
 }
 
 function viewportHasSize(viewport: DOMRect): boolean {
   return viewport.width > 0 && viewport.height > 0
-}
-
-function isNearViewport(rect: DOMRect, viewport: DOMRect): boolean {
-  return (
-    rect.width > 0 &&
-    rect.bottom >= viewport.top - PRE_RENDER_DISTANCE &&
-    rect.top <= viewport.bottom + PRE_RENDER_DISTANCE
-  )
-}
-
-function windowViewport(): DOMRect {
-  return {
-    top: 0,
-    bottom: window.innerHeight,
-    width: window.innerWidth,
-    height: window.innerHeight,
-  } as DOMRect
 }
 
 function getChunkRoot(

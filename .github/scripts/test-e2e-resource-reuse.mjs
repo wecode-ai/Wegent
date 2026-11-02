@@ -16,6 +16,150 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
+test("platform image reuse checks the registry before starting a builder", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['prepare-platform-e2e-image']['steps'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  const checkIndex = steps.findIndex((step) => step.id === "image-check");
+  const builderIndex = steps.findIndex((step) =>
+    step.uses?.startsWith("docker/setup-buildx-action@"),
+  );
+  const build = steps.find((step) =>
+    step.uses?.startsWith("docker/build-push-action@"),
+  );
+  assert(checkIndex >= 0);
+  assert(builderIndex > checkIndex);
+  assert.equal(
+    steps[builderIndex].if,
+    "steps.image-check.outputs.exists != 'true'",
+  );
+  assert.equal(build.if, steps[builderIndex].if);
+
+  for (const exists of [true, false]) {
+    const root = mkdtempSync(join(tmpdir(), "platform-image-check-"));
+    try {
+      const output = join(root, "output");
+      const image = "ghcr.io/example/platform-e2e:content-hash";
+      writeFileSync(
+        join(root, "docker"),
+        `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
+      );
+      chmodSync(join(root, "docker"), 0o755);
+      const probe = spawnSync("bash", ["-e", "-c", steps[checkIndex].run], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          IMAGE: image,
+          GITHUB_OUTPUT: output,
+        },
+      });
+      assert.equal(probe.status, 0, probe.stderr);
+      assert.equal(readFileSync(output, "utf8"), `exists=${exists}\n`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("dependency caches separate host and container workspace paths", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0]))",
+      ".github/actions/setup-node-workspace/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout).runs.steps;
+  const context = steps.find((step) => step.id === "workspace-cache-context");
+  const cache = steps.find((step) => step.id === "workspace-cache");
+  assert(
+    cache.with.key.includes(
+      "${{ steps.workspace-cache-context.outputs.fingerprint }}",
+    ),
+  );
+  const root = mkdtempSync(join(tmpdir(), "workspace-cache-context-"));
+  try {
+    const fingerprint = (cwd) => {
+      const output = join(root, "output");
+      writeFileSync(output, "");
+      const run = spawnSync("bash", ["-eu", "-c", context.run], {
+        cwd,
+        env: { ...process.env, GITHUB_OUTPUT: output },
+        encoding: "utf8",
+      });
+      assert.equal(run.status, 0, run.stderr);
+      const value = readFileSync(output, "utf8").trim();
+      assert.match(value, /^fingerprint=[a-f0-9]{64}$/);
+      return value;
+    };
+    const host = fingerprint(root);
+    const container = fingerprint(tmpdir());
+    assert.notEqual(host, container);
+    assert.equal(fingerprint(root), host);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows desktop shards consume packaged dependencies without reinstalling the workspace", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+      ".github/workflows/wework-e2e.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  assert(
+    !steps.some(
+      (step) => step.uses === "./.github/actions/setup-node-workspace",
+    ),
+  );
+  assert(
+    steps.some(
+      (step) =>
+        step.uses?.startsWith("actions/setup-node@") &&
+        step.with["node-version"] === "24",
+    ),
+  );
+  const pnpm = steps.find((step) =>
+    step.uses?.startsWith("pnpm/action-setup@"),
+  );
+  assert.equal(
+    pnpm.if,
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+  );
+  assert(
+    steps.some(
+      (step) =>
+        step.name ===
+          "Install Electron for native startup and schema verification" &&
+        step.if === pnpm.if,
+    ),
+  );
+});
+
 test("platform sharding preserves four runners and every provider shard", () => {
   const result = spawnSync(
     "ruby",
@@ -121,6 +265,7 @@ if (command === 'uv' && process.env.TEST_MODE === 'test-failure' && args.at(-1).
         (call) => call.command === "docker" && call.args[0] === "run",
       );
       assert.equal(starts.length, 2);
+      assert(starts[0].args.includes("gcr.io/etcd-development/etcd:v3.5.16"));
       assert(
         starts.every(
           (call) =>

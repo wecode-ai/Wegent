@@ -35,6 +35,23 @@ The durable queue, atomic claim, and Runtime acceptance control task delivery. A
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` overrides the default five-second interval. Reconnection and availability notifications still initiate an immediate pull.
 
+## Stand-in assignment identities
+
+For a direct human assignment, `human_task_binding.assignmentId` identifies the
+Issue assignment event. In a collaboration round it identifies the manager's
+member work; the additional `issueAssignmentId` identifies the current Issue
+assignment event. Executor uses the latter for current-assignment validation and
+reception receipts, persisting it as `issue_assignment_id` in task binding
+metadata while retaining the member work ID for round coordination. Receipts
+still require the current recipient, an owned device, and an owned task binding.
+
+Manual delegation from a notification without an execution omits the stand-in
+ID so Executor resolves an identity connected to the project, rather than
+assuming `default`. Reassignment creates a new assignment event and an independent
+stand-in task. The CI-covered `stand-in-assignment-notifications` suite verifies
+notification dispatch, manual delegation, reassignment after completion, and
+round reception receipts together.
+
 ## Verification cases
 
 1. A project Maintainer can bind another member's workspace-authorized Agent while global configuration permissions remain unchanged.

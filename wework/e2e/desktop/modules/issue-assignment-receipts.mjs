@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { verifyAssignmentActivityReceipts } from './assignment-activity-receipts.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
@@ -9,7 +10,8 @@ export async function verifyIssueAssignmentReceipts(
   control,
   projectId,
   uiTimeoutMs,
-  captureScreenshot
+  captureScreenshot,
+  userId
 ) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const dismissInbox = async () => {
@@ -28,12 +30,13 @@ export async function verifyIssueAssignmentReceipts(
     )
     await captureScreenshot(control, name, CONTENT)
   }
-  const params = { projectId, userId: 9001, projectStore: 'local' }
+  const params = { projectId, userId, projectStore: 'local' }
+  const peerUserId = userId + 1
   const settings = await rpc('runtime.stand_in.get', params)
   await rpc('runtime.stand_in.save', { ...params, settings: { ...settings, enabled: false } })
   let issue = await rpc('todos.create', {
     project_id: projectId,
-    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: 9002 },
+    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: peerUserId },
   })
   const load = () => rpc('todos.assignment_receipts', { project_id: projectId, task_id: issue.id })
   const open = async () => {
@@ -45,6 +48,7 @@ export async function verifyIssueAssignmentReceipts(
   const close = () => control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
   await open()
   await control.command('waitFor', RECEIPTS, { text: '未读' })
+  await verifyAssignmentActivityReceipts(control, '未读')
   assert.equal(await control.command('getElementCount', RECEIPTS), '1')
   assert.equal(
     (await load())[0].human_read_at,
@@ -57,10 +61,11 @@ export async function verifyIssueAssignmentReceipts(
   issue = await rpc('todos.update', {
     project_id: projectId,
     task_id: issue.id,
-    todo: { version: issue.version, assignee_user_id: 9001 },
+    todo: { version: issue.version, assignee_user_id: userId },
   })
   await open()
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
+  await verifyAssignmentActivityReceipts(control, '本人已读')
   assert.equal((await load())[0].stand_in_received_at, null)
   await control.command(
     'waitFor',
@@ -72,6 +77,7 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const both = (await load())[0]
+  await verifyAssignmentActivityReceipts(control, '分身已接收')
   assert.ok(both.human_read_at && both.stand_in_received_at)
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
   await capture('assignment-receipts-03-both-received.png')
@@ -95,6 +101,7 @@ export async function verifyIssueAssignmentReceipts(
   await open()
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   await capture('assignment-receipts-03-dark.png')
+  await verifyAssignmentActivityReceipts(control, '分身已接收')
   await close()
   await control.command('navigate', 'body', { value: '/settings/appearance' })
   await control.command('waitFor', '[data-testid="appearance-settings-page"]')
@@ -107,19 +114,21 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   assert.deepEqual((await load())[0], both, 'Reload must preserve both first-reception timestamps')
   await capture('assignment-receipts-04-persisted.png')
+  await verifyAssignmentActivityReceipts(control, '分身已接收')
   await close()
 
   issue = await rpc('todos.get', { project_id: projectId, task_id: issue.id })
   issue = await rpc('todos.update', {
     project_id: projectId,
     task_id: issue.id,
-    todo: { version: issue.version, assignee_user_id: 9002 },
+    todo: { version: issue.version, assignee_user_id: peerUserId },
   })
   await open()
   await control.command('waitFor', RECEIPTS, { text: '未读' })
   assert.notEqual((await load())[0].id, both.id)
   assert.equal((await load())[0].stand_in_received_at, null)
   await capture('assignment-receipts-05-reassigned.png')
+  await verifyAssignmentActivityReceipts(control, '未读')
   await close()
 }
 
@@ -133,6 +142,7 @@ export async function verifyCloudAssignmentReceipts(
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const assignments = await request(`/v1/loop-items/${issueId}/assignments`)
+  await verifyAssignmentActivityReceipts(control, '分身已接收')
   assert.ok(assignments.items.some(row => row.human_read_at && row.stand_in_received_at))
   await captureScreenshot(control, 'assignment-receipts-cloud-both.png', CONTENT)
   await verifyIndexedReceipts(issueId, assignments, request, cloud.database)

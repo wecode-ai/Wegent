@@ -55,24 +55,13 @@ def _catalog_models() -> tuple[dict[str, Any], ...]:
     return tuple(models)
 
 
-def codex_catalog_model_id_for_upstream(
-    model_id: Any,
-    upstream_api_format: Any = None,
-) -> Optional[str]:
-    """Resolve a catalog slug from declarative upstream identity metadata."""
+def codex_catalog_model_id_for_upstream(model_id: Any) -> Optional[str]:
+    """Resolve a catalog slug from declarative model identity metadata."""
 
     if not isinstance(model_id, str) or not model_id.strip():
         return None
     normalized_model_id = model_id.strip().lower()
-    normalized_api_format = (
-        upstream_api_format.strip().lower()
-        if isinstance(upstream_api_format, str)
-        else ""
-    )
     for model in _catalog_models():
-        api_formats = _normalized_strings(model.get("upstream_api_formats"))
-        if api_formats and normalized_api_format not in api_formats:
-            continue
         exact_model_ids = _normalized_strings(model.get("upstream_model_ids"))
         exact_model_id = model.get("upstream_model_id")
         if isinstance(exact_model_id, str) and exact_model_id.strip():

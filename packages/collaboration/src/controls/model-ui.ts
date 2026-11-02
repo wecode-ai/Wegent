@@ -2,10 +2,7 @@ import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
 } from "@wegent/chat-core/codex-catalog";
-import {
-  getCloudModelReasoning,
-  getCloudModelUpstreamApiFormat,
-} from "@wegent/chat-core/model-execution";
+import { getCloudModelReasoning } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 // Persist UI selection intent with the model so remounts do not change slider semantics.
@@ -539,10 +536,7 @@ export function resolveCodexCatalogModelId(model: UnifiedModel): string | null {
   const candidates = upstreamCandidates.some((candidate) => candidate?.trim())
     ? upstreamCandidates
     : [model.name];
-  return codexCatalogModelIdForUpstream(
-    candidates,
-    getCloudModelUpstreamApiFormat(model) ?? "",
-  );
+  return codexCatalogModelIdForUpstream(candidates);
 }
 
 function catalogReasoningLevels(

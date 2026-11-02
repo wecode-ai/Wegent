@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@/i18n'
 import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorApi } from './standIn'
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
@@ -197,4 +198,60 @@ it('routes telemetry policy, replay and ACK to the explicitly selected Executor'
     { userId: 7, ids: ['event-id'] },
     'remote'
   )
+})
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('stand-in RPC failures', () => {
+  it('keeps error identity and cause while localizing the message for shared project UI', async () => {
+    const error = {
+      code: 'assignment_already_handled',
+      message: 'This assignment has already been handled or is no longer active',
+    }
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const api = createStandInExecutorApi(vi.fn().mockRejectedValue(error))
+    await expect(api.run('project', 'issue', 7, 'cloud', 'mac', 'review')).rejects.toMatchObject({
+      code: error.code,
+      cause: error,
+      message: i18n.t('common:standIn.errors.assignment_already_handled'),
+    })
+    expect(log).toHaveBeenCalledWith(
+      '[Stand-in] Executor request failed',
+      expect.objectContaining({
+        method: 'runtime.stand_in.run',
+        deviceId: 'mac',
+        projectId: 'project',
+        issueId: 'issue',
+        userId: 7,
+        roleId: 'review',
+        code: error.code,
+      })
+    )
+  })
+
+  it('excludes conversation content from request diagnostics', async () => {
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const api = createStandInExecutorApi(vi.fn().mockRejectedValue({ code: 'cloud_unavailable' }))
+    await expect(api.conversation(7, 'mac', 'private conversation')).rejects.toBeInstanceOf(Error)
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private conversation')
+  })
+})
+
+it('preserves connection authorization metadata and retry policy', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const error = {
+    code: 'connector_auth_required',
+    message: 'Authorize the account',
+    retryable: true,
+    details: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+  }
+  const api = createStandInExecutorApi(vi.fn().mockRejectedValue(error))
+  await expect(api.connectionProviders('mac')).rejects.toMatchObject({
+    code: error.code,
+    retryable: true,
+    details: error.details,
+    cause: error,
+    message: i18n.t('common:standIn.errors.connector_auth_required'),
+  })
+  expect(error.message).toBe('Authorize the account')
 })

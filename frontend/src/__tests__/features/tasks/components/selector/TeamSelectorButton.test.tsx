@@ -236,6 +236,27 @@ describe('TeamSelectorButton', () => {
     }
   )
 
+  it('keeps a dual-mode agent on the code page', async () => {
+    const chatTeam = makeTeam({ id: 1, name: 'chat-agent', bind_mode: ['chat'] })
+    const dualModeTeam = makeTeam({ id: 2, name: 'dual-mode-agent', bind_mode: ['chat', 'code'] })
+    const setSelectedTeam = jest.fn()
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={chatTeam}
+        setSelectedTeam={setSelectedTeam}
+        teams={[chatTeam, dualModeTeam]}
+        disabled={false}
+        currentMode="code"
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('team-option-dual-mode-agent'))
+
+    expect(setSelectedTeam).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
   it('preserves project context when switching to an agent on another page', async () => {
     mockSearchParams = new URLSearchParams({
       projectId: '2180',

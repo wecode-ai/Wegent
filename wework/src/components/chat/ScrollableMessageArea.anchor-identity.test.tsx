@@ -42,7 +42,6 @@ function renderPausedReader(prefixCount = 0) {
   render(
     <ScrollableMessageArea
       conversationKey={`anchor-identity-${conversationIndex++}`}
-      scrollOrigin="bottom"
       messages={[
         { id: 'message', role: 'assistant', content: 'Text', status: 'done', createdAt: '' },
       ]}
@@ -52,7 +51,7 @@ function renderPausedReader(prefixCount = 0) {
   const reader = screen.getByTestId('reading-anchor')
   const earlierChunk = screen.getByTestId('earlier-windowed-chunk')
   const laterAnchors = screen.getByTestId('later-anchors')
-  const initialScrollTop = -9_583
+  const initialScrollTop = 2_998
   let scrollHeight = 13_372
   let readerLayoutShift = 0
   Object.defineProperties(scroller, {
@@ -65,8 +64,8 @@ function renderPausedReader(prefixCount = 0) {
     new DOMRect(0, 104.75 + readerLayoutShift - (scroller.scrollTop - initialScrollTop), 736, 24)
   earlierChunk.replaceChildren(...Array.from({ length: prefixCount }, () => semanticAnchor(-1_500)))
   laterAnchors.replaceChildren(semanticAnchor(500), semanticAnchor(600))
-  act(() => virtualLayoutCallback?.())
   fireEvent.wheel(scroller, { deltaY: -56 })
+  act(() => virtualLayoutCallback?.())
   fireEvent.scroll(scroller)
   const sampled = createUserViewportAnchor(scroller, scroller)!
   expect(sampled.element).toBe(reader)
@@ -149,7 +148,7 @@ describe('ScrollableMessageArea anchor node identity', () => {
     setReaderLayoutShift(-40)
     act(() => virtualLayoutCallback!())
 
-    expect(scroller.scrollTop).toBe(-9_623)
+    expect(scroller.scrollTop).toBe(2_958)
     expect(reader.getBoundingClientRect().top).toBe(top)
   })
 
@@ -183,7 +182,7 @@ describe('ScrollableMessageArea anchor node identity', () => {
       expect(findUserViewportAnchor(scroller, sampled)).toBe(reader)
       act(() => virtualLayoutCallback!())
 
-      expect(scroller.scrollTop).toBe(-9_623)
+      expect(scroller.scrollTop).toBe(2_958)
       expect(getTextOffsetRect(reader, sampled.textOffset!)!.top).toBe(textTop)
       expect(sampled.textOffset).toBe(6)
     } finally {
@@ -213,4 +212,37 @@ describe('ScrollableMessageArea anchor node identity', () => {
       expect(scroller.scrollTop).toBe(scrollTop)
     }
   )
+
+  test('restores a regrouped process item by its runtime identity', () => {
+    const { scroller, reader, earlierChunk, setHeight } = renderPausedReader()
+    const item = document.createElement('div')
+    item.dataset.processingBlockId = 'retained-process'
+    earlierChunk.before(item)
+    const chunk = document.createElement('div')
+    chunk.dataset.markdownChunkIndex = '1'
+    earlierChunk.dataset.markdownChunkIndex = '0'
+    item.append(earlierChunk, chunk)
+    chunk.append(reader)
+    fireEvent.wheel(scroller, { deltaY: -1 })
+    const sampled = createUserViewportAnchor(scroller, scroller)!
+    expect(sampled.element).toBe(reader)
+    expect(sampled.item?.id).toBe('retained-process')
+    expect(sampled.item?.chunkIndex).toBe('1')
+    const replacement = item.cloneNode(true) as HTMLElement
+    replacement.querySelector('[data-markdown-chunk-index="0"]')!.append(semanticAnchor(-1100))
+    const replacementReader = replacement.querySelector<HTMLElement>(
+      '[data-markdown-chunk-index="1"] [data-scroll-anchor]'
+    )!
+    replacementReader.getBoundingClientRect = () =>
+      new DOMRect(0, 104.75 + 600 - (scroller.scrollTop - 2998), 736, 24)
+    item.replaceWith(replacement)
+    setHeight(scroller.scrollHeight + 600)
+
+    expect(findUserViewportAnchor(scroller, sampled)).toBe(replacementReader)
+    act(() => virtualLayoutCallback!())
+    expect(scroller.scrollTop).toBe(3598)
+    expect(replacementReader.getBoundingClientRect().top).toBe(104.75)
+    replacement.dataset.processingBlockId = 'unrelated-process'
+    expect(findUserViewportAnchor(scroller, sampled)).toBeNull()
+  })
 })

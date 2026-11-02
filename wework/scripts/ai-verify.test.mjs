@@ -19,22 +19,7 @@ import {
   resolveStartupTimeout,
   startupFailureMessage,
   validateStartOptions,
-  takeWindowCommand,
 } from './ai-verify.mjs'
-
-describe('takeWindowCommand', () => {
-  test('keeps commands isolated between main and detached clients', () => {
-    const main = { id: 'main-command', windowLabel: 'main' }
-    const detached = { id: 'detached-command', windowLabel: 'workspace-task' }
-    const queue = [main, detached]
-    expect(takeWindowCommand(queue, undefined)).toBeNull()
-    expect(takeWindowCommand(queue, 'workspace-task')).toBe(detached)
-    expect(queue).toEqual([main])
-    expect(takeWindowCommand(queue, 'workspace-task')).toBeNull()
-    expect(takeWindowCommand(queue, 'main')).toBe(main)
-    expect(queue).toEqual([])
-  })
-})
 
 describe('AI_VERIFY_ACTIONS', () => {
   test('preserves the complete legacy command surface', () => {

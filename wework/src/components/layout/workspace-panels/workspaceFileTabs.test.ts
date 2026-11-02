@@ -27,3 +27,11 @@ test('Windows paths share a tab regardless of case or path separator', () => {
   )
   expect(workspaceFileTabLabel('C:\\fixture\\repo\\A.ts')).toBe('A.ts')
 })
+
+test('POSIX backslashes remain part of the filename and tab identity', () => {
+  const path = String.raw`/fixture/repo/report\2026.md`
+  expect(workspaceFileTabLabel(path)).toBe(String.raw`report\2026.md`)
+  expect(workspaceFileTabId(target, path)).not.toBe(
+    workspaceFileTabId(target, '/fixture/repo/report/2026.md')
+  )
+})

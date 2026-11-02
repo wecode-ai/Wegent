@@ -1,3 +1,4 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
@@ -9,7 +10,6 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
-  fetchJson,
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
@@ -41,7 +41,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     const address = state.workbench?.currentRuntimeTask
     assert.ok(address?.taskId, 'The conversation address is missing')
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +49,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         method: 'runtime.tasks.get',
         params: { address },
       }),
-      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(response.ok, true)
     const task = response.result?.task

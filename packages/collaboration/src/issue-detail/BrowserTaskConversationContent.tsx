@@ -73,7 +73,6 @@ function BrowserTaskConversationContentContent({
             {...conversation}
             className="min-h-0 flex-1"
             scrollTestId="right-workspace-chat-scroll-area"
-            scrollOrigin="bottom"
             initialScrollPosition={preview ? 'latest' : 'restore'}
             messageListClassName={`${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} pb-4 pt-5`}
           />

@@ -12,6 +12,10 @@ import { APIRequestContext, Page, expect, test, type Route } from '@playwright/t
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import {
+  assertCodexPhaseTransition,
+  type PhaseRegressionStep,
+} from '../../utils/codex-phase-regression'
 import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
@@ -801,6 +805,38 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
+  for (const rewriteCompletedText of [false, true]) {
+    test(
+      rewriteCompletedText
+        ? 'Codex completed text rewrites replace the same block and survive reload'
+        : 'Codex phase changes keep one text block during streaming and after reload',
+      async ({ page, request }) => {
+        await assertCodexPhaseTransition(
+          {
+            page,
+            configure: (prompt, steps) => configureToolScenario(request, prompt, steps),
+            start: async prompt => {
+              await openTaskPage(page, '/chat?agent=code', codexCodeTeam.id, 'code')
+              await sendMessage(page, prompt)
+              const taskId = await waitForTaskId(page)
+              createdTaskIds.add(taskId)
+              return taskId
+            },
+            waitForTerminal: taskId => waitForBackendTerminal(request, taskId),
+            readTask: async taskId => {
+              const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+                headers: authHeaders(),
+              })
+              expect(response.status()).toBe(200)
+              return response.json()
+            },
+          },
+          { rewriteCompletedText }
+        )
+      }
+    )
+  }
+
   test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
     const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
     const successMarker = 'CODEX_SKILL_MCP_EFFECTIVE'
@@ -1007,6 +1043,60 @@ test.describe('Agent conversation regression', () => {
       expect(extractText(modelRequest.body)).toContain(contextToken)
     } finally {
       await gitFixture.close()
+    }
+  })
+
+  test('preserves a draft until the explicitly requested agent is ready', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `AGENT_READINESS_${makeContextToken('agent_readiness')}`
+    const reply = `AGENT_READINESS_OK_${makeContextToken('agent_readiness_reply')}`
+    await configureStreamRule(request, prompt, reply)
+
+    const isRequestedTeam = (url: URL) => url.pathname === `/api/teams/${claudeChatTeam.id}`
+    let release!: () => void
+    let requested = false
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const holdTeam = async (route: Route) => {
+      requested = true
+      await gate
+      // Delay transport only; the real Backend resolves the requested agent.
+      await route.continue()
+    }
+    await page.route(isRequestedTeam, holdTeam)
+
+    try {
+      await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+      await expect.poll(() => requested, { timeout: 10_000 }).toBe(true)
+      const input = page.getByTestId('message-input')
+      await input.fill(prompt)
+      await expect(page.getByTestId('send-button')).toBeDisabled()
+      await input.press('Enter')
+      await expect(input).toContainText(prompt)
+      expect(new URL(page.url()).searchParams.get('taskId')).toBeNull()
+
+      const response = page.waitForResponse(response => isRequestedTeam(new URL(response.url())))
+      release()
+      expect((await response).status()).toBe(200)
+      await sendMessage(page, prompt)
+      const taskId = await waitForTaskId(page)
+      createdTaskIds.add(taskId)
+      await expect(page.getByTestId('messages-container')).toContainText(reply, {
+        timeout: RESPONSE_TIMEOUT_MS,
+      })
+      await waitForBackendTerminal(request, taskId)
+      const taskResponse = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(taskResponse.status()).toBe(200)
+      const task = (await taskResponse.json()) as { team: { id: number } }
+      expect(task.team.id).toBe(claudeChatTeam.id)
+    } finally {
+      release()
+      await page.unroute(isRequestedTeam, holdTeam)
     }
   })
 
@@ -1654,10 +1744,7 @@ test.describe('Agent conversation regression', () => {
   async function configureToolScenario(
     request: APIRequestContext,
     matchText: string,
-    steps: Array<{
-      toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
-      responseContent?: string
-    }>
+    steps: PhaseRegressionStep[]
   ): Promise<void> {
     toolScenarioMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {

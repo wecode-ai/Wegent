@@ -23,7 +23,7 @@ function rect(top: number, width: number, height: number): DOMRect {
 
 function viewportHarness(top = 4_000, richHeight = 2_407) {
   const root = document.createElement('div')
-  root.dataset.scrollOrigin = 'bottom'
+  root.dataset.scrollOrigin = 'top'
   document.body.append(root)
   const geometry = { top, width: 736, richHeight, rootWidth: 1_200 }
   const intersections: Array<{
@@ -107,6 +107,28 @@ describe('Markdown viewport windowing', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
+
+  test.each(['mermaid', 'mmd', 'plantuml', 'puml'])(
+    'reserves the fixed diagram geometry for offscreen %s fences regardless of source length',
+    language => {
+      const harness = viewportHarness()
+      for (const lines of [2, 100]) {
+        const view = harness.mount(
+          ['```' + language, ...Array.from({ length: lines }, () => 'A --> B'), '```'].join('\n')
+        )
+        expect(view.container.querySelector('[data-markdown-window-chunk]')).toHaveStyle({
+          minHeight: '404px',
+        })
+        view.unmount()
+      }
+      harness.scope.rootFontSize = 20
+      const view = harness.mount('```' + language + '\nA --> B\n```')
+      expect(view.container.querySelector('[data-markdown-window-chunk]')).toHaveStyle({
+        minHeight: '505px',
+      })
+      view.unmount()
+    }
+  )
 
   test('preserves rich layout without computing or recording diagnostic details outside capture', () => {
     const context = vi.spyOn(conversationDiagnostics, 'getConversationDiagnosticContext')

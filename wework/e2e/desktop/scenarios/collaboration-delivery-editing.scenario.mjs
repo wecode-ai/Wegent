@@ -22,7 +22,8 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workbenchR
     prepareCloud: cloud.prepare,
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const click = testId => control.command('click', scoped(`[data-testid="${testId}"]`))
+      const click = testId =>
+        control.command('clickWhenEnabled', scoped(`[data-testid="${testId}"]`), { visible: true })
       const fill = (testId, value) =>
         control.command('fill', scoped(`[data-testid="${testId}"]`), { value })
       await ensureExperimentalFeaturesEnabled(control)

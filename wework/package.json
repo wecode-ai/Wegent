@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.5.13-beta.8",
+  "version": "0.6.4-beta.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -91,7 +91,7 @@
     "@radix-ui/react-scroll-area": "^1.2.11",
     "@sentry/react": "^8.55.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tanstack/react-virtual": "3.14.2",
+    "@tanstack/react-virtual": "3.14.23",
     "@wegent/chat-core": "workspace:*",
     "@wegent/collaboration": "workspace:*",
     "@wegent/process-explorer": "workspace:*",
@@ -150,6 +150,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",
+    "chokidar": "3.6.0",
     "dingtalk-workspace-cli": "1.0.58",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",

@@ -642,16 +642,10 @@ export async function getSingleElementMetrics(control, selector, description) {
 }
 
 export function distanceFromBottom(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, -metrics.scrollTop)
-  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
 
 export function distanceFromTop(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
-  }
   return Math.max(0, metrics.scrollTop)
 }
 

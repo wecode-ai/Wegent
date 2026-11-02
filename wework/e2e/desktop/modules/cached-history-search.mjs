@@ -2,6 +2,12 @@ import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { SEARCH_CONTRACT_CASES, SEARCH_CONTRACT_QUERIES } from './conversation-search-contract.mjs'
+import { waitForTranscriptState } from './transcript-restoration.mjs'
+import {
+  getSingleElementMetrics,
+  SCROLLER_SELECTOR,
+  waitForBottom,
+} from './streaming-text-fixture.mjs'
 import {
   HISTORY_TRANSCRIPT_CONTENT_SELECTOR,
   TERMINAL_ANALYSIS_PROJECTION,
@@ -297,8 +303,22 @@ export async function verifyCachedHistorySearch(
   search,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  await control.command('waitFor', OLDER, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
+  // The cached tail can render before its initial automatic pagination settles.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.pane?.transcript?.loading === false &&
+      snapshot.pane.transcript.loadingMoreBefore === false,
+    'The cached history did not finish its initial pagination',
+    timeoutMs
+  )
+  await waitForBottom(control, 'The initial cached conversation', timeoutMs)
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|WEWORK_E2E_CACHED_/)
   const originalText = await control.command('getText', HISTORY_TRANSCRIPT_CONTENT_SELECTOR)
@@ -322,7 +342,27 @@ export async function verifyCachedHistorySearch(
     )
     assert.ok(result.matches.every(match => match.cursor.startsWith('wework-cached-search:')))
   }
-  await control.command('nativePress', OLDER, {
+  const beforeShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'Before find')
+  // The native key helper scrolls its focus target into view; keep it outside the transcript.
+  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
+    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+  })
+  await control.command('waitFor', OLDER)
+  const afterShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After find')
+  assert.equal(
+    afterShortcut.scrollHeight,
+    beforeShortcut.scrollHeight,
+    'Opening find changed transcript height through the manual history control'
+  )
+  assert.ok(
+    Math.abs(afterShortcut.scrollTop - beforeShortcut.scrollTop) <= 2,
+    `Opening find moved the original reading position: ${JSON.stringify({ beforeShortcut, afterShortcut })}`
+  )
+  await control.command('click', '[data-testid="conversation-find-close-button"]')
+  const afterClose = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After closing find')
+  assert.equal(afterClose.scrollHeight, beforeShortcut.scrollHeight)
+  assert.ok(Math.abs(afterClose.scrollTop - beforeShortcut.scrollTop) <= 2)
+  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
     key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
   })
   for (const { query, matches, browseContext } of CASES) {
@@ -410,9 +450,17 @@ export async function verifyCachedHistorySearch(
   }
   await control.command('nativePress', FIND, { key: 'Escape' })
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER })
+  await waitForBottom(control, 'The restored cached conversation', timeoutMs)
   const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
-    assert.deepEqual(restored.transcript[field], original.transcript[field])
+    assert.deepEqual(
+      restored.transcript[field],
+      original.transcript[field],
+      `Cached history restoration changed ${field}: ${JSON.stringify({
+        original: original.transcript,
+        restored: restored.transcript,
+      })}`
+    )
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
   assert.equal(Number(await control.command('getElementCount', NEWER)), 0)

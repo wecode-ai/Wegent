@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useCallback, useEffect, useState } from 'react'
 import type { StandInExecutorApi, StandInInboxWork, StandInSourceError } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -66,7 +67,7 @@ export function useStandInInbox(
           setError(null)
         }
       } catch (cause) {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       } finally {
         if (active) timer = setTimeout(poll, 3000)
       }

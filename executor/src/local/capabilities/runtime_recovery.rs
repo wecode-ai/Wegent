@@ -553,7 +553,17 @@ impl GlobalCapabilityStore {
             let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
                 && entry.get("installed_plugin_id").and_then(Value::as_i64)
                     == spec.installed_plugin_id;
-            if !same_install || !self.matches_old_managed_copy(&target, entry)? {
+            let published_source = spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                && !target.is_symlink()
+                && crate::local::plugin_import::personal_plugin_has_cloud_link(
+                    &self.personal_marketplace_dir(),
+                    &spec.name,
+                )
+                .map_err(CapabilitySyncError::invalid_payload)?;
+            if published_source
+                || !same_install
+                || !self.matches_old_managed_copy(&target, entry)?
+            {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin marketplace entry is occupied by an unrelated source",
                 ));
@@ -975,3 +985,7 @@ mod startup_tests;
 #[cfg(test)]
 #[path = "runtime_recovery_reinstall_tests.rs"]
 mod reinstall_tests;
+
+#[cfg(test)]
+#[path = "personal_source_uninstall_tests.rs"]
+mod personal_source_uninstall_tests;

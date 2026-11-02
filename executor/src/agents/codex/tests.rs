@@ -33,6 +33,123 @@ fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
 }
 
 #[test]
+fn runtime_notification_preparation_preserves_stand_in_approval_limits() {
+    let request = serde_json::from_value(json!({"origin": {
+        "type": "dingtalk_work", "initiatedBy": "stand_in", "askBeforeAct": true
+    }}))
+    .unwrap();
+    let mut message = json!({"id": 1, "method": "item/commandExecution/requestApproval", "params": {
+        "availableDecisions": ["accept", "acceptForSession", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["touch"]}}]
+    }});
+    assert!(prepare_codex_runtime_notification(&request, &mut message));
+    assert_eq!(message["params"]["standInSingleApproval"], true);
+    let result = codex_approval_result(
+        &message,
+        &json!({"answers": {
+            "__codex_approval": {"answers": ["allow_session"]}
+        }}),
+    )
+    .unwrap();
+    assert_eq!(result["decision"], "decline");
+}
+
+#[tokio::test]
+async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut observer = hub.subscribe_all();
+    hub.send(json!({"method": "turn/started"})).await;
+    let start = runtime.recv().await.unwrap();
+    observer.recv().await.unwrap();
+    let settled: CodexNotification = json!({"method": "wegent/mcpElicitation/settled"}).into();
+    let sequence = settled.sequence();
+    hub.send_runtime(settled).await;
+    hub.send(json!({"method": "turn/completed"})).await;
+    let observed = runtime.recv().await.unwrap();
+    assert_eq!(observed["method"], "wegent/mcpElicitation/settled");
+    assert_eq!(observed.sequence(), sequence);
+    assert!(start.sequence() < sequence);
+    let end = runtime.recv().await.unwrap();
+    assert_eq!(end["method"], "turn/completed");
+    assert!(sequence < end.sequence());
+    assert_eq!(observer.recv().await.unwrap()["method"], "turn/completed");
+}
+
+#[tokio::test]
+async fn native_subscription_survives_process_stop_and_replacement() {
+    let mut state = CodexAppServerSharedState::default();
+    let hub = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    let generation = hub.process_generation;
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    state.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    assert!(stop_codex_app_server_process(&mut state, None).await);
+    let exit = runtime.try_recv().unwrap();
+    assert_eq!(exit["method"], "codex/app-server/exited");
+    assert_eq!(exit.process_generation(), generation);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    let replacement = CodexNotificationHub::for_runtime(Arc::clone(&state.runtime_notifications));
+    assert_ne!(replacement.process_generation, generation);
+    replacement.send(json!({"method": "turn/started"})).await;
+    let start = runtime.try_recv().unwrap();
+    assert_eq!(start["method"], "turn/started");
+    assert_eq!(start.process_generation(), replacement.process_generation);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = Command::new("sh")
+        .args(["-c", r#"printf '%s\n' '{"method":"turn/started","params":{"threadId":"named-thread","turn":{"id":"turn-1"}}}' '{"id":1,"result":{}}' '{"id":2,"method":"item/commandExecution/requestApproval","params":{"threadId":"named-thread","turnId":"turn-1","expiresAtUnixMs":0}}'"#])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn().unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        1,
+    )
+    .with_runtime_notifications(Some(hub.clone()));
+    let start = rpc.read_message().await.unwrap();
+    assert_eq!(start["method"], "turn/started");
+    let native_start = runtime.try_recv().unwrap();
+    assert_eq!(native_start["params"]["threadId"], "named-thread");
+    assert_eq!(native_start.process_generation(), hub.process_generation);
+    assert_eq!(rpc.read_message().await.unwrap()["id"], 1);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let approval = rpc.read_message().await.unwrap();
+    assert_eq!(runtime.try_recv().unwrap()["id"], 2);
+    rpc.publish_runtime_notification(elicitation::settled(&approval, "expired", None))
+        .await;
+    let settled = runtime.try_recv().unwrap();
+    assert_eq!(settled["method"], "wegent/approval/settled");
+    assert_eq!(settled["params"]["interactionStatus"], "expired");
+    assert_eq!(
+        settled.process_generation(),
+        native_start.process_generation()
+    );
+    assert!(settled.sequence() > native_start.sequence());
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(
@@ -251,6 +368,50 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
         "new process admission raced with old process cleanup"
     );
     assert!(client.state.lock().await.process.is_none());
+}
+
+#[tokio::test]
+async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_response() {
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
+
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let mut client = CodexAppServerClient::new("explicit-unsubscribe-admission");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    let mut unsubscribe = Box::pin(client.release_thread_subscription("thread-1"));
+    assert!(unsubscribe.as_mut().poll(&mut context).is_pending());
+    let mut admission = Box::pin(client.mark_thread_active("thread-1"));
+    let admission_blocked = admission.as_mut().poll(&mut context).is_pending();
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, response) in responses {
+        response.send(Ok(json!({}))).unwrap();
+    }
+    unsubscribe.await.unwrap();
+    if admission_blocked {
+        admission.await;
+    }
+    client.restart().await;
+    assert!(
+        admission_blocked,
+        "a new resume overtook the native unsubscribe response"
+    );
 }
 
 #[tokio::test]
@@ -523,7 +684,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
                 "turnId": "turn-b",
                 "delta": index.to_string()
             }
-        }));
+        }))
+        .await;
     }
     hub.send(json!({
         "method": "turn/completed",
@@ -531,7 +693,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
             "threadId": "thread-a",
             "turn": {"id": "turn-a", "status": "completed"}
         }
-    }));
+    }))
+    .await;
 
     let message = thread_a
         .recv()
@@ -542,9 +705,36 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
 }
 
 #[tokio::test]
+async fn notification_hub_backpressures_runtime_without_losing_terminal_events() {
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
+
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    for index in 0..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        hub.send(json!({"method": "item/started", "index": index}))
+            .await;
+    }
+    let mut terminal = Box::pin(hub.send(json!({"method": "turn/completed"})));
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    assert!(terminal.as_mut().poll(&mut context).is_pending());
+    assert_eq!(runtime.recv().await.unwrap()["index"], 0);
+    terminal.await;
+    for index in 1..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        assert_eq!(runtime.recv().await.unwrap()["index"], index);
+    }
+    assert_eq!(runtime.recv().await.unwrap()["method"], "turn/completed");
+    drop(runtime);
+    hub.send(json!({"method": "turn/started"})).await;
+    assert!(hub.runtime.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
     let hub = CodexNotificationHub::new();
     let mut all = hub.subscribe_all();
+    let mut runtime = hub.subscribe_runtime();
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
     let message = json!({
@@ -552,15 +742,18 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
         "params": {"threadId": "thread-a", "turnId": "turn-a"}
     });
 
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
 
     let global = all.recv().await.unwrap();
     let scoped = thread_a.recv().await.unwrap();
+    let owned = runtime.recv().await.unwrap();
     assert_eq!(*global, message);
     assert_eq!(*scoped, message);
+    assert_eq!(*owned, message);
+    assert_eq!(owned.sequence(), global.sequence());
     assert!(global.claim_runtime_delivery());
     assert!(!scoped.claim_runtime_delivery());
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
     assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
 }
@@ -571,7 +764,7 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
 
-    notify_shared_process_closed(&hub, "app-server stopped");
+    notify_shared_process_closed(&hub, "app-server stopped").await;
 
     for receiver in [&mut thread_a, &mut thread_b] {
         let message = receiver.recv().await.unwrap();
@@ -856,6 +1049,35 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
         command.as_std().get_current_dir(),
         Some(codex_home.as_path())
     );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn codex_app_server_starts_beyond_windows_max_path() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let mut directory = crate::path_compat::strip_windows_verbatim_prefix(root.path());
+    while directory.as_os_str().encode_wide().count() < 280 {
+        directory.push("codex-long-path-component");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("codex.exe");
+    fs::copy(env::current_exe().unwrap(), &binary).unwrap();
+    assert!(binary.as_os_str().encode_wide().count() > 260);
+
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        CODEX_HOME_ENV.to_owned(),
+        root.path().join("codex-home").display().to_string(),
+    );
+    // The test binary treats app-server as a filter with no matching tests.
+    let mut child = spawn_codex_app_server(binary.to_str().unwrap(), &config).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
 }
 
 #[test]
@@ -2476,7 +2698,110 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
     assert_eq!(config.get("model_context_window"), Some(&json!(1_000_000)));
     assert_eq!(
         config.get("model_auto_compact_token_limit"),
-        Some(&json!(616_000))
+        Some(&json!(492_800))
+    );
+}
+
+#[test]
+fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        prompt: Value::String("review the current branch".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3.1-pro",
+            "codex_catalog_model_id": "wework-gpt-6.1-sol",
+            "codex_responses_compat_proxy": true,
+            "model_context_window": 1_048_576,
+            "max_output_tokens": 96_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-gpt-6.1-sol")
+    );
+    assert_eq!(config.get("model_context_window"), Some(&json!(1_048_576)));
+    let requested_limit = config
+        .get("model_auto_compact_token_limit")
+        .and_then(Value::as_i64)
+        .expect("auto-compact limit should be present");
+    assert_eq!(requested_limit, 762_060);
+    assert_eq!(requested_limit, (1_048_576 - 96_000) * 80 / 100);
+}
+
+#[test]
+fn auto_compact_limit_reserves_the_proxy_default_output_budget() {
+    for protocol in [
+        "openai-chat-completions",
+        "chat/completions",
+        "anthropic-messages",
+        "messages",
+    ] {
+        let model_config = json!({"upstream_api_format": protocol});
+        assert_eq!(codex_model_max_output_tokens(&model_config), Some(96_000));
+        assert_eq!(
+            codex_auto_compact_token_limit(&model_config, 1_048_576),
+            Some(762_060),
+            "unexpected budget for {protocol}"
+        );
+        assert_eq!(
+            codex_auto_compact_token_limit(
+                &json!({"upstream_api_format": protocol, "max_output_tokens": 8_000}),
+                1_000_000,
+            ),
+            Some(793_600)
+        );
+    }
+}
+
+#[test]
+fn auto_compact_limit_uses_catalog_context_when_no_override_was_saved() {
+    let _environment = environment::LaunchEnvironment::new();
+    let overrides = codex_model_config_overrides(&json!({
+        "codex_catalog_model_id": "wework-kimi-k3",
+        "upstream_api_format": "openai-chat-completions",
+    }));
+    assert!(overrides.contains(&"model_context_window=1048576".to_owned()));
+    assert!(overrides.contains(&"model_auto_compact_token_limit=762060".to_owned()));
+}
+
+#[test]
+fn auto_compact_limit_validates_aliases_and_handles_large_windows() {
+    let config = json!({
+        "model_context_window": 0,
+        "contextWindow": "1000000",
+        "max_output_tokens": false,
+        "maxOutputTokens": "32000",
+    });
+    assert_eq!(codex_model_context_window(&config), Some(1_000_000));
+    assert_eq!(
+        codex_auto_compact_token_limit(&config, 1_000_000),
+        Some(774_400)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 1}), i64::MAX),
+        Some(((i128::from(i64::MAX) - 1) * 80 / 100) as i64)
+    );
+}
+
+#[test]
+fn auto_compact_limit_uses_80_percent_of_the_input_budget() {
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 1_000_000),
+        Some(697_600)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 400_000),
+        Some(217_600)
     );
 }
 
@@ -2484,14 +2809,14 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
 fn auto_compact_limit_requires_a_usable_output_budget() {
     let cases = [
         // The configured output ceiling leaves an input budget.
-        (json!({"max_output_tokens": 384_000}), Some(616_000)),
+        (json!({"max_output_tokens": 384_000}), Some(492_800)),
         // An output budget that consumes the whole window leaves nothing to compact for.
         (json!({"max_output_tokens": 1_000_000}), None),
         (json!({"max_output_tokens": 1_200_000}), None),
         // Without a configured output ceiling the provider keeps its own default.
         (json!({}), None),
         (json!({"max_output_tokens": 0}), None),
-        (json!({"maxOutputTokens": "384000"}), Some(616_000)),
+        (json!({"maxOutputTokens": "384000"}), Some(492_800)),
     ];
 
     for (model_config, expected) in cases {
@@ -3966,6 +4291,7 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 #[test]
 fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
     let mut request = ExecutionRequest::default();
+    let loaded = Map::new();
     let plan = codex_thread_plan(
         None,
         None,
@@ -3974,19 +4300,25 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     for identity in ["stand_in", "stand_in_identity"] {
         request.extra.insert(
             "origin".into(),
             json!({"initiatedBy":identity,"askBeforeAct":true}),
         );
         assert_eq!(
-            config_reload_resume_thread_id(&plan, &request),
+            config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
             Some("existing")
         );
     }
     request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     let direct = codex_thread_plan(
         Some("existing"),
         None,
@@ -3995,7 +4327,10 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&direct, &request, Some(&loaded)),
+        None
+    );
 }
 
 #[test]
@@ -4189,13 +4524,18 @@ fn thread_launch_params_always_include_space_routing() {
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert_eq!(
+            instructions
+                .matches(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS)
+                .count(),
+            1
+        );
         assert!(instructions.contains("get_current_context"));
-        assert!(instructions.contains("list_item_attachments"));
-        assert!(instructions.contains("read_item_attachment"));
-        assert!(instructions.contains("MCP resource listing"));
-        assert!(instructions.contains("list_board_items"));
-        assert!(instructions.contains("get_assignment_candidates"));
+        assert!(instructions.contains("list_spaces"));
+        assert!(instructions.contains("discover deferred tools"));
+        assert!(instructions.contains("Follow the discovered tool instructions"));
+        assert!(instructions.contains("Never use MCP resources, browser, Shell, `curl`"));
+        assert!(instructions.contains("bypass these tools or their access errors"));
     }
 }
 
@@ -4632,6 +4972,7 @@ fn codex_model_provider_validation_accepts_requested_provider() {
 
 #[test]
 fn turn_input_matches_shared_prompt_reference_cases() {
+    let _lock = crate::test_env::lock();
     let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../packages/chat-core/test-fixtures/prompt-mentions.json"
@@ -5104,12 +5445,15 @@ fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn()
     let _environment = environment::LaunchEnvironment::new();
     for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
         for ask in [false, true] {
-            let request = serde_json::from_value(json!({
+            let mut value = json!({
                 "task_id":"source-collaboration-review",
                 "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
                     "cloudProjectId":"project-1","loopItemId":"issue-1"}
-            }))
-            .unwrap();
+            });
+            if kind == "issue_dispatch" {
+                value["origin"]["dispatchRole"] = json!("executor");
+            }
+            let request = serde_json::from_value(value).unwrap();
             let launch = build_codex_launch_config(&request).unwrap();
             let key = "mcp_servers.wework_space.default_tools_approval_mode";
             assert_eq!(
@@ -5223,7 +5567,7 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
 }
 
 #[test]
-fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+fn codex_thread_discovers_project_space_without_a_project_binding() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
@@ -5233,8 +5577,18 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
-    assert!(!config.contains_key("mcp_servers.wework_space.url"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
     assert!(launch_config
@@ -5263,7 +5617,7 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
@@ -5289,6 +5643,29 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
+}
+
+#[test]
+fn project_space_routing_keeps_detailed_workflows_out_of_initial_context() {
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS));
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.len() < 600);
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("deferred tools"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("submit_workflow_plan"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("list_item_attachments"));
+}
+
+#[test]
+fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "dispatchRole":"executor", "cloudProjectId":"space-1"
+        }),
+    );
+    assert!(build_codex_launch_config(&request).is_err());
 }
 
 #[test]
@@ -5831,6 +6208,23 @@ fn source_content_safety_applies_to_each_tool_enabled_thread_entry() {
 }
 
 #[test]
+fn all_task_launches_surface_business_decisions_through_structured_input() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread-1", &request, &launch),
+        thread_fork_params("thread-1", None, &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions
+            .contains("request_user_input_async when available, otherwise request_user_input"));
+        assert!(instructions.contains("Continue independent authorized work"));
+        assert!(instructions.contains("A business answer never grants execution permission"));
+    }
+}
+
+#[test]
 fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -5908,7 +6302,19 @@ async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers(
 
 #[tokio::test]
 async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
-    let client = CodexAppServerClient::new("unused-expired-approval");
+    let mut client = CodexAppServerClient::new("expired-approval");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(async {}),
+    });
     let (_answer_tx, answer_rx) = mpsc::channel(1);
     let router = InteractionAnswerRouter::new(answer_rx);
     let (notifications, mut received) = mpsc::unbounded_channel();
@@ -5932,8 +6338,12 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
     assert_eq!(event["params"]["interactionStatus"], "expired");
     assert_eq!(event["params"]["expiresAtUnixMs"], 0);
     assert_eq!(event["params"]["approvalMethod"], request["method"]);
+    let native_event = runtime.try_recv().unwrap();
+    assert_eq!(native_event.sequence(), event.sequence());
+    assert_eq!(*native_event, *event);
     assert_eq!(
         codex_approval_result(&request, &json!({})).unwrap()["decision"],
         "decline"
     );
+    client.restart().await;
 }

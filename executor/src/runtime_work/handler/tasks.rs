@@ -934,9 +934,10 @@ impl RuntimeWorkRpcHandler {
         turn_id: &str,
     ) {
         self.store.update_task(local_task_id, |link| {
+            let identities = superseded_turn_identities(link, turn_id);
             let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
                 link.runtime_handle = json!({
-                    "supersededTranscriptTurnIds": [turn_id],
+                    "supersededTranscriptTurnIds": identities,
                 });
                 return;
             };
@@ -944,14 +945,16 @@ impl RuntimeWorkRpcHandler {
                 .entry("supersededTranscriptTurnIds")
                 .or_insert_with(|| json!([]));
             let Some(turn_ids) = turn_ids.as_array_mut() else {
-                *turn_ids = json!([turn_id]);
+                *turn_ids = json!(identities);
                 return;
             };
-            if !turn_ids
-                .iter()
-                .any(|existing| existing.as_str() == Some(turn_id))
-            {
-                turn_ids.push(Value::String(turn_id.to_owned()));
+            for identity in identities {
+                if !turn_ids
+                    .iter()
+                    .any(|existing| existing.as_str() == Some(&identity))
+                {
+                    turn_ids.push(Value::String(identity));
+                }
             }
         });
     }
@@ -995,7 +998,17 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
         let was_busy = self.is_busy_local_task(&local_task_id);
-        if was_busy && !queue_if_busy {
+        // Native completion can precede isolated app-server/process cleanup.
+        // Admit one continuation through the existing serial scheduler while
+        // retaining the old execution's resources until cleanup finishes.
+        let completed_native_turn = existing_link.as_ref().is_some_and(|link| {
+            crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+                    && state.execution_outcome.as_deref() == Some("succeeded")
+            })
+        }) && self.is_active_local_task(&local_task_id)
+            && !self.is_queued_local_task(&local_task_id);
+        if was_busy && !queue_if_busy && !completed_native_turn {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1228,7 +1241,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_goal,
         };
-        if was_busy {
+        if was_busy && !completed_native_turn {
             self.queue_turn(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
@@ -2023,7 +2036,10 @@ impl RuntimeWorkRpcHandler {
             })?;
             (previous, turn, scheduler.queued_turns.clone())
         };
-        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+        if let Err(error) = self
+            .persist_turn_queue(remaining_turns, Some(&previous))
+            .await
+        {
             *self
                 .turn_scheduler
                 .lock()
@@ -2106,7 +2122,7 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>();
             (previous, ordered_task_ids, reordered)
         };
-        if let Err(error) = self.persist_turn_queue(reordered).await {
+        if let Err(error) = self.persist_turn_queue(reordered, Some(&previous)).await {
             *self
                 .turn_scheduler
                 .lock()
@@ -2476,6 +2492,30 @@ fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
         return None;
     }
     Some(turn_id)
+}
+
+fn superseded_turn_identities(link: &RuntimeTaskLink, turn_id: &str) -> Vec<String> {
+    let mut identities = vec![turn_id.to_owned()];
+    if let Some(native_id) = resolve_codex_turn_id(link, turn_id) {
+        if native_id != turn_id {
+            identities.push(native_id.clone());
+        }
+        if let Some(mappings) = link
+            .runtime_handle
+            .get("turnIdsBySubtask")
+            .and_then(Value::as_object)
+        {
+            identities.extend(
+                mappings
+                    .iter()
+                    .filter(|(alias, native)| {
+                        native.as_str() == Some(native_id.as_str()) && alias.as_str() != turn_id
+                    })
+                    .map(|(alias, _)| alias.clone()),
+            );
+        }
+    }
+    identities
 }
 
 fn retry_source_turn_id(payload: &Value) -> Option<String> {

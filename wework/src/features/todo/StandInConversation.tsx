@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useEffect, useState, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
@@ -38,7 +39,7 @@ export function StandInConversation({
         if (active) setAddress(result.task ? { deviceId, taskId } : null)
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -98,7 +99,7 @@ export function StandInConversation({
           setAddress(result)
           return result
         } catch (cause) {
-          options.onError(String(cause))
+          options.onError(getStandInErrorMessage(cause))
           return false
         }
       }}

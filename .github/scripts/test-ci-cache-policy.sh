@@ -84,6 +84,14 @@ assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
 assert_warmup_case "Wework source" \
   "${warmup_all_false/wework_target=false/wework_target=true}" \
   "wework/src/main.ts"
+for build_input in wework/electron/src/main.ts wework/vite.config.ts \
+  wework/public/icon.svg wework/resources/plugins/skills/SKILL.md \
+  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs; do
+  assert_warmup_case "Windows build input: $build_input" \
+    "${warmup_all_false/wework_target=false/wework_target=true}" "$build_input"
+done
+assert_warmup_case "Desktop E2E selection does not rebuild packages" \
+  "$warmup_all_false" "wework/e2e/desktop/checkpoints.mjs"
 assert_warmup_case "Wework runtime artifact downloader" \
   "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/scripts/download-actions-artifact.sh"
@@ -91,7 +99,7 @@ assert_warmup_case "Chat Core source" "$node_and_wework_target" \
   "packages/chat-core/src/index.ts"
 assert_warmup_case "Collaboration source" "$node_and_wework_target" \
   "packages/collaboration/src/issue-detail/issueTimestamp.ts"
-if ! grep -Fq '"packages/collaboration/**"' \
+if ! grep -Fq '"packages/**"' \
   "$workflow_dir/ci-cache-warmup.yml"; then
   fail "Collaboration changes must trigger cache warmup"
 fi
@@ -320,10 +328,10 @@ fi
 node_manifests=(
   frontend/package.json
   package.json
-  "packages/*/package.json"
+  "packages/**"
   pnpm-lock.yaml
   pnpm-workspace.yaml
-  wework/package.json
+  "wework/**"
 )
 for manifest in "${node_manifests[@]}"; do
   if ! grep -Fq -- "- \"$manifest\"" "$warmup_workflow"; then
@@ -689,6 +697,7 @@ bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
+node --test "$script_dir/macos-e2e-source-digest.test.mjs"
 bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"

@@ -10,6 +10,7 @@ interface ChatSendStateInput {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   hasNoTeams: boolean
+  hasSelectedTeam: boolean
   shouldHideChatInput: boolean
   taskInputMessage: string
   hasAttachments?: boolean
@@ -28,16 +29,13 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
   const hasTextContent = input.taskInputMessage.trim().length > 0
   const hasUserProvidedContent = hasTextContent || Boolean(input.hasAttachments)
   const hasSendableContent = input.shouldHideChatInput || hasUserProvidedContent
-  const sendDisabled =
+  const selectionDisabled =
     input.isModelSelectionRequired ||
     !input.isAttachmentReadyToSend ||
     input.hasNoTeams ||
-    !hasSendableContent
-  const queueDisabled =
-    input.isModelSelectionRequired ||
-    !input.isAttachmentReadyToSend ||
-    input.hasNoTeams ||
-    !hasUserProvidedContent
+    !input.hasSelectedTeam
+  const sendDisabled = selectionDisabled || !hasSendableContent
+  const queueDisabled = selectionDisabled || !hasUserProvidedContent
   const isActiveStream = input.isStreaming || input.isStopping
 
   if (input.isStopping) {

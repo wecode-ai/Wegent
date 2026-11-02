@@ -211,6 +211,27 @@ describe('SidebarTaskTitle', () => {
     expect(screen.getByTestId('text').parentElement!.style.width).toBe('')
   })
 
+  it('reads hover geometry before writing the clipped viewport width', () => {
+    render(fixture(undefined, true))
+    const viewport = screen.getByTestId('text').parentElement!
+    const operations: string[] = []
+    const setWidth = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'width')!.set!
+    vi.spyOn(viewport.style, 'width', 'set').mockImplementation(function (value) {
+      operations.push('write')
+      setWidth.call(this, value)
+    })
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(() => {
+      operations.push('read')
+      return textWidth
+    })
+
+    enter()
+
+    expect(operations).toEqual(['read', 'write'])
+    expect(viewport.style.width).toBe('166px')
+    expect(screen.getByTestId('title')).toHaveAttribute('data-overflow', 'true')
+  })
+
   it('remeasures resizing and title changes and stops during a drag', () => {
     const view = render(fixture())
     enter()

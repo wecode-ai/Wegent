@@ -265,6 +265,38 @@ describe('FileChangesReviewPanel', () => {
     expect(onSelectPreviousTurn).toHaveBeenCalledTimes(1)
   })
 
+  test('closes the review view menu on Escape and outside clicks', async () => {
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={treeDiff}
+        reviewTitle="未暂存"
+        viewOptions={[
+          { id: 'unstaged', label: '未暂存', active: true, onSelect: vi.fn() },
+          { id: 'staged', label: '已暂存', active: false, onSelect: vi.fn() },
+        ]}
+      />
+    )
+
+    const switcherButton = screen.getByTestId('review-view-switcher-button')
+
+    await userEvent.click(switcherButton)
+    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+    expect(switcherButton).toHaveAttribute('aria-expanded', 'false')
+    expect(switcherButton).toHaveFocus()
+
+    await userEvent.click(switcherButton)
+    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('file-changes-review-diff-lines'))
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(switcherButton)
+    await userEvent.click(switcherButton)
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+  })
+
   test('supports review toolbar actions', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
@@ -308,6 +340,46 @@ describe('FileChangesReviewPanel', () => {
     await userEvent.click(screen.getByTestId('copy-git-apply-command-button'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("git apply <<'PATCH'"))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining(treeDiff))
+  })
+
+  test('shows transient feedback after refreshing and copying', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
+    render(<FileChangesReviewPanel loading={false} diff={treeDiff} onRefresh={vi.fn()} />)
+
+    const refreshButton = screen.getByTestId('refresh-review-diff-button')
+    const copyButton = screen.getByTestId('copy-git-apply-command-button')
+    const copyLabel = copyButton.getAttribute('aria-label')
+    expect(refreshButton.querySelector('svg')).not.toHaveClass('animate-spin')
+
+    await userEvent.click(refreshButton)
+    expect(refreshButton.querySelector('svg')).toHaveClass('animate-spin')
+    await waitFor(() => expect(refreshButton.querySelector('svg')).not.toHaveClass('animate-spin'))
+
+    await userEvent.click(copyButton)
+    await waitFor(() => expect(copyButton).toHaveAttribute('aria-label', '已复制'))
+    await waitFor(() => expect(copyButton).toHaveAttribute('aria-label', copyLabel), {
+      timeout: 2500,
+    })
+  })
+
+  test('keeps the copy label when writing to the clipboard fails', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
+    render(<FileChangesReviewPanel loading={false} diff={treeDiff} />)
+
+    const copyButton = screen.getByTestId('copy-git-apply-command-button')
+    const copyLabel = copyButton.getAttribute('aria-label')
+    await userEvent.click(copyButton)
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    expect(copyButton).toHaveAttribute('aria-label', copyLabel)
   })
 
   test('positions the requested file and opens its source location', async () => {

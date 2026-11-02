@@ -21,6 +21,9 @@ describe('buildAiVerifyEnvironment', () => {
         WEWORK_RELEASE_ROOT: '/personal/releases',
         WEWORK_ACTIVE_RELEASE_ID: 'personal-release',
         WEWORK_COMPONENT_DATA_DIRECTORY: '/personal/releases/slots/personal-release',
+        WEWORK_APP_WEB_ROOT: '/personal/components/wework-app/web',
+        WEWORK_CORE_PLUGIN_ROOT: '/personal/components/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'personal-component-fingerprint',
         WEWORK_E2E_RELEASE_FAILURE_VERSION: '1.0.0',
         WEWORK_E2E_ROLLBACK_FAILURE: 'after-journal',
       })
@@ -45,6 +48,9 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_TASK_WORKSPACE: '/tmp/parent-workspace',
         ELECTRON_RUN_AS_NODE: '1',
         WEWORK_APP_HOT_RELOAD: '1',
+        WEWORK_APP_WEB_ROOT: '/tmp/foreign-components/wework-app/web',
+        WEWORK_CORE_PLUGIN_ROOT: '/tmp/foreign-components/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'foreign-component-fingerprint',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
         WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: '/tmp/personal-desktop-instances',
         WEWORK_DEV_DOCK_TITLE: 'Parent task · 1234',
@@ -102,6 +108,9 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
     expect(environment.WEWORK_APP_HOT_RELOAD).toBeUndefined()
+    expect(environment.WEWORK_APP_WEB_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGINS_SHA256).toBeUndefined()
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
     expect(environment.WEWORK_DEV_DOCK_TITLE).toBeUndefined()
     expect(environment.WEWORK_DEV_INSTANCE_LABEL).toBeUndefined()

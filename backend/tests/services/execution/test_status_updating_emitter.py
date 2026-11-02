@@ -349,6 +349,7 @@ async def test_emit_error_persists_partial_result_and_blocks():
         error="model error",
         executor_name=None,
         executor_namespace=None,
+        expected_status=None,
     )
     mock_session_manager.cleanup_streaming_state.assert_awaited_once_with(
         202, task_id=101
@@ -399,6 +400,7 @@ async def test_emit_error_merges_persisted_and_new_blocks():
         error="model error",
         executor_name=None,
         executor_namespace=None,
+        expected_status=None,
     )
 
 

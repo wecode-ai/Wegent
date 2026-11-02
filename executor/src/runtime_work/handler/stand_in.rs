@@ -4,15 +4,35 @@ use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
 
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
-    let code = if matches!(
-        error,
-        crate::task_runtime::TaskRuntimeError::VersionConflict
-    ) {
-        "version_conflict"
-    } else {
-        "stand_in_settings"
+    let code = match &error {
+        crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::StandInProjectConnections => {
+            "stand_in_project_connections"
+        }
+        _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())
+}
+
+pub(super) fn issue_assignment_event_id(binding: &Value) -> Result<&str, AppIpcError> {
+    // Member work identities belong to the manager's round, not the Issue activity stream.
+    let field = if binding["dispatchRoundId"]
+        .as_str()
+        .is_some_and(|round| round != "direct")
+    {
+        "issueAssignmentId"
+    } else {
+        "assignmentId"
+    };
+    binding[field]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "invalid_assignment",
+                "Issue assignment event identity is missing",
+            )
+        })
 }
 
 impl RuntimeWorkRpcHandler {
@@ -231,6 +251,14 @@ impl RuntimeWorkRpcHandler {
                 })?;
             config["manual"] = json!(true);
         }
+        self.log_stand_in_decision(
+            &config,
+            &issue,
+            "manual_role_selected",
+            json!({
+                "requestedRoleId":payload["standInId"],"enabled":config["enabled"]
+            }),
+        );
         let human_id = if local {
             let history = issue["metadata"]["assignment_history"]
                 .as_array()
@@ -263,7 +291,9 @@ impl RuntimeWorkRpcHandler {
             human
         };
         let task_id = self.stand_in_task_id(&config, &json!({"humanAssignmentId":human_id}));
-        let task = self.local_task_link(&task_id);
+        let task = self
+            .local_task_link(&task_id)
+            .filter(|task| !self.archived_link_is_deleted(task));
         if task.as_ref().is_some_and(|task| task.status == "failed") {
             return Err(AppIpcError::new(
                 "stand_in_start_failed",
@@ -271,6 +301,12 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         if task.is_none() {
+            self.log_stand_in_decision(
+                &config,
+                &issue,
+                "manual_task_missing",
+                json!({"expectedTaskId":task_id}),
+            );
             return Err(AppIpcError::new(
                 "assignment_already_handled",
                 "This assignment has already been handled or is no longer active",
@@ -405,9 +441,11 @@ impl RuntimeWorkRpcHandler {
             for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
                 let task_id = self.stand_in_task_id(config, &binding);
-                if self.local_task_link(&task_id).is_some()
-                    || bindings.iter().any(|binding| binding.task_id == task_id)
-                {
+                if self.stand_in_task_is_handled(
+                    config,
+                    &task_id,
+                    bindings.iter().any(|binding| binding.task_id == task_id),
+                ) {
                     continue;
                 }
                 if let Err(error) = self
@@ -450,16 +488,30 @@ impl RuntimeWorkRpcHandler {
             Some(gate.lock().await)
         };
         if issue["assignee_user_id"] != config["userId"] {
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "assignee_mismatch",
+                json!({"actualAssigneeUserId":issue["assignee_user_id"]}),
+            );
             return Ok(());
         }
         let Some(issue_id) = issue["id"].as_str() else {
+            self.log_stand_in_decision(config, issue, "issue_id_missing", json!({}));
             return Ok(());
         };
         let binding = &issue["human_task_binding"];
-        let Some(assignment_id) = binding["assignmentId"].as_str() else {
+        if binding["assignmentId"].as_str().is_none() {
+            self.log_stand_in_decision(config, issue, "assignment_identity_missing", json!({}));
             return Ok(());
-        };
+        }
         if binding["humanAssignmentId"].as_str().is_none() {
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "human_assignment_identity_missing",
+                json!({}),
+            );
             return Ok(());
         }
         let matching = if config["manual"] == true {
@@ -468,13 +520,14 @@ impl RuntimeWorkRpcHandler {
             super::personal_stand_in::matching_personal_roles(configs, issue)
         };
         if matching.is_empty() {
+            self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
         if matching.iter().all(|role| {
-            self.local_task_link(&self.stand_in_task_id(role, binding))
-                .is_some()
+            self.stand_in_task_is_handled(role, &self.stand_in_task_id(role, binding), false)
         }) && config["manual"] != true
         {
+            self.log_stand_in_decision(config, issue, "local_tasks_already_exist", json!({}));
             return Ok(());
         }
         let assignments = self
@@ -484,12 +537,25 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
+        let event_id = issue_assignment_event_id(binding)?;
         let Some(assignment) = assignments["items"]
             .as_array()
             .into_iter()
             .flatten()
-            .find(|row| row["id"] == assignment_id && row["status"] == "active")
+            .find(|row| row["id"] == event_id && row["status"] == "active")
         else {
+            let active: Vec<Value> = assignments["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| json!({"id":row["id"],"status":row["status"]}))
+                .collect();
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "active_assignment_not_found",
+                json!({"assignments":active}),
+            );
             return Ok(());
         };
         let eligible: Vec<&Value> = matching
@@ -499,6 +565,10 @@ impl RuntimeWorkRpcHandler {
             })
             .collect();
         if eligible.is_empty() {
+            self.log_stand_in_decision(config, issue, "assignment_before_role_enabled", json!({
+                "assignedAt":assignment["created_at"],
+                "roleEnableTimes":configs.iter().map(|role|json!({"id":role["id"],"enabledAfter":role["enabledAfter"]})).collect::<Vec<_>>()
+            }));
             return Ok(());
         }
         let existing = self
@@ -515,6 +585,12 @@ impl RuntimeWorkRpcHandler {
         if existing.as_array().into_iter().flatten().any(|row| {
             row["human_assignment_id"] == binding["humanAssignmentId"] && row["task_id"] == previous
         }) {
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "legacy_assignment_binding_exists",
+                json!({"taskId":previous}),
+            );
             return Ok(());
         }
         let mut failure = None;
@@ -548,28 +624,24 @@ impl RuntimeWorkRpcHandler {
         let bound = existing.as_array().into_iter().flatten().find(|row| {
             row["human_assignment_id"] == binding["humanAssignmentId"] && row["task_id"] == task_id
         });
-        let retry = config["manual"] == true
-            && self
-                .local_task_link(&task_id)
-                .is_some_and(|task| task.status == "failed");
-        if bound.is_some_and(|row| row["device_id"] != self.device_id || !retry) {
+        if bound.is_some_and(|row| row["device_id"] != self.device_id) {
+            let row = bound.unwrap();
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "role_assignment_binding_exists",
+                json!({
+                    "taskId":task_id,"bindingDeviceId":row["device_id"],
+                    "localTaskExists":self.local_task_link(&task_id).is_some()
+                }),
+            );
             return Ok(());
         }
-        let result = async {
-            let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-            if bound.is_some() {
-                self.dispatch_stand_in_task(payload, true).await.map(|_| ())
-            } else {
-                self.create_stand_in_task(config, issue, binding, payload)
-                    .await
-            }
-        }
-        .await;
-        self.record_stand_in_dispatch(config, &result);
-        result
+        self.execute_stand_in_task(config, issue, binding, bound.is_some())
+            .await
     }
 
-    async fn create_stand_in_task(
+    pub(super) async fn create_stand_in_task(
         &self,
         config: &Value,
         issue: &Value,
@@ -594,12 +666,16 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("stand-in-start:{task_id}"));
         let _guard = gate.lock().await;
         let existing = self.local_task_link(&task_id);
-        let retry = existing
-            .as_ref()
-            .is_some_and(|task| config["manual"] == true && task.status == "failed");
-        if existing.is_some() && !retry {
+        if self.stand_in_task_is_handled(config, &task_id, false) {
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "task_already_exists",
+                json!({"taskId":task_id,"status":existing.as_ref().map(|task| &task.status)}),
+            );
             return Ok(());
         }
+        let retry = existing.is_some();
         let mut binding = binding.clone();
         binding["deviceId"] = json!(self.device_id);
         binding["taskId"] = json!(task_id);
@@ -625,6 +701,12 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         }
+        self.log_stand_in_decision(
+            config,
+            issue,
+            "task_binding_created",
+            json!({"taskId":task_id,"retry":retry}),
+        );
         let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
             let cleanup = if local {
@@ -659,32 +741,6 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
-    async fn dispatch_stand_in_task(
-        &self,
-        payload: Value,
-        retry: bool,
-    ) -> Result<Value, AppIpcError> {
-        // These large futures must not inflate every enclosing stand-in state
-        // machine and exhaust Windows worker stacks during nested polling.
-        let result = if retry {
-            Box::pin(self.send_message(payload)).await
-        } else {
-            Box::pin(self.create_task(payload)).await
-        };
-        result.and_then(|result| {
-            if result["success"] == false || result["accepted"] == false {
-                Err(AppIpcError::new(
-                    "stand_in_start_failed",
-                    result["error"]
-                        .as_str()
-                        .unwrap_or("Stand-in execution was not accepted"),
-                ))
-            } else {
-                Ok(result)
-            }
-        })
-    }
-
     async fn start_local_stand_in(
         &self,
         config: &Value,
@@ -701,24 +757,11 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(gate.lock().await)
         };
-        let task_id = self.stand_in_task_id(config, binding);
-        if self
-            .local_task_link(&task_id)
-            .is_some_and(|task| config["manual"] != true || task.status != "failed")
-        {
-            return Ok(());
-        }
-        let result = async {
-            let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-            self.create_stand_in_task(config, issue, binding, payload)
-                .await
-        }
-        .await;
-        self.record_stand_in_dispatch(config, &result);
-        result
+        self.execute_stand_in_task(config, issue, binding, false)
+            .await
     }
 
-    fn stand_in_task_id(&self, config: &Value, binding: &Value) -> String {
+    pub(super) fn stand_in_task_id(&self, config: &Value, binding: &Value) -> String {
         let human = &binding["humanAssignmentId"];
         // Resolve existing work by its owning identity, including archived executions.
         if let Some(task) = self.local_task_links(true).into_iter().find(|task| {
@@ -739,7 +782,7 @@ impl RuntimeWorkRpcHandler {
         )
     }
 
-    async fn prepare_stand_in_task(
+    pub(super) async fn prepare_stand_in_task(
         &self,
         config: &Value,
         issue: &Value,

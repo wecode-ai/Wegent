@@ -137,8 +137,9 @@ class TestSandboxScheduler:
 
         await sandbox_scheduler.start()
 
-        # Verify three jobs were added: sandbox_heartbeat_check, task_heartbeat_check, sandbox_gc
-        assert mock_scheduler_instance.add_job.call_count == 3
+        # Verify four jobs were added: sandbox_heartbeat_check,
+        # task_heartbeat_check, sandbox_gc and queue_stall_check.
+        assert mock_scheduler_instance.add_job.call_count == 4
 
     # ----- stop Tests -----
 

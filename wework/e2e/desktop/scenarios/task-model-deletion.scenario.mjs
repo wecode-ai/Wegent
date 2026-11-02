@@ -1,3 +1,4 @@
+import { fetchLocalRuntimeJson } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -100,7 +101,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     const address = state.workbench?.currentRuntimeTask
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchJson(`${origin}/wework/executor/v1/rpc`, {
+    const response = await fetchLocalRuntimeJson(control, `${origin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -108,7 +109,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         method: 'runtime.tasks.get',
         params: { address },
       }),
-      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(response.ok, true, 'The persisted task could not be read')
     const task = response.result?.task

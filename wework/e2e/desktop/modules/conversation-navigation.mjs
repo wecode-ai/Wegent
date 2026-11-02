@@ -198,7 +198,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
       `The conversation rendered "${text}" ${countTextOccurrences(
         transcriptText,
         text
-      )} times instead of ${expectedCount}`
+      )} times instead of ${expectedCount}; transcriptLength=${transcriptText.length}`
     )
   }
 }
@@ -1030,6 +1030,119 @@ async function verifyEnvironmentPanelScrollStability(control) {
   await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
 }
 
+async function verifyTurnNavigationComposerClearance(control, turnCount) {
+  const previousSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1280, height: 420 }),
+    })
+  )
+  const navSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation"]`
+  const railSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-rail"]`
+  const footerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-sticky-footer"]`
+  const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+  const previewsSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
+  const lastPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnCount}`
+
+  try {
+    const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    let rail = await getSingleElementMetrics(control, railSelector, 'The turn-navigation rail')
+    while (rail.clientHeight <= 0 && Date.now() < deadline) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      rail = await getSingleElementMetrics(control, railSelector, 'The turn-navigation rail')
+    }
+    assert.ok(
+      rail.clientHeight > 0,
+      `The turn-navigation rail did not render at the reduced window size: ${JSON.stringify(rail)}`
+    )
+
+    // The resize reaches the nav through the composer ResizeObserver and a state
+    // update, so poll the real clearance instead of sampling one transient frame.
+    const clearanceDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    let clearanceStableSince = null
+    let navigation
+    let footer
+    let composer
+    while (Date.now() < clearanceDeadline) {
+      navigation = await getSingleElementMetrics(
+        control,
+        navSelector,
+        'The turn-navigation rail box'
+      )
+      footer = await getSingleElementMetrics(control, footerSelector, 'The sticky composer footer')
+      composer = await getSingleElementMetrics(control, composerSelector, 'The composer card')
+      const clear =
+        navigation.height > 0 &&
+        navigation.bottom <= footer.top + 0.5 &&
+        navigation.bottom <= composer.top + 0.5
+      if (!clear) {
+        clearanceStableSince = null
+      } else {
+        clearanceStableSince ??= Date.now()
+        if (Date.now() - clearanceStableSince >= COMPOSER_READY_STABILITY_MS) break
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    assert.ok(
+      navigation && footer && composer,
+      'The turn-navigation clearance metrics did not resolve'
+    )
+    assert.ok(
+      navigation.height > 0,
+      `The turn navigation collapsed instead of staying above the composer: ${JSON.stringify(
+        navigation
+      )}`
+    )
+    assert.ok(
+      navigation.bottom <= footer.top + 0.5,
+      `The turn navigation crossed the sticky composer footer: ${JSON.stringify({
+        footer,
+        navigation,
+      })}`
+    )
+    assert.ok(
+      navigation.bottom <= composer.top + 0.5,
+      `The turn navigation crossed the composer card: ${JSON.stringify({
+        composer,
+        navigation,
+      })}`
+    )
+
+    const lastTurnIndex = await control.command('getAttribute', previewsSelector, {
+      text: lastPrompt,
+      value: 'data-turn-index',
+    })
+    assert.match(lastTurnIndex, /^\d+$/, 'Unable to identify the latest navigation marker')
+    await control.command('scrollToRatioAsUser', railSelector, { value: '1' })
+    await control.command(
+      'hover',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${lastTurnIndex}"]`
+    )
+    const previewSelector = `${previewsSelector}[data-turn-index="${lastTurnIndex}"]`
+    await control.command('waitFor', `${previewSelector}.opacity-100`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const preview = await getSingleElementMetrics(
+      control,
+      previewSelector,
+      'The latest turn-navigation preview'
+    )
+    assert.ok(
+      preview.bottom <= footer.top + 0.5,
+      `The turn-navigation preview crossed the composer footer: ${JSON.stringify({
+        footer,
+        preview,
+      })}`
+    )
+    console.log(
+      'Turn navigation composer clearance:',
+      JSON.stringify({ composer, footer, navigation, preview, rail })
+    )
+    await captureVerificationScreenshot(control, 'turn-navigation-composer-clearance.png')
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
+  }
+}
+
 async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
@@ -1072,11 +1185,15 @@ async function reopenCurrentTurnNavigationTask(
       paginatedSnapshot.pane?.transcript.hasMoreBefore === true &&
       Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS
     ) {
-      await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+      await control.command('waitFor', '[data-testid="runtime-transcript-history-start"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       const previousMessageCount = paginatedSnapshot.pane?.messageSummary.total ?? 0
-      await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+      await control.command(
+        'scrollToRatioAsUser',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+        { value: '0' }
+      )
       while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
         paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         if (
@@ -1533,6 +1650,28 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     false,
     'The edited conversation still rendered the superseded assistant response'
   )
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The WebView did not reconnect after editing the last user message'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const restoredText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(restoredText.includes(MESSAGE_EDIT_ORIGINAL_PROMPT), false)
+  assert.equal(restoredText.includes(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT), false)
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
@@ -1552,6 +1691,7 @@ async function waitForSuccessfulMatrixSubmission(control, selector, prompt, time
 }
 
 export {
+  activeTranscriptSelector,
   sendPrompt,
   sendPromptWithButton,
   assertConversationMessageState,
@@ -1567,6 +1707,7 @@ export {
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
   verifyEnvironmentPanelScrollStability,
+  verifyTurnNavigationComposerClearance,
   reopenCurrentTurnNavigationTask,
   verifyStandaloneViewImageTask,
   verifyVisionSidecar,

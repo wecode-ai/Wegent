@@ -8,7 +8,12 @@ use super::{
     agents, authority, issues, notifications, profile,
     queue::{self, Admission},
     routing,
-    store::{self, COLUMNS, LIVE, Node, iso},
+    store::{self, Node, iso},
+};
+use crate::loop_tasks::{
+    assignment_index::refresh_active_index,
+    assignments::uncancelled_events,
+    loop_repository::{CommentRow, item_comments_query},
 };
 use crate::state::AppState;
 use anyhow::{Context, Result};
@@ -317,7 +322,7 @@ pub(super) async fn assign(
 // Keep the immutable assignment identity and its notification/trigger policy
 // explicit at the transaction boundary shared by individual and group targets.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn record(
+pub(crate) async fn record(
     tx: &mut impl MysqlTransaction,
     issue: &Node,
     kind: &str,
@@ -327,50 +332,46 @@ pub(super) async fn record(
     notify: bool,
     trigger: &str,
 ) -> brz_mysql::MysqlResult<(String, bool)> {
-    let comments:Vec<Node>=tx.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='comment' AND loop_item_id=? AND {LIVE} ORDER BY created_at,id"),(issue.id.as_str(),)).await?;
-    let cancelled: std::collections::BTreeSet<_> = comments
-        .iter()
-        .filter(|comment| {
-            comment.metadata.0["event_type"] == "assignment"
-                && comment.metadata.0["action"] == "unassign"
-        })
-        .filter_map(|comment| comment.metadata.0["assignment_event_id"].as_str())
-        .collect();
+    let comments: Vec<CommentRow> = tx
+        .fetch_all(
+            format!("{} FOR UPDATE", item_comments_query()),
+            (issue.id.as_str(),),
+        )
+        .await?;
     let canonical = if kind == "human" { "human" } else { "agent" };
-    let active: Vec<_> = comments
-        .iter()
-        .filter(|comment| {
-            comment.metadata.0["event_type"] == "assignment"
-                && comment.metadata.0["action"] == "assign"
-                && !cancelled.contains(comment.id.as_str())
-        })
-        .collect();
+    let active = uncancelled_events(&comments);
     let existing = active.iter().rev().find(|comment| {
-        comment.metadata.0["target_type"] == canonical
-            && comment.metadata.0["target_id"] == target
-            && comment.metadata.0["workflow_step"]
-                .as_str()
+        comment.metadata.target_type.as_deref() == Some(canonical)
+            && comment.metadata.target_id.as_deref() == Some(target)
+            && comment
+                .metadata
+                .workflow_step
+                .as_deref()
                 .unwrap_or("")
                 .is_empty()
     });
     if let Some(existing) = existing
-        && (existing.metadata.0["trigger"] != "default" || trigger == "default")
+        && (existing.metadata.trigger.as_deref() != Some("default") || trigger == "default")
     {
-        return Ok((existing.id.clone(), false));
+        refresh_active_index(tx, &issue.id).await?;
+        return Ok((existing.comment.id.clone(), false));
     }
     if canonical == "human" {
         for previous in active {
-            if !previous.metadata.0["workflow_step"]
-                .as_str()
+            if !previous
+                .metadata
+                .workflow_step
+                .as_deref()
                 .unwrap_or("")
                 .is_empty()
             {
                 continue;
             }
-            store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"unassign","assignment_event_id":previous.id,"target_type":previous.metadata.0["target_type"],"target_id":previous.metadata.0["target_id"],"workflow_step":"","notify":false,"trigger":"reassignment"}})).await?;
+            store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"unassign","assignment_event_id":previous.comment.id,"target_type":previous.metadata.target_type,"target_id":previous.metadata.target_id,"workflow_step":"","notify":false,"trigger":"reassignment"}})).await?;
         }
     }
     let id=store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"assign","target_type":canonical,"target_id":target,"target_name":name,"workflow_step":"","notify":notify,"trigger":trigger}})).await?;
+    refresh_active_index(tx, &issue.id).await?;
     Ok((id, true))
 }
 

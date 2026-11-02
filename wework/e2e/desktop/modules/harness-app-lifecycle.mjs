@@ -42,7 +42,7 @@ export async function verifyHarnessLifecycle(
     ]),
   })
   await control.command('waitFor', `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]`, {
-    text: 'DSH E2E Smoke 0.1.0-rc.8',
+    text: 'DSH E2E Smoke 0.2.0-rc.2',
     timeoutMs: uiTimeoutMs,
   })
   await captureScreenshot(control, 'harness-apps-04-created.png', 'body')
@@ -88,7 +88,7 @@ export async function verifyHarnessLifecycle(
     'waitFor',
     `[data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
     {
-      text: 'DSH E2E Smoke 0.1.0-rc.8',
+      text: 'DSH E2E Smoke 0.2.0-rc.2',
       timeoutMs: uiTimeoutMs,
     }
   )
@@ -470,7 +470,7 @@ export async function verifyHarnessLifecycle(
   assert.deepEqual(
     await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
     legacyRuntimeCache,
-    'Reopening a legacy app must reuse its previously verified runtime archive'
+    'Reopening an authenticated app must preserve the verified legacy runtime archive'
   )
   const reopenedAppTabId = await control.command('getAttribute', appSurface, {
     value: 'data-workspace-tab-id',

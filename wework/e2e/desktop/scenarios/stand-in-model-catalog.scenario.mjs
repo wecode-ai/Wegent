@@ -116,6 +116,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           await control.command('scrollIntoView', selector(optionId))
           await control.command('waitFor', selector(optionId), { text: model.label })
           await control.command('clickWhenEnabled', selector(optionId))
+          await control.command('press', 'body', { key: 'Escape' })
           await control.command('waitFor', `${PANEL} [data-testid="model-selector-button"]`, {
             text: model.label,
           })

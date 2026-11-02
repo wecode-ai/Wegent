@@ -263,13 +263,35 @@ pub(crate) fn register_space_mcp_context(
         #[cfg(not(test))]
         return Err("project-space MCP endpoint is not ready".to_owned());
     };
-    let context_handle = Uuid::new_v4().to_string();
     let mut contexts = running
         .contexts
         .lock()
         .map_err(|_| "project-space MCP context registry is poisoned".to_owned())?;
-    let now = Instant::now();
+    let context_handle = register_context(&mut contexts, context, Instant::now());
+    Ok(RegisteredSpaceMcpContext {
+        endpoint: running.endpoint.clone(),
+        context_handle,
+    })
+}
+
+fn register_context(
+    contexts: &mut HashMap<String, RegisteredContext>,
+    context: SpaceMcpRequestContext,
+    now: Instant,
+) -> String {
+    // Unbound authority is immutable: share its transport without sharing grants.
+    let reused = contexts
+        .iter_mut()
+        .find(|(_, registered)| registered.context.shares_unbound_authority(&context))
+        .map(|(handle, registered)| {
+            registered.expires_at = now + CONTEXT_HANDLE_TTL;
+            handle.clone()
+        });
     contexts.retain(|_, registered| registered.expires_at > now);
+    if let Some(handle) = reused {
+        return handle;
+    }
+    let context_handle = Uuid::new_v4().to_string();
     contexts.insert(
         context_handle.clone(),
         RegisteredContext {
@@ -277,10 +299,7 @@ pub(crate) fn register_space_mcp_context(
             expires_at: now + CONTEXT_HANDLE_TTL,
         },
     );
-    Ok(RegisteredSpaceMcpContext {
-        endpoint: running.endpoint.clone(),
-        context_handle,
-    })
+    context_handle
 }
 
 pub(crate) fn register_cloud_collaboration_dispatcher(
@@ -496,6 +515,70 @@ mod tests {
     use super::*;
     use axum::http::header::AUTHORIZATION;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    #[test]
+    fn identical_unbound_authority_reuses_and_renews_its_handle() {
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        let context = SpaceMcpRequestContext::new(
+            None,
+            Some("https://backend.example".into()),
+            Some("user-a".into()),
+        );
+        let handle = register_context(&mut contexts, context.clone(), now);
+        register_context(
+            &mut contexts,
+            SpaceMcpRequestContext::new(None, None, None),
+            now,
+        );
+        let later = now + CONTEXT_HANDLE_TTL + Duration::from_secs(1);
+        assert_eq!(register_context(&mut contexts, context, later), handle);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[&handle].expires_at, later + CONTEXT_HANDLE_TTL);
+    }
+
+    #[test]
+    fn unbound_handles_do_not_share_credentials_backends_or_surfaces() {
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        let backend = Some("https://backend.example".to_owned());
+        let token = Some("user-a".to_owned());
+        let personal = register_context(
+            &mut contexts,
+            SpaceMcpRequestContext::new(None, backend.clone(), token.clone()),
+            now,
+        );
+        for context in [
+            SpaceMcpRequestContext::new(None, backend.clone(), Some("user-b".into())),
+            SpaceMcpRequestContext::new(None, Some("https://other.example".into()), token.clone()),
+            SpaceMcpRequestContext::notifications(backend.clone(), token.clone()),
+        ] {
+            assert_ne!(register_context(&mut contexts, context, now), personal);
+        }
+        let notifications = SpaceMcpRequestContext::notifications(backend, token);
+        assert_eq!(
+            register_context(&mut contexts, notifications.clone(), now),
+            register_context(&mut contexts, notifications, now),
+        );
+        assert_eq!(contexts.len(), 4);
+    }
+
+    #[test]
+    fn bound_grants_never_reuse_a_previous_execution_handle() {
+        let grant = serde_json::from_value(json!({
+            "version":1, "task_id":"task-1", "space_id":"space-1", "item_id":"issue-1",
+            "expires_at_unix":chrono::Local::now().timestamp() + 3600
+        }))
+        .unwrap();
+        let context = SpaceMcpRequestContext::new(Some(grant), None, None);
+        let mut contexts = HashMap::new();
+        let now = Instant::now();
+        assert_ne!(
+            register_context(&mut contexts, context.clone(), now),
+            register_context(&mut contexts, context, now),
+        );
+        assert_eq!(contexts.len(), 2);
+    }
 
     #[test]
     fn authorization_requires_the_exact_instance_token() {

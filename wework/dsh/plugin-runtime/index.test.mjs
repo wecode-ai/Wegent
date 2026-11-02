@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { apply, BASE_PATH, handleRpc } from './index.js'
+import { createRequestSecurity } from '../electron-host/request-security.js'
+
+const weworkRequestSecurity = createRequestSecurity(
+  {
+    requestRejection: req => (req.headers.cookie === 'test-session=valid' ? undefined : 401),
+  },
+  3000
+)
 
 test('registers lifecycle-scoped plugin backend methods', async () => {
   let provided
@@ -9,6 +17,7 @@ test('registers lifecycle-scoped plugin backend methods', async () => {
   let runtimeCleanup
   let route
   const ctx = {
+    weworkRequestSecurity,
     effect(factory) {
       runtimeCleanup = factory()
     },
@@ -66,6 +75,7 @@ test('rejects duplicate backends and invalid methods', () => {
   let provided
   const owner = { effect() {} }
   apply({
+    weworkRequestSecurity,
     effect(factory) {
       factory()
     },
@@ -99,7 +109,10 @@ test('rejects non-loopback requests', async () => {
   request.headers = {}
   request.socket = { remoteAddress: '10.0.0.8' }
 
-  await handleRpc(request, response, async () => null)
+  await weworkRequestSecurity.wrap((req, res) => handleRpc(req, res, async () => null))(
+    request,
+    response
+  )
   assert.equal(response.status, 403)
 })
 
@@ -107,7 +120,11 @@ async function invoke(handler, body) {
   const response = createResponse()
   const request = Readable.from([JSON.stringify(body)])
   request.method = 'POST'
-  request.headers = { host: '127.0.0.1:3000', origin: 'http://127.0.0.1:3000' }
+  request.headers = {
+    host: '127.0.0.1:3000',
+    origin: 'http://127.0.0.1:3000',
+    cookie: 'test-session=valid',
+  }
   request.socket = { remoteAddress: '127.0.0.1' }
   await handler(request, response)
   return response

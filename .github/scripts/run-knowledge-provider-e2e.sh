@@ -55,7 +55,7 @@ containers+=("$etcd")
 docker run -d --name "$etcd" --network "$E2E_DOCKER_NETWORK" --network-alias etcd \
   -e ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379 \
   -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 -e ETCD_DATA_DIR=/etcd \
-  quay.io/coreos/etcd:v3.5.16 > /dev/null
+  gcr.io/etcd-development/etcd:v3.5.16 > /dev/null
 wait_for_url etcd http://etcd:2379/health "$etcd"
 wait_for_url minio http://minio:9000/minio/health/ready
 containers+=("$milvus")

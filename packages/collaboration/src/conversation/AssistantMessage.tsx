@@ -53,8 +53,6 @@ import {
   hasRunningProcessingBlocks,
   getProcessingPhase,
   splitProcessingBlocks,
-  hasProcessingDisplayBlock,
-  hasTrailingCompletedProcessText,
   shouldShowAssistantThinkingIndicator,
 } from "./assistantMessagePresentation";
 
@@ -208,10 +206,8 @@ export function AssistantMessage({
   };
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
-    hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
+    blocks: displayBlocks,
     hasVisibleContent,
-    hasTrailingCompletedProcessText:
-      hasTrailingCompletedProcessText(displayBlocks),
   });
   const webSearchSources = isStreaming
     ? []
@@ -244,7 +240,7 @@ export function AssistantMessage({
   const processingTimeline = shouldShowProcessingSummary
     ? processingSegments.map((segment, index) => (
         <ToolBlocksDisplay
-          key={`${segment.kind}:${index}`}
+          key={`${segment.kind}:${segment.blocks[0]?.id}`}
           blocks={segment.blocks}
           fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
@@ -275,7 +271,7 @@ export function AssistantMessage({
           }
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
-          stateKey={`${processingStateKey}:${index}`}
+          stateKey={`${processingStateKey}:${segment.blocks[0]?.id}`}
           detailStateScopeKey={processingStateKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}

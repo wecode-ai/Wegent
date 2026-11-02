@@ -202,7 +202,7 @@ export function QuickAccessCards({
 
   const handleSelectTeamFromMore = (team: Team) => {
     if (isShowingAllTeams) {
-      const targetPage = getTeamTargetPage(team, 'all')
+      const targetPage = getTeamTargetPage(team, currentMode)
       const currentPage = getCurrentTargetPageByMode(currentMode)
       if (targetPage !== currentPage) {
         router.push(
@@ -526,6 +526,7 @@ export function QuickAccessCards({
       <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
         <PopoverTrigger asChild>
           <div
+            data-testid="quick-access-more-button"
             className="group relative flex h-16 w-16 flex-col items-center justify-center cursor-pointer border border-border bg-base transition-all duration-200 hover:border-border-strong hover:bg-hover hover:shadow-sm md:h-[78px] md:w-[72px]"
             style={{
               padding: '8px 12px',

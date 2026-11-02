@@ -12,6 +12,7 @@ import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -140,6 +141,19 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  invalidateNativeExecutions(): RuntimeTaskAddress[] {
+    let changed = false
+    const addresses: RuntimeTaskAddress[] = []
+    for (const machine of this.machines.values()) {
+      if (machine.getState().task?.executionState) {
+        addresses.push(machine.getState().address)
+        changed = machine.dispatch({ type: 'executor_replaced' }) || changed
+      }
+    }
+    if (changed) this.publish()
+    return addresses
+  }
+
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
@@ -190,6 +204,7 @@ export class RuntimeTaskLifecycleStore {
       }>
     }
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     if (transcript.running === true) {
       const current = this.getTask(address)
       if (shouldIgnoreStaleRunningTranscript(current)) return
@@ -327,6 +342,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    if (this.getTask(address)?.task?.executionState) return
     logRuntimeTaskCreateStage('lifecycle-transcript-received', {
       taskId: address.taskId,
       deviceId: address.deviceId,
@@ -454,12 +470,13 @@ export class RuntimeTaskLifecycleStore {
       previous.turn.phase === 'awaiting' &&
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true
+    // Executor confirmation can admit a turn first seen in streaming history.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       !confirmsAcceptedSend &&
       (previous.turn.active
         ? previous.task !== null
-        : previous.turn.outcome !== null && !isRuntimeGoalExecutionActive(canonicalEvent.task)) &&
+        : previous.turn.outcome !== null && !isRuntimeTaskConfirmedActive(canonicalEvent.task)) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
     ) {

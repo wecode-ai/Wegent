@@ -4,7 +4,8 @@
 
 'use client'
 
-import { useMemo, useCallback } from 'react'
+import { createContext, useContext, useMemo, useCallback, useState } from 'react'
+import type { ExtraProps } from 'react-markdown'
 import dynamic from 'next/dynamic'
 import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,15 @@ import {
 } from '@/features/knowledge/multimodal/components/InlineImageViewer'
 import { resolveWikiLink } from '../utils/wikiLinkResolver'
 import type { KnowledgeDocument } from '@/types/knowledge'
+import { resolveDocumentLinkPolicy } from '../utils/documentLinkPolicy'
+import {
+  createDocumentLinkResource,
+  isDocumentFileLink,
+  type DocumentLinkResource as LinkResource,
+} from '../utils/documentLinkResource'
+import { DocumentLinkResource } from './DocumentLinkResource'
+import { DocumentLinkPreview } from './DocumentLinkPreview'
+import { rehypeDocumentResources } from '../utils/rehypeDocumentResources'
 
 // Dynamically import EnhancedMarkdown for markdown preview
 const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkdown'), {
@@ -37,6 +47,8 @@ const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkd
 })
 
 type ViewMode = 'preview' | 'raw'
+const StandaloneResourceContext = createContext(false)
+const documentResourcePlugins = [rehypeDocumentResources]
 
 interface DocumentContentViewerProps {
   content: string
@@ -70,6 +82,8 @@ export function DocumentContentViewer({
   const { t } = useTranslation('knowledge')
   const { theme } = useTheme()
   const router = useRouter()
+  const [selectedLinkResource, setSelectedLinkResource] = useState<LinkResource | null>(null)
+  const linkPolicy = useMemo(() => resolveDocumentLinkPolicy(document), [document])
 
   // Check if content is JSON
   const isJsonContent = useMemo(() => {
@@ -127,55 +141,153 @@ export function DocumentContentViewer({
     ]
   )
 
-  // Render markdown content
+  // Stable component types preserve in-flight previews on parent updates.
+  const markdownComponents = useMemo(() => {
+    const components = {
+      p: function DocumentParagraph({
+        node,
+        children,
+        ...props
+      }: React.HTMLAttributes<HTMLParagraphElement> & ExtraProps) {
+        const nodes = node?.children.filter(
+          child => child.type !== 'text' || child.value.trim().length > 0
+        )
+        const child = nodes?.length === 1 ? nodes[0] : undefined
+        const href =
+          child?.type === 'element' && ['a', 'img'].includes(child.tagName)
+            ? child.properties[child.tagName === 'img' ? 'src' : 'href']
+            : undefined
+        const standaloneFile =
+          linkPolicy.policy !== 'legacy' && typeof href === 'string' && isDocumentFileLink(href)
+
+        if (!standaloneFile) return <p {...props}>{children}</p>
+
+        return (
+          <StandaloneResourceContext.Provider value>
+            <div {...props}>{children}</div>
+          </StandaloneResourceContext.Provider>
+        )
+      },
+      a: function DocumentAnchor({
+        href,
+        children,
+        node: _node,
+        ...props
+      }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+        children?: React.ReactNode
+      } & ExtraProps) {
+        const standalone = useContext(StandaloneResourceContext)
+        if (!href) {
+          return <a {...props}>{children}</a>
+        }
+        const isExternalUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)
+        const isAnchor = href.startsWith('#')
+        const isWikiLink = !isExternalUrl && !isAnchor
+
+        const isRestrictedFile =
+          linkPolicy.policy !== 'legacy' && !isAnchor && isDocumentFileLink(href)
+        if (isRestrictedFile) {
+          const resource = createDocumentLinkResource(document.id, href)
+          if (!resource || linkPolicy.policy === 'unavailable') {
+            return (
+              <span
+                className="mx-0.5 inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-text-muted"
+                data-testid="document-link-preview-unavailable"
+              >
+                {children}
+              </span>
+            )
+          }
+          return (
+            <DocumentLinkResource
+              resource={resource}
+              onOpen={setSelectedLinkResource}
+              inline={!standalone}
+            >
+              {children}
+            </DocumentLinkResource>
+          )
+        }
+
+        if (!isWikiLink) {
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+              {...props}
+            >
+              {children}
+            </a>
+          )
+        }
+
+        return (
+          <button
+            type="button"
+            onClick={e => {
+              e.preventDefault()
+              handleWikiLinkClick(href)
+            }}
+            className="text-primary hover:underline cursor-pointer inline bg-transparent border-none p-0 font-inherit"
+            title={decodeURIComponent(href)}
+            data-testid="knowledge-document-wiki-link"
+          >
+            {children}
+          </button>
+        )
+      },
+      img: function DocumentImage({
+        src,
+        alt,
+        node: _node,
+        ...props
+      }: React.ImgHTMLAttributes<HTMLImageElement> & ExtraProps) {
+        const standalone = useContext(StandaloneResourceContext)
+        if (linkPolicy.policy === 'legacy' || typeof src !== 'string') {
+          // eslint-disable-next-line @next/next/no-img-element
+          return <img {...props} src={src} alt={alt || ''} />
+        }
+        const resource = createDocumentLinkResource(document.id, src, alt)
+        if (!resource || linkPolicy.policy === 'unavailable') {
+          return (
+            <span
+              className="inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-text-muted"
+              data-testid="document-link-preview-unavailable"
+            >
+              {alt || t('document.document.detail.linkPreview.unavailable')}
+            </span>
+          )
+        }
+        return (
+          <DocumentLinkResource
+            resource={resource}
+            onOpen={setSelectedLinkResource}
+            inline={!standalone}
+          />
+        )
+      },
+      ...(linkPolicy.policy !== 'legacy'
+        ? {
+            iframe: () => <BlockedEmbeddedResource />,
+            object: () => <BlockedEmbeddedResource />,
+            embed: () => <BlockedEmbeddedResource />,
+            video: () => <BlockedEmbeddedResource />,
+            source: () => null,
+          }
+        : {}),
+    }
+    // Preserve the shared Markdown renderers for every non-DingTalk source.
+    return linkPolicy.policy === 'legacy' ? { a: components.a } : components
+  }, [document.id, linkPolicy.policy, handleWikiLinkClick, t])
+
   const renderMarkdown = () => (
     <EnhancedMarkdown
       source={content}
       theme={theme}
-      components={{
-        a: ({
-          href,
-          children,
-          ...props
-        }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-          children?: React.ReactNode
-        }) => {
-          if (!href) {
-            return <a {...props}>{children}</a>
-          }
-          const isExternalUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)
-          const isAnchor = href.startsWith('#')
-          const isWikiLink = !isExternalUrl && !isAnchor
-
-          if (!isWikiLink) {
-            return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-                {...props}
-              >
-                {children}
-              </a>
-            )
-          }
-
-          return (
-            <button
-              type="button"
-              onClick={e => {
-                e.preventDefault()
-                handleWikiLinkClick(href)
-              }}
-              className="text-primary hover:underline cursor-pointer inline bg-transparent border-none p-0 font-inherit"
-              title={decodeURIComponent(href)}
-            >
-              {children}
-            </button>
-          )
-        },
-      }}
+      components={markdownComponents}
+      rehypePlugins={linkPolicy.policy === 'preview-only' ? documentResourcePlugins : undefined}
     />
   )
 
@@ -199,7 +311,7 @@ export function DocumentContentViewer({
       return (
         <InlineImageViewer
           document={document}
-          className="p-4 bg-white rounded-lg border border-border"
+          className="p-4 bg-surface rounded-lg border border-border"
         />
       )
     }
@@ -211,7 +323,7 @@ export function DocumentContentViewer({
   }
 
   return (
-    <div className="p-4 bg-white rounded-lg border border-border">
+    <div className="p-4 bg-surface rounded-lg border border-border">
       {/* Image document: show the original image above the extracted text content */}
       <InlineImageViewer
         document={document}
@@ -256,6 +368,26 @@ export function DocumentContentViewer({
           </Button>
         )}
       </div>
+      {linkPolicy.policy === 'preview-only' && (
+        <DocumentLinkPreview
+          resource={selectedLinkResource}
+          onOpenChange={open => {
+            if (!open) setSelectedLinkResource(null)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function BlockedEmbeddedResource() {
+  const { t } = useTranslation('knowledge')
+  return (
+    <span
+      className="inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-text-muted"
+      data-testid="document-embedded-content-blocked"
+    >
+      {t('document.document.detail.linkPreview.embeddedBlocked')}
+    </span>
   )
 }

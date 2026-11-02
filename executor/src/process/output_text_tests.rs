@@ -50,6 +50,7 @@ async fn native_partial_text_and_thinking_are_emitted_before_snapshots_and_eof()
         "1".into(),
         "2".into(),
         None,
+        None,
     ));
     send_line(
         &mut writer,
@@ -181,6 +182,7 @@ async fn assert_native_partial_boundaries(omit_root_ids: bool) {
         "1".into(),
         "2".into(),
         None,
+        None,
     )
     .await;
     assert!(matches!(outcome, StreamingStdoutOutcome::Success(_)));
@@ -252,6 +254,7 @@ async fn claude_segments_keep_turn_offsets_and_native_item_offsets() {
         ResponsesEventBuilder::new("1", "2", "test"),
         "1".into(),
         "2".into(),
+        None,
         None,
     )
     .await;

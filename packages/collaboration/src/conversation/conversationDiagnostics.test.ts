@@ -138,7 +138,7 @@ describe('conversation diagnostics', () => {
 
   test('correlates externally scrolled rows, Markdown, and anchors with their visible viewport', () => {
     const viewport = document.createElement('div')
-    viewport.dataset.scrollOrigin = 'bottom'
+    viewport.dataset.scrollOrigin = 'top'
     viewport.className = 'overflow-y-auto'
     viewport.innerHTML =
       '<div data-scroll-origin="bottom" class="overflow-visible"><article data-index="7"><div data-markdown-window-chunk><p data-scroll-anchor>Private text</p></div></article></div>'
@@ -157,7 +157,7 @@ describe('conversation diagnostics', () => {
       })
     }
     const otherViewport = document.createElement('div')
-    otherViewport.dataset.scrollOrigin = 'bottom'
+    otherViewport.dataset.scrollOrigin = 'top'
     expect(getConversationDiagnosticContext(otherViewport).scrollerId).not.toBe(
       viewportContext.scrollerId
     )
@@ -165,7 +165,7 @@ describe('conversation diagnostics', () => {
 
   test('keeps an independent nested scrolling viewport distinct from its outer viewport', () => {
     const outer = document.createElement('div')
-    outer.dataset.scrollOrigin = 'bottom'
+    outer.dataset.scrollOrigin = 'top'
     outer.innerHTML =
       '<div data-scroll-origin="top" class="overflow-y-auto"><article data-index="3"><p>Text</p></article></div>'
     const inner = outer.firstElementChild!
@@ -183,7 +183,7 @@ describe('conversation diagnostics', () => {
 
   test('recognizes inline visible overflow and respects an independent inline scroll override', () => {
     const outer = document.createElement('div')
-    outer.dataset.scrollOrigin = 'bottom'
+    outer.dataset.scrollOrigin = 'top'
     outer.innerHTML =
       '<div data-scroll-origin="bottom" style="overflow-y: visible"><p>Text</p></div>'
     const inner = outer.firstElementChild as HTMLElement
@@ -197,7 +197,7 @@ describe('conversation diagnostics', () => {
 
   test('resolves diagnostic ownership without computed styles or layout reads', () => {
     const viewport = document.createElement('div')
-    viewport.dataset.scrollOrigin = 'bottom'
+    viewport.dataset.scrollOrigin = 'top'
     viewport.innerHTML =
       '<div data-scroll-origin="bottom" class="overflow-y-visible"><p>Text</p></div>'
     const paragraph = viewport.querySelector('p')!

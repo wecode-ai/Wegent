@@ -16,7 +16,7 @@ export function createMcpAppConversationServices({
   if (!address || !api?.requestMcpApp) return undefined
   return {
     address,
-    api: { requestMcpApp: api.requestMcpApp },
+    api: { requestMcpApp: api.requestMcpApp, getMcpAppSessionTarget: api.getMcpAppSessionTarget },
     sendMessage: readOnly ? undefined : message => sendMessage({ address, message }),
   }
 }

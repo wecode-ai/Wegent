@@ -61,6 +61,7 @@ describe('MessageList', () => {
       vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800)
       vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1000)
       vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
       const viewport = document.createElement('div')
       viewport.scrollTo = vi.fn()
       document.body.appendChild(viewport)
@@ -5714,6 +5715,35 @@ describe('MessageList', () => {
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
+
+  test.each(['done', 'error'] as const)(
+    'keeps thinking visible after a %s guidance tool while the response is pending',
+    status => {
+      const message: WorkbenchMessage = {
+        id: 'assistant-guidance-pending',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        createdAt: '2026-05-25T18:46:00.000+08:00',
+        blocks: [
+          {
+            id: 'completed-guidance',
+            type: 'tool',
+            toolName: 'conversation_guidance',
+            toolInput: { message: 'continue after restarting the model proxy' },
+            status,
+            createdAt: Date.parse('2026-05-25T18:46:00.000+08:00'),
+          },
+        ],
+      }
+      const { rerender } = render(<MessageList messages={[message]} />)
+      expect(screen.getByText(status === 'error' ? '引导对话失败' : '引导对话')).toBeInTheDocument()
+      expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+
+      rerender(<MessageList messages={[{ ...message, status: 'done' }]} />)
+      expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    }
+  )
 
   test('hides generic thinking once final text starts streaming', () => {
     render(

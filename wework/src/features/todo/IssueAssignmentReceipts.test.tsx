@@ -2,7 +2,12 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
-import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
+import {
+  IssueAssignmentReceipts,
+  IssueAssignmentReceiptStatus,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
+import { useCallback, useState } from 'react'
 
 const receipt: IssueAssignmentReceipt = {
   id: 'assignment-1',
@@ -33,6 +38,54 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('shares live receipt updates with the activity without another polling request', async () => {
+    vi.useFakeTimers()
+    const onStateChange = vi.fn()
+    const api = {
+      getLoopItem: vi.fn().mockResolvedValue({ id: 'issue' }),
+      getIssueAssignmentReceipts: vi.fn().mockResolvedValue([receipt]),
+      acknowledgeIssueAssignment: vi.fn().mockResolvedValue({ acknowledged: true }),
+    }
+    function SharedReceipts() {
+      const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
+      const publish = useCallback((next: IssueAssignmentReceiptState) => {
+        onStateChange(next)
+        setState(next)
+      }, [])
+      return (
+        <>
+          <IssueAssignmentReceipts
+            api={api}
+            issueId="issue"
+            version={1}
+            currentUserId={8}
+            assigneeUserId={7}
+            onStateChange={publish}
+          />
+          {state ? <IssueAssignmentReceiptStatus {...state} /> : null}
+        </>
+      )
+    }
+    const { unmount } = render(<SharedReceipts />)
+    await act(async () => {})
+    expect(screen.getAllByText('未读')).toHaveLength(2)
+    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(1)
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(2)
+    expect(onStateChange).toHaveBeenCalledTimes(1)
+    api.getIssueAssignmentReceipts.mockResolvedValue([
+      { ...receipt, human_read_at: '2026-10-27T02:00:00Z' },
+    ])
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(screen.getAllByText(/本人已读/)).toHaveLength(2)
+    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(3)
+    expect(onStateChange).toHaveBeenCalledTimes(2)
+    expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
+    unmount()
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(api.getIssueAssignmentReceipts).toHaveBeenCalledTimes(3)
+  })
+
   it('shows only receipts belonging to the displayed assignee', async () => {
     setup(9, [
       receipt,

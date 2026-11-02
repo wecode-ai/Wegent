@@ -11,7 +11,7 @@ import {
 
 function createScroller() {
   const element = document.createElement('div')
-  element.dataset.scrollOrigin = 'bottom'
+  element.dataset.scrollOrigin = 'top'
   element.innerHTML =
     '<article data-message-id="private-message"><p>Private transcript</p></article>'
   Object.defineProperties(element, {

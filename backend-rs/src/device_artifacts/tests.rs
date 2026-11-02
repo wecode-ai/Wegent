@@ -23,7 +23,7 @@ fn token(payload: &Value) -> String {
 }
 
 fn claims() -> Value {
-    json!({"type":"task_token", "task_id":42,"subtask_id":7,"user_id":3,
+    json!({"type":"task_token", "task_id":42,"subtask_id":7,"user_id":3,"user_name":"artifact-owner",
         "exp":chrono::Utc::now().timestamp()+3600})
 }
 
@@ -60,6 +60,9 @@ fn declaration_requires_exact_task_and_user_and_positive_assistant_identity() {
     }
     let jwt = token(&json!({"sub":"owner", "user_id":3}));
     assert!(matching_task_token(&config(), Some(&jwt), 42, 3).is_err());
+    let mut incomplete = claims();
+    incomplete.as_object_mut().unwrap().remove("user_name");
+    assert!(matching_task_token(&config(), Some(&token(&incomplete)), 42, 3).is_err());
     let valid = token(&claims());
     for prefix in ["Bearer ", "bearer ", "BeArEr ", ""] {
         assert_eq!(

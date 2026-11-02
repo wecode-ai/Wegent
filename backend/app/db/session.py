@@ -21,6 +21,9 @@ from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Database connection URL (using sync driver)
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+# Explicit row locks serialize mutations without locking absent index ranges
+# shared by unrelated resources. Both request and worker engines use this policy.
+MYSQL_TRANSACTION_ISOLATION = "READ COMMITTED"
 
 
 def _configure_sqlite_engine(sqlite_engine: Engine) -> Engine:
@@ -60,6 +63,7 @@ def _create_engine():
         # for every Backend and Celery process that imports this engine.
         mysql_engine = create_engine(
             SQLALCHEMY_DATABASE_URL,
+            isolation_level=MYSQL_TRANSACTION_ISOLATION,
             pool_pre_ping=True,
             poolclass=ObservedQueuePool,
             pool_size=settings.DB_POOL_SIZE,
@@ -127,6 +131,7 @@ def _create_async_engine() -> AsyncEngine:
         return async_engine
     async_engine = create_async_engine(
         async_url,
+        isolation_level=MYSQL_TRANSACTION_ISOLATION,
         connect_args={
             "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
         },

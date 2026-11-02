@@ -250,6 +250,19 @@ passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
 
+### Async Question Model Fixtures
+
+The desktop E2E async question fixture recognizes only an exact expected answer
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
+AGENTS.md and environment context can also arrive with `role=user`; scanning the
+whole request or matching an answer substring cannot establish a user reply.
+
+`desktop-async-input-fixture.test.mjs` covers injected context, historical answers,
+tool output, and actual replies. Existing desktop async question scenarios retain
+the distracting word `Complete` in their prompt and assert both the waiting
+message before an answer and the completion message afterward.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:
@@ -290,6 +303,28 @@ events; without `ci:all`, test selection still follows the changed paths.
 The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
+Windows desktop builds share the `build-wework-windows-e2e` action between PRs
+and main-branch cache warmup. Only `main` writes shared caches. Complete packages
+require an exact match of source inputs, Node, Rust, and runner image versions;
+prefix matching is not used. A hit validates and uploads the original package,
+preserving its producer identity. A miss builds with shared pnpm, Codex, Electron,
+Executor, and Backend compilation caches. These are E2E builds, not evidence of
+upgrade compatibility.
+
+Windows Core independently balances serial shards using median successful
+checkpoint durations in `.github/ci/wework-windows-checkpoint-durations.json`,
+which records the source Actions runs. Linux grouping stays unchanged. Scheduling
+preserves the ten-runner budget, two exclusive benchmark shards, and every
+checkpoint. A shard containing an unmeasured checkpoint remains intact until
+successful logs provide evidence. Failed and cancelled checkpoints are excluded.
+Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
+preserving the original number of preparation jobs.
+Loads also include measured conditional preparation costs with a source job link,
+so cold object-storage compilation does not sit on an otherwise full shard.
+Cache hits may reduce these costs.
+Estimated loads omit runner queues, common setup, and cleanup; validate actual
+savings with a complete CI run.
+
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`
@@ -298,6 +333,15 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Desktop E2E element mounting and subsequent value polling each use the shared
+  step budget. Mounting must not consume the entire value loop before its first
+  read; retain actual-value diagnostics and exact-match assertions.
+- After routing control commands back from another window, explicitly restore
+  native window focus before checking virtualized content. Control routing does
+  not bring a native window to the foreground.
+- Desktop teardown observes both exit events and operating-system liveness and
+  always checks the entire process group. Timeouts retain the PID, exit status,
+  and Linux kernel process state without relaxing cleanup assertions.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns
@@ -657,6 +701,8 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 - [GitHub Actions](https://docs.github.com/en/actions)
 
 ## E2E resource reuse and shard allocation
+
+Platform E2E checks its content-addressed GHCR image before starting Buildx, and starts the builder and publishes an image only when that image is missing. A registry hit does not download BuildKit, avoiding an unnecessary Docker Hub dependency. Knowledge tests use the official `gcr.io/etcd-development/etcd:v3.5.16` image to avoid the 502 errors observed on the previous Quay download path.
 
 Shard 4's knowledge test entry point owns the on-demand Milvus and etcd containers, reusing the existing network and MinIO; other shards do not start these services. Startup checks etcd `/health` and MinIO `/minio/health/ready` before starting Milvus and polling its actual `/healthz`, within the existing 180-second budget. Container exit fails immediately, test failures preserve their exit code, and every path records container state, health-check configuration/history and complete logs before cleanup. Evidence is uploaded as `knowledge-provider-lifecycle-e2e`. This addresses the pre-checkout service failure in [40609610685](https://github.com/wecode-ai/Wegent/actions/runs/40609610685), where subsequent steps could not capture health details. The four runners and both knowledge test entry points remain unchanged.
 

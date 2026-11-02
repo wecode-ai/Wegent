@@ -41,17 +41,39 @@ mod runtime_capability_startup;
 mod runtime_temporary_chat_persistence;
 
 struct EnvLockGuard {
+    // Restore the environment before deleting fixtures and releasing the lock.
+    _environment: Vec<EnvGuard>,
+    _root: tempfile::TempDir,
     _guard: OwnedMutexGuard<()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
     static LOCK: OnceLock<Arc<AsyncMutex<()>>> = OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
+    let root = tempfile::tempdir().unwrap();
+    let mut environment = Vec::new();
+    for (key, directory) in [
+        ("HOME", "home"),
+        ("CODEX_HOME", "codex"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+        ("WEGENT_CAPABILITIES_HOME", "capabilities"),
+    ] {
+        let path = root.path().join(directory);
+        fs::create_dir_all(&path).unwrap();
+        environment.push(EnvGuard::set(key, path.to_str().unwrap()));
+    }
+    environment.push(EnvGuard::remove("WEGENT_CODEX_HOME"));
+    environment.push(EnvGuard::remove("CODEX_SQLITE_HOME"));
+    environment.push(EnvGuard::set("WEWORK_CODEX_SUBSCRIPTION_ENABLED", "false"));
     EnvLockGuard {
-        _guard: LOCK
-            .get_or_init(|| Arc::new(AsyncMutex::new(())))
-            .clone()
-            .lock_owned()
-            .await,
+        _environment: environment,
+        _root: root,
+        _guard: guard,
     }
 }
 
@@ -61,6 +83,12 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
@@ -5006,7 +5034,8 @@ while IFS= read -r line; do
       else
         turn_count=$((turn_count + 1))
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","itemId":"text-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
       fi
       ;;
@@ -5258,10 +5287,14 @@ while IFS= read -r line; do
       turn_start_count=$((turn_start_count + 1))
       if [ "$turn_start_count" -eq 1 ]; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"inProgress"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","delta":"alpha","phase":"finalAnswer"}}}}'
-        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","delta":"beta","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-a","turnId":"turn-a","item":{{"id":"text-a","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-b","turnId":"turn-b","item":{{"id":"text-b","type":"agentMessage","phase":"commentary","text":""}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-a","turnId":"turn-a","itemId":"text-a","delta":"alpha"}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-b","turnId":"turn-b","itemId":"text-b","delta":"beta"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-a","turn":{{"id":"turn-a","status":"completed"}}}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-b","turn":{{"id":"turn-b","status":"completed"}}}}}}'
       fi
@@ -5361,6 +5394,7 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
+    printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{}'
     sleep 0.1
     notification_index=0
@@ -5380,8 +5414,8 @@ while IFS= read -r line; do
     fi
   elif printf '%s\n' "$line" | grep -q '"id":{}' && printf '%s\n' "$line" | grep -q '"result"'; then
     turn_active=false
-    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
-    printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
+    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"answered-message","delta":"answered","phase":"finalAnswer"}}}}'
+    printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"completed"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"auto-approval-sentinel","type":"commandExecution","status":"inProgress","command":"approval returned"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":98' && printf '%s\n' "$line" | grep -q '"result"'; then
@@ -5523,6 +5557,7 @@ while IFS= read -r line; do
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       ;;
     *'"method":"turn/steer"'*)
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'

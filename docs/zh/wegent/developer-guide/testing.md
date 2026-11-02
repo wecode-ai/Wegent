@@ -249,6 +249,17 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
 
+### 异步提问模型桩
+
+桌面 E2E 的异步提问模型桩仅将对应 `function_call_output` 回执之后、与预期答案
+完全一致的用户消息识别为回答；答案文本复用共享解析器移除运行时包装上下文。
+AGENTS.md 和环境上下文也可能通过 `role=user`
+传入模型，不能通过扫描全部请求或子串匹配判断用户是否作答。
+
+`desktop-async-input-fixture.test.mjs` 覆盖注入上下文、历史答案、工具输出和真实
+回答；现有桌面异步提问场景在提示词中保留 `Complete` 干扰文本，并继续断言
+作答前的等待消息和作答后的完成消息。
+
 ## Wework 桌面云设备测试
 
 从仓库根目录运行云设备功能 E2E：
@@ -284,6 +295,21 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不触发内存 E2E。
 
+Windows 桌面构建由 `build-wework-windows-e2e` 共享 action 负责，主分支缓存预热与
+PR 使用同一路径。只有 `main` 可以写入共享缓存；完整桌面包按源码输入、Node、
+Rust 和 runner 镜像版本精确匹配，不使用前缀匹配。命中后直接验证并上传原始构建包，
+保留生成时的构建身份；未命中时复用 pnpm、Codex、Electron、Executor 和 Backend
+编译缓存后构建。这里只复用 E2E 构建，不产生升级兼容性证据。
+
+Windows Core 使用 `.github/ci/wework-windows-checkpoint-durations.json` 中带有
+Actions 来源链接的成功检查点耗时中位数，单独均衡串行分片；Linux 分组不变。
+调度保留十个 runner 的预算、两个独占基准分片和全部检查点。包含未测量检查点的
+分片整体保持原样，待有成功日志后更新耗时数据。失败和取消的检查点不计入基线；
+共享 CLI、Electron 或对象存储准备的检查点一起调度，保持原有准备任务数量。
+负载也计入带有 job 来源链接的条件准备耗时，避免冷构建对象存储的分片额外拖尾；
+缓存命中后这部分成本可能降低。
+估算负载不包含 runner 排队、公共初始化和清理时间，最终收益以完整 CI 实测为准。
+
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
@@ -291,6 +317,12 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 
 CI 稳定性依赖以下约束：
 
+- 桌面 E2E 的元素挂载等待和后续取值轮询各自使用共享步骤预算；挂载耗时不能让
+  取值循环一次都不执行。保留实际值和精确匹配断言。
+- 多窗口测试切回控制客户端后，必须显式恢复原生窗口焦点，再验证该窗口中的
+  虚拟化内容。控制命令路由不代表窗口已在前台。
+- 桌面进程清理同时观察退出事件与操作系统存活状态，始终检查整个进程组。
+  超时必须保留 PID、退出状态和 Linux 内核进程状态，不能放宽清理断言。
 - 平台 E2E 的 MySQL 服务必须为首次初始化保留启动宽限。健康检查的
   `start-period` 应覆盖共享 runner 上的冷启动，再通过检查间隔和重试次数判断失败；
   不要依赖重跑掩盖初始化超时。
@@ -625,6 +657,8 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 - [GitHub Actions](https://docs.github.com/en/actions)
 
 ## E2E 资源复用与分片分配
+
+平台 E2E 先查询按内容哈希命名的 GHCR 镜像，只在镜像不存在时启动 Buildx 构建器并发布镜像。命中镜像时不下载 BuildKit，避免不必要的 Docker Hub 网络依赖。知识库测试使用 `gcr.io/etcd-development/etcd:v3.5.16` 官方镜像，以避开原 Quay 下载链路出现的 502。
 
 Milvus 和 etcd 由 shard 4 的知识库测试入口按需启动，复用现有容器网络与 MinIO；其他分片不启动这两个服务。启动顺序显式检查 etcd `/health` 和 MinIO `/minio/health/ready`，再启动 Milvus 并等待真实 `/healthz` 响应，总启动预算保持 180 秒。容器退出立即失败，测试失败保留原退出码；所有路径都保存容器状态、健康检查配置与历史、完整日志并清理容器。诊断制品为 `knowledge-provider-lifecycle-e2e`。这避免了 [40609610685](https://github.com/wecode-ai/Wegent/actions/runs/40609610685) 中服务在 checkout 前失败、后续步骤无法保存健康检查详情的问题；四个 runner 与两个知识库测试入口保持不变。
 

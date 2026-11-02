@@ -1,11 +1,12 @@
+import { telemetryDeliveryScope } from './identity'
 import type { StandInExecutorApi, StandInTelemetryFact } from '@/api/standIn'
-import type { WeworkTelemetryEnvelope, WeworkTelemetrySink } from './facts'
+import type { WeworkTelemetryEnvelope } from './facts'
 import { ANALYTICS_EVENT_PROPERTY_KEYS, type ExecutionTarget } from './events'
 import {
-  deliverDurablePublicEvent,
-  durablePublicIdentity,
+  deliverDurableEvent,
+  durableTelemetryIdentity,
   sanitizeAnalyticsProperties,
-  type DurablePublicIdentity,
+  type DurableTelemetryIdentity,
 } from './client'
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -14,18 +15,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface QueuedFact {
   readonly fact: WeworkTelemetryEnvelope
-  readonly identity?: DurablePublicIdentity
-  readonly deliveredTo: readonly string[]
+  readonly identity: DurableTelemetryIdentity
 }
 
 /** Account/device scope is a local routing key and never part of an event. */
-export function createStandInDelivery(key: string, distribution: 'internal' | 'public') {
-  const storageKey = `wework.stand-in-telemetry:${distribution}:${key}`
+export function createStandInDelivery(key: string) {
+  const storageKey = `wework.stand-in-telemetry:${key}`
   const read = (): QueuedFact[] => {
     const rows = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as QueuedFact[]
     return rows
       .filter(
-        row => validFact(row.fact) && Date.parse(row.fact.occurredAt) >= Date.now() - RETENTION_MS
+        row =>
+          validFact(row.fact) &&
+          row.identity?.scope === telemetryDeliveryScope() &&
+          Date.parse(row.fact.occurredAt) >= Date.now() - RETENTION_MS
       )
       .slice(-MAX_EVENTS)
   }
@@ -43,8 +46,8 @@ export function createStandInDelivery(key: string, distribution: 'internal' | 'p
     ) {
       const { items } = await api.telemetryFacts(userId, deviceId)
       if (!active()) return
-      const identity = distribution === 'public' ? await durablePublicIdentity() : undefined
-      if (!active() || (distribution === 'public' && !identity)) return
+      const identity = await durableTelemetryIdentity()
+      if (!active() || !identity) return
       const rows = read()
       const known = new Set(rows.map(row => row.fact.eventId))
       const ids: string[] = []
@@ -62,54 +65,33 @@ export function createStandInDelivery(key: string, distribution: 'internal' | 'p
             eventId: item.id,
             occurredAt: new Date(item.occurredAt).toISOString(),
           } as WeworkTelemetryEnvelope,
-          identity: identity ?? undefined,
-          deliveredTo: [],
+          identity,
         })
       }
       // A failed storage write must leave the Executor queue unacknowledged.
       write(rows)
       if (active() && ids.length) await api.acknowledgeTelemetry(userId, deviceId, ids)
     },
-    async flush(sinks: readonly WeworkTelemetrySink[], active: () => boolean) {
-      for (const row of read()) {
+    async flush(active: () => boolean) {
+      const rows = read()
+      write(rows)
+      for (const row of rows) {
         if (!active()) return
-        let accepted = false
-        const deliveredTo = new Set(row.deliveredTo)
-        if (distribution === 'public') {
-          accepted = Boolean(
-            row.identity &&
-            (await deliverDurablePublicEvent(
-              row.fact,
-              row.fact.eventId,
-              row.fact.occurredAt,
-              row.identity
-            ))
-          )
-        } else {
-          for (const sink of sinks) {
-            if (!active()) return
-            if (deliveredTo.has(sink.id)) continue
-            try {
-              await sink.accept(row.fact)
-              deliveredTo.add(sink.id)
-            } catch {
-              /* Retain failed deliveries. */
-            }
-          }
-          accepted = sinks.length > 0 && sinks.every(sink => deliveredTo.has(sink.id))
-        }
+        const result = await deliverDurableEvent(
+          row.fact,
+          row.fact.eventId,
+          row.fact.occurredAt,
+          row.identity
+        )
+        const accepted = result === true
         if (!active()) return
         // Re-read after awaiting transport so newly collected facts are preserved.
         write(
           read().flatMap(current =>
-            current.fact.eventId !== row.fact.eventId
-              ? [current]
-              : accepted
-                ? []
-                : [{ ...current, deliveredTo: [...deliveredTo] }]
+            current.fact.eventId !== row.fact.eventId ? [current] : accepted ? [] : [current]
           )
         )
-        if (!accepted) return
+        if (result === false) return
       }
     },
   }
@@ -135,18 +117,15 @@ function validFact(fact: WeworkTelemetryEnvelope): boolean {
   } as StandInTelemetryFact)
 }
 
-export function clearStandInDeliveries(distribution: 'public' | 'internal', accountKey?: string) {
-  const prefix = `wework.stand-in-telemetry:${distribution}:${accountKey == null ? '' : accountKey + ':'}`
+export function clearStandInDeliveries(accountKey?: string) {
+  const prefix = `wework.stand-in-telemetry:${accountKey == null ? '' : accountKey + ':'}`
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith(prefix)) localStorage.removeItem(key)
   }
 }
 
-export function queuedStandInDevices(
-  accountKey: string,
-  distribution: 'public' | 'internal'
-): string[] {
-  const prefix = `wework.stand-in-telemetry:${distribution}:${accountKey}:`
+export function queuedStandInDevices(accountKey: string): string[] {
+  const prefix = `wework.stand-in-telemetry:${accountKey}:`
   return Object.keys(localStorage)
     .filter(key => key.startsWith(prefix))
     .map(key => key.slice(prefix.length))

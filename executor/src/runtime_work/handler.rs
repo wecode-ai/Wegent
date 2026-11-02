@@ -134,6 +134,7 @@ mod connections;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;
+pub(super) mod lifecycle;
 mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
@@ -148,7 +149,9 @@ mod sidebar;
 mod stand_in;
 mod stand_in_agent;
 mod stand_in_conversations;
+mod stand_in_diagnostics;
 mod stand_in_events;
+mod stand_in_execution;
 mod stand_in_ingress;
 mod stand_in_memory;
 mod stand_in_telemetry;
@@ -673,6 +676,7 @@ struct WorktreeReconciliationState {
 
 struct ActiveLocalExecution {
     execution_id: u64,
+    request: Option<ExecutionRequest>,
     stop_requested: bool,
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,
@@ -720,7 +724,6 @@ struct RuntimeThreadEventRoute {
     active: bool,
     nested: bool,
     generation: u64,
-    native_completed_turn_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -807,7 +810,6 @@ impl RuntimeThreadEventRoute {
             active,
             nested: false,
             generation,
-            native_completed_turn_id: None,
         }
     }
 }

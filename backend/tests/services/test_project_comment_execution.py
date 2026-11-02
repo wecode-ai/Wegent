@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
@@ -13,6 +14,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
@@ -25,7 +27,19 @@ from tests.utils.collaboration import (
 
 
 @pytest.fixture
-def scenario(test_db, test_user, test_admin_user, monkeypatch):
+def scenario(
+    test_db, test_user, test_admin_user, monkeypatch, runtime_transcript_sessions
+):
+    return create_scenario(test_db, test_user, test_admin_user, monkeypatch)
+
+
+def create_scenario(
+    test_db: Session,
+    test_user: User,
+    test_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build committed collaboration state for SQLite and MySQL regressions."""
     owner, member = test_admin_user, test_user
     project = CloudProject(
         public_id="comment-project",
@@ -586,6 +600,7 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
 async def test_member_reads_bound_transcript_using_original_owner(scenario, role):
+    """Read a granted project session through its original owner's device identity."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 
@@ -619,6 +634,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
             "taskId": "original-session",
             "limit": 20,
             "beforeCursor": "page-2",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
         allow_app_device_task_reading=True,
@@ -632,6 +648,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
 async def test_group_transcript_reads_manager_session_without_changing_dispatch_identity(
     scenario, requested_task
 ):
+    """Resolve group history to the manager session without changing its binding."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 
@@ -670,6 +687,7 @@ async def test_group_transcript_reads_manager_session_without_changing_dispatch_
     assert s.rpc.call_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session-manager-initial",
+        "transcriptProtocolVersion": 2,
     }
     assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
 

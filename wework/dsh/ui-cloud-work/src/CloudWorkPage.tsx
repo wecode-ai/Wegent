@@ -79,6 +79,7 @@ export function CloudWorkPage() {
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
   } = useWorkbench()
 
   useEffect(() => {
@@ -182,6 +183,7 @@ export function CloudWorkPage() {
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
+            onCloneGitRepository={cloneGitRepository}
             onOpenSettings={options =>
               navigateTo(options?.settingsPage ? `/settings/${options.settingsPage}` : '/settings')
             }

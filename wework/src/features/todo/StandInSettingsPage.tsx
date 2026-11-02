@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useCallback,
@@ -149,7 +150,7 @@ export function StandInSettingsPage({
           })
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -168,7 +169,7 @@ export function StandInSettingsPage({
         if (active) setRuntimeWork(value)
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false

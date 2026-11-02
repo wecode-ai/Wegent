@@ -59,7 +59,7 @@ pub(crate) fn stand_in_mcp_client_config(
             ),
             ("X-Wework-Mcp-Context".into(), registered.context_handle),
         ]),
-        context_bound: true,
+        auto_approve: true,
     }))
 }
 

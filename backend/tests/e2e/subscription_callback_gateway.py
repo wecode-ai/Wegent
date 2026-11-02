@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Verify subscription completion through the real hybrid gateway and MySQL.
+"""Verify subscription MCP and completion through the real hybrid gateway.
 
 Run directly, outside pytest's service-mocking conftest. CI supplies the same
 running Backend, MySQL and Redis used by the other gateway API E2E tests.
-Only fixture rows are inserted directly; callbacks traverse the public listener,
-the Rust callback handler and the subscription completion handler.
+Only fixture rows are inserted directly. Callbacks traverse the public Rust
+gateway; the Python-owned subscription MCP tools are verified on both the
+public gateway and the direct Python upstream.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import sys
 import time
 import unittest
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -33,12 +35,13 @@ from app.models.subscription import BackgroundExecution
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.auth.task_token import create_task_token
 
 COMMAND = "uv run --no-sync python tests/e2e/subscription_callback_gateway.py"
 
 
 class SubscriptionCallbackGateway(unittest.TestCase):
-    """Persist three terminal callbacks without replacing any product service."""
+    """Exercise subscription tools and callbacks without replacing services."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -55,14 +58,26 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         assert settings.DATABASE_URL.startswith("mysql"), "Real MySQL is required"
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             assert redis.ping(), "Real Redis is required"
+        cls.route = os.environ["E2E_SUBSCRIPTION_ROUTE"]
+        assert cls.route in {"python", "rust"}
         cls.client = httpx.Client(base_url=base_url, timeout=30, trust_env=False)
-        cls.rust_log = Path(os.environ["E2E_RUST_LOG"])
-        assert cls.rust_log.is_file(), "Rust process log is required"
+        cls.mcp_client = cls.client
+        if cls.route == "python":
+            cls.mcp_client = httpx.Client(
+                base_url=f"http://127.0.0.1:{state['python_port']}",
+                timeout=30,
+                trust_env=False,
+            )
+            cls.python_log = Path(os.environ["E2E_PYTHON_LOG"])
+            assert cls.python_log.is_file(), "Python process log is required"
+        cls.handler_log = Path(os.environ["E2E_RUST_LOG"])
+        assert cls.handler_log.is_file(), "Rust process log is required"
         cls.evidence: list[dict] = []
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.client.close()
+        cls.mcp_client.close()
         (Path(os.environ["E2E_REPORT_DIR"]) / "persistence.json").write_text(
             json.dumps(cls.evidence, indent=2) + "\n"
         )
@@ -207,6 +222,13 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             self.assertEqual(after[field], expected, after)
             self.assertNotEqual(after[field], "RUNNING")
         self.assertEqual(after["version"], before["version"] + 1)
+        self._assert_handler_receipt(expected)
+        self.evidence.append(
+            {"event_type": event_type, "before": before, "after": after}
+        )
+        return after
+
+    def _assert_handler_receipt(self, expected: str) -> None:
         # Breeze flushes asynchronously; require the migrated handler's receipt
         # for this exact callback as well as its durable database side effects.
         deadline = time.monotonic() + 5
@@ -218,17 +240,13 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         while True:
             receipts = [
                 line
-                for line in self.rust_log.read_text().splitlines()
+                for line in self.handler_log.read_text().splitlines()
                 if "TaskCompletedEvent received" in line
             ]
             if any(receipt_fields <= set(line.split()) for line in receipts):
                 break
             self.assertLess(time.monotonic(), deadline, receipts)
             time.sleep(0.1)
-        self.evidence.append(
-            {"event_type": event_type, "before": before, "after": after}
-        )
-        return after
 
     def test_completed_callback_persists_subscription_completion(self) -> None:
         after = self._callback(
@@ -258,6 +276,121 @@ class SubscriptionCallbackGateway(unittest.TestCase):
     def test_cancelled_callback_persists_subscription_cancellation(self) -> None:
         self._callback("response.incomplete", {}, "CANCELLED")
 
+    def _subscription_tool(self, name: str, arguments: dict) -> dict:
+        token = create_task_token(
+            task_id=self.task_id,
+            subtask_id=self.subtask_id,
+            user_id=self.user_id,
+            user_name=self.marker,
+        )
+        response = self.mcp_client.post(
+            "/api/mcp/subscription/sse",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {token}",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": self.marker,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        rpc = response.json()
+        self.assertNotIn("error", rpc, rpc)
+        self.assertFalse(rpc["result"].get("isError", False), rpc)
+        return json.loads(rpc["result"]["content"][0]["text"])
+
+    def _prepare_subscription_mcp(self) -> None:
+        with SessionLocal() as db:
+            db.add(
+                Kind(
+                    user_id=self.user_id,
+                    kind="Team",
+                    name=self.marker,
+                    namespace="default",
+                    is_active=True,
+                    json={
+                        "kind": "Team",
+                        "metadata": {"name": self.marker, "namespace": "default"},
+                        "spec": {"bots": []},
+                    },
+                )
+            )
+            db.get(TaskResource, self.task_id).is_active = TaskResource.STATE_ACTIVE
+            db.commit()
+
+    def _cleanup_subscription_preview(self, preview_id: str) -> None:
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            redis.delete(
+                f"subscription:preview:{preview_id}",
+                f"chat:streaming:blocks:{self.subtask_id}",
+            )
+
+    def test_subscription_mcp_preview_and_confirmed_create(self) -> None:
+        self._prepare_subscription_mcp()
+        arguments = {
+            "display_name": self.marker,
+            "trigger_type": "one_time",
+            "execute_at": (datetime.now() + timedelta(days=7)).isoformat(),
+            "prompt_template": self.marker,
+        }
+        preview = self._subscription_tool("preview_subscription", arguments)
+        self.assertTrue(preview["__silent_exit__"], preview)
+        self.assertEqual(preview["type"], "subscription_preview")
+        self.assertEqual(preview["status"], "pending")
+        preview_id = preview["preview_id"]
+        self.addCleanup(self._cleanup_subscription_preview, preview_id)
+        key = f"subscription:preview:{preview_id}"
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            stored = json.loads(redis.get(key))
+            self.assertEqual(stored["user_id"], self.user_id)
+            self.assertEqual(stored["prompt_template"], self.marker)
+            blocks = redis.lrange(f"chat:streaming:blocks:{self.subtask_id}", 0, -1)
+            self.assertTrue(
+                any(
+                    json.loads(block).get("preview_id") == preview_id
+                    for block in blocks
+                )
+            )
+        with SessionLocal() as db:
+            count = (
+                db.query(Kind)
+                .filter_by(user_id=self.user_id, kind="Subscription")
+                .count()
+            )
+            self.assertEqual(count, 1, "Preview must not create a subscription")
+
+        created = self._subscription_tool(
+            "create_subscription", {**arguments, "preview_id": preview_id}
+        )
+        self.assertTrue(created["success"], created)
+        with SessionLocal() as db:
+            subscription = (
+                db.query(Kind)
+                .filter_by(
+                    id=created["subscription"]["id"],
+                    user_id=self.user_id,
+                    kind="Subscription",
+                    namespace="default",
+                )
+                .one()
+            )
+            self.assertEqual(subscription.json["spec"]["promptTemplate"], self.marker)
+            self.assertEqual(
+                subscription.json["spec"]["trigger"]["one_time"]["execute_at"],
+                arguments["execute_at"],
+            )
+        if self.route == "python":
+            self.assertIn(
+                "request : POST /api/mcp/subscription/sse ",
+                self.python_log.read_text(),
+            )
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            self.assertFalse(redis.exists(key), "Creation must consume its preview")
+        self.evidence.append({"preview_id": preview_id, "created": created})
+
 
 if __name__ == "__main__":
     report_dir = Path(os.environ["E2E_REPORT_DIR"])
@@ -274,7 +407,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 3
+        and result.testsRun == 4
         and not result.skipped,
     }
     (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")

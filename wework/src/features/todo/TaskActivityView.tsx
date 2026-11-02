@@ -1,5 +1,9 @@
 import { IssueManagerEvent } from './IssueManagerEvent'
 import { IssueAssignmentEvent } from './IssueAssignmentEvent'
+import {
+  IssueAssignmentReceiptStatus,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
 import { issueActivityTimeline } from './issueActivityTimeline'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
@@ -76,6 +80,7 @@ import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   selectActivityRerunModel,
   mergeProjectChatMessages,
+  refreshTaskAfterComment,
   startTaskAiRun,
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
@@ -90,6 +95,7 @@ import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChange
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
+  assignmentReceipts?: IssueAssignmentReceiptState | null
   commentAssignment?: import('@wegent/collaboration').CommentAssignment
   client?: ProjectChatClient
   project: CloudProject
@@ -215,6 +221,7 @@ function isVersionConflict(cause: unknown): boolean {
 }
 
 export function TaskActivityView({
+  assignmentReceipts,
   commentAssignment,
   client,
   project,
@@ -686,6 +693,13 @@ export function TaskActivityView({
       }),
     [activityHistory, commentCards, issueTimeline, task.created_at]
   )
+  const latestAssignment = activityEntries.findLast(activity => activity.kind === 'assignment')
+  const currentReceipts =
+    assignmentReceipts?.issueId === task.id &&
+    assignmentReceipts.version === task.version &&
+    assignmentReceipts.assigneeUserId === task.assignee_user_id
+      ? assignmentReceipts
+      : null
 
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
@@ -984,6 +998,13 @@ export function TaskActivityView({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
     } finally {
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: task.id,
+          getTask: projectDeliveryApi?.getLoopItem,
+          onTaskUpdated,
+        })
       setSending(false)
     }
     return persisted
@@ -1271,6 +1292,21 @@ export function TaskActivityView({
                     entry={activity.entry}
                     index={activity.index}
                     projectMembers={projectMembers}
+                    receipts={
+                      activity === latestAssignment &&
+                      activity.entry.action !== 'unassign' &&
+                      activity.entry.to_type === 'user' &&
+                      currentReceipts?.assigneeUserId != null &&
+                      activity.entry.to_id === String(currentReceipts.assigneeUserId) ? (
+                        <span
+                          data-testid="issue-assignment-activity-receipts"
+                          className="inline-flex items-center gap-1 text-xs text-text-muted"
+                          aria-live="polite"
+                        >
+                          <IssueAssignmentReceiptStatus {...currentReceipts} />
+                        </span>
+                      ) : null
+                    }
                   />
                 )
               }

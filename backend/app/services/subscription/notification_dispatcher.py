@@ -18,6 +18,7 @@ import hmac
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -28,8 +29,10 @@ from app.schemas.subscription import (
     NotificationLevel,
     NotificationWebhook,
     NotificationWebhookType,
-    SubscriptionFollowConfig,
-    normalize_dingtalk_mention_user_ids,
+)
+from app.services.subscription.notification_directives import (
+    NotificationDirectives,
+    parse_notification_directives,
 )
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -104,7 +107,15 @@ async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
 
     if not users:
         return ""
-    name = str(users[0].get("NAME") or "").strip()
+    record = users[0] if isinstance(users[0], Mapping) else {}
+    if record.get("notExist"):
+        logger.info(
+            "[SubscriptionNotificationDispatcher] DingTalk staff ID %s is not "
+            "in the enterprise directory",
+            user_id,
+        )
+        return ""
+    name = str(record.get("NAME") or "").strip()
     if name:
         await cache_manager.set(cache_key, name, expire=86400)
     return name
@@ -116,22 +127,18 @@ async def _resolve_dingtalk_mention_user_ids(
     """Attach display names to DingTalk mention IDs for card rendering."""
     resolved: List[str] = []
     for value in values or []:
-        raw = value.strip()
-        if not raw:
+        staff_id = value.strip()
+        if not staff_id:
             continue
-        staff_id, separator, _ = raw.partition(":")
-        lookup_id = (
-            staff_id.strip() if separator and staff_id.strip().isdigit() else raw
-        )
-        if not lookup_id.isdigit():
-            resolved.append(lookup_id)
+        if not staff_id.isdigit():
+            resolved.append(staff_id)
             continue
-        name = _DINGTALK_MENTION_NAME_CACHE.get(lookup_id, "")
+        name = _DINGTALK_MENTION_NAME_CACHE.get(staff_id, "")
         if not name:
-            name = await _lookup_dingtalk_mention_name(db, lookup_id)
+            name = await _lookup_dingtalk_mention_name(db, staff_id)
             if name:
-                _DINGTALK_MENTION_NAME_CACHE[lookup_id] = name
-        resolved.append(f"{lookup_id}:{name}" if name else lookup_id)
+                _DINGTALK_MENTION_NAME_CACHE[staff_id] = name
+        resolved.append(f"{staff_id}:{name}" if name else staff_id)
     return resolved
 
 
@@ -226,6 +233,15 @@ class SubscriptionNotificationDispatcher:
             f"subscription {subscription_id} execution {execution_id} "
             f"summary_chars={len(result_summary or '')}"
         )
+        directives = parse_notification_directives(result_summary)
+        logger.info(
+            "[SubscriptionNotificationDispatcher] Parsed notification controls for "
+            "subscription %s execution %s: group_silent=%s mention_count=%s",
+            subscription_id,
+            execution_id,
+            directives.silent,
+            len(directives.mention_staff_ids),
+        )
         # Get all accepted followers with their settings
         followers_with_settings = (
             subscription_notification_service.get_followers_with_settings(
@@ -268,9 +284,10 @@ class SubscriptionNotificationDispatcher:
                             subscription_id=subscription_id,
                             execution_id=execution_id,
                             subscription_display_name=subscription_display_name,
-                            result_summary=result_summary,
+                            result_summary=directives.content,
                             status=status,
                             detail_url=detail_url,
+                            directives=directives,
                         )
                         results["notify_success"] += 1
                     except Exception as e:
@@ -310,6 +327,7 @@ class SubscriptionNotificationDispatcher:
         result_summary: str,
         status: str,
         detail_url: Optional[str] = None,
+        directives: NotificationDirectives,
     ) -> None:
         """
         Send notifications via Messager channels.
@@ -324,6 +342,7 @@ class SubscriptionNotificationDispatcher:
             result_summary: Summary of the execution result
             status: Execution status
             detail_url: URL to view execution details
+            directives: Parsed group notification controls
         """
         # Get user's IM bindings
         user_bindings = subscription_notification_service.get_user_im_bindings(
@@ -403,14 +422,10 @@ class SubscriptionNotificationDispatcher:
                 send_private = True
                 send_group = False
                 group_conversation_id = None
-                group_mention_user_ids: List[str] = []
                 if binding_config:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
-                    group_mention_user_ids = normalize_dingtalk_mention_user_ids(
-                        binding_config.get("group_mention_user_ids") or []
-                    )
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -424,7 +439,8 @@ class SubscriptionNotificationDispatcher:
                         send_private=send_private,
                         send_group=send_group,
                         group_conversation_id=group_conversation_id,
-                        group_mention_user_ids=group_mention_user_ids,
+                        group_silent=directives.silent,
+                        directive_mention_user_ids=list(directives.mention_staff_ids),
                     )
                 )
             elif channel_type == "telegram":
@@ -463,7 +479,8 @@ class SubscriptionNotificationDispatcher:
         send_private: bool = True,
         send_group: bool = False,
         group_conversation_id: Optional[str] = None,
-        group_mention_user_ids: Optional[List[str]] = None,
+        group_silent: bool = False,
+        directive_mention_user_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -477,7 +494,8 @@ class SubscriptionNotificationDispatcher:
             subscription_id: Subscription ID
             execution_id: Background execution ID
             subscription_display_name: Display name of the subscription
-            group_mention_user_ids: DingTalk user IDs to mention in group cards
+            group_silent: Whether the message requested no group delivery
+            directive_mention_user_ids: Per-message DingTalk user IDs to mention
         """
         try:
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
@@ -512,6 +530,7 @@ class SubscriptionNotificationDispatcher:
             sender = DingTalkRobotSender(
                 client_id=client_id,
                 client_secret=client_secret,
+                api_base_url=config.get("api_base_url"),
             )
 
             # Check if AI card template is configured
@@ -552,14 +571,21 @@ class SubscriptionNotificationDispatcher:
                             f"AI card notification to user {user_id}: {result.get('error')}"
                         )
 
-                if send_group and group_conversation_id:
+                if send_group and group_conversation_id and group_silent:
+                    logger.info(
+                        "[_send_dingtalk_notification] Group delivery skipped "
+                        "because the message requested silence"
+                    )
+
+                if send_group and group_conversation_id and not group_silent:
                     group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
-                    group_mentions = group_mention_user_ids
-                    if group_mention_user_ids:
+                    effective_mention_user_ids = directive_mention_user_ids or []
+                    group_mentions = effective_mention_user_ids
+                    if effective_mention_user_ids:
                         try:
                             group_mentions = await asyncio.wait_for(
                                 _resolve_dingtalk_mention_user_ids(
-                                    db, group_mention_user_ids
+                                    db, effective_mention_user_ids
                                 ),
                                 timeout=DINGTALK_MENTION_RESOLUTION_TIMEOUT_SECONDS,
                             )
@@ -821,6 +847,10 @@ class SubscriptionNotificationDispatcher:
             "failed_count": 0,
             "errors": [],
         }
+
+        # Webhooks are not the bound group-chat channel, so a silent directive
+        # never suppresses them. Strip the controls from the payload in all cases.
+        result_summary = parse_notification_directives(result_summary).content
 
         # Filter enabled webhooks
         enabled_webhooks = [w for w in webhooks if w.enabled]

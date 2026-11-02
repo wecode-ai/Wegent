@@ -9,6 +9,7 @@ import {
   type LocalModelConfig,
 } from './localModelSettings'
 import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
+import { codexCatalogModelIdForUpstream } from './codexCatalog'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
 import type {
   ModelConfigurationSnapshot,
@@ -98,7 +99,10 @@ export function resolveProviderModel(
     visionModelConfigId: model.vision_model_config_id,
     codexCatalogModelId:
       model.codex_catalog_model_id ??
-      (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined),
+      (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined) ??
+      (profileId === 'custom'
+        ? undefined
+        : (codexCatalogModelIdForUpstream([model.model_id]) ?? undefined)),
     catalogEntry,
     catalogReady:
       !catalogEntry ||

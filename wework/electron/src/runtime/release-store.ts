@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { removePhysicalRelease } from './physical-release-files.js'
+import { macosInstallationStage } from './macos-installation-paths.js'
 
 const releaseOperations = new Map<string, Promise<void>>()
 
@@ -12,9 +13,17 @@ export interface DesktopRelease {
   executable: string
   resources: string
   runtimeRoot: string
+  componentDataDirectory?: string
   profileRoot: string
   dataSchema: number
   readableDataSchemas: number[]
+  retainedRelease?: string
+  macosInstallation?: {
+    payloadExecutable: string
+    bootstrapFromPayload: boolean
+    sourceReleaseId?: string
+    rollbackReleaseId?: string
+  }
 }
 
 export interface ReleaseActivation {
@@ -63,6 +72,7 @@ export class ReleaseStore {
     const value = JSON.parse(
       await readFile(join(this.slot(id), 'release.json'), 'utf8')
     ) as DesktopRelease
+    const installation = value.macosInstallation
     if (
       value.schemaVersion !== 1 ||
       value.id !== id ||
@@ -70,6 +80,25 @@ export class ReleaseStore {
       !Number.isSafeInteger(value.dataSchema) ||
       !Array.isArray(value.readableDataSchemas) ||
       !value.readableDataSchemas.every(Number.isSafeInteger) ||
+      (value.retainedRelease !== undefined &&
+        (typeof value.retainedRelease !== 'string' || releaseId(value.retainedRelease) === id)) ||
+      (installation !== undefined &&
+        (!installation ||
+          typeof installation.bootstrapFromPayload !== 'boolean' ||
+          typeof installation.payloadExecutable !== 'string' ||
+          !isAbsolute(installation.payloadExecutable) ||
+          (installation.sourceReleaseId === undefined) !==
+            (installation.rollbackReleaseId === undefined) ||
+          (installation.sourceReleaseId !== undefined &&
+            (releaseId(installation.sourceReleaseId) === id ||
+              releaseId(installation.rollbackReleaseId!) === id)) ||
+          /[\r\n]/.test(installation.payloadExecutable) ||
+          relative(this.slot(id), installation.payloadExecutable).startsWith('..') ||
+          isAbsolute(relative(this.slot(id), installation.payloadExecutable)))) ||
+      (value.componentDataDirectory !== undefined &&
+        (typeof value.componentDataDirectory !== 'string' ||
+          !isAbsolute(value.componentDataDirectory) ||
+          /[\r\n]/.test(value.componentDataDirectory))) ||
       [value.executable, value.resources, value.runtimeRoot, value.profileRoot].some(
         path => typeof path !== 'string' || !isAbsolute(path) || /[\r\n]/.test(path)
       )
@@ -82,7 +111,21 @@ export class ReleaseStore {
     await mkdir(this.slot(release.id), { recursive: true, mode: 0o700 })
     await atomicReleaseWrite(join(this.slot(release.id), 'release.json'), JSON.stringify(release))
     await this.read(release.id)
-    await atomicReleaseWrite(join(this.slot(release.id), 'executable'), release.executable)
+    const installation = release.macosInstallation
+    await atomicReleaseWrite(
+      join(this.slot(release.id), 'executable'),
+      installation?.bootstrapFromPayload ? installation.payloadExecutable : release.executable
+    )
+    if (installation) {
+      await atomicReleaseWrite(
+        join(this.slot(release.id), 'installed-executable'),
+        release.executable
+      )
+      await atomicReleaseWrite(
+        join(this.slot(release.id), 'payload-executable'),
+        installation.payloadExecutable
+      )
+    }
   }
 
   async active(): Promise<DesktopRelease | null> {
@@ -110,10 +153,11 @@ export class ReleaseStore {
   }
 
   private async activateRelease(next: DesktopRelease, snapshot: string): Promise<void> {
-    const previous = await this.active()
+    let previous = await this.active()
     if (!previous) throw new Error('No healthy desktop release is registered')
     if (await this.activation()) throw new Error('A release activation is already in progress')
-    await this.read(next.id)
+    next = await this.read(next.id)
+    previous = await this.activationSource(next, previous, snapshot)
     const activation: ReleaseActivation = {
       token: randomUUID(),
       from: previous.id,
@@ -124,6 +168,63 @@ export class ReleaseStore {
     await atomicReleaseWrite(join(this.root, 'activation.json'), JSON.stringify(activation))
     await atomicReleaseWrite(join(this.root, 'trial'), activation.token)
     await atomicReleaseWrite(join(this.root, 'active'), next.id)
+  }
+
+  private async activationSource(
+    next: DesktopRelease,
+    previous: DesktopRelease,
+    snapshot: string
+  ): Promise<DesktopRelease> {
+    const installation = next.macosInstallation
+    if (!installation?.rollbackReleaseId || previous.id === installation.rollbackReleaseId)
+      return previous
+    if (previous.id !== installation.sourceReleaseId)
+      throw new Error('The macOS activation source changed after preparation')
+    const retained = await this.read(installation.rollbackReleaseId)
+    if (
+      retained.retainedRelease !== previous.id ||
+      retained.version !== previous.version ||
+      retained.dataSchema !== previous.dataSchema ||
+      JSON.stringify(retained.readableDataSchemas) !== JSON.stringify(previous.readableDataSchemas)
+    )
+      throw new Error('The retained macOS source does not match the activation source')
+    // Old installers retain a stopped live profile immediately before activation.
+    // Resolve that final ownership here instead of retaining a live pointer.
+    const source = { ...retained, profileRoot: previous.profileRoot }
+    await this.save(source)
+    // Delivered cleaners do not understand retainedRelease. Retain the real
+    // snapshot's profile owner using their existing preservation contract.
+    for (const id of [previous.id, source.id]) {
+      const marker = join(this.slot(id), 'preserved-data-snapshot')
+      if (!(await optionalText(marker)))
+        await atomicReleaseWrite(
+          marker,
+          JSON.stringify({ kind: 'macos-source-owner', owner: source.id, snapshot })
+        )
+    }
+    await atomicReleaseWrite(join(this.root, 'bridge'), source.macosInstallation!.payloadExecutable)
+    return source
+  }
+
+  async repairMacosActivationSource(next: DesktopRelease): Promise<void> {
+    const activation = await this.activation()
+    if (!activation || activation.to !== next.id || !next.macosInstallation?.rollbackReleaseId)
+      return
+    const previous = await this.read(activation.from)
+    if (previous.id !== next.macosInstallation.rollbackReleaseId) {
+      if ((await optionalText(join(this.root, 'data-opened'))) === activation.token)
+        throw new Error('The macOS activation source cannot change after data opens')
+      const source = await this.activationSource(next, previous, activation.snapshot)
+      await atomicReleaseWrite(
+        join(this.root, 'activation.json'),
+        JSON.stringify({ ...activation, from: source.id })
+      )
+    }
+    // The selected signed bootstrap has now loaded before opening data. Legacy
+    // parents may recover through a cached versioned source, whose old native
+    // launcher cannot restore Contents. Route that recovery through this loaded
+    // bootstrap; runtime/renderer health is still confirmed independently.
+    await atomicReleaseWrite(join(this.root, 'bridge'), next.macosInstallation.payloadExecutable)
   }
 
   async confirm(id: string): Promise<void> {
@@ -138,13 +239,53 @@ export class ReleaseStore {
     await atomicReleaseWrite(join(this.root, 'previousHealthy'), activation.from)
     await atomicReleaseWrite(join(this.root, 'last-activation.json'), JSON.stringify(activation))
     const healthy = await this.read(id)
-    await atomicReleaseWrite(join(this.root, 'bridge'), healthy.executable)
+    await atomicReleaseWrite(
+      join(this.root, 'bridge'),
+      healthy.macosInstallation?.payloadExecutable ?? healthy.executable
+    )
     await atomicReleaseWrite(join(this.root, 'healthy'), activation.token)
     await this.finishActivation()
   }
 
   async rollback(): Promise<DesktopRelease> {
     return this.serial(() => this.rollbackRelease())
+  }
+
+  async recoverUnstartedActivation(sourceId: string, prepare: () => Promise<void>): Promise<void> {
+    return this.serial(async () => {
+      const activation = await this.activation()
+      if (!activation) {
+        if ((await this.active())?.id !== sourceId) throw new Error('Recovery source changed')
+        await prepare()
+        return
+      }
+      const recovery = join(this.root, 'recovery')
+      const archived = await optionalText(join(recovery, `${activation.token}.json`))
+      const resuming = archived === JSON.stringify(activation)
+      const selected = (await this.active())?.id
+      const trial = await optionalText(join(this.root, 'trial'))
+      if (
+        activation.from !== sourceId ||
+        activation.rollbackRequested ||
+        (selected !== activation.to && !(resuming && selected === sourceId)) ||
+        (trial !== activation.token && !(resuming && trial === null)) ||
+        (
+          await Promise.all(
+            ['attempted', 'data-opened', 'healthy', 'failed'].map(name =>
+              optionalText(join(this.root, name))
+            )
+          )
+        ).includes(activation.token)
+      )
+        throw new Error('The pending release has started; supervised recovery is required')
+      await prepare()
+      await mkdir(recovery, { recursive: true, mode: 0o700 })
+      await atomicReleaseWrite(
+        join(recovery, `${activation.token}.json`),
+        JSON.stringify(activation)
+      )
+      await this.rollbackRelease()
+    })
   }
 
   private async rollbackRelease(): Promise<DesktopRelease> {
@@ -175,7 +316,10 @@ export class ReleaseStore {
       )
     }
     await atomicReleaseWrite(join(this.root, 'active'), previous.id)
-    await atomicReleaseWrite(join(this.root, 'bridge'), previous.executable)
+    await atomicReleaseWrite(
+      join(this.root, 'bridge'),
+      previous.macosInstallation?.payloadExecutable ?? previous.executable
+    )
     if (activation.rollbackRequested) await rm(join(this.root, 'previousHealthy'), { force: true })
     await this.finishActivation()
     return previous
@@ -211,9 +355,57 @@ export class ReleaseStore {
     const previous = await optionalText(join(this.root, 'previousHealthy'))
     const activation = await this.activation()
     const retained = new Set([active.id, previous, activation?.from, activation?.to])
-    for (const entry of await readdir(join(this.root, 'slots'), { withFileTypes: true })) {
+    const bridge = await optionalText(join(this.root, 'bridge'))
+    if (bridge) {
+      const path = relative(join(this.root, 'slots'), bridge)
+      const location = path.split(/[\\/]/)
+      if (!isAbsolute(path) && location.length > 1 && location[0] !== '..')
+        retained.add(releaseId(location[0]))
+    }
+    for (const id of retained) {
+      if (!id) continue
+      const source = await this.read(id)
+      if (source.retainedRelease) retained.add(source.retainedRelease)
+    }
+    const entries = await readdir(join(this.root, 'slots'), { withFileTypes: true })
+    const installation = await optionalText(join(this.root, 'macos-application'))
+    const physicalRoot = installation ? await realpath(this.root) : null
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const marker = join(this.slot(entry.name), 'preserved-data-snapshot')
+      const value = await optionalText(marker)
+      if (!value?.startsWith('{')) continue
+      let owner
+      try {
+        owner = JSON.parse(value)
+      } catch {
+        continue
+      }
+      if (owner.kind === 'macos-source-owner' && !retained.has(owner.owner))
+        await rm(marker, { force: true })
+    }
+    for (const entry of entries) {
       if (!entry.isDirectory() || retained.has(entry.name)) continue
       if (await optionalText(join(this.slot(entry.name), 'preserved-data-snapshot'))) continue
+      if (installation) {
+        const executable = join(
+          installation,
+          'Contents',
+          'MacOS',
+          active.executable.split(/[\\/]/).at(-1)!
+        )
+        const stage = dirname(macosInstallationStage(executable, releaseId(entry.name)))
+        const value = await optionalText(join(stage, 'release-owner.json'))
+        if (value) {
+          const owner = JSON.parse(value)
+          if (
+            owner.schemaVersion === 1 &&
+            owner.storeRoot === physicalRoot &&
+            owner.releaseId === entry.name
+          )
+            await removePhysicalRelease(stage)
+        }
+      }
       await removePhysicalRelease(this.slot(entry.name))
     }
     const last = await optionalText(join(this.root, 'last-activation.json'))

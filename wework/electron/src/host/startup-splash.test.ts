@@ -28,9 +28,47 @@ describe('startup readiness notifications', () => {
       .mockRejectedValueOnce(new Error('close failed'))
       .mockResolvedValue(undefined)
     const ready = createStartupReadyHandler(complete)
+    const activated = vi.fn()
+    const pending = ready.whenReady.then(activated)
     await expect(ready('task-list')).rejects.toThrow('close failed')
+    expect(activated).not.toHaveBeenCalled()
     await ready('task-list')
+    await pending
+    expect(activated).toHaveBeenCalledOnce()
     expect(complete).toHaveBeenCalledTimes(2)
+  })
+
+  test('holds activation before window creation and while the splash is loading', async () => {
+    const ready = createStartupReadyHandler(async () => {
+      await fixture.splash.close()
+    })
+    const activated = vi.fn()
+    const pending = ready.whenReady.then(activated)
+    await Promise.resolve()
+    expect(activated).not.toHaveBeenCalled()
+    const fixture = createFixture()
+    const showing = fixture.show()
+    expect(fixture.splash.snapshot().state).toBe('loading')
+    await Promise.resolve()
+    expect(activated).not.toHaveBeenCalled()
+    await showing
+    expect(fixture.target.requestNativeClose()).toBe(false)
+    expect(activated).not.toHaveBeenCalled()
+    await ready('task-list')
+    await pending
+    expect(fixture.splash.snapshot().state).toBe('closed')
+    expect(activated).toHaveBeenCalledOnce()
+  })
+
+  test('releases startup waiters immediately when shutdown cancels startup', async () => {
+    const complete = vi.fn(async () => {})
+    const ready = createStartupReadyHandler(complete)
+    const released = vi.fn()
+    const pending = ready.whenReady.then(released)
+    ready.cancel()
+    await pending
+    expect(released).toHaveBeenCalledOnce()
+    expect(complete).not.toHaveBeenCalled()
   })
 })
 

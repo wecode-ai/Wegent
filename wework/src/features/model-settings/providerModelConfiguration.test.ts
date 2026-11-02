@@ -23,6 +23,38 @@ const provider = {
 }
 
 describe('Provider configuration runtime adapter', () => {
+  test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const)(
+    'resolves managed model capabilities without an official account for %s',
+    apiFormat => {
+      const model = resolveProviderModel({
+        provider: { ...provider, api_format: apiFormat },
+        model: {
+          id: 'kimi',
+          model_id: 'moonshot-kimi-k3.1-pro',
+          provider_profile_id: 'kimi',
+          context_window: 1_048_576,
+        },
+      })
+      expect(model.codexCatalogModelId).toBe('wework-kimi-k3-1-pro')
+      expect(model.catalogEntry).toBeUndefined()
+      expect(model.catalogReady).toBe(true)
+      expect(model.contextWindow).toBe(1_048_576)
+    }
+  )
+
+  test('keeps explicit catalog selection ahead of managed model inference', () => {
+    const model = resolveProviderModel({
+      provider,
+      model: {
+        id: 'kimi',
+        model_id: 'kimi-k3',
+        provider_profile_id: 'kimi',
+        codex_catalog_model_id: 'operator-selected-catalog',
+      },
+    })
+    expect(model.codexCatalogModelId).toBe('operator-selected-catalog')
+  })
+
   test('keeps existing local-model identity and never enters the Codex-provider namespace', () => {
     const model = resolveProviderModel({
       provider,

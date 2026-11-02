@@ -290,8 +290,8 @@ const GEMINI_MODEL_OPTIONS = [
 
 const GEMINI_DEEP_RESEARCH_MODEL_OPTIONS = [
   {
-    value: 'deep-research-pro-preview-12-2025',
-    label: 'deep-research-pro-preview-12-2025 (Recommended)',
+    value: 'deep-research-preview-04-2026',
+    label: 'deep-research-preview-04-2026 (Recommended)',
   },
   { value: 'custom', label: 'Custom...' },
 ]

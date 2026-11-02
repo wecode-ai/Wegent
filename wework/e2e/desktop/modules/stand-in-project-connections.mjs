@@ -4,11 +4,12 @@ import { createLocalCollaborationProject } from './workspace-flows.mjs'
 
 const USER = 9001
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const CONNECTIONS_OPEN = '[data-testid="stand-in-connections-open"]'
 const ROLE = 'project-connection-names'
 
 /** All-project scope belongs to the selected Executor, not the editor's computer. */
 export async function verifyRemoteStandInProjectScope(control, localProjectId, cloudProjectId) {
-  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('click', CONNECTIONS_OPEN)
   await control.command('click', '[data-testid="stand-in-add-connection"]')
   await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
   const source = '[data-testid="stand-in-source-collaboration"]'
@@ -70,7 +71,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   await control.command('click', '[data-testid="stand-in-primary-cancel"]')
   await control.command('click', `[data-testid="stand-in-overview-role-${ROLE}"]`)
   await control.command('click', '[data-testid="stand-in-settings-open"]')
-  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('click', CONNECTIONS_OPEN)
   await control.command('waitFor', row, { text: name })
   await control.command('click', row)
   await control.command('waitFor', `[data-testid="stand-in-connect-project-${project.id}"]`)
@@ -85,7 +86,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     name
   )
   await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
   await control.command('waitFor', row, { text: name })
   const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
   assert.deepEqual(
@@ -95,7 +96,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   await control.command('click', row)
   await control.command('click', `[data-testid="stand-in-connect-project-${project.id}"]`)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
   await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
   const disconnected = await rpc('runtime.stand_in.personal.get', { userId: USER })
   assert.deepEqual(disconnected.roles.find(role => role.id === ROLE).collaboration.projects, [])
