@@ -21,12 +21,11 @@ const EXPOSED_HEADERS: [&str; 2] = ["Content-Disposition", "X-Request-ID"];
 /// the deadline-free source serves. The framework default
 /// (`brz_http_server::ServerConfig::default()`, 15s) and a previous 30s
 /// horizon both did exactly that, answering an empty 408 the source never
-/// produces. Keep a finite bound for connection hygiene, but size it on the
-/// source's own shutdown horizon: `GRACEFUL_SHUTDOWN_TIMEOUT`
-/// (`app/core/config.py`, 600s, `--timeout-graceful-shutdown 600` in
-/// `backend/start.sh`) is the longest a source request is allowed to run
-/// while still draining cleanly.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+/// produces. Chat Shell turns can also remain active for tens of minutes, so
+/// size the origin deadline above that horizon while the per-read timeouts
+/// still bound stalled streams. Keep a finite one-hour backstop for connection
+/// hygiene.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Maximum fixed `Content-Length` request body the origin accepts.
 ///
@@ -255,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn request_deadline_uses_the_source_request_horizon() {
+    fn request_deadline_covers_long_chat_turns() {
         // The framework default closes a legitimate long-running handler that
         // the deadline-free source would serve; the configured deadline must
         // stay above it and above the pool-acquisition horizon.
@@ -278,10 +277,9 @@ mod tests {
             REQUEST_TIMEOUT > Duration::from_secs(30),
             "the configured deadline must exceed the source pool timeout"
         );
-        assert_eq!(
-            REQUEST_TIMEOUT,
-            Duration::from_secs(600),
-            "the horizon mirrors the source graceful-shutdown timeout"
+        assert!(
+            REQUEST_TIMEOUT >= Duration::from_secs(3600),
+            "the origin horizon must cover long-running Chat turns"
         );
     }
 
