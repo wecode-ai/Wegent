@@ -2784,6 +2784,9 @@ class LoopItemExecutionService:
 
         activity = self._linked_activity(db, execution)
         if activity is not None:
+            project_chat_service._record_runtime_sequence(
+                activity, execution.last_event_seq
+            )
             project_chat_service._finish_activity(
                 db,
                 activity,

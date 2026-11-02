@@ -2,6 +2,19 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
 import { generateMessageId } from '@wegent/chat-core'
 
+function runtimeSequence(message: ProjectChatMessage): bigint {
+  const sequence = message.metadata.runtime_event_sequence
+  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence) ? BigInt(sequence) : 0n
+}
+
+function acceptsMessage(previous: ProjectChatMessage, incoming: ProjectChatMessage): boolean {
+  const previousSequence = runtimeSequence(previous)
+  const incomingSequence = runtimeSequence(incoming)
+  return previousSequence === incomingSequence
+    ? previous.updatedAt <= incoming.updatedAt
+    : previousSequence < incomingSequence
+}
+
 export function mergeIssueChatMessages(
   current: ProjectChatMessage[],
   incoming: ProjectChatMessage[]
@@ -9,8 +22,8 @@ export function mergeIssueChatMessages(
   const byId = new Map(current.map(message => [message.messageId, message]))
   for (const message of incoming) {
     const previous = byId.get(message.messageId)
-    // A subscription snapshot can arrive after a newer live event.
-    if (!previous || previous.updatedAt <= message.updatedAt) byId.set(message.messageId, message)
+    // Runtime sequence distinguishes updates within the same SQL timestamp.
+    if (!previous || acceptsMessage(previous, message)) byId.set(message.messageId, message)
   }
   return [...byId.values()].sort((a, b) => a.sequenceNumber - b.sequenceNumber)
 }
@@ -61,7 +74,7 @@ export function useIssueProjectChat(
           setSnapshot(previous => {
             const state = previous.owner === owner ? previous : empty
             const message = state.messages.find(message => message.messageId === chunk.messageId)
-            if (message && message.updatedAt > chunk.updatedAt) return previous
+            if (message && !acceptsMessage(message, chunk)) return previous
             return {
               ...state,
               messages: mergeIssueChatMessages(state.messages, [

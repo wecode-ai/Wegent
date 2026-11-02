@@ -75,6 +75,40 @@ def report(**overrides):
 
 
 @pytest.mark.parametrize(
+    "event_name,data,reconcile",
+    [
+        ("response.output_text.delta", {"delta": "Final"}, False),
+        ("response.output_text.done", {"text": "Final answer"}, False),
+        ("response.completed", {"value": "Final answer"}, True),
+    ],
+)
+def test_runtime_message_sequence_survives_live_and_history_views(
+    test_db, test_user, run, event_name, data, reconcile
+):
+    """Order same-second projections without rounding nanosecond sequences."""
+    _, _, row = run
+    if reconcile:
+        reconcile_execution_snapshot(test_db, user_id=test_user.id, snapshot=report())
+    sequence = 1793597834818561700
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=row.runtime_device_id,
+        runtime_task_id=row.runtime_task_id,
+        event_name=event_name,
+        payload={"subtaskId": "turn-1", "eventSeq": sequence, "data": data},
+    )
+
+    assert projected is not None
+    assert projected[0].metadata["runtime_event_sequence"] == str(sequence)
+    test_db.expire_all()
+    assert row.metadata_json["runtime_event_sequence"] == str(sequence)
+    assert project_chat_service.to_view(row, db=test_db).metadata[
+        "runtime_event_sequence"
+    ] == str(sequence)
+
+
+@pytest.mark.parametrize(
     "event_name,data",
     [
         ("runtime.goal.cleared", {}),

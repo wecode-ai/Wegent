@@ -1245,6 +1245,9 @@ class ProjectChatService:
         owner_user_id: int | None = None,
         accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
+        from app.services.project_chat.execution_snapshot import runtime_event_sequence
+
+        sequence = runtime_event_sequence(payload)
         identities = [device_id]
         if owner_user_id is not None and record_id_from_route(device_id):
             device = resolve_owned_device_alias(
@@ -1263,7 +1266,6 @@ class ProjectChatService:
                 can_restore_reconciled_completion,
                 completed_activity_for_turn,
                 runtime_event_client_message_id,
-                runtime_event_sequence,
             )
 
             completed = completed_activity_for_turn(
@@ -1329,7 +1331,6 @@ class ProjectChatService:
                             "runtime_turn_id": turn_id,
                         }
                     self._index_activity_change_requests(db, completed)
-                    sequence = runtime_event_sequence(payload)
                     if (
                         execution is not None
                         and sequence is not None
@@ -1338,6 +1339,7 @@ class ProjectChatService:
                         execution.last_event_seq = sequence
                 elif execution is not None and not accepted_terminal:
                     return None
+                self._record_runtime_sequence(completed, sequence)
                 self._commit(db)
                 db.refresh(completed)
                 return self.to_view(completed, db=db), "snapshot"
@@ -1396,13 +1398,14 @@ class ProjectChatService:
                 agent=None,
                 status_value="running",
             )
+            self._record_runtime_sequence(row, sequence)
             self._commit(db)
             db.refresh(row)
             return (
                 self.to_view(row, db=db).model_copy(
                     update={
                         "content": delta,
-                        "metadata": {"contentMode": "delta"},
+                        "metadata": {**row.metadata_json, "contentMode": "delta"},
                     }
                 ),
                 "delta",
@@ -1444,9 +1447,19 @@ class ProjectChatService:
             )
         else:
             return None
+        self._record_runtime_sequence(row, sequence)
         self._commit(db)
         db.refresh(row)
         return self.to_view(row, db=db), "snapshot"
+
+    @staticmethod
+    def _record_runtime_sequence(row: ProjectChatMessage, sequence: int | None) -> None:
+        """Preserve exact ordering beyond SQL timestamp and JavaScript precision."""
+        if sequence is not None and sequence > 0:
+            row.metadata_json = {
+                **dict(row.metadata_json or {}),
+                "runtime_event_sequence": str(sequence),
+            }
 
     @staticmethod
     def _execution_for_completed_activity(
