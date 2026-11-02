@@ -131,6 +131,7 @@ import { usePluginInstallActions } from './hooks/usePluginInstallActions'
 import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
+  acquirePluginDeviceSync,
   beginPluginDeviceSync,
   collectPluginDeviceStatusReports,
   getPluginDeviceSyncRevision,
@@ -1713,21 +1714,32 @@ export function PluginsWorkspace({
 
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
     if (!isCloudManagedInstalledPlugin(plugin.raw)) return
+    const isCurrent = capturePluginScope()
     const attempt = beginOperation('plugin.update_policy')
     const updatePolicy = enabled ? 'auto' : 'manual'
     const pluginId = plugin.id
     setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
     setPluginMarketplaceState(previous => ({ ...previous, error: null }))
 
-    pluginApi
-      .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+    let finishDeviceSync: (() => void) | undefined
+    const deviceLease = currentDeviceId
+      ? acquirePluginDeviceSync(currentDeviceId)
+      : Promise.resolve(() => {})
+    void deviceLease
+      .then(finish => {
+        finishDeviceSync = finish
+        if (!isCurrent()) throw new DOMException('Plugin scope changed', 'AbortError')
+        return pluginApi.updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+      })
       .then(updated => {
+        if (!isCurrent()) return attempt.cancel()
         updatePluginInventoryInstallation(marketplaceCacheKeyValue, pluginId, updated, {
           updatePolicy,
         })
         attempt.succeed()
       })
       .catch(error => {
+        if (!isCurrent()) return attempt.cancel()
         attempt.fail('request')
         const errorMessage = getErrorMessage(error, 'Unknown error')
         setPluginMarketplaceState(previous => ({
@@ -1739,6 +1751,8 @@ export function PluginsWorkspace({
         }))
       })
       .finally(() => {
+        finishDeviceSync?.()
+        if (!isCurrent()) return
         setUpdatingPluginPolicyIds(previous => {
           const next = new Set(previous)
           next.delete(pluginId)

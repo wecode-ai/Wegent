@@ -4988,6 +4988,7 @@ describe('PluginsWorkspace', () => {
       const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
       await userEvent.click(toggle)
       await waitFor(() => expect(saving).toBe(true))
+      expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
       try {
         marketplace.publishMarketplaceUpdate()
         fireEvent.focus(window)
