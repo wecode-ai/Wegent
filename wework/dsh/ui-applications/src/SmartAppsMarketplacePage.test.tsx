@@ -1372,21 +1372,37 @@ describe('SmartAppsMarketplacePage', () => {
     )
   })
 
-  test('falls back to catalog details when a running target has no web URL', async () => {
-    listInstalled.mockResolvedValue([
-      {
-        ...importedInstallation,
-        smartAppId: 7,
-        modelKey: localHarnessModelOptionKey(harnessModel),
-        state: 'running',
-        webUrl: null,
-      },
-    ])
+  test('waits for a running target to receive its web URL', async () => {
+    const installation = {
+      ...importedInstallation,
+      smartAppId: 7,
+      modelKey: localHarnessModelOptionKey(harnessModel),
+      state: 'running' as const,
+      webUrl: null,
+    }
+    listInstalled.mockResolvedValue([installation])
     const smartAppsApi = api([item()])
     render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
 
-    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+    )
     expect(openHarnessAppTab).not.toHaveBeenCalled()
+
+    const running = { ...installation, webUrl: 'http://127.0.0.1:3000' }
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, {
+          detail: {
+            type: 'updated',
+            installationId: installation.id,
+            installation: running,
+          },
+        })
+      )
+    })
+
+    await waitFor(() => expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), running))
   })
 
   test('retries a deep-link start after the model catalog becomes available', async () => {
@@ -1422,11 +1438,11 @@ describe('SmartAppsMarketplacePage', () => {
 
     rerender(<SmartAppsMarketplacePage api={secondApi} targetSmartAppId={7} />)
 
+    await waitFor(() => expect(secondApi.getItem).toHaveBeenCalledWith(7))
     expect(
       await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
     ).toBeInTheDocument()
     expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
-    expect(secondApi.getItem).toHaveBeenCalledWith(7)
   })
 
   test('re-resolves the target after a catalog refresh removes it', async () => {

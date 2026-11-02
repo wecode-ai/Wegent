@@ -298,6 +298,7 @@ export function SmartAppsMarketplacePage({
   const itemsApiRef = useRef<SmartAppsApi | null>(null)
   const targetItemsSnapshotRef = useRef<SmartAppMarketplaceItem[] | null>(null)
   const targetLookupFailedRef = useRef<number | null>(null)
+  const targetLookupInFlightRef = useRef<{ target: number; api: SmartAppsApi } | null>(null)
   const targetLookupRevisionRef = useRef(0)
   const targetLookupRequestRef = useRef(0)
   const downloadRequestRef = useRef(0)
@@ -404,6 +405,7 @@ export function SmartAppsMarketplacePage({
     resolvedTargetApiRef.current = null
     targetItemsSnapshotRef.current = null
     targetLookupFailedRef.current = null
+    targetLookupInFlightRef.current = null
     targetLookupRevisionRef.current = targetLookupRevision
     targetLookupRequestRef.current += 1
     downloadRequestRef.current += 1
@@ -429,6 +431,7 @@ export function SmartAppsMarketplacePage({
       resolvedTargetApiRef.current = api
       targetItemsSnapshotRef.current = null
       targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
       targetLookupRevisionRef.current = targetLookupRevision
       targetLookupRequestRef.current += 1
       downloadRequestRef.current += 1
@@ -450,6 +453,7 @@ export function SmartAppsMarketplacePage({
       catalogTargetSmartAppIdRef.current = null
       targetItemsSnapshotRef.current = null
       targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
       targetLookupRevisionRef.current = targetLookupRevision
       queueMicrotask(() => {
         setSelected(null)
@@ -477,6 +481,17 @@ export function SmartAppsMarketplacePage({
       })
       return
     }
+    if (installation) {
+      handledTargetSmartAppIdRef.current = null
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setSelected(null)
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(true)
+      })
+      return
+    }
     handledTargetSmartAppIdRef.current = null
     if (!api) return
     const currentApiItems = itemsApiRef.current === api ? items : null
@@ -486,6 +501,7 @@ export function SmartAppsMarketplacePage({
     if (retryRequested) {
       targetLookupRevisionRef.current = targetLookupRevision
       targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
     }
     const item = currentApiItems?.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
@@ -513,16 +529,18 @@ export function SmartAppsMarketplacePage({
       })
     }
     if (targetLookupFailedRef.current === targetSmartAppId && !retryRequested) return
+    const inFlight = targetLookupInFlightRef.current
+    if (inFlight?.target === targetSmartAppId && inFlight.api === api) return
     const requestId = ++targetLookupRequestRef.current
+    targetLookupInFlightRef.current = { target: targetSmartAppId, api }
     queueMicrotask(() => {
       setTargetLookupPending(true)
       setTargetLookupError(null)
     })
-    let cancelled = false
     void api
       .getItem(targetSmartAppId)
       .then(item => {
-        if (cancelled || requestId !== targetLookupRequestRef.current) return
+        if (requestId !== targetLookupRequestRef.current) return
         catalogTargetSmartAppIdRef.current = targetSmartAppId
         targetItemsSnapshotRef.current = null
         targetLookupFailedRef.current = null
@@ -531,7 +549,7 @@ export function SmartAppsMarketplacePage({
         setSelected(item)
       })
       .catch(error => {
-        if (cancelled || requestId !== targetLookupRequestRef.current) return
+        if (requestId !== targetLookupRequestRef.current) return
         targetLookupFailedRef.current = targetSmartAppId
         setTargetInstallItem(null)
         setTargetLookupError(
@@ -547,12 +565,10 @@ export function SmartAppsMarketplacePage({
       })
       .finally(() => {
         if (requestId === targetLookupRequestRef.current) {
+          targetLookupInFlightRef.current = null
           queueMicrotask(() => setTargetLookupPending(false))
         }
       })
-    return () => {
-      cancelled = true
-    }
   }, [
     activeInstallations,
     api,
