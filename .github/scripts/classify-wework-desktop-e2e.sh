@@ -534,7 +534,8 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
-      wework/e2e/desktop/modules/harness-app-*)
+      wework/e2e/desktop/modules/harness-app-* | \
+      wework/e2e/desktop/modules/smart-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"

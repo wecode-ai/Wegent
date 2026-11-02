@@ -1450,7 +1450,8 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/harness-apps.scenario.mjs" \
-  "wework/e2e/desktop/modules/harness-app-models.mjs"
+  "wework/e2e/desktop/modules/harness-app-models.mjs" \
+  "wework/e2e/desktop/modules/smart-app-marketplace-identity.mjs"
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true

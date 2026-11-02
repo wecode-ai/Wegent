@@ -403,7 +403,7 @@ export function SmartAppsMarketplacePage({
       return
     }
     if (handledTargetSmartAppIdRef.current === targetSmartAppId) return
-    if (!api || loading) return
+    if (!api) return
     const item = items.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
       handledTargetSmartAppIdRef.current = targetSmartAppId
@@ -457,7 +457,6 @@ export function SmartAppsMarketplacePage({
     activeInstallations,
     api,
     items,
-    loading,
     openInstalledApp,
     startInstalledApp,
     t,

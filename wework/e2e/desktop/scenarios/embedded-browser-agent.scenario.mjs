@@ -79,6 +79,7 @@ function fixtureHtml() {
       h1 { margin: 0 0 12px; font-size: 24px; }
       label, input, button, output, select { display: block; margin-block: 6px; }
       input, button, select { font: inherit; padding: 4px 6px; }
+      #scheme-deep-link { display: inline-block; margin-block: 6px; color: #0759d6; }
       #agent-confirm { display: inline; padding: 0; margin: 0 6px 0 0; }
       #agent-scroll-box { block-size: 120px; overflow: auto; border: 1px solid #ccc; padding: 8px; }
       #agent-scroll-spacer { block-size: 420px; }
@@ -86,6 +87,7 @@ function fixtureHtml() {
   </head>
   <body>
     <h1>${READY_TEXT}</h1>
+    <a id="scheme-deep-link" href="wework://apps/todo">Open project workspace</a>
     <label for="agent-name">Agent name</label>
     <input id="agent-name" name="agent-name" placeholder="Name" />
     <button id="agent-submit" type="button">Run agent form</button>
@@ -908,6 +910,39 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 5_000,
       })
       assert.equal(readyWait.ok, true, `Bridge fixture wait failed: ${JSON.stringify(readyWait)}`)
+      const browserTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(browserTaskTabTestId, 'The embedded browser task did not expose its tab identity')
+      const schemeClick = await bridgeCall({
+        action: 'click',
+        selector: '#scheme-deep-link',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        schemeClick.ok,
+        true,
+        `Embedded browser scheme click failed: ${JSON.stringify(schemeClick)}`
+      )
+      await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="${browserTaskTabTestId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="${browserTaskTabTestId}"][aria-selected="true"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'Returning from an embedded browser scheme link did not restore the browser page'
+      )
 
       const fixtureServerUrl = new URL(control.url)
       const schemeLessLocalhostUrl = `localhost:${fixtureServerUrl.port}${FIXTURE_PATH}`

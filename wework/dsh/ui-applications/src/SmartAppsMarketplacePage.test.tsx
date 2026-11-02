@@ -1158,6 +1158,16 @@ describe('SmartAppsMarketplacePage', () => {
     expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
   })
 
+  test('loads a deep-link target while the marketplace catalog is still pending', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.listMarketplace).mockReturnValue(new Promise(() => {}))
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
   test('clears the deep-link install prompt after the target is installed', async () => {
     render(<SmartAppsMarketplacePage api={api([item()])} targetSmartAppId={7} />)
     expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
