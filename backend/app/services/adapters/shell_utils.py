@@ -430,6 +430,7 @@ def get_shells_by_names_batch(
     lookup = ExecutionCapabilityLookup(db, user_id)
 
     def build_exact_filters(keys: Set[Tuple[str, str]]):
+        """Build exact name-and-namespace filters for a Shell batch."""
         return (
             or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
             if keys
@@ -444,7 +445,7 @@ def get_shells_by_names_batch(
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Shell",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .filter(user_shell_filter)
             .all()
@@ -490,7 +491,7 @@ def get_shells_by_names_batch(
             db.query(Kind)
             .filter(
                 Kind.kind == "Shell",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .filter(group_shell_filter)
             .all()
@@ -508,7 +509,7 @@ def get_shells_by_names_batch(
                 Kind.user_id == 0,
                 Kind.kind == "Shell",
                 Kind.namespace == "default",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
                 Kind.name.in_(missing_names),
             )
             .all()

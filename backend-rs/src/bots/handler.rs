@@ -318,10 +318,12 @@ async fn preload_components(
         .cloned()
         .collect();
     let mut seen_public_names = HashSet::new();
-    let public_names: Vec<String> = missing_public_shells
-        .iter()
-        .filter_map(|(name, _)| seen_public_names.insert(name.clone()).then(|| name.clone()))
-        .collect();
+    let mut public_names = Vec::new();
+    for (name, _) in &missing_public_shells {
+        if seen_public_names.insert(name.clone()) {
+            public_names.push(name.clone());
+        }
+    }
     if !public_names.is_empty() {
         for row in repo::public_shells_by_names(&state.mysql, &public_names)
             .await
@@ -402,16 +404,16 @@ where
             .map_err(database_error)?;
         for row in referenced_shells {
             if names.contains(row.name.as_str()) {
-                shells.insert(
-                    (row.name.clone(), namespace.clone()),
-                    kind_row_from_referenced_shell(row),
-                );
+                shells
+                    .entry((row.name.clone(), namespace.clone()))
+                    .or_insert_with(|| kind_row_from_referenced_shell(row));
             }
         }
     }
     Ok(())
 }
 
+/// Convert a referenced Shell row into the Bot list response row.
 fn kind_row_from_referenced_shell(row: OwnedKindRow) -> KindRow {
     KindRow {
         kinds_id: row.id,

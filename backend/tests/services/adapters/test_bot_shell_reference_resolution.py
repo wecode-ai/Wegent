@@ -12,6 +12,7 @@ from app.services.adapters.bot_kinds import BotKindsService
 
 
 def _create_group(test_db, user, name: str) -> Namespace:
+    """Create a group namespace and make the user a developer."""
     namespace = Namespace(
         name=name,
         display_name=name,
@@ -49,6 +50,7 @@ def _create_shell(
     shell_type: str = "ClaudeCode",
     owner_user_id: int | None = None,
 ) -> Kind:
+    """Create a Shell resource owned by the requested user."""
     owner_id = user.id if owner_user_id is None else owner_user_id
     shell = Kind(
         user_id=owner_id,
@@ -79,6 +81,7 @@ def _create_shell(
 
 
 def _reference_shell(test_db, shell: Kind, namespace: Namespace) -> None:
+    """Reference a Shell into a group namespace."""
     test_db.add(
         ResourceMember(
             resource_type="Shell",
@@ -96,6 +99,7 @@ def _reference_shell(test_db, shell: Kind, namespace: Namespace) -> None:
 def _create_bot(
     test_db, user, namespace: str, shell_namespace: str, name: str = "group-bot"
 ) -> Kind:
+    """Create a Bot pointing at a Shell reference namespace."""
     bot = Kind(
         user_id=user.id,
         kind="Bot",
@@ -124,6 +128,7 @@ def _create_bot(
 
 @pytest.fixture
 def referenced_shell_bot(test_db, test_user):
+    """Create a Bot whose Shell is visible through another group's reference."""
     reference_group = _create_group(test_db, test_user, "aaa-reference")
     source_group = _create_group(test_db, test_user, "zzz-source")
     shell = _create_shell(test_db, test_user, source_group.name)
@@ -140,6 +145,7 @@ def referenced_shell_bot(test_db, test_user):
 def test_bot_detail_resolves_shell_by_reference_namespace(
     test_db, test_user, referenced_shell_bot
 ):
+    """Bot detail should resolve a Shell through its reference namespace."""
     bot, _shell, _source_group = referenced_shell_bot
 
     result = BotKindsService(Kind).get_by_id_and_user(
@@ -153,6 +159,7 @@ def test_bot_detail_resolves_shell_by_reference_namespace(
 def test_bot_update_preserves_existing_shell_namespace(
     test_db, test_user, referenced_shell_bot
 ):
+    """A prompt-only update must preserve an existing resolvable Shell namespace."""
     _bot, shell, source_group = referenced_shell_bot
     bot = _create_bot(
         test_db,
@@ -181,6 +188,7 @@ def test_bot_update_preserves_existing_shell_namespace(
 def test_bot_list_resolves_referenced_shells_in_batch(
     test_db, test_user, referenced_shell_bot
 ):
+    """Batch Bot listing should resolve referenced Shells."""
     bot, _shell, source_group = referenced_shell_bot
 
     result = BotKindsService(Kind).get_user_bots(
@@ -199,6 +207,7 @@ def test_bot_list_resolves_referenced_shells_in_batch(
 def test_detail_and_list_share_reference_precedence(
     test_db, test_user, referenced_shell_bot
 ):
+    """Detail and list lookups should choose the same Shell source."""
     bot, _shell, source_group = referenced_shell_bot
     _create_shell(
         test_db,
@@ -231,6 +240,7 @@ def test_detail_and_list_share_reference_precedence(
 def test_bot_update_keeps_shell_type_for_referenced_shell(
     test_db, test_user, referenced_shell_bot
 ):
+    """Bot update responses should retain the referenced Shell type."""
     bot, shell, _source_group = referenced_shell_bot
     existing_namespace = bot.json["spec"]["shellRef"]["namespace"]
 
@@ -254,6 +264,7 @@ def test_bot_update_keeps_shell_type_for_referenced_shell(
 def test_bot_update_replaces_obsolete_group_reference_public_fallback(
     test_db, test_user, referenced_shell_bot
 ):
+    """An obsolete group reference should fall back to the public namespace."""
     bot, shell, _source_group = referenced_shell_bot
     source_shell = test_db.get(Kind, shell.id)
     source_shell.is_active = False
