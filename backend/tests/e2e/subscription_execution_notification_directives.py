@@ -492,6 +492,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
             "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "Chat",
         )
+        # Webhooks run after channel delivery, including failed group requests.
+        self.assertEqual(len(self._wait_webhook(result)), 1)
         self.assertEqual(result["status"], "COMPLETED")
         self.assertEqual(_cards(result["requests"], "IM_GROUP"), [])
         self.assertEqual(len(_cards(result["requests"], "IM_ROBOT")), 1)
