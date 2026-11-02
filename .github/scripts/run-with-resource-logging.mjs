@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statfsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, statfsSync } from 'node:fs'
 import { availableParallelism, cpus, freemem, loadavg, totalmem } from 'node:os'
 import { dirname, resolve } from 'node:path'
+import { openDeletedDiskFiles } from './runner-process-disk.mjs'
 
 const [command, ...args] = process.argv.slice(2)
 if (!command) throw new Error('A command is required')
@@ -118,6 +119,9 @@ function sample(phase, exitCode) {
           Boolean
         ),
         ...diskUsage(baseline && !lowFree ? 1 : 4),
+      }
+      if (lowFree || growth) {
+        record.openDeletedDiskFiles = openDeletedDiskFiles(child?.pid, statSync('.').dev)
       }
     }
     record.linux = Object.fromEntries(

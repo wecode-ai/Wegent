@@ -5,8 +5,109 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
+import { openDeletedDiskFiles } from './runner-process-disk.mjs'
 
 const script = fileURLToPath(new URL('./run-with-resource-logging.mjs', import.meta.url))
+
+function processDiskFixture() {
+  const reads = []
+  const descriptors = new Map()
+  const parents = { 10: 1, 11: 10, 12: 11, 20: 1 }
+  const io = {
+    readdirSync(path) {
+      reads.push(path)
+      if (path === '/proc') return [...Object.keys(parents), 'self']
+      return [...descriptors.keys()]
+        .filter(key => key.startsWith(`${path}/`))
+        .map(key => key.split('/').at(-1))
+    },
+    readFileSync(path) {
+      reads.push(path)
+      const [, , pid, name] = path.split('/')
+      if (name === 'status') return `PPid:\t${parents[pid]}\n`
+      assert.equal(name, 'comm')
+      return 'owned-process\n'
+    },
+    statSync(path) {
+      reads.push(path)
+      const descriptor = descriptors.get(path)
+      if (descriptor.error) throw Object.assign(new Error('fixture'), { code: descriptor.error })
+      return {
+        dev: 1,
+        ino: Number(path.split('/').at(-1)),
+        blocks: 4096,
+        size: 2 * 1024 ** 2,
+        nlink: 0,
+        isFile: () => true,
+        ...descriptor,
+      }
+    },
+    readlinkSync(path) {
+      return `/tmp/owned-${path.split('/').at(-1)} (deleted)`
+    },
+  }
+  return { io, reads, descriptors }
+}
+
+test('counts unique large unlinked files only on the owned process tree and filesystem', () => {
+  const fixture = processDiskFixture()
+  for (const [path, descriptor] of [
+    ['/proc/10/fd/1', { ino: 1 }],
+    ['/proc/11/fd/2', { ino: 1 }],
+    ['/proc/12/fd/3', { ino: 3, blocks: 8192 }],
+    ['/proc/11/fd/4', { nlink: 1 }],
+    ['/proc/11/fd/5', { isFile: () => false }],
+    ['/proc/11/fd/6', { blocks: 1 }],
+    ['/proc/11/fd/7', { dev: 2 }],
+    ['/proc/20/fd/8', {}],
+  ])
+    fixture.descriptors.set(path, descriptor)
+  const result = openDeletedDiskFiles(10, 1, fixture)
+  assert.equal(result.allocatedBytes, 6 * 1024 ** 2)
+  assert.deepEqual(
+    result.files.map(file => file.pid),
+    [12, 10]
+  )
+  assert.equal(result.truncated, false)
+  assert.deepEqual(result.errors, [])
+  assert.ok(!fixture.reads.some(path => path.startsWith('/proc/20/fd')))
+  assert.ok(
+    fixture.reads.every(path => /^\/proc(?:\/\d+\/(?:status|comm|fd(?:\/\d+)?))?$/.test(path))
+  )
+})
+
+test('keeps partial metadata after process disappearance or permission denial', () => {
+  const fixture = processDiskFixture()
+  fixture.descriptors.set('/proc/10/fd/1', {})
+  fixture.descriptors.set('/proc/11/fd/2', { error: 'ENOENT' })
+  fixture.descriptors.set('/proc/12/fd/3', { error: 'EACCES' })
+  const result = openDeletedDiskFiles(10, 1, fixture)
+  assert.equal(result.files.length, 1)
+  assert.equal(result.allocatedBytes, 2 * 1024 ** 2)
+  assert.deepEqual(result.errors, ['ENOENT', 'EACCES'])
+})
+
+test('bounds process inspection time and skips inspection without a child', () => {
+  const fixture = processDiskFixture()
+  openDeletedDiskFiles(undefined, 1, fixture)
+  assert.deepEqual(fixture.reads, [])
+  let elapsed = 0
+  const result = openDeletedDiskFiles(10, 1, {
+    ...fixture,
+    now: () => elapsed++,
+    budgetMs: 3,
+  })
+  assert.equal(result.truncated, true)
+  assert.ok(fixture.reads.length <= 3)
+})
+
+test('caps emitted file metadata while retaining total allocated bytes', () => {
+  const fixture = processDiskFixture()
+  for (let index = 1; index <= 25; index++) fixture.descriptors.set(`/proc/10/fd/${index}`, {})
+  const result = openDeletedDiskFiles(10, 1, fixture)
+  assert.equal(result.files.length, 20)
+  assert.equal(result.allocatedBytes, 50 * 1024 ** 2)
+})
 
 function run(args, env = {}, preload) {
   const cwd = mkdtempSync(join(tmpdir(), 'runner-resource-test-'))
