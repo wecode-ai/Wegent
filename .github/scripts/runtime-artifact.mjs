@@ -24,19 +24,25 @@ export function runtimeArtifact(
   sourceRef,
   files,
   headSha,
+  target = "linux-x64",
+  profile = "release",
 ) {
   if (!["executor", "backend-rs"].includes(component))
     throw new Error("Unknown runtime");
   if (!headSha || !sourceRef || !files.length)
     throw new Error("Missing runtime identity");
+  if (!["linux-x64", "darwin-arm64"].includes(target))
+    throw new Error("Unsupported runtime target");
+  if (!["release", "dev"].includes(profile))
+    throw new Error("Unsupported runtime profile");
   const path = join(root, `${component}-runtime-manifest.json`);
   const identity = {
     schema: 1,
     component,
     headSha,
     sourceRef,
-    target: "linux-x64",
-    profile: "release",
+    target,
+    profile,
   };
   if (mode === "create") {
     writeFileSync(
@@ -81,5 +87,7 @@ if (
     sourceRef,
     files,
     process.env.RUNTIME_HEAD_SHA,
+    process.env.RUNTIME_TARGET,
+    process.env.RUNTIME_PROFILE,
   );
 }

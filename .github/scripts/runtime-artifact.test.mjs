@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -10,6 +16,165 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
+
+test("native runtime manifests preserve their target and compilation profile", () => {
+  const root = mkdtempSync(join(tmpdir(), "native-runtime-artifact-"));
+  try {
+    for (const [component, profile] of [
+      ["executor", "release"],
+      ["backend-rs", "dev"],
+    ]) {
+      const binary = `wegent-${component}`;
+      writeFileSync(join(root, binary), "native runtime bytes");
+      const invoke = (
+        mode,
+        target = "darwin-arm64",
+        expectedProfile = profile,
+      ) =>
+        runtimeArtifact(
+          mode,
+          root,
+          component,
+          "source-key",
+          [binary],
+          "head",
+          target,
+          expectedProfile,
+        );
+      invoke("create");
+      const manifest = JSON.parse(
+        readFileSync(join(root, `${component}-runtime-manifest.json`), "utf8"),
+      );
+      assert.equal(manifest.target, "darwin-arm64");
+      assert.equal(manifest.profile, profile);
+      invoke("verify");
+      assert.throws(() => invoke("verify", "linux-x64"), /target mismatch/);
+      assert.throws(
+        () =>
+          invoke(
+            "verify",
+            "darwin-arm64",
+            profile === "dev" ? "release" : "dev",
+          ),
+        /profile mismatch/,
+      );
+      assert.throws(() => invoke("verify", "darwin-arm64", "other"), /profile/);
+      assert.throws(() => invoke("create", "unknown"), /target/);
+      writeFileSync(join(root, binary), "modified native payload");
+      assert.throws(() => invoke("verify"), /checksum mismatch/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime handoff selects the correct native producer and rejects incompatible payloads", () => {
+  const root = mkdtempSync(join(tmpdir(), "native-runtime-handoff-"));
+  try {
+    const scripts = join(root, "scripts");
+    const scratch = join(root, "scratch");
+    mkdirSync(scripts);
+    mkdirSync(scratch);
+    for (const name of ["restore-actions-runtime.sh", "runtime-artifact.mjs"])
+      copyFileSync(new URL(name, import.meta.url), join(scripts, name));
+    const downloader = join(scripts, "download-actions-artifact.sh");
+    writeFileSync(
+      downloader,
+      `#!/usr/bin/env bash
+set -euo pipefail
+test "$ACTIONS_ARTIFACT_JOB" = "$TEST_PRODUCER_JOB"
+mkdir -p "$2"
+printf '#!/bin/sh\\nexit 0\\n' > "$2/$TEST_BINARY"
+RUNTIME_HEAD_SHA="$ACTIONS_ARTIFACT_HEAD_SHA" RUNTIME_TARGET="$TEST_MANIFEST_TARGET" RUNTIME_PROFILE="$TEST_MANIFEST_PROFILE" \\
+  node "$(dirname "$0")/runtime-artifact.mjs" create "$2" "$TEST_COMPONENT" source-key "$TEST_BINARY"
+`,
+    );
+    chmodSync(downloader, 0o755);
+    let attempt = 0;
+    for (const [artifact, component, target, profile, producer] of [
+      [
+        "executor-e2e-binary",
+        "executor",
+        "linux-x64",
+        "release",
+        "Prepare Executor E2E Runtime",
+      ],
+      [
+        "backend-rs-e2e-runtime",
+        "backend-rs",
+        "linux-x64",
+        "release",
+        "Build Backend Rust E2E Runtime",
+      ],
+      [
+        "macos-executor-e2e-binary",
+        "executor",
+        "darwin-arm64",
+        "release",
+        "Wework Desktop macOS E2E",
+      ],
+      [
+        "macos-backend-rs-e2e-runtime",
+        "backend-rs",
+        "darwin-arm64",
+        "dev",
+        "Wework Desktop macOS E2E",
+      ],
+    ]) {
+      const run = (manifestTarget, manifestProfile) => {
+        const destination = join(root, `output-${attempt++}`);
+        const result = spawnSync(
+          "bash",
+          [
+            join(scripts, "restore-actions-runtime.sh"),
+            artifact,
+            component,
+            `wegent-${component}`,
+            "source-key",
+            destination,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              TMPDIR: scratch,
+              ACTIONS_ARTIFACT_HEAD_SHA: "head",
+              RUNTIME_TARGET: "unexpected-ambient-target",
+              RUNTIME_PROFILE: "unexpected-ambient-profile",
+              TEST_PRODUCER_JOB: producer,
+              TEST_COMPONENT: component,
+              TEST_BINARY: `wegent-${component}`,
+              TEST_MANIFEST_TARGET: manifestTarget,
+              TEST_MANIFEST_PROFILE: manifestProfile,
+            },
+          },
+        );
+        assert.deepEqual(
+          readdirSync(scratch),
+          [],
+          "handoff must clean temporary files",
+        );
+        if (result.status === 0)
+          assert.match(readFileSync(destination, "utf8"), /exit 0/);
+        else assert.equal(existsSync(destination), false);
+        return result;
+      };
+      const success = run(target, profile);
+      assert.equal(success.status, 0, success.stderr);
+      const wrongTarget = run(
+        target === "linux-x64" ? "darwin-arm64" : "linux-x64",
+        profile,
+      );
+      assert.notEqual(wrongTarget.status, 0);
+      assert.match(wrongTarget.stderr, /target mismatch/);
+      const wrongProfile = run(target, profile === "dev" ? "release" : "dev");
+      assert.notEqual(wrongProfile.status, 0);
+      assert.match(wrongProfile.stderr, /profile mismatch/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("runtime artifacts bind source, platform, profile and complete file contents", () => {
   const root = mkdtempSync(join(tmpdir(), "runtime-artifact-"));

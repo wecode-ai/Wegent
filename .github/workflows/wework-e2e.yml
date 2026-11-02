@@ -1232,6 +1232,51 @@ jobs:
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
 
+      - name: Describe verified native macOS runtimes
+        env:
+          RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUNTIME_TARGET: darwin-arm64
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          for component in executor backend-rs; do
+            profile=release
+            binary="$WEWORK_E2E_EXECUTOR_BIN"
+            if [[ "$component" == backend-rs ]]; then
+              profile=dev
+              binary="$WEWORK_E2E_BACKEND_RS_BIN"
+            fi
+            test -x "$binary"
+            artifact_dir="$RUNNER_TEMP/macos-runtimes/$component"
+            mkdir -p "$artifact_dir"
+            cp "$binary" "$artifact_dir/wegent-$component"
+            digest="$(node .github/scripts/macos-e2e-source-digest.mjs "$component")"
+            source_ref="ghcr.io/$owner/wegent-wework-macos-e2e-runtime:$component-v1-$digest"
+            RUNTIME_PROFILE="$profile" node .github/scripts/runtime-artifact.mjs create \
+              "$artifact_dir" "$component" "$source_ref" "wegent-$component"
+          done
+
+      - name: Upload verified macOS Executor runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-executor-e2e-binary
+          path: |
+            ${{ runner.temp }}/macos-runtimes/executor/wegent-executor
+            ${{ runner.temp }}/macos-runtimes/executor/executor-runtime-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload verified macOS Backend runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-backend-rs-e2e-runtime
+          path: |
+            ${{ runner.temp }}/macos-runtimes/backend-rs/wegent-backend-rs
+            ${{ runner.temp }}/macos-runtimes/backend-rs/backend-rs-runtime-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh

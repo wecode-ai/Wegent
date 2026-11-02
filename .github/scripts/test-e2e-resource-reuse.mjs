@@ -11,11 +11,124 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { runtimeArtifact } from "./runtime-artifact.mjs";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
+
+test("the existing macOS runner exports verified runtimes after its real checkpoints", () => {
+  const parsed = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-memory-e2e'])",
+      ".github/workflows/wework-e2e.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const job = JSON.parse(parsed.stdout);
+  assert.equal(job["runs-on"], "macos-15");
+  const describe = job.steps.find(
+    (step) => step.name === "Describe verified native macOS runtimes",
+  );
+  assert(describe);
+  assert.equal(describe.if, undefined);
+  assert.equal(describe["continue-on-error"], undefined);
+  assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
+  assert.equal(
+    describe.env.RUNTIME_HEAD_SHA,
+    "${{ github.event.pull_request.head.sha || github.sha }}",
+  );
+  for (const name of [
+    "Run Wework desktop memory E2E",
+    "Run Wework desktop macOS Inspector E2E",
+  ])
+    assert(
+      job.steps.findIndex((step) => step.name === name) <
+        job.steps.indexOf(describe),
+    );
+  for (const [name, artifact, component] of [
+    [
+      "Upload verified macOS Executor runtime",
+      "macos-executor-e2e-binary",
+      "executor",
+    ],
+    [
+      "Upload verified macOS Backend runtime",
+      "macos-backend-rs-e2e-runtime",
+      "backend-rs",
+    ],
+  ]) {
+    const upload = job.steps.find((step) => step.name === name);
+    assert(job.steps.indexOf(upload) > job.steps.indexOf(describe));
+    assert.equal(upload.if, undefined);
+    assert.equal(upload["continue-on-error"], undefined);
+    assert.equal(upload.with.name, artifact);
+    assert.equal(upload.with["if-no-files-found"], "error");
+    assert.equal(upload.with["retention-days"], 1);
+    assert.deepEqual(upload.with.path.trim().split("\n"), [
+      `\${{ runner.temp }}/macos-runtimes/${component}/wegent-${component}`,
+      `\${{ runner.temp }}/macos-runtimes/${component}/${component}-runtime-manifest.json`,
+    ]);
+  }
+  const directory = mkdtempSync(join(tmpdir(), "macos-runtime-export-"));
+  try {
+    const executor = join(directory, "executor");
+    const backend = join(directory, "backend");
+    for (const file of [executor, backend]) {
+      writeFileSync(file, "verified runtime bytes");
+      chmodSync(file, 0o755);
+    }
+    const result = spawnSync("bash", ["-e", "-c", describe.run], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUNNER_TEMP: directory,
+        GITHUB_REPOSITORY_OWNER: "WECODE-AI",
+        RUNTIME_HEAD_SHA: "source-head",
+        RUNTIME_TARGET: describe.env.RUNTIME_TARGET,
+        WEWORK_E2E_EXECUTOR_BIN: executor,
+        WEWORK_E2E_BACKEND_RS_BIN: backend,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    for (const [component, profile] of [
+      ["executor", "release"],
+      ["backend-rs", "dev"],
+    ]) {
+      const folder = join(directory, "macos-runtimes", component);
+      const manifest = JSON.parse(
+        readFileSync(
+          join(folder, `${component}-runtime-manifest.json`),
+          "utf8",
+        ),
+      );
+      assert.match(
+        manifest.sourceRef,
+        new RegExp(
+          `^ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:${component}-v1-[a-f0-9]{64}$`,
+        ),
+      );
+      runtimeArtifact(
+        "verify",
+        folder,
+        component,
+        manifest.sourceRef,
+        [`wegent-${component}`],
+        "source-head",
+        "darwin-arm64",
+        profile,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("platform image reuse checks the registry before starting a builder", () => {
   const result = spawnSync(
