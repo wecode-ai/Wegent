@@ -25,7 +25,6 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
-from app.services.loop_item_executions.runtime_identity import execution_runtime_turn_id
 from app.services.loop_item_executions.service import loop_item_execution_service
 from shared.telemetry.decorators import trace_async
 
@@ -362,12 +361,7 @@ async def reconcile_device_executions(
             needs_confirmation_only=needs_confirmation_only,
         )
         execution_refs = [
-            (
-                execution.id,
-                execution.runtime_task_id,
-                execution_runtime_turn_id(execution),
-            )
-            for execution in executions
+            (execution.id, execution.runtime_task_id) for execution in executions
         ]
     if not execution_refs:
         return 0
@@ -407,12 +401,8 @@ async def reconcile_device_executions(
 
     reconciled = 0
     with get_db_session() as db:
-        for execution_id, runtime_task_id, request_turn_id in execution_refs:
+        for execution_id, runtime_task_id in execution_refs:
             snapshot = snapshots.get(runtime_task_id)
-            state = (snapshot or {}).get("executionState") or {}
-            if state and state.get("requestTurnId") != request_turn_id:
-                # A reused conversation can still report its previous execution.
-                continue
             loop_item_execution_service.reconcile_runtime_snapshot(
                 db,
                 execution_id=execution_id,
@@ -425,7 +415,6 @@ async def reconcile_device_executions(
                     if snapshot
                     else None
                 ),
-                runtime_turn_id=state.get("latestTurnId"),
             )
             reconciled += 1
     return reconciled

@@ -771,6 +771,37 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, right)).toBe(false)
   })
 
+  test('retains installed plugin device transitions even when package metadata is unchanged', () => {
+    const ready = installedItem('101', 'wegent', 'documents')
+    ready.raw.status.devices = [
+      {
+        deviceId: 'current-device',
+        state: 'installed',
+        desiredReleaseId: 1001,
+        actualReleaseId: 1001,
+        attemptCount: 0,
+      },
+    ]
+    const removing = {
+      ...ready,
+      raw: {
+        ...ready.raw,
+        status: {
+          ...ready.raw.status,
+          devices: [
+            {
+              ...ready.raw.status.devices[0]!,
+              state: 'uninstalling' as const,
+            },
+          ],
+        },
+      },
+    }
+    expect(sameInstalledPlugins([ready], [removing])).toBe(false)
+    expect(sameInstalledPlugins([removing], [ready])).toBe(false)
+    expect(sameInstalledPlugins([ready], [structuredClone(ready)])).toBe(true)
+  })
+
   test('detects device installation state changes via signature', () => {
     const base = item({ id: 1, name: 'a', installed: false })
     const failed = item({

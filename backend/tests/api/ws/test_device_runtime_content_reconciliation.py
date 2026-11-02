@@ -7,7 +7,6 @@ import pytest
 
 from app.api.ws import device_namespace
 from app.models.project_chat_message import ProjectChatMessage
-from app.services.loop_item_executions.runtime_identity import execution_runtime_turn_id
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.execution_snapshot import reconcile_execution_snapshot
 from app.services.project_chat.service import project_chat_service
@@ -84,77 +83,6 @@ def test_response_created_binds_runtime_turn_for_snapshot_reconciliation(
     assert execution.status == "completed"
     assert activity.status == "completed"
     assert activity.metadata_json["runtime_turn_id"] == "turn-1"
-
-
-@pytest.mark.parametrize("current_request", [True, False])
-async def test_device_reconciliation_preserves_native_turn_before_final_event(
-    test_db, test_user, managed_run, current_request
-):
-    from app.tasks.robot_queue_tasks import reconcile_device_executions
-
-    task, execution, activity = managed_run
-    activity.metadata_json = {
-        key: value
-        for key, value in activity.metadata_json.items()
-        if key != "runtime_turn_id"
-    }
-    activity.content = ""
-    test_db.commit()
-    snapshot = {
-        "taskId": execution.runtime_task_id,
-        "running": False,
-        "status": "completed",
-        "executionState": {
-            "requestTurnId": (
-                execution_runtime_turn_id(execution)
-                if current_request
-                else "previous-execution"
-            ),
-            "latestTurnId": "native-final-turn",
-        },
-    }
-    sio = AsyncMock()
-    sio.call.return_value = {"success": True, "workspaces": [{"tasks": [snapshot]}]}
-    with (
-        patch("app.db.session.get_db_session", return_value=nullcontext(test_db)),
-        patch("app.core.socketio.get_sio", return_value=sio),
-        patch(
-            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
-            new=AsyncMock(return_value={"socket_id": "runtime-socket"}),
-        ),
-    ):
-        await reconcile_device_executions(
-            user_id=test_user.id, device_id=execution.runtime_device_id
-        )
-
-    test_db.expire_all()
-    if not current_request:
-        assert execution.status == "running"
-        assert activity.status == "streaming"
-        assert "runtime_turn_id" not in activity.metadata_json
-        return
-    assert execution.status == activity.status == "completed"
-    assert activity.metadata_json["runtime_turn_id"] == "native-final-turn"
-    previous_versions = execution.version, task.version
-    with patch.object(
-        device_namespace, "get_db_session", return_value=nullcontext(test_db)
-    ):
-        result = device_namespace._project_chat_runtime_event_sync(
-            execution.runtime_device_id,
-            {
-                "event": "response.completed",
-                "payload": {
-                    "taskId": execution.runtime_task_id,
-                    "subtaskId": "native-final-turn",
-                    "eventSeq": 2,
-                    "data": {"text": "Final member reply"},
-                },
-            },
-            user_id=test_user.id,
-        )
-    test_db.expire_all()
-    assert result["message"]["content"] == activity.content == "Final member reply"
-    assert (execution.version, task.version) == previous_versions
 
 
 @pytest.mark.parametrize("order", ["snapshot_first", "event_first", "during_lock"])
