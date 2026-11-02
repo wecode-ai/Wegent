@@ -9566,7 +9566,7 @@ describe('PluginsWorkspace', () => {
           if (request.method === 'plugin/list') return new Promise(() => undefined)
           if (request.method === 'plugin/read') {
             expect(request.params).toMatchObject({
-              marketplacePath: source.path,
+              marketplacePath: `${source.path}/.agents/plugins/marketplace.json`,
               remoteMarketplaceName: null,
               pluginName: 'github',
             })

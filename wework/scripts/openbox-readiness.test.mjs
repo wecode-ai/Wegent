@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -13,6 +13,7 @@ const processTestTimeoutMs = fixtureTimeoutMs + 5_000
 const runningOpenbox = `#!/bin/sh
 echo $$ > "$OPENBOX_TEST_DIR/pid"
 touch "$OPENBOX_TEST_DIR/openbox-started"
+echo ready > "$OPENBOX_TEST_DIR/openbox-ready"
 exec node -e 'setInterval(() => {}, 1000)'
 `
 
@@ -21,9 +22,11 @@ queries=0
 if [ -f "$OPENBOX_TEST_DIR/queries" ]; then IFS= read -r queries < "$OPENBOX_TEST_DIR/queries"; fi
 queries=$((queries + 1))
 echo "$queries" > "$OPENBOX_TEST_DIR/queries"
-if [ "$queries" -lt 2 ] || [ ! -f "$OPENBOX_TEST_DIR/openbox-started" ]; then
+if [ "$queries" -lt 2 ]; then
   echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
 else
+  IFS= read -r ready < "$OPENBOX_TEST_DIR/openbox-ready"
+  test "$ready" = ready && test -f "$OPENBOX_TEST_DIR/openbox-started" || exit 1
   echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
 fi
 `
@@ -46,6 +49,9 @@ fi
 function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
   try {
+    // The accelerated poll loop must wait for the fixture child to be scheduled.
+    // A FIFO handshake preserves the missing-atom probe without real sleeps.
+    execFileSync('mkfifo', [join(directory, 'openbox-ready')])
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-window-manager'), xprop, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-display'), display, { mode: 0o755 })
