@@ -261,7 +261,8 @@ export async function verifyPersonalPluginVersionSubmission({
     await control.command('waitFor', testId('plugins-search-input'))
     await control.command('click', testId('plugins-distribution-tab-personal'))
     await control.command('fill', testId('plugins-search-input'), { value: slug })
-    await control.command('click', testId('plugins-refresh-button'))
+    // Account changes reload the catalog and reconcile the existing local source.
+    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
     await control.command('waitFor', testId(`plugin-marketplace-row-${initialized.pluginId}`))
     await control.command('click', testId(`plugin-marketplace-row-${initialized.pluginId}`))
     await control.command('click', 'button[data-testid^="plugin-detail-actions-"]')
