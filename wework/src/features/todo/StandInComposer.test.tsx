@@ -358,52 +358,69 @@ describe('Stand-in configuration composer', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ prompt: '', enabled: false }))
   })
 
-  it('loads plugins and skills from the selected execution workspace for slash commands', async () => {
-    const readCatalog = vi.fn(async () => ({
-      taskId: null,
-      workspacePath: '/repo',
-      projectPluginIds: [],
-      apps: [],
-      marketplaces: [
-        {
-          name: 'local',
-          plugins: [{ name: 'tool', enabled: true, installed: true, source: { path: '/tool' } }],
-        },
-      ],
-      skills: [{ name: 'review', path: '/repo/review/SKILL.md' }],
-      store: { storePath: '/store', plugins: [] },
-      cloudInstalledPlugins: [],
-    }))
-    const services = {
-      composerCatalogApi: { readCatalog },
-      deviceApi: {},
-    } as unknown as WorkbenchServices
-    render(
-      <Fixture
-        save={vi.fn()}
-        services={services}
-        initial={{
-          projectKey: 'repo',
-          workspacePath: '/repo',
-          executionMode: 'current_workspace',
-        }}
-      />
-    )
-    const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
-    act(() => {
-      editor.value = '/'
-      editor.focus()
-    })
-    expect(await screen.findByTestId('slash-command-option-app-plugin-tool')).toBeInTheDocument()
-    expect(await screen.findByTestId('slash-command-option-skill-review')).toBeInTheDocument()
-    expect(readCatalog).toHaveBeenCalledWith(
-      { deviceId: 'mac', scope: 'workspace', workspacePath: '/repo' },
-      true
-    )
-    await userEvent.click(screen.getByTestId('slash-command-option-skill-review'))
-    await userEvent.click(screen.getByTestId('stand-in-save'))
-    expect(editor.value).toContain('/repo/review/SKILL.md')
-  })
+  it.each(['immediate', 'deferred'] as const)(
+    'loads plugins and skills from the selected execution workspace with %s catalog results',
+    async mode => {
+      const catalog = {
+        taskId: null,
+        workspacePath: '/repo',
+        projectPluginIds: [],
+        apps: [],
+        marketplaces: [
+          {
+            name: 'local',
+            plugins: [{ name: 'tool', enabled: true, installed: true, source: { path: '/tool' } }],
+          },
+        ],
+        skills: [{ name: 'review', path: '/repo/review/SKILL.md' }],
+        store: { storePath: '/store', plugins: [] },
+        cloudInstalledPlugins: [],
+      }
+      let finishCatalog!: (value: typeof catalog) => void
+      const pendingCatalog = new Promise<typeof catalog>(resolve => {
+        finishCatalog = resolve
+      })
+      const readCatalog = vi.fn(() =>
+        mode === 'deferred' ? pendingCatalog : Promise.resolve(catalog)
+      )
+      const services = {
+        composerCatalogApi: { readCatalog },
+        deviceApi: {},
+      } as unknown as WorkbenchServices
+      render(
+        <Fixture
+          save={vi.fn()}
+          services={services}
+          initial={{
+            projectKey: 'repo',
+            workspacePath: '/repo',
+            executionMode: 'current_workspace',
+          }}
+        />
+      )
+      const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
+      await act(async () => {
+        editor.value = '/'
+        editor.focus()
+      })
+      expect(readCatalog).toHaveBeenCalledWith(
+        { deviceId: 'mac', scope: 'workspace', workspacePath: '/repo' },
+        true
+      )
+      if (mode === 'deferred') {
+        expect(screen.queryByTestId('slash-command-option-app-plugin-tool')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('slash-command-option-skill-review')).not.toBeInTheDocument()
+        await act(async () => finishCatalog(catalog))
+      }
+      await waitFor(() => {
+        expect(screen.getByTestId('slash-command-option-app-plugin-tool')).toBeInTheDocument()
+        expect(screen.getByTestId('slash-command-option-skill-review')).toBeInTheDocument()
+      })
+      await userEvent.click(screen.getByTestId('slash-command-option-skill-review'))
+      await userEvent.click(screen.getByTestId('stand-in-save'))
+      expect(editor.value).toContain('/repo/review/SKILL.md')
+    }
+  )
 
   it('uses shared project and execution selectors and excludes other devices', async () => {
     const save = vi.fn(async () => true)

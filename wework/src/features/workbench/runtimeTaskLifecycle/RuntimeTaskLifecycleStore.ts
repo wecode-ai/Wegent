@@ -349,6 +349,14 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    const machine = this.ensureMachine(this.canonicalizeAddress(address))
+    for (const turn of transcript.turns) {
+      if (turn.id && isTerminalTurnStatus(turn.status)) machine.observeSettledTurn(turn.id)
+    }
+    const streamingTurn = transcript.turns.findLast(
+      turn => turn.status === 'pending' || turn.status === 'streaming'
+    )
+    if (streamingTurn?.id && machine.isSettledTurn(streamingTurn.id)) return
     const recoveredTurn = this.getTask(address)?.turn
     const completedRecoveredTurn =
       transcript.running === false && recoveredTurn?.phase === 'streaming'
@@ -370,9 +378,6 @@ export class RuntimeTaskLifecycleStore {
           currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
         ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
-    const streamingTurn = transcript.turns.findLast(
-      turn => turn.status === 'pending' || turn.status === 'streaming'
-    )
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)

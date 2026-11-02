@@ -1,5 +1,6 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 import { reduceRuntimeTaskLifecycle } from './reducer'
+import { isRuntimeTaskAuthoritativeCompletion } from './projection'
 import type {
   RuntimeTaskLifecycleEvent,
   RuntimeTaskLifecycleSnapshot,
@@ -41,6 +42,13 @@ export class RuntimeTaskMachine {
       if (epoch && this.retiredExecutorEpochs.has(epoch)) return false
     }
     if (
+      (event.type === 'turn_started' || event.type === 'turn_recovered') &&
+      event.turnId &&
+      this.settledTurnIds.has(event.turnId)
+    ) {
+      return false
+    }
+    if (
       event.type === 'turn_settled' &&
       this.state.turnPhase !== 'idle' &&
       event.turnId &&
@@ -53,7 +61,17 @@ export class RuntimeTaskMachine {
     if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
     if (changed && event.type === 'turn_settled' && this.state.latestTurnId) {
-      this.settledTurnIds.add(this.state.latestTurnId)
+      this.observeSettledTurn(this.state.latestTurnId)
+    }
+    if (
+      changed &&
+      event.type === 'executor_snapshot_received' &&
+      event.task.optimistic !== true &&
+      isRuntimeTaskAuthoritativeCompletion(event.task) &&
+      typeof event.task.runtimeHandle?.lastTurnId === 'string' &&
+      event.task.runtimeHandle.lastTurnId.length > 0
+    ) {
+      this.observeSettledTurn(event.task.runtimeHandle.lastTurnId)
     }
     if (changed) this.revision += 1
     return changed
@@ -70,6 +88,10 @@ export class RuntimeTaskMachine {
 
   observeTurn(turnId: string): void {
     this.observedTurnIds.add(turnId)
+  }
+
+  observeSettledTurn(turnId: string): void {
+    this.settledTurnIds.add(turnId)
   }
 
   isSettledTurn(turnId: string): boolean {
