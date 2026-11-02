@@ -42,6 +42,15 @@ export interface RunnerEnvironment {
   runtimes?: RunnerModelIdentity['runtime'][]
 }
 
+/** Native model references can be validated without connecting to a cloud catalog. */
+export function requiresCloudModelCatalog(
+  policy?: AgentModelPolicy,
+  selection?: RunnerSelection
+): boolean {
+  const model = policy?.mode === 'fixed' ? policy.model : selection?.model
+  return !model || model.source === 'cloud'
+}
+
 export function runnerModelKey(model: RunnerModelIdentity): string {
   if (model.source === 'cloud') {
     const ref = model.cloud_model

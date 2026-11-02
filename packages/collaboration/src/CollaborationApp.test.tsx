@@ -50,6 +50,11 @@ vi.mock("./workspace-controller", () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
 }));
 
+vi.mock("./templates/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./templates/context")>()),
+  useCollaborationTemplateStore: () => null,
+}));
+
 vi.mock("./platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./platform")>()),
   useIssueAssignmentsByIssueId: collaborationAppMocks.useAssignments,

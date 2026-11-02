@@ -252,6 +252,22 @@ describe('browser main comment with the PC execution pipeline', () => {
     expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
     expect(input().value).toBe('')
   })
+  it('publishes persisted comment badges without a socket invalidation or agent execution', async () => {
+    client.executeTaskComment = vi.fn().mockResolvedValue([])
+    const updated = {
+      ...issue,
+      version: 2,
+      metadata: { badges: [{ id: 'mr-7', label: '!7' }] },
+    }
+    vi.mocked(api.issues.get).mockResolvedValue(updated)
+    await mount([], [])
+    await type('Review https://gitlab.example/group/repo/-/merge_requests/7')
+    await click('collaboration-issue-comment-submit')
+
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(onTaskUpdated).toHaveBeenCalledWith(updated)
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+  })
   it('executes an assigned hidden agent without requiring the members own runtime catalog', async () => {
     client.executeTaskComment = vi.fn().mockResolvedValue([message])
     vi.mocked(runtime.listDevices).mockResolvedValue([])

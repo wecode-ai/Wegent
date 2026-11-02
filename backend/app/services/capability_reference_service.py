@@ -15,7 +15,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.base_role import BaseRole
 from shared.db.capability_reference import resolve_referenced_model_kind
 
-REFERENCE_KINDS = {"Model", "Shell", "Retriever"}
+REFERENCE_KINDS = {"Model", "Shell", "Retriever", "Template"}
 
 
 def ensure_capability_reference(
