@@ -16,6 +16,10 @@ test('catalog navigation uses the production route and visible refresh prerequis
     catalog.indexOf("command('waitFor', testId('plugins-search-input')") >= 0,
     'The catalog must be visible before any detail or refresh action'
   )
+  assert.ok(
+    catalog.indexOf("command('clickIfPresent', testId(id)") >= 0,
+    'Route back actions must skip hidden controls retained by another window'
+  )
 
   const refresh = source.slice(
     source.indexOf('async function refreshCatalog()'),
