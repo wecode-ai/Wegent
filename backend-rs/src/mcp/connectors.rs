@@ -320,7 +320,12 @@ async fn call_tool(
             }
         };
     if app.transport == "http" {
-        return call_http_tool(&app, upstream_name, &arguments, &headers).await;
+        return match call_http_tool(&app, upstream_name, &arguments, &headers).await {
+            HttpToolOutcome::Result(result) => result,
+            HttpToolOutcome::Unauthorized(message) => {
+                unauthorized(state, &app, &user, &message, attempted_access).await
+            }
+        };
     }
     match mcp::call_tool_for_transport(
         &app.transport,
@@ -348,22 +353,34 @@ async fn call_http_tool(
     upstream_name: &str,
     arguments: &Value,
     headers: &[(String, String)],
-) -> Value {
+) -> HttpToolOutcome {
     let definitions = match http_tools::definitions(app) {
         Ok(definitions) => definitions,
-        Err(error) => return failure(error.to_string()),
+        Err(error) => return HttpToolOutcome::Result(failure(error.to_string())),
     };
     let Some(tool) = definitions.iter().find(|tool| tool.name == upstream_name) else {
-        return failure("Connector tool not found");
+        return HttpToolOutcome::Result(failure("Connector tool not found"));
     };
     match http_tools::call(app, tool, arguments, headers).await {
-        Ok(call) => success(&call),
-        Err(http_tools::HttpToolError::InvalidArguments(message)) => failure(message),
+        Ok(call) => HttpToolOutcome::Result(success(&call)),
+        Err(http_tools::HttpToolError::InvalidArguments(message)) => {
+            HttpToolOutcome::Result(failure(message))
+        }
+        Err(http_tools::HttpToolError::Unauthorized(message)) => {
+            HttpToolOutcome::Unauthorized(message)
+        }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector HTTP tool failed");
-            failure(error.to_string())
+            HttpToolOutcome::Result(failure(error.to_string()))
         }
     }
+}
+
+/// An HTTP 401/403 keeps its credential-scoped recovery semantics; every
+/// other result already has the MCP content/error envelope.
+enum HttpToolOutcome {
+    Result(Value),
+    Unauthorized(String),
 }
 
 /// The upstream rejected a still-unexpired credential: flip the connection to
@@ -383,8 +400,13 @@ async fn unauthorized(
         .flatten()
         && let Some(expected_access) = attempted_access
     {
-        let _ = refresh::reject_credential_if_current(&state.mysql, row.kinds_id, &expected_access)
-            .await;
+        let _ = refresh::reject_credential_if_current(
+            &state.mysql,
+            row.kinds_id,
+            &expected_access,
+            Some(message),
+        )
+        .await;
     }
     failure(connector_auth_required(&app.slug))
 }

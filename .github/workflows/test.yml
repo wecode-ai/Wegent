@@ -317,7 +317,7 @@ jobs:
           CONNECTOR_REFRESH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/
         run: |
           uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
-          uv run python tests/integration/connector_refresh_mysql.py
+          uv run pytest tests/integration/connector_refresh_mysql.py -n 0
 
       - name: Upload MCP OAuth concurrency results
         if: always()

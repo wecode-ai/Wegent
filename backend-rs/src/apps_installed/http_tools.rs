@@ -60,6 +60,8 @@ pub(crate) enum HttpToolError {
     InvalidSchema,
     /// The caller's arguments violate the tool's contract.
     InvalidArguments(String),
+    /// The upstream rejected the credential used by this request.
+    Unauthorized(String),
     /// The upstream call failed or exceeded the response budget.
     Upstream(String),
 }
@@ -72,6 +74,7 @@ impl std::fmt::Display for HttpToolError {
             }
             Self::InvalidSchema => formatter.write_str("Connector HTTP tool schema is invalid"),
             Self::InvalidArguments(message) => write!(formatter, "{message}"),
+            Self::Unauthorized(message) => write!(formatter, "{message}"),
             Self::Upstream(message) => write!(formatter, "{message}"),
         }
     }
@@ -142,6 +145,12 @@ pub(crate) async fn call(
         .await
         .map_err(|error| HttpToolError::Upstream(error.to_string()))?;
     let status = response.status();
+    if matches!(status.as_u16(), 401 | 403) {
+        return Err(HttpToolError::Unauthorized(format!(
+            "Connector HTTP request returned status {}",
+            status.as_u16()
+        )));
+    }
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
@@ -568,6 +577,56 @@ mod tests {
             call.structured_content,
             Some(json!({"status_code": 200, "data": {"ok": true}}))
         );
+    }
+
+    /// Authorization failures are typed before body shaping, so the caller
+    /// can expire exactly the credential presented by this request.
+    #[tokio::test]
+    async fn authorization_statuses_are_not_plain_tool_errors() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        for status in [401, 403] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer).await;
+                let response = format!(
+                    "HTTP/1.1 {status} Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            });
+            let app = super::super::service::row_to_app(&crate::apps_installed::db::KindRow {
+                kinds_id: 1,
+                kinds_user_id: 0,
+                kinds_kind: "ConnectorApp".to_string(),
+                kinds_name: "erp".to_string(),
+                kinds_namespace: "system".to_string(),
+                kinds_json: brz_mysql::Json(
+                    json!({
+                        "kind": "ConnectorApp",
+                        "spec": {
+                            "name": "erp",
+                            "mcpUrl": format!("http://{address}/v1"),
+                            "authType": "oauth2",
+                            "transport": "http",
+                        }
+                    })
+                    .into(),
+                ),
+                kinds_is_active: true,
+                kinds_created_at: chrono::NaiveDateTime::default(),
+                kinds_updated_at: chrono::NaiveDateTime::default(),
+            });
+
+            let error = call(&app, &tool(), &json!({"id": "1"}), &[])
+                .await
+                .unwrap_err();
+            assert!(matches!(error, HttpToolError::Unauthorized(_)));
+        }
     }
 
     /// Arrays repeat the query parameter, and scalars follow httpx rendering.

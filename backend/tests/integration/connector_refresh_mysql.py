@@ -1,11 +1,11 @@
 """CI-covered MySQL checks for grant-scoped connector failures."""
 
-import asyncio
 import json
 import os
 import uuid
 
 import httpx
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -181,7 +181,8 @@ async def verify_rate_limited_refresh_recovers(engine) -> None:
         assert renewed.refresh_token() == "R1"
 
 
-def main() -> None:
+@pytest.fixture(scope="module")
+def mysql_engine():
     url = make_url(os.environ["CONNECTOR_REFRESH_TEST_MYSQL_URL"])
     if url.get_backend_name() != "mysql" or url.host not in {
         "mysql",
@@ -199,10 +200,7 @@ def main() -> None:
         from app.db.base import Base
 
         Base.metadata.create_all(engine)
-        verify_late_rejection_does_not_expire_newer_grant(engine)
-        verify_rejection_expires_only_the_used_grant(engine)
-        asyncio.run(verify_rate_limited_refresh_recovers(engine))
-        print("MySQL: grant-scoped rejection and 429 recovery retain the right grant")
+        yield engine
     finally:
         if engine is not None:
             engine.dispose()
@@ -211,5 +209,14 @@ def main() -> None:
         admin.dispose()
 
 
-if __name__ == "__main__":
-    main()
+def test_late_rejection_does_not_expire_newer_grant(mysql_engine) -> None:
+    verify_late_rejection_does_not_expire_newer_grant(mysql_engine)
+
+
+def test_rejection_expires_only_the_used_grant(mysql_engine) -> None:
+    verify_rejection_expires_only_the_used_grant(mysql_engine)
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_refresh_recovers(mysql_engine) -> None:
+    await verify_rate_limited_refresh_recovers(mysql_engine)

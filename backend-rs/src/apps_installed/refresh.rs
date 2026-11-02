@@ -560,20 +560,35 @@ pub(crate) async fn reject_credential_if_current<M>(
     mysql: &M,
     kind_id: i64,
     expected_access: &str,
+    last_error: Option<&str>,
 ) -> Result<(), RefreshError>
 where
     M: Mysql,
 {
-    mysql
-        .execute(
-            "UPDATE kinds SET json = JSON_SET(json, '$.spec.status', 'expired'), \
-             updated_at = NOW() WHERE id = ? \
-             AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted')), '') = ?",
-            (kind_id, expected_access),
-        )
-        .await
-        .map(|_| ())
-        .map_err(RefreshError::Database)
+    if let Some(message) = last_error {
+        let error = discovery_error(message);
+        mysql
+            .execute(
+                "UPDATE kinds SET json = JSON_SET(json, '$.spec.status', 'expired', \
+                 '$.spec.lastError', CAST(? AS JSON)), updated_at = NOW() WHERE id = ? \
+                 AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted')), '') = ?",
+                (error.as_str(), kind_id, expected_access),
+            )
+            .await
+            .map(|_| ())
+            .map_err(RefreshError::Database)
+    } else {
+        mysql
+            .execute(
+                "UPDATE kinds SET json = JSON_SET(json, '$.spec.status', 'expired'), \
+                 updated_at = NOW() WHERE id = ? \
+                 AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted')), '') = ?",
+                (kind_id, expected_access),
+            )
+            .await
+            .map(|_| ())
+            .map_err(RefreshError::Database)
+    }
 }
 
 /// The `record_tool_error` payload (`{"message": ..., "at": ...}`).
@@ -1032,7 +1047,7 @@ mod tests {
     async fn marking_a_connection_expired_keeps_the_grant() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
 
-        reject_credential_if_current(&mysql, 42, "access-ciphertext")
+        reject_credential_if_current(&mysql, 42, "access-ciphertext", None)
             .await
             .unwrap();
 
@@ -1049,7 +1064,7 @@ mod tests {
     async fn a_rejected_credential_update_is_conditional_on_its_grant() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
 
-        reject_credential_if_current(&mysql, 42, "access-ciphertext")
+        reject_credential_if_current(&mysql, 42, "access-ciphertext", None)
             .await
             .unwrap();
 

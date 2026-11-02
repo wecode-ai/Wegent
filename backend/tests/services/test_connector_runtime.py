@@ -864,8 +864,11 @@ async def test_server_config_sends_trusted_user_headers_without_opt_in(
         provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
     )
 
-    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
+    config, attempted = await ConnectorRuntimeService._server_config(
+        test_db, app, test_user
+    )
 
+    assert attempted is None
     assert config["headers"] == {
         "X-Provider": "configured",
         "X-Wegent-Username": test_user.user_name,
@@ -891,8 +894,12 @@ async def test_oauth_server_config_uses_user_token_with_identity_headers(
         expires_at=None,
     )
 
-    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
+    config, attempted = await ConnectorRuntimeService._server_config(
+        test_db, app, test_user
+    )
 
+    assert attempted is not None
+    assert attempted.access_token() == "github-user-token"
     assert config["headers"] == {
         "Authorization": "Bearer github-user-token",
         "X-Wegent-Username": test_user.user_name,
@@ -1269,6 +1276,65 @@ async def test_http_connector_validates_arguments_before_request(
 
     assert exc_info.value.status_code == 422
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_connector_auth_error_expires_the_used_grant(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain HTTP connectors follow the same 401 recovery path as MCP."""
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="ticket-api",
+        name="Ticket API",
+        transport="http",
+        auth_type="oauth2",
+        http_tools=[
+            {
+                "name": "get_ticket",
+                "method": "GET",
+                "path": "/tickets/current",
+            }
+        ],
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="ticket-api",
+        user_id=test_user.id,
+        access_token="stale-token",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+
+    async def send(
+        _client: httpx.AsyncClient,
+        request: httpx.Request,
+        *,
+        stream: bool,
+    ) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer stale-token"
+        return httpx.Response(401, text="expired", request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    with pytest.raises(HTTPException) as exc_info:
+        await ConnectorRuntimeService.call_tool(
+            test_db, test_user, "ticket-api__get_ticket", {}
+        )
+
+    assert exc_info.value.status_code == 401
+    connection = connector_connection_service.get(
+        test_db, slug="ticket-api", user_id=test_user.id
+    )
+    assert connection is not None
+    assert connection.status == "expired"
+    assert connection.refresh_token() == "refresh-token"
 
 
 @pytest.mark.asyncio

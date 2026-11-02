@@ -29,7 +29,10 @@ from app.services.connector_apps import (
     _decrypt_json,
     create_connector_http_client,
 )
-from app.services.connector_connections import connector_connection_service
+from app.services.connector_connections import (
+    ConnectorConnection,
+    connector_connection_service,
+)
 from app.services.connector_oauth import connector_oauth_service
 from shared.telemetry.decorators import trace_async
 
@@ -281,13 +284,11 @@ class ConnectorRuntimeService:
         answers: a still-broken upstream keeps its error so the UI cannot claim
         the connection recovered.
         """
+        attempted = None
         try:
-            attempted = (
-                connector_connection_service.get(db, slug=app.slug, user_id=user.id)
-                if app.auth_type != "none"
-                else None
+            attempted = await ConnectorRuntimeService.refresh_tool_summary_cache(
+                db, app, user
             )
-            await ConnectorRuntimeService.refresh_tool_summary_cache(db, app, user)
         except Exception as error:  # noqa: BLE001 - upstream failures vary
             if ConnectorRuntimeService._mark_expired_on_auth_error(
                 db, app, user, error, attempted
@@ -306,12 +307,15 @@ class ConnectorRuntimeService:
         db: Session,
         app: ConnectorApp,
         user: User,
-    ) -> None:
+    ) -> ConnectorConnection | None:
         """Cache the current tool surface for later expired-connection views."""
+        attempted = None
         if app.transport == "http":
             app_tools = ConnectorRuntimeService._http_tools(app)
         else:
-            config, _ = await ConnectorRuntimeService._server_config(db, app, user)
+            config, attempted = await ConnectorRuntimeService._server_config(
+                db, app, user
+            )
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 upstream_tools = await ConnectorRuntimeService._list_all_tools(session)
             allowlist = set(app.tool_allowlist or [])
@@ -321,6 +325,7 @@ class ConnectorRuntimeService:
                 if not allowlist or tool.name in allowlist
             ]
         await ConnectorRuntimeService._cache_tool_summaries(db, app, user, app_tools)
+        return attempted
 
     @staticmethod
     async def _cache_tool_summaries(
@@ -391,19 +396,42 @@ class ConnectorRuntimeService:
         allowlist = set(app.tool_allowlist or [])
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
-        config = await ConnectorRuntimeService._server_config(db, app, user)
-        attempted = (
-            connector_connection_service.get(db, slug=app.slug, user_id=user.id)
-            if app.auth_type != "none"
-            else None
-        )
+        config, attempted = await ConnectorRuntimeService._server_config(db, app, user)
         if app.transport == "http":
             definition = ConnectorRuntimeService._http_tool_definition(
                 app, upstream_name
             )
-            return await ConnectorRuntimeService._call_http_tool(
-                config, definition, arguments
-            )
+            try:
+                (
+                    (result, structured, is_error),
+                    status_code,
+                ) = await ConnectorRuntimeService._call_http_tool(
+                    config, definition, arguments
+                )
+                # Non-JSON error responses deliberately have no structured
+                # body, but their upstream status still drives OAuth recovery.
+                if status_code in {401, 403}:
+                    raise HTTPException(
+                        status_code, f"Connector upstream returned {status_code}"
+                    )
+                return result, structured, is_error
+            except HTTPException as exc:
+                if exc.status_code not in {401, 403}:
+                    raise
+                error: Exception = exc
+            except Exception as exc:
+                error = exc
+            if ConnectorRuntimeService._mark_expired_on_auth_error(
+                db, app, user, error, attempted
+            ):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' requires authorization",
+                ) from error
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                ConnectorRuntimeService._tool_failure_detail(error),
+            ) from error
         try:
             schema = ConnectorRuntimeService._cached_input_schema(
                 db, app, user, upstream_name
@@ -620,11 +648,8 @@ class ConnectorRuntimeService:
         user: User,
     ) -> list[Any]:
         try:
-            config = await ConnectorRuntimeService._server_config(db, app, user)
-            attempted = (
-                connector_connection_service.get(db, slug=app.slug, user_id=user.id)
-                if app.auth_type != "none"
-                else None
+            config, attempted = await ConnectorRuntimeService._server_config(
+                db, app, user
             )
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 return await ConnectorRuntimeService._list_all_tools(session)
@@ -655,7 +680,7 @@ class ConnectorRuntimeService:
         config: dict[str, Any],
         definition: ConnectorHttpToolDefinition,
         arguments: dict[str, Any],
-    ) -> tuple[Any, dict[str, Any] | None, bool]:
+    ) -> tuple[tuple[Any, dict[str, Any] | None, bool], int]:
         ConnectorRuntimeService._validate_http_arguments(definition, arguments)
         url, query, body = ConnectorRuntimeService._http_request_parts(
             config["url"], definition, arguments
@@ -684,10 +709,13 @@ class ConnectorRuntimeService:
                 status.HTTP_502_BAD_GATEWAY,
                 "Connector HTTP request failed",
             ) from exc
-        return ConnectorRuntimeService._http_response(
+        return (
+            ConnectorRuntimeService._http_response(
+                response.status_code,
+                content,
+                response.encoding,
+            ),
             response.status_code,
-            content,
-            response.encoding,
         )
 
     @staticmethod
@@ -839,8 +867,9 @@ class ConnectorRuntimeService:
         db: Session,
         app: ConnectorApp,
         user: User | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], ConnectorConnection | None]:
         headers = _decrypt_json(app.provider_headers_encrypted)
+        connection = None
         if user and app.auth_type != "none":
             connection = connector_connection_service.get(
                 db,
@@ -886,11 +915,14 @@ class ConnectorRuntimeService:
         if user:
             headers["X-Wegent-Username"] = user.user_name
             headers["X-Wegent-User-Id"] = str(user.id)
-        return {
-            "type": app.transport,
-            "url": app.mcp_url,
-            "headers": headers,
-        }
+        return (
+            {
+                "type": app.transport,
+                "url": app.mcp_url,
+                "headers": headers,
+            },
+            connection,
+        )
 
     @staticmethod
     def _model_dump(value: Any) -> dict[str, Any] | None:

@@ -104,9 +104,13 @@ where
             // reached its `expiresAt` yet.
             tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
             if let Some(attempted_access) = attempted_access {
-                let _ =
-                    refresh::reject_credential_if_current(mysql, row.kinds_id, &attempted_access)
-                        .await;
+                let _ = refresh::reject_credential_if_current(
+                    mysql,
+                    row.kinds_id,
+                    &attempted_access,
+                    Some(&message),
+                )
+                .await;
             }
         }
         Err(ProbeError::Transport(message)) => {

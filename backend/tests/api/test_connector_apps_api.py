@@ -807,7 +807,7 @@ def test_admin_can_test_a_connector_app_restricted_to_other_roles(
     )
 
     async def fake_call_http_tool(config, definition, arguments):
-        return ([{"type": "text", "text": "ok"}], None, False)
+        return (([{"type": "text", "text": "ok"}], None, False), 200)
 
     monkeypatch.setattr(
         ConnectorRuntimeService,

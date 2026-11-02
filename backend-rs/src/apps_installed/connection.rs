@@ -574,6 +574,7 @@ mod tests {
     /// A ciphertext the key cannot read is missing, not a credential to send.
     #[test]
     fn undecryptable_credentials_read_as_empty() {
+        crate::subscriptions_item::crypto::use_test_key();
         let stored = ConnectorConnection::from_row(&row(serde_json::json!({
             "status": "connected",
             "accessTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0",

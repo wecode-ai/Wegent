@@ -254,7 +254,7 @@ async fn discovery_does_not_revive_a_rejected_grant() {
                 .expect("seeded row");
 
             // Another request's refresh was rejected in the meantime.
-            refresh::reject_credential_if_current(&mysql, stale.kinds_id, "old-access")
+            refresh::reject_credential_if_current(&mysql, stale.kinds_id, "old-access", None)
                 .await
                 .unwrap();
             mysql
@@ -657,6 +657,7 @@ async fn a_late_tool_rejection_does_not_expire_a_newer_grant() {
                 &mysql,
                 attempted.kinds_id,
                 attempted_access.as_deref().unwrap(),
+                Some("upstream 401"),
             )
             .await
             .unwrap();
@@ -690,14 +691,20 @@ async fn a_current_tool_rejection_expires_only_the_used_grant() {
                 .unwrap()
                 .expect("seeded row");
 
-            refresh::reject_credential_if_current(&mysql, attempted.kinds_id, "old-access")
-                .await
-                .unwrap();
+            refresh::reject_credential_if_current(
+                &mysql,
+                attempted.kinds_id,
+                "old-access",
+                Some("upstream 401"),
+            )
+            .await
+            .unwrap();
 
             let spec = read_spec(&mysql).await;
             assert_eq!(spec["status"], json!("expired"));
             assert_eq!(spec["accessTokenEncrypted"], json!("old-access"));
             assert_eq!(spec["refreshTokenEncrypted"], json!("old-refresh"));
+            assert_eq!(spec["lastError"]["message"], json!("upstream 401"));
         }
     })
     .await;

@@ -7,7 +7,7 @@ or a disconnect drops its own result.
 """
 
 import json
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
@@ -471,6 +471,75 @@ async def test_a_late_tool_401_does_not_expire_a_newer_grant(
     assert current.status == "connected"
     assert current.access_token() == "A1"
     assert current.refresh_token() == "R1"
+
+
+@pytest.mark.asyncio
+async def test_tool_request_keeps_its_header_and_attempted_grant_together(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new grant between config and rejection never receives A0's 401."""
+    _create_app(test_db, test_user)
+    attempted = _connect(test_db, test_user, access="A0", refresh="R0")
+    attempted = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=SLUG,
+        user_id=test_user.id,
+        access_token="A0",
+        refresh_token="R0",
+        token_type="bearer",
+        granted_scopes=["race:read"],
+        external_account_name="race@example.test",
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1),
+    )
+    seen = []
+
+    class Session:
+        async def list_tools(self, cursor=None):
+            return type(
+                "Listing",
+                (),
+                {
+                    "tools": [type("Tool", (), {"name": "search"})()],
+                    "nextCursor": None,
+                },
+            )()
+
+        async def call_tool(self, name, arguments):
+            raise RuntimeError("401 unauthorized")
+
+    @asynccontextmanager
+    async def session(config):
+        assert config["headers"]["Authorization"] == "Bearer A0"
+        seen.append(config["headers"]["Authorization"])
+        with _competing_writer(test_db) as competing:
+            connector_connection_service.save_oauth_connection(
+                competing,
+                slug=SLUG,
+                user_id=test_user.id,
+                access_token="A1",
+                refresh_token="R1",
+                token_type="bearer",
+                granted_scopes=["race:read"],
+                external_account_name="race@example.test",
+                expires_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                + timedelta(hours=1),
+            )
+        yield Session()
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", session)
+    with pytest.raises(HTTPException) as error:
+        await ConnectorRuntimeService.call_tool(
+            test_db, test_user, f"{SLUG}__search", {}
+        )
+
+    assert error.value.status_code == 401
+    assert seen == ["Bearer A0"]
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.status == "connected"
+    assert current.access_token() == "A1"
 
 
 @pytest.mark.asyncio
