@@ -41,6 +41,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command('select', testId('template-role-main-role-0'), { value: human })
     for (let index = 1; index < count; index++) {
       const selector = testId(`template-role-main-role-${index}`)
+      await control.command('waitFor', `${selector} option[value^="agent:"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       const agent = await control.command(
         'getAttribute',
         `${selector} option[value^="agent:"]`,
