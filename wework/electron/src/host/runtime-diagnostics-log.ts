@@ -16,4 +16,8 @@ export class RuntimeDiagnosticsLog {
     if (!message.startsWith(this.prefix)) return
     await this.log.write('stdout', `web_contents_id=${contentsId} ${message}`)
   }
+
+  flush(): Promise<void> {
+    return this.log.flush()
+  }
 }

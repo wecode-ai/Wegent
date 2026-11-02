@@ -651,6 +651,24 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/cloud-model-recovery.mjs" \
   "wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs"
 
+for responses_gateway_path in \
+  wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs \
+  backend/app/api/endpoints/openapi_responses.py \
+  backend/app/api/endpoints/wework_api.py \
+  backend/app/services/wework_api/service.py \
+  backend/tests/api/test_openapi_responses.py \
+  backend/tests/api/test_wework_api.py; do
+  assert_desktop_case "Responses creation reuses the existing account-auth Cloud lifecycle: $responses_gateway_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$responses_gateway_path"
+done
+
 assert_desktop_case "deleted task model recovery runs in the cloud shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
@@ -2614,7 +2632,7 @@ if [[ "$core_build_job" != *"restore-wework-core-e2e-build-oci.sh"* ]] ||
     "$wework_core_build_action" ||
   ! grep -Fq "resources/bin/wegent-executor" "$wework_core_build_action" ||
   ! grep -Fq "restore-oci-runtime-binary.sh" "$wework_core_build_action" ||
-  ! grep -Fq "BUILD_RUNTIMES_FROM_SOURCE:" "$wework_core_build_action"; then
+  ! grep -Fq "RUNTIME_ARTIFACTS:" "$wework_core_build_action"; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi

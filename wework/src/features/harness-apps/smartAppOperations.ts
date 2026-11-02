@@ -47,7 +47,9 @@ function smartAppContext(installation: HarnessAppInstallation): SmartAppIdentity
 }
 
 function assertValidPreview(preview: HarnessAppPreview): void {
-  if (!preview.valid || !preview.manifest) throw new Error('Invalid Smart App package')
+  if (!preview.valid || !preview.manifest) {
+    throw new Error(preview.issues[0] || 'Invalid Smart App package')
+  }
 }
 
 function notifyInstalled(installation: HarnessAppInstallation): void {

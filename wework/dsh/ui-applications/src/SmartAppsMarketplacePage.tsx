@@ -58,6 +58,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { ApplicationContextToolbar } from '@/components/sites/ApplicationContextToolbar'
 import { Button } from '@/components/ui/button'
+import { stripAppBasePath } from '@/config/runtime'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
 import {
   SmartAppDevelopmentDialog,
@@ -514,7 +515,11 @@ export function SmartAppsMarketplacePage({
   useEffect(() => {
     const refreshWhenReenteringSmartApps = () => {
       const params = new URLSearchParams(window.location.search)
-      if (window.location.pathname !== '/sites' || params.get('app_type') !== 'smart_app') return
+      if (
+        stripAppBasePath(window.location.pathname) !== '/sites' ||
+        params.get('app_type') !== 'smart_app'
+      )
+        return
       void refresh()
     }
     window.addEventListener('popstate', refreshWhenReenteringSmartApps)
