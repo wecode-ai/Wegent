@@ -1171,19 +1171,25 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   mistaken for a layout change and snapped back to the bottom. Custom controls
   that cancel wheel events and internal overscroll containment keep ownership.
 
-  桌面 E2E 通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
+  桌面 E2E 先激活操作所属的工作区标签页，等待控件可见，再将目标区域移入视口；
+  后台保留的 DOM 不能作为交互就绪的证明。通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
   回执；不能把跨进程 iframe 的输入直接送给主渲染器。鼠标移动前后观测同一输入点，
   仅当其仍命中原 iframe 且位于目标区域内时发送滚轮；遮挡或移出目标直接报错，
-  附前后几何与命中信息，不重试。临时根页面被动监听器只记录可信原生事件，
+  附前后几何、命中元素及最近可识别祖先信息，不重试。祖先诊断限制层数和标识字段长度，
+  不读取文本。临时根页面被动监听器只记录可信原生事件，
   在所有退出路径清理，并先于 debugger 使用权释放。回执不代表 DOM 已收到事件；
   根页面探针只提供即时诊断，实际投递由业务断言确认。内联可视化输入、主工作台
   截图、堆读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
   外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
-  Desktop E2E dispatches native wheel input through Chromium hit testing and
+  Desktop E2E first activates the owning workspace tab, waits for visible
+  controls, and reveals the target region. Retained background DOM does not
+  establish interaction readiness. It dispatches native wheel input through Chromium hit testing and
   awaits each protocol acknowledgement. Before
   and after the mouse move, the fixed input point must hit the same owned iframe
   and remain inside the target region. Occlusion or loss of the target fails with
-  both observations, without retries. A temporary passive root listener records
+  both observations, without retries. Hit diagnostics include the nearest
+  identified ancestor with bounded traversal and identifier field lengths, without text.
+  A temporary passive root listener records
   only trusted native events and is cleaned up on every exit before releasing
   the debugger lease. Acknowledgements do not establish DOM delivery, and the
   root probe is an immediate diagnostic snapshot; business assertions verify
@@ -1200,8 +1206,9 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     participant Lease as Shared debugger leases
     participant Chromium
     participant Frame as Opaque-origin iframe
+    Test->>Test: Activate owning tab, wait for visibility and reveal target
     Test->>Lease: Acquire input lease
-    Test->>Test: Install root probe and observe fixed point ownership
+    Test->>Test: Install root probe; observe fixed point ownership and identified ancestor
     Test->>Chromium: Dispatch mouse move and await acknowledgement
     Chromium-->>Test: Acknowledge mouse move
     Test->>Test: Recheck point ownership and target region; fail if lost

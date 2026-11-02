@@ -474,6 +474,91 @@ describe('inline visualization verification controls', () => {
     probe.expectCleaned()
   })
 
+  test.each(['initial', 'after-move'])(
+    'identifies the nearest marked ancestor of an SVG covering the %s input point',
+    async stage => {
+      const { contents, hitTest } = visibleWheelTarget()
+      const probe = observeRootWheelProbe()
+      const outer = document.createElement('div')
+      outer.id = 'outer-owner'
+      outer.innerHTML =
+        '<button data-testid="scroll-to-bottom-button" class="floating-action"><svg><path></path></svg></button>'
+      outer.append('Private control label')
+      document.body.append(outer)
+      const path = outer.querySelector('path')!
+      if (stage === 'initial') hitTest.mockReturnValue(path)
+      else {
+        contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+          if ((params as { type: string }).type === 'mouseMoved') hitTest.mockReturnValue(path)
+          return {}
+        })
+      }
+      const failure = await controlInlineVisualizationFrame(
+        contents,
+        { ...request('wheel', '#blank'), deltaY: 80 },
+        environment
+      ).catch(error => error)
+      expect(failure).toMatchObject({
+        code: 'e2e_target_changed',
+        details: {
+          after: {
+            ownsPoint: false,
+            hit: { tag: 'path' },
+            hitAncestor: {
+              tag: 'button',
+              id: null,
+              testId: 'scroll-to-bottom-button',
+              className: 'floating-action',
+            },
+          },
+        },
+      })
+      expect(JSON.stringify(failure)).not.toContain('Private control label')
+      expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(stage === 'initial' ? 0 : 1)
+      expect(contents.debugger.detach).toHaveBeenCalledOnce()
+      probe.expectCleaned()
+    }
+  )
+
+  test.each([8, 9])('bounds marked-ancestor traversal and descriptors at depth %s', async depth => {
+    const { contents, hitTest } = visibleWheelTarget()
+    const overlay = document.createElement('div')
+    overlay.id = 'i'.repeat(300)
+    overlay.dataset.testid = 't'.repeat(300)
+    overlay.className = 'c'.repeat(300)
+    document.body.append(overlay)
+    let parent = overlay
+    for (let index = 1; index < depth; index += 1) {
+      parent = parent.appendChild(document.createElement('div'))
+    }
+    const child = parent.appendChild(document.createElement('span'))
+    hitTest.mockReturnValue(child)
+    await expect(
+      controlInlineVisualizationFrame(
+        contents,
+        { ...request('wheel', '#blank'), deltaY: 80 },
+        environment
+      )
+    ).rejects.toMatchObject({
+      code: 'e2e_target_changed',
+      details: {
+        after: {
+          hitAncestor:
+            depth === 8
+              ? {
+                  tag: 'div',
+                  id: 'i'.repeat(256),
+                  testId: 't'.repeat(256),
+                  className: 'c'.repeat(256),
+                }
+              : null,
+        },
+      },
+    })
+    expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+    expect(contents.debugger.detach).toHaveBeenCalledOnce()
+  })
+
   test('allows subpixel movement while the fixed point still hits the owned target', async () => {
     const { contents } = visibleWheelTarget()
     contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
@@ -547,6 +632,52 @@ describe('inline visualization verification controls', () => {
       },
     })
     expect(JSON.stringify(result)).not.toContain(rootTarget.textContent)
+    probe.expectCleaned()
+  })
+
+  test('identifies a trusted root wheel target through its marked ancestor', async () => {
+    const { contents } = visibleWheelTarget()
+    const probe = observeRootWheelProbe()
+    const owner = document.createElement('button')
+    owner.id = 'root-wheel-owner'
+    owner.innerHTML = '<svg><path></path></svg>'
+    owner.append('Private root wheel label')
+    document.body.append(owner)
+    contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+      if ((params as { type: string }).type === 'mouseWheel') {
+        probe.listener()({
+          isTrusted: true,
+          target: owner.querySelector('path'),
+          clientX: 210,
+          clientY: 210,
+          deltaX: 0,
+          deltaY: 80,
+          deltaMode: 0,
+          cancelable: true,
+          defaultPrevented: false,
+        } as unknown as Event)
+      }
+      return {}
+    })
+    const result = await controlInlineVisualizationFrame(
+      contents,
+      { ...request('wheel', '#blank'), deltaY: 80 },
+      environment
+    )
+    expect(result).toMatchObject({
+      probe: {
+        afterWheel: {
+          wheelEvents: [
+            {
+              target: { tag: 'path' },
+              targetAncestor: { tag: 'button', id: 'root-wheel-owner' },
+            },
+          ],
+        },
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain('Private root wheel label')
+    expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(2)
     probe.expectCleaned()
   })
 

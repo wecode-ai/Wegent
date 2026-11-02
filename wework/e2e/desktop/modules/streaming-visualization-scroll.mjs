@@ -183,8 +183,8 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
     assert.fail(typeof description === 'function' ? description() : description)
   }
 
-  async function centerFrame(control) {
-    await control.command('scrollIntoViewAsUser', FRAME)
+  async function revealFrame(control, alignment = 'center') {
+    await control.command('scrollIntoViewAsUser', FRAME, { value: alignment })
     await control.command('waitFor', FRAME, { stableMs: 250, timeoutMs: uiTimeoutMs })
   }
 
@@ -272,7 +272,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
   }
 
   async function verifyNestedPanelWheel(control) {
-    await centerFrame(control)
+    await revealFrame(control)
     await wheel(control, '#blank', -72)
     await waitFor(
       async () => distanceFromBottom(await outerMetrics(control)) >= 50,
@@ -328,7 +328,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
   }
 
   async function verifyPreventedWheel(control) {
-    await centerFrame(control)
+    await revealFrame(control, 'start')
     await wheel(control, '#blank', -24)
     await waitFor(
       async () => distanceFromBottom(await outerMetrics(control)) >= 16,

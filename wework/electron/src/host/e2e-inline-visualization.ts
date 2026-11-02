@@ -18,15 +18,18 @@ interface VisualizationRect {
   bottom: number
 }
 
+interface VisualizationElementDescriptor {
+  tag: string
+  id: string | null
+  testId: string | null
+  className: string | null
+}
+
 interface VisualizationRootObservation {
   frameRect: VisualizationRect | null
   ownsPoint: boolean
-  hit: {
-    tag: string
-    id: string | null
-    testId: string | null
-    className: string | null
-  } | null
+  hit: VisualizationElementDescriptor | null
+  hitAncestor: VisualizationElementDescriptor | null
 }
 
 interface VisualizationTargetObservation extends VisualizationRootObservation {
@@ -260,6 +263,7 @@ function parseRootObservation(value: unknown): VisualizationRootObservation {
     frameRect: record.frameRect === null ? null : parseVisualizationRect(record.frameRect),
     ownsPoint: record.ownsPoint === true,
     hit: record.hit as VisualizationRootObservation['hit'],
+    hitAncestor: record.hitAncestor as VisualizationRootObservation['hitAncestor'],
   }
 }
 
@@ -314,6 +318,13 @@ async function visualizationRootProbe(
       testId: element.getAttribute('data-testid')?.slice(0, 256) || null,
       className: element.getAttribute('class')?.slice(0, 256) || null,
     } : null;
+    const describeAncestor = element => {
+      let ancestor = element instanceof Element ? element.parentElement : null;
+      for (let depth = 0; ancestor && depth < 8; depth += 1, ancestor = ancestor.parentElement) {
+        if (ancestor.id || ancestor.getAttribute('data-testid')) return describe(ancestor);
+      }
+      return null;
+    };
     const observe = () => {
       const rect = frame?.isConnected ? frame.getBoundingClientRect() : null;
       const hit = document.elementFromPoint(point.x, point.y);
@@ -321,6 +332,7 @@ async function visualizationRootProbe(
         frameRect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null,
         ownsPoint: Boolean(frame?.isConnected && frame.src === point.url && hit === frame),
         hit: describe(hit),
+        hitAncestor: describeAncestor(hit),
       };
     };
     const events = [];
@@ -328,7 +340,8 @@ async function visualizationRootProbe(
       if (!event.isTrusted) return;
       events.push({
         time: performance.now(), trusted: event.isTrusted,
-        target: describe(event.target), clientX: event.clientX, clientY: event.clientY,
+        target: describe(event.target), targetAncestor: describeAncestor(event.target),
+        clientX: event.clientX, clientY: event.clientY,
         deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode,
         cancelable: event.cancelable, defaultPrevented: event.defaultPrevented,
       });
