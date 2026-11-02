@@ -40,22 +40,31 @@ def _create_group(test_db, user, name: str) -> Namespace:
     return namespace
 
 
-def _create_shell(test_db, user, namespace: str) -> Kind:
+def _create_shell(
+    test_db,
+    user,
+    namespace: str,
+    *,
+    name: str = "group-claude",
+    shell_type: str = "ClaudeCode",
+    owner_user_id: int | None = None,
+) -> Kind:
+    owner_id = user.id if owner_user_id is None else owner_user_id
     shell = Kind(
-        user_id=user.id,
+        user_id=owner_id,
         kind="Shell",
-        name="group-claude",
+        name=name,
         namespace=namespace,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Shell",
             "metadata": {
-                "name": "group-claude",
+                "name": name,
                 "namespace": namespace,
                 "labels": {"type": "local_engine"},
             },
             "spec": {
-                "shellType": "ClaudeCode",
+                "shellType": shell_type,
                 "supportModel": [],
                 "baseImage": "example.invalid/executor:test",
             },
@@ -187,10 +196,43 @@ def test_bot_list_resolves_referenced_shells_in_batch(
     assert listed["shell_type"] == "ClaudeCode"
 
 
+def test_detail_and_list_share_reference_precedence(
+    test_db, test_user, referenced_shell_bot
+):
+    bot, _shell, source_group = referenced_shell_bot
+    _create_shell(
+        test_db,
+        test_user,
+        "aaa-reference",
+        name="group-claude",
+        shell_type="Codex",
+        owner_user_id=test_user.id + 1,
+    )
+
+    detail = BotKindsService(Kind).get_by_id_and_user(
+        test_db, bot_id=bot.id, user_id=test_user.id
+    )
+    listed = next(
+        item
+        for item in BotKindsService(Kind).get_user_bots(
+            test_db,
+            user_id=test_user.id,
+            scope="group",
+            group_name=source_group,
+            limit=100,
+        )
+        if item["id"] == bot.id
+    )
+
+    assert detail["shell_type"] == "ClaudeCode"
+    assert listed["shell_type"] == detail["shell_type"]
+
+
 def test_bot_update_keeps_shell_type_for_referenced_shell(
     test_db, test_user, referenced_shell_bot
 ):
     bot, shell, _source_group = referenced_shell_bot
+    existing_namespace = bot.json["spec"]["shellRef"]["namespace"]
 
     result = BotKindsService(Kind).update_with_user(
         test_db,
@@ -205,3 +247,41 @@ def test_bot_update_keeps_shell_type_for_referenced_shell(
 
     assert result["shell_name"] == "group-claude"
     assert result["shell_type"] == "ClaudeCode"
+    refreshed = test_db.get(Kind, bot.id)
+    assert refreshed.json["spec"]["shellRef"]["namespace"] == existing_namespace
+
+
+def test_bot_update_replaces_obsolete_group_reference_public_fallback(
+    test_db, test_user, referenced_shell_bot
+):
+    bot, shell, _source_group = referenced_shell_bot
+    source_shell = test_db.get(Kind, shell.id)
+    source_shell.is_active = False
+    test_db.query(ResourceMember).filter(
+        ResourceMember.resource_type == "Shell",
+        ResourceMember.resource_id == shell.id,
+    ).delete()
+    _create_shell(
+        test_db,
+        test_user,
+        "default",
+        name="group-claude",
+        shell_type="Codex",
+        owner_user_id=0,
+    )
+    test_db.commit()
+
+    result = BotKindsService(Kind).update_with_user(
+        test_db,
+        bot_id=bot.id,
+        obj_in=BotUpdate(
+            name=bot.name,
+            shell_name=shell.name,
+            system_prompt="updated prompt",
+        ),
+        user_id=test_user.id,
+    )
+
+    refreshed = test_db.get(Kind, bot.id)
+    assert result["shell_type"] == "Codex"
+    assert refreshed.json["spec"]["shellRef"]["namespace"] == "default"

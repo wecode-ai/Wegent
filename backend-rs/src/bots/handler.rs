@@ -6,7 +6,7 @@
 //! resolution, the paginated Bot lookup with a batched Ghost/Shell/Model
 //! preload, and response assembly
 //! (`app/api/endpoints/adapter/bots.py::list_bots`).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -295,26 +295,45 @@ async fn preload_components(
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
-    if !missing_shells.is_empty() {
-        for row in repo::public_shells(&state.mysql, &missing_shells)
+    resolve_missing_shell_references(&state.mysql, user_id, &missing_shells, &mut shells).await?;
+
+    let missing_group_shells: Vec<RefKey> = shell_keys
+        .iter()
+        .filter(|(_, namespace)| namespace != "default")
+        .filter(|key| !shells.contains_key(*key))
+        .cloned()
+        .collect();
+    if !missing_group_shells.is_empty() {
+        for row in repo::group_shells(&state.mysql, &missing_group_shells)
             .await
             .map_err(database_error)?
         {
             shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
         }
     }
-    let missing_shell_references: Vec<RefKey> = shell_keys
+
+    let missing_public_shells: Vec<RefKey> = shell_keys
         .iter()
         .filter(|key| !shells.contains_key(*key))
         .cloned()
         .collect();
-    resolve_missing_shell_references(
-        &state.mysql,
-        user_id,
-        &missing_shell_references,
-        &mut shells,
-    )
-    .await?;
+    let mut seen_public_names = HashSet::new();
+    let public_names: Vec<String> = missing_public_shells
+        .iter()
+        .filter_map(|(name, _)| seen_public_names.insert(name.clone()).then(|| name.clone()))
+        .collect();
+    if !public_names.is_empty() {
+        for row in repo::public_shells_by_names(&state.mysql, &public_names)
+            .await
+            .map_err(database_error)?
+        {
+            for (name, namespace) in &missing_public_shells {
+                if name == &row.kinds_name {
+                    shells.insert((name.clone(), namespace.clone()), row.clone());
+                }
+            }
+        }
+    }
 
     let mut models: HashMap<RefKey, KindRow> = HashMap::new();
     for row in repo::personal_models(&state.mysql, user_id, &personal_model_keys)
@@ -366,17 +385,29 @@ async fn resolve_missing_shell_references<M>(
 where
     M: brz_mysql::Mysql,
 {
-    for (name, namespace) in missing_keys {
-        let Some(row) = shell_resolution::referenced_shell(mysql, name, user_id, namespace)
+    let mut namespaces: Vec<String> = Vec::new();
+    for (_, namespace) in missing_keys {
+        if !namespaces.contains(namespace) {
+            namespaces.push(namespace.clone());
+        }
+    }
+    for namespace in namespaces {
+        let names: HashSet<&str> = missing_keys
+            .iter()
+            .filter(|(_, candidate)| candidate == &namespace)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let referenced_shells = shell_resolution::referenced_shells(mysql, user_id, &namespace)
             .await
-            .map_err(database_error)?
-        else {
-            continue;
-        };
-        shells.insert(
-            (name.clone(), namespace.clone()),
-            kind_row_from_referenced_shell(row),
-        );
+            .map_err(database_error)?;
+        for row in referenced_shells {
+            if names.contains(row.name.as_str()) {
+                shells.insert(
+                    (row.name.clone(), namespace.clone()),
+                    kind_row_from_referenced_shell(row),
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -523,7 +554,10 @@ mod tests {
     #[tokio::test]
     async fn missing_shell_references_use_capability_reference_lookup() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let missing = vec![("group-claude".to_string(), "default".to_string())];
+        let missing = vec![
+            ("group-claude".to_string(), "default".to_string()),
+            ("other-claude".to_string(), "default".to_string()),
+        ];
         let mut shells = HashMap::new();
 
         resolve_missing_shell_references(&mysql, 74, &missing, &mut shells)
@@ -531,11 +565,15 @@ mod tests {
             .unwrap();
 
         let queries = mysql.queries();
-        assert!(queries.iter().any(|query| {
-            query
-                .sql
-                .contains("resource_members.resource_type = 'Shell'")
-        }));
+        assert_eq!(
+            queries
+                .iter()
+                .filter(|query| query
+                    .sql
+                    .contains("resource_members.resource_type = 'Shell'"))
+                .count(),
+            1
+        );
     }
 
     #[test]

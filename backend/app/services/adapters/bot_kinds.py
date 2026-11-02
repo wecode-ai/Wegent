@@ -1052,9 +1052,19 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             shell_ref = bot_crd.spec.shellRef
             shell = None
             if shell_ref.name == new_shell_name:
-                shell = get_shell_by_name(
-                    db, new_shell_name, user_id, shell_ref.namespace or "default"
+                existing_namespace = shell_ref.namespace or "default"
+                candidate = get_shell_by_name(
+                    db, new_shell_name, user_id, existing_namespace
                 )
+                public_fallback = (
+                    candidate is not None
+                    and candidate.user_id == 0
+                    and candidate.namespace == "default"
+                )
+                if candidate and (
+                    existing_namespace == "default" or not public_fallback
+                ):
+                    shell = candidate
 
             if shell is None:
                 try:
