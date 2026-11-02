@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
@@ -72,7 +72,7 @@ async function historicalComponent(release, component, directory) {
   await mkdir(directory, { recursive: true })
   const archive = join(directory, asset)
   try {
-    await access(archive)
+    assert.equal(await hashReleaseAsset(archive), sha256, 'Historical component bytes changed')
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
     const response = await fetch(
@@ -80,9 +80,15 @@ async function historicalComponent(release, component, directory) {
       { signal: AbortSignal.timeout(120_000) }
     )
     assert.ok(response.ok, `Historical plugin component download failed: HTTP ${response.status}`)
-    await pipeline(response.body, createWriteStream(archive, { flags: 'wx' }))
+    const partial = `${archive}.${randomUUID()}.partial`
+    try {
+      await pipeline(response.body, createWriteStream(partial, { flags: 'wx' }))
+      assert.equal(await hashReleaseAsset(partial), sha256, 'Historical component bytes changed')
+      await rename(partial, archive)
+    } finally {
+      await rm(partial, { force: true })
+    }
   }
-  assert.equal(await hashReleaseAsset(archive), sha256, 'Historical component bytes changed')
   const installed = join(directory, 'installed')
   await mkdir(installed, { recursive: true })
   await extractRuntimeArchive(archive, installed)
