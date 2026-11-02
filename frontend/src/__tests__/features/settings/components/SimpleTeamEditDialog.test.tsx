@@ -1231,6 +1231,40 @@ describe('Simple TeamEditDialog', () => {
     expect(mockedCreateBot).not.toHaveBeenCalled()
   })
 
+  it('keeps editing an existing team saveable when the group list fails', async () => {
+    const team = makeTeam()
+    ;(listGroups as jest.Mock).mockRejectedValueOnce(new Error('group load failed'))
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: true,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-scope-team')).toHaveAttribute('aria-pressed', 'true')
+    })
+    expect(await screen.findByTestId('capability-scope-groups-error')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalled()
+    })
+  })
+
   it('skips writable group loading when the create target is fixed', async () => {
     render(
       <TeamEditDialog

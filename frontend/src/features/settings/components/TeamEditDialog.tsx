@@ -1206,7 +1206,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       return
     }
-    if (publishTarget === 'team' && availableWritableGroupsError) {
+    // Editing keeps the entity's own namespace, so a failed group refresh must
+    // not block unrelated edits; only new team targets need the fresh list.
+    // Editing keeps the entity's own namespace, so a failed group refresh must
+    // not block unrelated edits; only new team targets need the fresh list.
+    if (!isEditing && publishTarget === 'team' && availableWritableGroupsError) {
       toast({
         variant: 'destructive',
         title: t('resource-library:messages.groups_load_failed'),
