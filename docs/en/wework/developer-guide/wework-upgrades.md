@@ -28,10 +28,9 @@ Suite v7 runs `app-upgrade` through the normal default layout in an isolated Hom
 rollback. After writers stop, it uses production snapshot, profile-retention, and activation code
 to establish an unstarted legacy activation. It checks source usability after restart, automatic
 target-owned repair, task preservation and continuation, and rollback. The test runner's initial app environment allows only OS session settings and test control/model services;
-product path, binary, identity, and update-source overrides are absent. Independently packaged
-fixtures embed their test identity/feed as package defaults and retain a source snapshot of the
-delivered `0.6.3` bootstrap. Never edit signed archives. Other checkpoints retain explicit
-user-data isolation and incompatible-snapshot coverage.
+product path, binary, identity, and update-source overrides are absent. Suite v9 downloads
+actual historical archives without rebuilding or editing them, and uses the default layout
+for every upgrade checkpoint. Incompatible pairs retain snapshot-restoration assertions.
 
 `upgrade-policy.json` can declare `requiredDirectUpgrades[targetVersion]`. The repair release
 `0.6.4-beta.2` must verify exact-package upgrade and rollback directly from `0.6.2`, `0.6.3`, and
@@ -86,8 +85,8 @@ Preparation leaves the active source record unchanged; cancellation removes only
 
 Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
 outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
-continuing the original task after rollback. Source fixtures retain snapshots of the delivered
-bootstrap, release store, and native launcher rather than reimplementing their behavior.
+continuing the original task after rollback. Suite v9 retains the delivered bootstrap,
+release store, and native launcher by downloading old packages without rebuilding them.
 Failed activation also enters through the signed versioned source to cover cached legacy recovery.
 Mechanism evidence still cannot authorize production edges bound to different package hashes.
 
@@ -112,14 +111,14 @@ Incompatible restoration retains the rejected slot so subsequent cleanup cannot 
 | Layer                        | Inputs                                                 | Purpose                                                                                  | Authorizes a production edge                           |
 | ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | Policy and transaction tests | Small manifests and temporary directories              | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                     |
-| Mechanism E2E                | Independently built and signed A/B regression packages | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No                                                     |
+| Mechanism E2E                | Prebuilt real package pairs | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No; fault-injection results cannot authorize production edges |
 | Release-pair E2E             | Immutable delivered source and target archives         | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes |
 
-Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. The shared runner prepares packages once. Upgrade-only runs reuse package A without building an unused generic desktop package. Versions are test data, not branches selecting assertions.
+Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. Suite v9 requires prebuilt pairs: the runner fails immediately when artifacts are missing and never compiles, packages, or signs. Reuse the release candidate archive and download immutable historical releases, checking versions, source revisions, and SHA-256. Versions are test data, not branches selecting assertions.
 
 Suite v5 gives host preparation, extraction, and runtime preparation separate five-minute budgets. Phases must advance monotonically; a stalled or failed phase fails verification. Do not apply one operation's budget to every sequential operation combined. The target records profile copying, component preparation, runtime materialization, and profile preparation with start/end timestamps and durations in `logs/release-preparation.log`; retain it in CI artifacts.
 
-Only model services may be replaced. Serve actual package files over real HTTP; use real signature checks, storage, native launcher, and Executor. Fault injection terminates the actual target process. Regression fixtures deliberately exercise incompatible data declarations and snapshot restoration. Build them from source; never rename an archive or rewrite a signed package. Mark results as `regression`; promotion rejects them as release proof.
+Only model services may be replaced. Serve actual package files over real HTTP; use real signature checks, storage, native launcher, and Executor. Fault injection terminates the actual target process. Data compatibility comes from the real packages: incompatible pairs must confirm snapshot restoration and verify preserved newer data. Never rename archives, rewrite package identities, or re-sign historical packages to fabricate a pair. Promotion rejects `regression` results as release proof.
 
 Each checkpoint first invokes the source package's headless preparation entry to establish an installed client's runtime before UI actions. The target must still extract and prepare its independent slot. After upgrading and rolling back, assert the actual host, Core, plugins, executor, Codex, and DWS paths against that slot's prepared composition; never inherit fixed source binary overrides. Fixture output is separate from formal packages and other checkpoints' applications.
 
@@ -129,21 +128,16 @@ pnpm --dir wework/electron test src/runtime/release-store.test.ts src/runtime/re
 pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 ```
 
-For existing pairs, provide `WEWORK_E2E_UPGRADE_PAIR`, `WEWORK_E2E_APP_BIN`, and `WEWORK_E2E_EXECUTOR_BIN`. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Change the shared scenario for behavior changes; change pair data for releases. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Run macOS arm64, macOS x64, and Windows x64 independently. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
+Provide a verified `WEWORK_E2E_UPGRADE_PAIR`; the runner resolves the source application and executor without building. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Default-layout tests with the real application identity require a clean operating-system user; existing native application data stops verification and must never be cleared to run a test. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Verify macOS arm64 and Windows x64 independently; macOS x64 uses the previously described architecture-equivalence release proof with its own hashes. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
 
-The `Wework Upgrade E2E` workflow runs the complete three-platform matrix for non-draft PRs under `ci:all` and supports manual dispatch. Keep acceptance versions in `upgrade-suite.mjs`; rebuild fixtures after strengthening assertions instead of reusing old proof.
+Packaged upgrade E2E runs only in the `Wework App` release workflow, including release dry runs. Ordinary PRs and `ci:all` do not run a separate upgrade job. The release gate invokes the shared `upgrade-and-rollback` group and `app-update-full`; every checkpoint must pass before generating and promoting exact-pair upgrade policy. Keep acceptance versions in `upgrade-suite.mjs`; older-suite proof cannot authorize new edges.
+
+Suite v9 retains downloaded historical entry points without rebuilding them. Before its own child enters application code, the driver routes requests for the default update catalog to real loopback HTTP transport. It supplies no update-feed or other product configuration overrides and does not disable TLS or signature checks. When an older source and the previous published release are both available, their own preparation entries establish the unstarted transaction while retaining profile and component-ownership assertions.
 
 The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
-The upgrade workflow covers all three platforms by default; manual dispatches can select one
-`runner` for focused diagnosis. Intel Mac cold builds plus five serial real-package checkpoints
-have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
-75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
-
-For default-user upgrade diagnosis, also select `checkpoint=app-upgrade` to run that scenario
-through the shared runner. PRs and default manual runs execute the complete upgrade suite.
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
 captures stack locations once and resumes execution, without reading scopes, arguments, or
 source text. Monitoring stops when startup completes.
@@ -170,7 +164,7 @@ the build, matching Cargo.
 `node --test wework/scripts/build-launcher.test.mjs` compiles and starts the real launcher with
 Git `link.exe` first on PATH, and verifies that invalid linker settings are never ignored. Windows
 uses Git's actual `link.exe`; macOS/Linux use a native conflicting program to shadow the default
-`cc`. The upgrade E2E workflow runs this test on all three platforms.
+`cc`. Release build verification runs this test before packaging; upgrade scenarios do not repeat compilation.
 
 ## Release promotion
 

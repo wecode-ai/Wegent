@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { UPGRADE_PACKAGE_CHECKPOINTS } from '../upgrade-suite.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1098,9 +1099,7 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const usesDefaultUserData =
-    DESKTOP_SEGMENT === 'app-upgrade' &&
-    JSON.parse(await readFile(process.env.WEWORK_E2E_UPGRADE_PAIR, 'utf8')).kind === 'regression'
+  const usesDefaultUserData = UPGRADE_PACKAGE_CHECKPOINTS.includes(DESKTOP_SEGMENT)
   const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
   if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
   const upgradeHome = nativeApplicationData
@@ -1475,13 +1474,13 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    await desktopScenario?.prepareUserDataLaunch?.()
     if (usesDefaultUserData) {
       const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
     }
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(process.platform === 'win32'
@@ -1502,6 +1501,7 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
@@ -1537,6 +1537,12 @@ async function main() {
             })
         })
         child.once('exit', stopObserving)
+      }
+      try {
+        await scenarioStartup
+      } catch (error) {
+        await stopDesktopAppProcess(child)
+        throw error
       }
       return child
     }

@@ -229,6 +229,13 @@ jobs:
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
+      - name: Verify native launcher before packaging
+        shell: bash
+        run: |
+          node --test wework/scripts/build-launcher.test.mjs
+          rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
+          "$RUNNER_TEMP/wework-launcher-tests.exe"
+
       - name: Prepare Apple signing keychain
         if: matrix.platform == 'macos'
         shell: bash
@@ -333,7 +340,6 @@ jobs:
         run: |
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments release-package-startup,component-update
-          pnpm --filter wework e2e:desktop -- --segment app-update-full
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -379,6 +385,71 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+      - name: Prepare standalone upgrade test driver
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        shell: bash
+        run: node wework/scripts/build-desktop-e2e-client.mjs "$RUNNER_TEMP/wework-upgrade-client"
+
+      - name: Share immutable release inputs with upgrade verification
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/wework-release-assets/WeWorkRelease_*.tar.gz
+            ${{ runner.temp }}/wework-release-assets/release-*.json
+            ${{ runner.temp }}/wework-upgrade-client/*.cjs
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Verify componentized macOS update package
+        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
+        run: |
+          set -euo pipefail
+          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
+          test -n "$zip"
+          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
+            echo "::error::The online Host update contains managed component resources."
+            exit 1
+          fi
+
+  verify-upgrades:
+    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }})
+    permissions:
+      contents: read
+    needs: [prepare-release, build]
+    if: needs.prepare-release.outputs.release_kind != 'none'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: windows-latest
+            platform: windows
+            arch: x64
+    env:
+      WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
+      WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - name: Download prebuilt signed release inputs
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/upgrade-input
+
       - name: Verify declared upgrade and rollback edges on real release packages
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         shell: bash
@@ -387,7 +458,7 @@ jobs:
           WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
-            "$RUNNER_TEMP/wework-release-assets" \
+            "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
             "${{ matrix.platform }}" "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.channel }}" \
             "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
@@ -411,23 +482,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Verify componentized macOS update package
-        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
-        run: |
-          set -euo pipefail
-          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
-          test -n "$zip"
-          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
-            echo "::error::The online Host update contains managed component resources."
-            exit 1
-          fi
-
       - name: Upload verified release upgrade evidence
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: wework-${{ needs.prepare-release.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/wework-release-assets/upgrade-*.json
+          path: ${{ runner.temp }}/upgrade-input/wework-release-assets/upgrade-*.json
           if-no-files-found: error
           compression-level: 0
 
@@ -436,6 +496,7 @@ jobs:
     needs:
       - prepare-release
       - build
+      - verify-upgrades
     runs-on: ubuntu-latest
     if: needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none'
 
