@@ -303,6 +303,53 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByRole('button', { name: /更新/ })).toBeInTheDocument()
   })
 
+  test.each(['', '/wework/app', '/nested/workbench'])(
+    'refreshes published releases on reentry under base path "%s"',
+    async appBasePath => {
+      window.__WEWORK_RUNTIME_CONFIG__ = {
+        ...window.__WEWORK_RUNTIME_CONFIG__,
+        appBasePath,
+      }
+      window.history.replaceState({}, '', `${appBasePath}/sites?app_type=smart_app`)
+      listInstalled.mockResolvedValue([
+        { ...importedInstallation, id: 'market-7', smartAppId: 7, releaseId: 17 },
+      ])
+      const smartAppsApi = api()
+      vi.mocked(smartAppsApi.listMarketplace)
+        .mockResolvedValueOnce({ items: [item()] })
+        .mockResolvedValue({ items: [item({ latestReleaseId: 18, version: '2.0.0' })] })
+      render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+      expect(await screen.findByTestId('harness-app-start-market-7')).toBeInTheDocument()
+      await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+
+      expect(await screen.findByTestId('smart-app-marketplace-install-7')).toHaveTextContent('更新')
+      expect(screen.getByTestId('smart-app-marketplace-item-7')).toHaveTextContent('v2.0.0')
+      expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  test.each([
+    '/wework/app/sites?app_type=miniapp',
+    '/wework/app/settings?app_type=smart_app',
+    '/wework/app-other/sites?app_type=smart_app',
+  ])('does not refresh Smart apps for unrelated route "%s"', async route => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      appBasePath: '/wework/app',
+    }
+    window.history.replaceState({}, '', '/wework/app/sites?app_type=smart_app')
+    const smartAppsApi = api()
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+    await screen.findByTestId('smart-app-marketplace-item-7')
+
+    window.history.replaceState({}, '', route)
+    await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
+
+    expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(1)
+    expect(listInstalled).toHaveBeenCalledTimes(1)
+  })
+
   test('downloads an authorized package from the detail view', async () => {
     const smartAppsApi = api()
     render(<SmartAppsMarketplacePage api={smartAppsApi} />)
@@ -512,22 +559,29 @@ describe('SmartAppsMarketplacePage', () => {
     ).toBeInTheDocument()
   })
 
-  test('refreshes local runtime state when returning to Smart apps', async () => {
-    listInstalled.mockResolvedValueOnce([importedInstallation]).mockResolvedValue([
-      {
-        ...importedInstallation,
-        state: 'running',
-        webUrl: 'http://127.0.0.1:3080',
-      },
-    ])
-    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
-    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+  test.each(['', '/wework/app', '/nested/workbench'])(
+    'refreshes local runtime state on reentry under base path "%s"',
+    async appBasePath => {
+      window.__WEWORK_RUNTIME_CONFIG__ = {
+        ...window.__WEWORK_RUNTIME_CONFIG__,
+        appBasePath,
+      }
+      listInstalled.mockResolvedValueOnce([importedInstallation]).mockResolvedValue([
+        {
+          ...importedInstallation,
+          state: 'running',
+          webUrl: 'http://127.0.0.1:3080',
+        },
+      ])
+      window.history.replaceState({}, '', `${appBasePath}/sites?app_type=smart_app&view=owned`)
+      render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
-    expect(await screen.findByTestId('harness-app-start-research-desk')).toBeInTheDocument()
-    window.dispatchEvent(new PopStateEvent('popstate'))
+      expect(await screen.findByTestId('harness-app-start-research-desk')).toBeInTheDocument()
+      await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
 
-    expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
-  })
+      expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
+    }
+  )
 
   test('does not replace marketplace results when an owned-page stop finishes late', async () => {
     const ownedItem = item({
