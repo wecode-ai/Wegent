@@ -119,11 +119,14 @@ export async function createDesktopScenario({
 
   async function preflightTimeout(control) {
     const item = await fixture('preflight-timeout')
+    const startIndex = apiProxy.requests.length
     apiProxy.rule = request =>
       request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped
         ? 'hold-request'
         : null
     const started = await uninstallInUi(control, item)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:disabled`)
     // This deliberately held read must settle at the account-preflight deadline.
     await control.command('waitFor', testId('plugin-operation-notice'), {
       text: '暂时无法确认当前账号的插件安装状态',
@@ -131,6 +134,21 @@ export async function createDesktopScenario({
     })
     const elapsedMs = Date.now() - started
     assert.ok(elapsedMs < 15_000, `Account preflight kept loading for ${elapsedMs}ms`)
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:not(:disabled)`, {
+      enabled: true,
+    })
+    assert.equal(
+      apiProxy.requests
+        .slice(startIndex)
+        .filter(
+          request =>
+            request.method === 'POST' &&
+            request.path === `/api/plugins/marketplace/${item.pluginId}/install`
+        ).length,
+      0,
+      'Uninstalling detail initiated another installation'
+    )
+    await control.command('click', testId('plugin-detail-back-button'))
     assert.equal(deletes(item).length, 0, 'Unconfirmed account preflight issued a DELETE')
     assert.ok(await accountPlugin(cloud, item.slug), 'Preflight failure removed membership')
     await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
@@ -142,7 +160,12 @@ export async function createDesktopScenario({
     await assertInstallButton(control, item)
     assert.equal(deletes(item).length, 1, 'Explicit retry must issue exactly one DELETE')
     await assertSurfaces(control, item, false)
-    evidence.push({ case: 'account-preflight-timeout-and-explicit-retry', elapsedMs })
+    evidence.push({
+      case: 'account-preflight-timeout-and-explicit-retry',
+      elapsedMs,
+      examplesBlockedDuringUninstall: true,
+      examplesRestoredAfterFailure: true,
+    })
   }
 
   async function unknownResult(control) {
@@ -226,11 +249,29 @@ export async function createDesktopScenario({
     )
     assert.ok(await pathExists(runtimePath), 'Fault did not actually delay device cleanup')
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
+    // Exercise the Rust listing while this exact device still has a real
+    // removal awaiting delivery. Account removal must hide its cleanup state.
+    const market = await pluginApi(
+      cloud,
+      `/plugins/marketplace?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`
+    )
+    const removedListing = market.items.find(plugin => plugin.id === item.pluginId)
+    assert.ok(removedListing, 'Uninstalled plugin disappeared from the marketplace')
+    assert.equal(removedListing.installed, false)
+    assert.equal(removedListing.installedPluginId, null)
+    assert.equal(removedListing.currentDeviceInstallation, null)
     await assertSurfaces(control, item, false)
     await openPlugin(control, item)
     await control.command('click', testId('plugins-refresh-button'))
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', testId(`plugin-detail-toggle-${item.pluginId}`), {
+      text: '安装插件',
+      enabled: true,
+    })
+    await control.command('click', testId('plugin-detail-back-button'))
+    await assertInstallButton(control, item)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
     assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })
