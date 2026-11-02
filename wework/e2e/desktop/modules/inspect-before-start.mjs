@@ -33,6 +33,7 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
     if (method === 'Debugger.paused') log('[desktop-e2e-inspector] paused', params.reason)
     else if (method === 'Debugger.resumed') log('[desktop-e2e-inspector] resumed')
   })
+  let setupError
   try {
     await once(socket, 'open', { signal: AbortSignal.timeout(10_000) })
     let id = 0
@@ -84,9 +85,24 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
     const result = await command('Runtime.evaluate', { expression, returnByValue: true })
     if (result.exceptionDetails)
       throw new Error(`Inspector setup failed: ${result.exceptionDetails.text}`)
-    await command('Debugger.resume')
+    // Disabling removes the driver-owned pause state and resumes the child.
+    // Do not disconnect a still-enabled debugger as the application starts.
+    await command('Debugger.disable')
+    await command('Runtime.disable')
+  } catch (error) {
+    setupError = error
+    throw error
   } finally {
     log('[desktop-e2e-inspector] disconnecting')
-    socket.close()
+    if (socket.readyState !== WebSocket.CLOSED) {
+      const disconnected = once(socket, 'close', { signal: AbortSignal.timeout(10_000) })
+      socket.close()
+      try {
+        await disconnected
+      } catch (error) {
+        if (!setupError) throw error
+        log('[desktop-e2e-inspector] disconnect failed', error.message)
+      }
+    }
   }
 }
