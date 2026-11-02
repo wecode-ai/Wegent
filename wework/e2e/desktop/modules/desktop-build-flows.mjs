@@ -422,8 +422,8 @@ function hostCodexTarget() {
   return target
 }
 
-async function resolveDesktopCodexBinary() {
-  const configured = process.env.WEWORK_E2E_CODEX_BIN
+async function resolveDesktopCodexBinary(environment = process.env) {
+  const configured = environment.WEWORK_E2E_CODEX_BIN
   if (configured) {
     return resolveExecutable(configured, 'codex', 'Configured Wework E2E Codex')
   }
