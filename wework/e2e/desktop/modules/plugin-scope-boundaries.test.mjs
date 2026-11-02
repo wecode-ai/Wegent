@@ -2,15 +2,15 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-test('catalog navigation uses the production route and visible refresh prerequisites', async () => {
+test('catalog navigation uses visible product controls and refresh prerequisites', async () => {
   const source = await readFile(new URL('./plugin-scope-boundaries.mjs', import.meta.url), 'utf8')
   const catalog = source.slice(
     source.indexOf('async function backToCatalog()'),
     source.indexOf('async function refreshCatalog()')
   )
   assert.ok(
-    catalog.indexOf("command('navigate'") >= 0,
-    'Catalog navigation must use the production route after a restart'
+    catalog.indexOf("command('click', testId('plugins-button')") >= 0,
+    'Catalog navigation must use the product plugin entry'
   )
   assert.ok(
     catalog.indexOf("command('waitFor', testId('plugins-search-input')") >= 0,

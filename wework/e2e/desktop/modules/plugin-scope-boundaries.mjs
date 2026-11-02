@@ -119,9 +119,12 @@ export async function verifyPluginScopeBoundaries({
   }
 
   async function backToCatalog() {
-    // The sidebar may be off-canvas after a real restart. Use the production
-    // route directly, then verify the catalog itself before any further action.
-    await control.command('navigate', 'body', { value: '/plugins' })
+    await control.command('waitFor', testId('plugins-button'), {
+      visible: true,
+      enabled: true,
+      stableMs: 250,
+    })
+    await control.command('click', testId('plugins-button'), { visible: true })
     for (const id of ['plugin-management-back-button', 'plugin-detail-back-button']) {
       // An off-screen window may retain a duplicate control. Click only the
       // enabled/visible route action instead of the first DOM match.
