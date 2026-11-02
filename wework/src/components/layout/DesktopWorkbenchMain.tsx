@@ -293,6 +293,7 @@ import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import {
   openFeedbackDialog,
   useRegisteredFeedbackDialogContext,
+  withLatestFeedbackDialogContext,
   type FeedbackDialogRequest,
 } from '@/features/feedback/feedbackDialogStore'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -1356,6 +1357,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
   const feedbackDialogRequest: FeedbackDialogRequest = {
     hasActiveTask: Boolean(currentRuntimeTask),
+    deviceId: currentRuntimeTask?.deviceId ?? null,
+    taskId: currentRuntimeTask?.taskId ?? null,
     feedbackApi: services?.feedbackApi,
     getTaskContext: async () => {
       if (!currentRuntimeTask) {
@@ -1392,6 +1395,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
     },
   }
+  const feedbackDialogRequestRef = useRef(feedbackDialogRequest)
+  useLayoutEffect(() => {
+    // The request is rebuilt from current pane state on every render.
+    feedbackDialogRequestRef.current = feedbackDialogRequest
+  })
   useRegisteredFeedbackDialogContext(workbenchVisible && paneActive, feedbackDialogRequest)
   const {
     activeDeliveryItem,
@@ -4984,7 +4992,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
         aria-label={t('workbench.feedback_button')}
-        onClick={() => openFeedbackDialog(feedbackDialogRequest)}
+        onClick={() =>
+          openFeedbackDialog(
+            withLatestFeedbackDialogContext(
+              feedbackDialogRequest,
+              () => feedbackDialogRequestRef.current
+            )
+          )
+        }
       >
         <MessageSquareWarning />
       </button>

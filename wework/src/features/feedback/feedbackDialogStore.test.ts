@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   EMPTY_FEEDBACK_DIALOG_REQUEST,
   closeFeedbackDialog,
@@ -13,6 +13,8 @@ import {
 function createRequest(taskId: string): FeedbackDialogRequest {
   return {
     hasActiveTask: true,
+    deviceId: 'device-1',
+    taskId,
     getTaskContext: async () => ({ task: { taskId } }),
   }
 }
@@ -39,7 +41,11 @@ describe('feedback dialog store', () => {
 
     act(() => openFeedbackDialog())
 
-    expect(result.current).toBe(request)
+    expect(result.current).toMatchObject({
+      hasActiveTask: true,
+      deviceId: 'device-1',
+      taskId: 'task-1',
+    })
   })
 
   test('prefers an explicit request over the registered context', () => {
@@ -72,7 +78,11 @@ describe('feedback dialog store', () => {
     act(() => openFeedbackDialog())
     unregister()
 
-    expect(result.current).toBe(request)
+    expect(result.current).toMatchObject({
+      hasActiveTask: true,
+      deviceId: 'device-1',
+      taskId: 'task-1',
+    })
   })
 
   test('does not replace a dialog that is already open', () => {
@@ -109,7 +119,57 @@ describe('feedback dialog store', () => {
     view.rerender({ active: true, request: second })
     act(() => openFeedbackDialog())
 
-    expect(view.result.current).toBe(second)
+    expect(view.result.current).toMatchObject({
+      hasActiveTask: true,
+      deviceId: 'device-1',
+      taskId: 'second',
+    })
+  })
+
+  test('uses the latest getter for the same task while the dialog is open', async () => {
+    const firstGetter = vi.fn(async () => ({ version: 1 }))
+    const secondGetter = vi.fn(async () => ({ version: 2 }))
+    const first = { ...createRequest('task-1'), getTaskContext: firstGetter }
+    const second = { ...createRequest('task-1'), getTaskContext: secondGetter }
+    const view = renderHook(
+      ({ request }) => {
+        useRegisteredFeedbackDialogContext(true, request)
+        return useFeedbackDialogRequest()
+      },
+      { initialProps: { request: first } }
+    )
+
+    act(() => openFeedbackDialog())
+    view.rerender({ request: second })
+
+    await act(async () => {
+      await expect(view.result.current?.getTaskContext()).resolves.toEqual({ version: 2 })
+    })
+    expect(secondGetter).toHaveBeenCalledOnce()
+    expect(firstGetter).not.toHaveBeenCalled()
+  })
+
+  test('retains the opened getter when the task changes while the dialog is open', async () => {
+    const firstGetter = vi.fn(async () => ({ version: 1 }))
+    const secondGetter = vi.fn(async () => ({ version: 2 }))
+    const first = { ...createRequest('task-1'), getTaskContext: firstGetter }
+    const second = { ...createRequest('task-2'), getTaskContext: secondGetter }
+    const view = renderHook(
+      ({ request }) => {
+        useRegisteredFeedbackDialogContext(true, request)
+        return useFeedbackDialogRequest()
+      },
+      { initialProps: { request: first } }
+    )
+
+    act(() => openFeedbackDialog())
+    view.rerender({ request: second })
+
+    await act(async () => {
+      await expect(view.result.current?.getTaskContext()).resolves.toEqual({ version: 1 })
+    })
+    expect(firstGetter).toHaveBeenCalledOnce()
+    expect(secondGetter).not.toHaveBeenCalled()
   })
 
   test('unregisters the context when the surface becomes inactive', () => {

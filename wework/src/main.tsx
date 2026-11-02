@@ -83,6 +83,9 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
   const root = createRoot(container)
   root.render(
     <StrictMode>
+      {/* Keep feedback outside the workbench boundary: reporting must remain
+          available when the workbench itself fails to render. */}
+      <FeedbackDialogHost />
       <WorkbenchErrorBoundary onError={reportRendererFailure}>
         {getDesktopE2ERuntimeConfig().controlUrl && <RendererCrashProbe />}
         <DshClientContextProvider context={context}>
@@ -93,7 +96,6 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
           ) : (
             <App />
           )}
-          <FeedbackDialogHost />
         </DshClientContextProvider>
       </WorkbenchErrorBoundary>
     </StrictMode>

@@ -3,6 +3,9 @@ import type { FeedbackApi } from './TaskFeedbackDialog'
 
 export interface FeedbackDialogRequest {
   hasActiveTask: boolean
+  /** Identifies the task whose context is attached; null for a non-task surface. */
+  deviceId?: string | null
+  taskId?: string | null
   getTaskContext: () => Promise<Record<string, unknown>>
   feedbackApi?: FeedbackApi
 }
@@ -11,6 +14,8 @@ export type FeedbackDialogContextProvider = () => FeedbackDialogRequest
 
 export const EMPTY_FEEDBACK_DIALOG_REQUEST: FeedbackDialogRequest = {
   hasActiveTask: false,
+  deviceId: null,
+  taskId: null,
   getTaskContext: () => Promise.resolve({}),
 }
 
@@ -38,9 +43,10 @@ function getSnapshot(): FeedbackDialogRequest | null {
 }
 
 /**
- * Opens the single feedback dialog. The request is frozen for the lifetime of
- * the open dialog so switching surfaces cannot replace a form the user has
- * already started filling in.
+ * Opens the single feedback dialog. The selected task and request fields are
+ * frozen for the lifetime of the open dialog so switching surfaces cannot
+ * replace a form the user has already started filling in. The registered
+ * context refreshes only the task-context getter for the same task.
  */
 export function openFeedbackDialog(request?: FeedbackDialogRequest): void {
   if (activeRequest) return
@@ -86,6 +92,31 @@ export function useRegisteredFeedbackDialogContext(
 
   useLayoutEffect(() => {
     if (!active) return
-    return registerFeedbackDialogContext(() => requestRef.current)
+    return registerFeedbackDialogContext(() =>
+      withLatestFeedbackDialogContext(requestRef.current, () => requestRef.current)
+    )
   }, [active])
+}
+
+/**
+ * Freezes the selected task and request fields while allowing the task-context
+ * getter to follow the same task's latest runtime state.
+ */
+export function withLatestFeedbackDialogContext(
+  openedRequest: FeedbackDialogRequest,
+  getLatestRequest: () => FeedbackDialogRequest
+): FeedbackDialogRequest {
+  return {
+    ...openedRequest,
+    getTaskContext: () => {
+      const latestRequest = getLatestRequest()
+      return hasSameTaskIdentity(openedRequest, latestRequest)
+        ? latestRequest.getTaskContext()
+        : openedRequest.getTaskContext()
+    },
+  }
+}
+
+function hasSameTaskIdentity(left: FeedbackDialogRequest, right: FeedbackDialogRequest): boolean {
+  return left.deviceId === right.deviceId && left.taskId === right.taskId
 }
