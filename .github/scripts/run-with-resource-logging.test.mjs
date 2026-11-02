@@ -73,7 +73,23 @@ test('counts unique large unlinked files only on the owned process tree and file
   assert.equal(result.truncated, false)
   assert.deepEqual(result.errors, [])
   assert.deepEqual(result.mountNamespaces, { 'mnt:[1]': 2, 'mnt:[2]': 1 })
-  assert.deepEqual(result.excludedDevices, { 2: { files: 1, allocatedBytes: 2 * 1024 ** 2 } })
+  assert.deepEqual(result.excludedDevices, {
+    2: {
+      files: 1,
+      allocatedBytes: 2 * 1024 ** 2,
+      firstHolders: { 11: { files: 1, allocatedBytes: 2 * 1024 ** 2 } },
+    },
+  })
+  assert.deepEqual(result.excludedFiles, [
+    {
+      pid: 11,
+      process: 'owned-process',
+      device: 2,
+      path: '/tmp/owned-7 (deleted)',
+      sizeBytes: 2 * 1024 ** 2,
+      allocatedBytes: 2 * 1024 ** 2,
+    },
+  ])
   assert.ok(!fixture.reads.some(path => path.startsWith('/proc/20/fd')))
   assert.ok(
     fixture.reads.every(path =>
@@ -128,6 +144,50 @@ test('caps emitted file metadata while retaining total allocated bytes', () => {
   const result = openDeletedDiskFiles(10, 1, fixture)
   assert.equal(result.files.length, 20)
   assert.equal(result.allocatedBytes, 50 * 1024 ** 2)
+})
+
+test('bounds other-device metadata and attributes unique files to their first holder', () => {
+  const fixture = processDiskFixture()
+  for (let index = 1; index <= 25; index++) {
+    fixture.descriptors.set(`/proc/10/fd/${index}`, { dev: 2 })
+  }
+  fixture.descriptors.set('/proc/10/fd/26', { dev: 2, ino: 26, blocks: 8192 })
+  fixture.descriptors.set('/proc/11/fd/27', { dev: 2, ino: 26, blocks: 8192 })
+  const result = openDeletedDiskFiles(10, 1, fixture)
+  assert.equal(result.allocatedBytes, 0)
+  assert.equal(result.excludedFiles.length, 20)
+  assert.equal(result.excludedFiles[0].path, '/tmp/owned-26 (deleted)')
+  assert.deepEqual(result.excludedDevices, {
+    2: {
+      files: 26,
+      allocatedBytes: 54 * 1024 ** 2,
+      firstHolders: { 10: { files: 26, allocatedBytes: 54 * 1024 ** 2 } },
+    },
+  })
+  assert.equal(fixture.reads.filter(path => path.endsWith('/comm')).length, 1)
+})
+
+test('preserves cross-device allocation when file description becomes unavailable', () => {
+  const fixture = processDiskFixture()
+  fixture.descriptors.set('/proc/10/fd/1', { ino: 1 })
+  fixture.descriptors.set('/proc/10/fd/2', { dev: 2, ino: 1 })
+  fixture.descriptors.set('/proc/11/fd/3', { dev: 2, ino: 1 })
+  const readlink = fixture.io.readlinkSync
+  fixture.io.readlinkSync = path => {
+    if (path === '/proc/10/fd/2') throw Object.assign(new Error('fixture'), { code: 'EACCES' })
+    return readlink(path)
+  }
+  const result = openDeletedDiskFiles(10, 1, fixture)
+  assert.equal(result.allocatedBytes, 2 * 1024 ** 2)
+  assert.deepEqual(result.excludedDevices, {
+    2: {
+      files: 1,
+      allocatedBytes: 2 * 1024 ** 2,
+      firstHolders: { 10: { files: 1, allocatedBytes: 2 * 1024 ** 2 } },
+    },
+  })
+  assert.deepEqual(result.excludedFiles, [])
+  assert.deepEqual(result.errors, ['EACCES'])
 })
 
 function run(args, env = {}, preload) {

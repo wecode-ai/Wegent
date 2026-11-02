@@ -27,6 +27,20 @@ export function diskRootMetadata(paths, io = fs) {
   })
 }
 
+function fileMetadata(io, pid, path, stat, allocatedBytes, processNames) {
+  if (!processNames.has(pid)) {
+    processNames.set(pid, io.readFileSync(`/proc/${pid}/comm`, 'utf8').trim())
+  }
+  return {
+    pid,
+    process: processNames.get(pid),
+    device: stat.dev,
+    path: io.readlinkSync(path),
+    sizeBytes: stat.size,
+    allocatedBytes,
+  }
+}
+
 export function openDeletedDiskFiles(
   rootPid,
   filesystemDevice,
@@ -40,11 +54,13 @@ export function openDeletedDiskFiles(
     truncated: false,
     mountNamespaces: {},
     excludedDevices: {},
+    excludedFiles: [],
   }
   if (!Number.isInteger(rootPid) || rootPid <= 0) return result
   const deadline = now() + budgetMs
   const parents = new Map()
   const seen = new Set()
+  const processNames = new Map()
   const failure = error => {
     const code = error.code ?? error.name
     if (!result.errors.includes(code)) result.errors.push(code)
@@ -90,19 +106,29 @@ export function openDeletedDiskFiles(
               const excluded = (result.excludedDevices[stat.dev] ??= {
                 files: 0,
                 allocatedBytes: 0,
+                firstHolders: {},
               })
               excluded.files++
               excluded.allocatedBytes += allocatedBytes
+              const holder = (excluded.firstHolders[pid] ??= { files: 0, allocatedBytes: 0 })
+              holder.files++
+              holder.allocatedBytes += allocatedBytes
+              if (
+                result.excludedFiles.length < 20 ||
+                allocatedBytes > result.excludedFiles.at(-1).allocatedBytes
+              ) {
+                result.excludedFiles.push(
+                  fileMetadata(io, pid, path, stat, allocatedBytes, processNames)
+                )
+                result.excludedFiles.sort(
+                  (left, right) => right.allocatedBytes - left.allocatedBytes
+                )
+                result.excludedFiles = result.excludedFiles.slice(0, 20)
+              }
               continue
             }
             result.allocatedBytes += allocatedBytes
-            result.files.push({
-              pid,
-              process: io.readFileSync(`/proc/${pid}/comm`, 'utf8').trim(),
-              path: io.readlinkSync(path),
-              sizeBytes: stat.size,
-              allocatedBytes,
-            })
+            result.files.push(fileMetadata(io, pid, path, stat, allocatedBytes, processNames))
           } catch (error) {
             failure(error)
           }
