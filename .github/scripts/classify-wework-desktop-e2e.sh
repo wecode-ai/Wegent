@@ -634,6 +634,15 @@ classify_wework_path() {
       return
       ;;
 
+    # Installer packaging changes are covered by the formal release startup
+    # checkpoint and the dedicated Windows alternate-drive installer E2E.
+    wework/electron/electron-builder.config.cjs | \
+      wework/electron/src/build-identity* | \
+      wework/e2e/desktop/windows-installer.e2e.mjs)
+      select_target "core:release-package-startup"
+      return
+      ;;
+
     # The native startup checkpoint owns splash-window creation and teardown.
     wework/electron/src/host/startup-splash* | \
       wework/electron/src/shell/startup-splash/*)

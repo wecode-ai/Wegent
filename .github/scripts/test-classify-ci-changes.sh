@@ -2717,6 +2717,9 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
   [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"pnpm --dir wework/electron install --frozen-lockfile"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"Build Windows NSIS installer for alternate-drive E2E"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-installer"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]]; then
@@ -2725,7 +2728,7 @@ if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]]
 fi
 
 wework_windows_desktop_core_job="$(
-  sed -n '/^  wework-desktop-windows-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
+  sed -n '/^  wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-installer-e2e:/p' \
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
@@ -2748,6 +2751,19 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   exit 1
 fi
 
+wework_windows_desktop_installer_job="$(
+  sed -n '/^  wework-desktop-windows-installer-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
+    "$wework_workflow"
+)"
+if [[ "$wework_windows_desktop_installer_job" != *"runs-on: windows-latest"* ]] ||
+  [[ "$wework_windows_desktop_installer_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
+  [[ "$wework_windows_desktop_installer_job" != *"wework-desktop-windows-installer"* ]] ||
+  [[ "$wework_windows_desktop_installer_job" != *"run-windows-standard-user-process.ps1"* ]] ||
+  [[ "$wework_windows_desktop_installer_job" != *"windows-installer.e2e.mjs"* ]]; then
+  printf 'Windows installer E2E must install from a standard-user alternate drive\n' >&2
+  exit 1
+fi
+
 wework_summary_job="$(
   sed -n '/^  wework-e2e-summary:/,/^  wework-desktop-memory-e2e:/p' \
     "$wework_workflow"
@@ -2761,6 +2777,11 @@ fi
 if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
   [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
   printf 'Wework E2E summary must check Windows Core only when explicitly scheduled\n' >&2
+  exit 1
+fi
+if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_INSTALLER_E2E:"* ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  printf 'Wework E2E summary must check the Windows installer only when explicitly scheduled\n' >&2
   exit 1
 fi
 

@@ -129,8 +129,19 @@ for (const job of [
   const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
   assert.equal(block.match(/^    if: (.+)$/m)?.[1], gate, job);
 }
+const installerBlock = workflow
+  .split("  wework-desktop-windows-installer-e2e:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+assert.equal(
+  installerBlock.match(/^    if: (.+)$/m)?.[1],
+  gate,
+  "wework-desktop-windows-installer-e2e",
+);
 assert.ok(
   workflow.includes("RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ " + gate + " }}"),
+);
+assert.ok(
+  workflow.includes("RUN_WINDOWS_DESKTOP_INSTALLER_E2E: ${{ " + gate + " }}"),
 );
 
 const summary = workflow
@@ -154,8 +165,10 @@ for (const [buildResult, shardResult, expected] of [
       ...process.env,
       CHANGES_RESULT: "success",
       RUN_WINDOWS_DESKTOP_CORE_E2E: "true",
+      RUN_WINDOWS_DESKTOP_INSTALLER_E2E: "true",
       WINDOWS_DESKTOP_CORE_BUILD_RESULT: buildResult,
       WINDOWS_DESKTOP_CORE_E2E_RESULT: shardResult,
+      WINDOWS_DESKTOP_INSTALLER_E2E_RESULT: "success",
     },
     encoding: "utf8",
   });
@@ -163,6 +176,30 @@ for (const [buildResult, shardResult, expected] of [
     result.status,
     expected,
     `${buildResult}/${shardResult}: ${result.stdout}${result.stderr}`,
+  );
+}
+for (const [installerResult, expected] of [
+  ["success", 0],
+  ["skipped", 1],
+  ["failure", 1],
+  ["cancelled", 1],
+]) {
+  const result = spawnSync("bash", ["-c", script], {
+    env: {
+      ...process.env,
+      CHANGES_RESULT: "success",
+      RUN_WINDOWS_DESKTOP_CORE_E2E: "true",
+      RUN_WINDOWS_DESKTOP_INSTALLER_E2E: "true",
+      WINDOWS_DESKTOP_CORE_BUILD_RESULT: "success",
+      WINDOWS_DESKTOP_CORE_E2E_RESULT: "success",
+      WINDOWS_DESKTOP_INSTALLER_E2E_RESULT: installerResult,
+    },
+    encoding: "utf8",
+  });
+  assert.equal(
+    result.status,
+    expected,
+    `installer ${installerResult}: ${result.stdout}${result.stderr}`,
   );
 }
 assert.ok(
