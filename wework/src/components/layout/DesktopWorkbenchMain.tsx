@@ -4428,6 +4428,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
         const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
           workspaceTargets: fileWorkspaceTargets,
+          pathStyleSource: workspaceTarget?.path,
         })
         let localTarget =
           attachmentTarget ??
@@ -4453,6 +4454,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           localTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
             workspaceTargets: attachmentTarget ? [] : fileWorkspaceTargets,
             isDirectory: true,
+            pathStyleSource: workspaceTarget?.path,
           })
         }
         setOpenFileRequest(current => ({
@@ -4481,6 +4483,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       effectiveWorkspaceTarget,
       fileWorkspaceTargets,
       getDeviceHomeDirectory,
+      workspaceTarget,
       openRightPanelTab,
       setOpenFileRequest,
       setFileOpenError,

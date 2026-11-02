@@ -477,7 +477,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         item["lifecycleCompleted"] = json!(notification.method == "item/completed");
-        if is_codex_context_compaction_item_type(&item_type(&item)) {
+        if is_codex_context_compaction_item_type(&item_type(&item)) || item_type(&item) == "plan" {
             item["status"] = json!(if notification.method == "item/completed" {
                 "done"
             } else {

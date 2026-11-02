@@ -3324,6 +3324,49 @@ def test_group_dispatch_binds_and_settles_its_initial_manager_session(
     assert activity.runtime_task_id == manager_task_id
 
 
+@pytest.mark.parametrize(
+    "event_name", ["thread/tokenUsage/updated", "runtime.turn.updated"]
+)
+def test_thread_metadata_does_not_fence_a_delayed_current_turn_completion(
+    test_db: Session, test_user: User, event_name: str
+) -> None:
+    execution, _, activity = _make_running_automation_execution(test_db, test_user)
+    activity.metadata_json = {
+        **activity.metadata_json,
+        "runtime_turn_id": "current-turn",
+    }
+    test_db.commit()
+    loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name=event_name,
+        payload={"eventSeq": 3, "subtaskId": "previous-turn", "data": {}},
+    )
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.completed",
+        payload={
+            "eventSeq": 2,
+            "subtaskId": "current-turn",
+            "data": {
+                "text": "The current turn completed before thread metadata arrived"
+            },
+        },
+    )
+
+    assert completed is not None and completed.status == "completed"
+    assert completed.last_event_seq == 2
+    test_db.refresh(activity)
+    assert activity.status == "completed"
+    assert (
+        activity.content == "The current turn completed before thread metadata arrived"
+    )
+
+
 def test_open_execution_activity_never_revives_a_terminal_execution(
     independent_session_database,
 ) -> None:

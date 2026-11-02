@@ -79,17 +79,21 @@ export function projectRuntimeConversationTurn(
       if (splitsReply) flushAssistant(false, hadAssistant);
       hasUser = true;
       const parsedContexts = parseCodeCommentContexts(item.message.content);
+      const userMessage = {
+        ...item.message,
+        ...(turn.id ? { turnId: turn.id, subtaskId: turn.id } : {}),
+        runtimeItemId: item.id,
+      };
       messages.push(
         parsedContexts
           ? {
-              ...item.message,
-              runtimeItemId: item.id,
+              ...userMessage,
               content: parsedContexts.content,
               codeComments: item.message.codeComments?.length
                 ? item.message.codeComments
                 : parsedContexts.codeComments,
             }
-          : { ...item.message, runtimeItemId: item.id },
+          : userMessage,
       );
       followsGuidance = item.message.runtimeGuidance === true;
       // Output items can be reordered or recovered while the same reply streams.

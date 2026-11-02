@@ -129,6 +129,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-task-flow',
   'task-attachments',
   'device-artifact-declaration',
+  'local-artifact-declaration',
   'drawing-attachment',
   'cloud-git-worktree',
   'cloud-worktree-capability',
