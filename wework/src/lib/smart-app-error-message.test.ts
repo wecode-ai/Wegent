@@ -10,6 +10,15 @@ import {
 const t = (_key: string, fallback?: string) => fallback ?? _key
 
 describe('getSmartAppErrorMessage', () => {
+  test('localizes a running app install rejection from the native owner', () => {
+    expect(
+      getSmartAppErrorMessage(
+        new Error('Stop the Smart app before installing a new version'),
+        '安装失败',
+        t
+      )
+    ).toBe('请先停止智能工作台，再安装新版本。')
+  })
   test('explains how to recover from a package extraction timeout', () => {
     expect(
       getSmartAppErrorMessage(new Error('Smart app ZIP extraction timed out'), '安装失败', t)
