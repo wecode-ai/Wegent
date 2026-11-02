@@ -35,6 +35,9 @@ let child
 let smallestDiskPressureTier = Infinity
 let initialDiskAvailableBytes
 let sampledDiskGrowth = false
+let initialSampleAt
+let sampledScheduledProcesses = false
+const processSampleAfterMs = Number(process.env.RUNNER_PROCESS_SAMPLE_AFTER_MS)
 
 function diskUsage(depth) {
   const paths = [
@@ -81,12 +84,15 @@ function diskUsage(depth) {
 }
 
 function sample(phase, exitCode) {
+  const sampledAt = Date.now()
+  initialSampleAt ??= sampledAt
   const currentCpu = cpuTimes()
   const elapsed = currentCpu.total - previousCpu.total
   const disk = statfsSync('.')
   initialDiskAvailableBytes ??= disk.bavail * disk.bsize
   const record = {
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(sampledAt).toISOString(),
+    elapsedMs: sampledAt - initialSampleAt,
     phase,
     exitCode,
     commandPid: child?.pid,
@@ -114,6 +120,12 @@ function sample(phase, exitCode) {
     const growth =
       desktopRun && !sampledDiskGrowth && record.diskAvailableDecreaseBytes >= 8 * 1024 ** 3
     const baseline = desktopRun && phase === 'start'
+    const scheduled =
+      desktopRun &&
+      !sampledScheduledProcesses &&
+      Number.isSafeInteger(processSampleAfterMs) &&
+      processSampleAfterMs > 0 &&
+      record.elapsedMs >= processSampleAfterMs
     if (baseline || lowFree || growth) {
       if (lowFree) smallestDiskPressureTier = pressureTier
       if (growth) sampledDiskGrowth = true
@@ -123,8 +135,14 @@ function sample(phase, exitCode) {
         ),
         ...diskUsage(baseline && !lowFree ? 1 : 4),
       }
-      if (lowFree || growth) {
-        record.openDeletedDiskFiles = openDeletedDiskFiles(child?.pid, statSync('.').dev)
+    }
+    if (lowFree || growth || scheduled) {
+      if (scheduled) sampledScheduledProcesses = true
+      record.openDeletedDiskFiles = {
+        triggers: [lowFree && 'low_free', growth && 'growth', scheduled && 'scheduled'].filter(
+          Boolean
+        ),
+        ...openDeletedDiskFiles(child?.pid, statSync('.').dev),
       }
     }
     record.linux = Object.fromEntries(

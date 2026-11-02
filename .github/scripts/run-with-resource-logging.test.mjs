@@ -352,3 +352,34 @@ for (const { remainingGiB, triggers } of [
     assert.equal(end.exitCode, 23)
   })
 }
+
+test('samples owned files once at a configured time without disk pressure or another directory scan', () => {
+  const result = run(
+    [process.execPath, '-e', 'setTimeout(() => process.exit(23), 100)'],
+    { WEWORK_E2E_PARALLEL_CHECKPOINTS: '4', RUNNER_PROCESS_SAMPLE_AFTER_MS: '1' },
+    `
+      import fs from 'node:fs'
+      import childProcess from 'node:child_process'
+      import { syncBuiltinESMExports } from 'node:module'
+      const statfs = fs.statfsSync
+      fs.statfsSync = path => {
+        const current = statfs(path)
+        return { ...current, bavail: 85 * 1024 ** 3 / current.bsize }
+      }
+      childProcess.execFileSync = () => '8\\tbaseline\\n'
+      const interval = globalThis.setInterval
+      globalThis.setInterval = (callback, delay) => interval(callback, delay === 15000 ? 10 : delay)
+      Object.defineProperty(process, 'platform', { value: 'linux' })
+      syncBuiltinESMExports()
+    `
+  )
+  assert.equal(result.status, 23)
+  const samples = result.records.filter(record => record.openDeletedDiskFiles)
+  assert.equal(samples.length, 1)
+  assert.deepEqual(samples[0].openDeletedDiskFiles.triggers, ['scheduled'])
+  assert.ok(samples[0].elapsedMs >= 1)
+  assert.equal(samples[0].diskAvailableDecreaseBytes, 0)
+  assert.equal(samples[0].diskUsage, undefined)
+  assert.equal(result.records.filter(record => record.diskUsage).length, 1)
+  assert.equal(result.records.at(-1).exitCode, 23)
+})
