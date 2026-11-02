@@ -293,7 +293,9 @@ export function SmartAppsMarketplacePage({
   const [targetLookupRevision, setTargetLookupRevision] = useState(0)
   const previousTargetSmartAppIdRef = useRef<number | null>(null)
   const handledTargetSmartAppIdRef = useRef<number | null>(null)
+  const catalogTargetSmartAppIdRef = useRef<number | null>(null)
   const targetLookupRequestRef = useRef(0)
+  const downloadRequestRef = useRef(0)
   const refreshRequestRef = useRef(0)
   const activeModeRef = useRef(mode)
 
@@ -379,9 +381,14 @@ export function SmartAppsMarketplacePage({
     if (targetSmartAppId) return
     previousTargetSmartAppIdRef.current = null
     handledTargetSmartAppIdRef.current = null
+    catalogTargetSmartAppIdRef.current = null
     targetLookupRequestRef.current += 1
+    downloadRequestRef.current += 1
     queueMicrotask(() => {
       setSelected(null)
+      setPendingInstall(null)
+      setModelKey('')
+      setBusy(current => (current?.startsWith('download-') ? null : current))
       setTargetInstallItem(null)
       setTargetLookupError(null)
       setTargetLookupPending(false)
@@ -392,9 +399,14 @@ export function SmartAppsMarketplacePage({
     if (previousTargetSmartAppIdRef.current !== targetSmartAppId) {
       previousTargetSmartAppIdRef.current = targetSmartAppId
       handledTargetSmartAppIdRef.current = null
+      catalogTargetSmartAppIdRef.current = null
       targetLookupRequestRef.current += 1
+      downloadRequestRef.current += 1
       queueMicrotask(() => {
         setSelected(null)
+        setPendingInstall(null)
+        setModelKey('')
+        setBusy(current => (current?.startsWith('download-') ? null : current))
         setTargetInstallItem(null)
         setTargetLookupError(null)
         setTargetLookupPending(false)
@@ -417,11 +429,12 @@ export function SmartAppsMarketplacePage({
       })
       return
     }
-    if (handledTargetSmartAppIdRef.current === targetSmartAppId) return
+    handledTargetSmartAppIdRef.current = null
+    if (catalogTargetSmartAppIdRef.current === targetSmartAppId) return
     if (!api) return
     const item = items.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
-      handledTargetSmartAppIdRef.current = targetSmartAppId
+      catalogTargetSmartAppIdRef.current = targetSmartAppId
       targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setTargetInstallItem(item)
@@ -441,7 +454,7 @@ export function SmartAppsMarketplacePage({
       .getItem(targetSmartAppId)
       .then(item => {
         if (cancelled || requestId !== targetLookupRequestRef.current) return
-        handledTargetSmartAppIdRef.current = targetSmartAppId
+        catalogTargetSmartAppIdRef.current = targetSmartAppId
         setTargetInstallItem(item)
         setTargetLookupError(null)
         setSelected(item)
@@ -608,15 +621,18 @@ export function SmartAppsMarketplacePage({
 
   async function download(item: SmartAppMarketplaceItem) {
     if (!api) return
+    const requestId = ++downloadRequestRef.current
     const intent = localState(item)?.update ? 'update' : 'install'
     setBusy(`download-${item.id}`)
     setError(null)
     try {
       const preparation = await prepareMarketplaceSmartApp(api, item, intent)
+      if (requestId !== downloadRequestRef.current) return
       setPendingInstall(preparation)
       setModelKey(localState(item)?.installation.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
+      if (requestId !== downloadRequestRef.current) return
       setError(
         getSmartAppErrorMessage(
           downloadError,
@@ -625,7 +641,7 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      setBusy(null)
+      if (requestId === downloadRequestRef.current) setBusy(null)
     }
   }
 
