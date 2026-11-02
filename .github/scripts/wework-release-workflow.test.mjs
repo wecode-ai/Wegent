@@ -18,6 +18,25 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("install diagnostics preserve the failing install gate on every platform", () => {
+  const install = jobs.build.steps.find(
+    (step) => step.id === "workspace-install",
+  );
+  assert.equal(install.shell, "bash");
+  assert.equal(install["continue-on-error"], undefined);
+  assert.match(
+    install.run,
+    /pnpm install --frozen-lockfile --reporter=ndjson \| node/,
+  );
+  const diagnostics = jobs.build.steps.find(
+    (step) => step.name === "Upload workspace install diagnostics",
+  );
+  assert.equal(
+    diagnostics.if,
+    "failure() && steps.workspace-install.outcome == 'failure'",
+  );
+});
+
 test("release creation waits for every candidate build and validation", () => {
   for (const name of ["prepare-release", "build", "verify-upgrades"]) {
     for (const step of jobs[name].steps)

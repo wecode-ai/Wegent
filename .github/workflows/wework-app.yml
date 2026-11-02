@@ -243,7 +243,18 @@ jobs:
           '
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        id: workspace-install
+        shell: bash
+        run: pnpm install --frozen-lockfile --reporter=ndjson | node .github/scripts/pnpm-install-report.mjs "$RUNNER_TEMP/pnpm-install-diagnostics.json"
+
+      - name: Upload workspace install diagnostics
+        if: failure() && steps.workspace-install.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/pnpm-install-diagnostics.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Install Wework Electron dependencies
         run: pnpm --dir wework/electron install --frozen-lockfile
