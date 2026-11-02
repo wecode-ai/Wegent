@@ -69,6 +69,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    env:
+      BACKEND_GUARD_TESTS: >-
+        tests/test_collaboration_permission_guard.py
+        tests/api/test_collaboration_permission_contract.py
+        tests/api/test_collaboration_permission_resources.py
+        tests/api/test_loop_item_reorder_permissions.py
+        tests/api/test_workspace_shared_agents.py
+        tests/models/test_collaboration_permission_compatibility.py
+        tests/test_startup_migration_failure.py
+        tests/services/test_runner_routing.py
 
     steps:
       - name: Checkout code
@@ -92,19 +102,32 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_loop_item_reorder_permissions.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+        run: |
+          set -euo pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          uv run pytest "${guard_tests[@]}" -n 0 --cov=app --cov-report= \
+            --junitxml=../.ci-artifacts/backend-tests/guard-results.xml
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/guard.sha.txt
 
       - name: Run backend tests
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          test -f .coverage
+          test "$(cat ../.ci-artifacts/backend-tests/guard.sha.txt)" = "$(git rev-parse HEAD)"
+          read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
+          ignore_guards=("${guard_tests[@]/#/--ignore=}")
           mkdir -p ../.ci-artifacts/backend-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
-          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
-          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
-            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+          command=(uv run pytest tests/ "${ignore_guards[@]}" --cov=app --cov-append \
+            --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml)
+          printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/command.txt
+          printf '\n' >> ../.ci-artifacts/backend-tests/command.txt
+          "${command[@]}" \
             2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
 
       - name: Upload backend test evidence

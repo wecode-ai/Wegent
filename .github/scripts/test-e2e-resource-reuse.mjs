@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -17,6 +18,100 @@ const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
+
+test("Backend deduplication requires a successful same-head guard and appends its coverage", () => {
+  const parsed = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['test-backend'])",
+      ".github/workflows/test.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const job = JSON.parse(parsed.stdout);
+  const guard = job.steps.find(
+    (step) =>
+      step.name === "Guard approved collaboration permission invariants",
+  );
+  const full = job.steps.find((step) => step.name === "Run backend tests");
+  const files = job.env.BACKEND_GUARD_TESTS.trim().split(/\s+/);
+  assert.deepEqual(files, [
+    "tests/test_collaboration_permission_guard.py",
+    "tests/api/test_collaboration_permission_contract.py",
+    "tests/api/test_collaboration_permission_resources.py",
+    "tests/api/test_loop_item_reorder_permissions.py",
+    "tests/api/test_workspace_shared_agents.py",
+    "tests/models/test_collaboration_permission_compatibility.py",
+    "tests/test_startup_migration_failure.py",
+    "tests/services/test_runner_routing.py",
+  ]);
+  const directory = mkdtempSync(join(tmpdir(), "backend-test-dedup-"));
+  try {
+    const backend = join(directory, "backend");
+    const bin = join(directory, "bin");
+    mkdirSync(backend);
+    mkdirSync(bin);
+    const uv = join(bin, "uv");
+    writeFileSync(
+      uv,
+      `#!/usr/bin/env node
+const fs = require('node:fs')
+fs.appendFileSync(process.env.TEST_UV_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+if (process.env.TEST_UV_FAIL === 'true') process.exit(1)
+fs.writeFileSync('.coverage', 'guard coverage')
+`,
+    );
+    const git = join(bin, "git");
+    writeFileSync(
+      git,
+      '#!/usr/bin/env bash\ntest "$*" = "rev-parse HEAD"\nprintf "%s\\n" "$TEST_HEAD"\n',
+    );
+    chmodSync(uv, 0o755);
+    chmodSync(git, 0o755);
+    const log = join(directory, "uv.log");
+    const run = (step, extra = {}) =>
+      spawnSync("bash", ["-c", step.run], {
+        cwd: backend,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...job.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          TEST_UV_LOG: log,
+          TEST_HEAD: "a".repeat(40),
+          ...extra,
+        },
+      });
+    assert.notEqual(run(full).status, 0);
+    assert.notEqual(run(guard, { TEST_UV_FAIL: "true" }).status, 0);
+    assert.notEqual(run(full).status, 0);
+    const guarded = run(guard);
+    assert.equal(guarded.status, 0, guarded.stderr);
+    assert.notEqual(run(full, { TEST_HEAD: "b".repeat(40) }).status, 0);
+    const completed = run(full);
+    assert.equal(completed.status, 0, completed.stderr);
+    const calls = readFileSync(log, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[1].slice(2, 2 + files.length), files);
+    assert.deepEqual(calls[1].slice(2 + files.length, 4 + files.length), [
+      "-n",
+      "0",
+    ]);
+    assert(calls[1].includes("--cov=app"));
+    assert(calls[2].includes("--cov-append"));
+    assert.deepEqual(
+      calls[2].filter((arg) => arg.startsWith("--ignore=")),
+      files.map((file) => `--ignore=${file}`),
+    );
+    assert.equal(calls[2].includes("-n"), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("the existing macOS runner exports verified runtimes after its real checkpoints", () => {
   const parsed = spawnSync(
