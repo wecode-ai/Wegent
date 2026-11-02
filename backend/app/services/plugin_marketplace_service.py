@@ -3150,7 +3150,9 @@ class PluginMarketplaceService:
                 "manifest": release.manifest_json or spec.get("manifest"),
                 "interface": release.interface_json or spec.get("interface"),
                 "components": components_with_manifest_account_auth(
-                    (release.scan_report_json or {}).get("components") or {},
+                    (release.scan_report_json or {}).get("components")
+                    or spec.get("components")
+                    or {},
                     release.manifest_json or {},
                 ),
                 "packageRef": package_ref,

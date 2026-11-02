@@ -1,5 +1,8 @@
 """Regression for historical releases whose scan omitted accountAuth."""
 
+import io
+import json
+import zipfile
 from copy import deepcopy
 
 import pytest
@@ -15,6 +18,7 @@ from app.services.plugin_account_connections import (
     PluginAccountConnectionService,
 )
 from app.services.plugin_marketplace_service import PluginMarketplaceService
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_release_components import components_with_manifest_account_auth
 
 AUTH = {
@@ -47,7 +51,7 @@ def catalog(test_db):
     test_db.add(plugin)
     test_db.flush()
 
-    def release(version="0.5.0", account_auth=True):
+    def release(version="0.5.0", account_auth=True, scan_report=None):
         connector = deepcopy(CONNECTOR)
         if account_auth:
             connector["accountAuth"] = AUTH
@@ -59,9 +63,11 @@ def catalog(test_db):
                 "version": version,
                 "connectors": [connector],
             },
-            scan_report_json={
-                "components": {"connectors": [deepcopy(CONNECTOR)], "skills": []}
-            },
+            scan_report_json=(
+                scan_report
+                if scan_report is not None
+                else {"components": {"connectors": [deepcopy(CONNECTOR)], "skills": []}}
+            ),
             interface_json={},
             storage_key=f"plugins/{version}.zip",
             sha256="a" * 64,
@@ -277,3 +283,86 @@ def test_repair_removes_stale_auth_when_current_manifest_removes_it(
         PluginAccountConnectionService._plugin(
             test_db, test_user.id, installed.id, "gitlab-intra"
         )
+
+
+@pytest.mark.parametrize("connectors", [None, {}, "invalid", 1])
+def test_non_list_manifest_connectors_clear_auth_without_losing_components(connectors):
+    components = {"connectors": [{**CONNECTOR, "accountAuth": AUTH}], "skills": []}
+
+    corrected = components_with_manifest_account_auth(
+        components, {"connectors": connectors}
+    )
+
+    assert corrected == {"connectors": [CONNECTOR], "skills": []}
+    assert components["connectors"][0]["accountAuth"] == AUTH
+
+
+@pytest.mark.parametrize("with_auth", [False, True])
+def test_manifest_auth_uses_the_package_validated_declaration(with_auth):
+    first = {**CONNECTOR, "slug": " gitlab-intra "}
+    if with_auth:
+        first["accountAuth"] = AUTH
+    manifest = {
+        "name": "gitlab-intra",
+        "version": "0.5.0",
+        "connectors": [
+            {"slug": "gitlab-intra", "authPolicy": "invalid"},
+            first,
+            {
+                "slug": "gitlab-intra",
+                "accountAuth": {**AUTH, "adapter": "../unchecked.py"},
+            },
+        ],
+    }
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr(".codex-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr(AUTH["adapter"], "# Validated adapter")
+    parsed = plugin_package_parser.parse_package(package.getvalue())
+    assert len(parsed.components.connectors) == 1
+
+    corrected = components_with_manifest_account_auth(
+        {"connectors": [deepcopy(CONNECTOR)]}, parsed.manifest
+    )
+
+    declaration = parsed.components.connectors[0].accountAuth
+    assert corrected["connectors"][0].get("accountAuth") == (
+        declaration.model_dump(exclude_none=True) if declaration else None
+    )
+
+
+@pytest.mark.parametrize("scan_report", [{}, {"components": None}, {"components": {}}])
+@pytest.mark.parametrize("with_auth", [False, True])
+def test_catalog_remap_preserves_components_when_target_scan_has_none(
+    catalog, test_db, test_user, scan_report, with_auth
+):
+    plugin, publish = catalog
+    old = publish("0.4.0")
+    installed = legacy_install(test_db, test_user, plugin, old)
+    target = publish(scan_report=scan_report, account_auth=with_auth)
+    payload = deepcopy(installed.json)
+    payload["spec"]["releaseId"] = target.id
+    payload["spec"]["source"]["catalogItemId"] = "stale"
+    original = {
+        "connectors": [{**CONNECTOR, "accountAuth": AUTH}],
+        "skills": [{"name": "review", "path": "skills/review/SKILL.md"}],
+    }
+    payload["spec"]["components"] = original
+    installed.json = payload
+    test_db.commit()
+
+    changed = PluginMarketplaceService().reconcile_stale_installed_catalog_refs(
+        test_db, user_id=test_user.id
+    )
+
+    assert changed == 1
+    components = installed.json["spec"]["components"]
+    assert components["skills"] == original["skills"]
+    assert components["connectors"][0]["localAuth"] == CONNECTOR["localAuth"]
+    assert components["connectors"][0].get("accountAuth") == (
+        AUTH if with_auth else None
+    )
+    assert installed.json["spec"]["componentStates"] == {"skill:review": False}
+    assert installed.json["spec"]["updatePolicy"] == "manual"
+    test_db.refresh(target)
+    assert target.scan_report_json == scan_report

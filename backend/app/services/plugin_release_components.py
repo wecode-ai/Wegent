@@ -3,6 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
+from app.services.plugin_package_parser import plugin_package_parser
+
 
 def components_with_manifest_account_auth(
     components: dict[str, Any], manifest: dict[str, Any]
@@ -14,13 +16,12 @@ def components_with_manifest_account_auth(
     """
     result = deepcopy(components)
     declarations = {
-        item["slug"]: item
-        for item in manifest.get("connectors", [])
-        if isinstance(item, dict) and isinstance(item.get("slug"), str)
+        connector.slug: connector.accountAuth
+        for connector in plugin_package_parser._parse_connectors(manifest)
     }
     for connector in result.get("connectors", []):
-        declaration = declarations.get(connector.get("slug"), {})
+        declaration = declarations.get(connector.get("slug"))
         connector.pop("accountAuth", None)
-        if declaration.get("accountAuth") is not None:
-            connector["accountAuth"] = deepcopy(declaration["accountAuth"])
+        if declaration is not None:
+            connector["accountAuth"] = declaration.model_dump(exclude_none=True)
     return result

@@ -513,6 +513,64 @@ fn advancing_historical_release_takes_account_auth_from_target_manifest() {
     );
 }
 
+#[test]
+fn advancing_release_matches_the_first_normalized_valid_connector() {
+    let auth = serde_json::json!({
+        "protocolVersion": 1, "credentialType": "password",
+        "adapter": "scripts/account-auth.py"
+    });
+    for with_auth in [false, true] {
+        let mut release = release_row(12, 1);
+        let mut first = serde_json::json!({"slug": " gitlab-intra ", "authPolicy": "on_install"});
+        if with_auth {
+            first["accountAuth"] = auth.clone();
+        }
+        release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "connectors": [
+                {"slug": "gitlab-intra", "authPolicy": "invalid"},
+                first,
+                {"slug": "gitlab-intra", "accountAuth": {"adapter": "../unchecked.py"}}
+            ]
+        })));
+        release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "components": {"connectors": [{"slug": "gitlab-intra", "accountAuth": auth}]}
+        })));
+
+        let payload = installed_payload(&plugin_row(1), &release, &InstalledSpec::default());
+
+        assert_eq!(
+            payload["spec"]["components"]["connectors"][0].get("accountAuth"),
+            if with_auth { Some(&auth) } else { None }
+        );
+    }
+}
+
+#[test]
+fn advancing_release_treats_non_list_manifest_connectors_as_empty() {
+    for connectors in [
+        Value::Null,
+        serde_json::json!({}),
+        serde_json::json!("invalid"),
+        serde_json::json!(1),
+    ] {
+        let mut release = release_row(12, 1);
+        release.manifest_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "connectors": connectors
+        })));
+        release.scan_report_json = Json(OpaqueJson::from_serializable(serde_json::json!({
+            "components": {"connectors": [{"slug": "gitlab-intra", "accountAuth": {}}]}
+        })));
+
+        let payload = installed_payload(&plugin_row(1), &release, &InstalledSpec::default());
+
+        assert!(
+            payload["spec"]["components"]["connectors"][0]
+                .get("accountAuth")
+                .is_none()
+        );
+    }
+}
+
 #[tokio::test]
 async fn successive_bounded_batches_drain_candidates_without_repeating_updates() {
     let catalog = catalog_for(&[1, 2, 3]);

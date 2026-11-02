@@ -26,6 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::json_compat::{python_str, python_truthy};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 use crate::plugins_marketplace::db::{
     InstalledKindRow, KIND_COLUMNS, NamespaceRow, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
@@ -713,6 +714,21 @@ pub(super) fn component_states(components: &Value) -> Value {
     Value::Object(states)
 }
 
+/// Match the first declaration accepted by the package parser, before deduping.
+fn manifest_connector_matches(item: &Value, slug: &str) -> bool {
+    let item_slug = item
+        .get("slug")
+        .filter(|value| python_truthy(value))
+        .map(python_str)
+        .unwrap_or_default();
+    let policy = item
+        .get("authPolicy")
+        .filter(|value| python_truthy(value))
+        .map(python_str)
+        .unwrap_or_else(|| "optional".to_owned());
+    item_slug.trim() == slug && matches!(policy.as_str(), "on_install" | "on_use" | "optional")
+}
+
 /// Build the advanced release document while preserving its runtime preferences.
 fn installed_payload(
     plugin: &PluginRow,
@@ -738,8 +754,10 @@ fn installed_payload(
                 .and_then(Value::as_array)
                 .and_then(|items| {
                     items.iter().find(|item| {
-                        item.get("slug").and_then(Value::as_str).is_some()
-                            && item.get("slug") == connector.get("slug")
+                        connector
+                            .get("slug")
+                            .and_then(Value::as_str)
+                            .is_some_and(|slug| manifest_connector_matches(item, slug.trim()))
                     })
                 })
                 .and_then(|item| item.get("accountAuth"))
