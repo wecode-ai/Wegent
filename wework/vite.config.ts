@@ -270,7 +270,7 @@ export default defineConfig({
   test: {
     sequence:
       process.env.WEWORK_CI_BALANCED_SHARDS === 'true'
-        ? { sequencer: path.resolve(__dirname, 'scripts/ci-test-sequencer.mjs') }
+        ? { sequencer: (await import('./scripts/ci-test-sequencer.mjs')).default }
         : undefined,
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',

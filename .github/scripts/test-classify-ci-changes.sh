@@ -424,7 +424,8 @@ for path in .github/actions/build-wework-core-e2e/action.yml \
     "${all_false/wework_e2e=false/wework_e2e=true}" "$path"
 done
 for path in .github/ci/wework-unit-test-durations.json \
-  .github/scripts/balance-wework-unit-tests.mjs wework/scripts/ci-test-sequencer.mjs; do
+  .github/scripts/balance-wework-unit-tests.mjs wework/scripts/ci-test-sequencer.mjs \
+  wework/scripts/ci-test-sequencer.test.mjs; do
   assert_case "Unit scheduling changes select the existing unit suite: $path" \
     "${all_false/wework=false/wework=true}" "$path"
 done

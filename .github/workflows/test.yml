@@ -637,6 +637,10 @@ jobs:
           sudo chmod 4755 "$sandbox_path"
           xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
+      - name: Verify measured Wework test sharding
+        if: matrix.shard == 1
+        run: node --test wework/scripts/ci-test-sequencer.test.mjs
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
