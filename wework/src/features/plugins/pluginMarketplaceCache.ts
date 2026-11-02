@@ -728,6 +728,7 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         item.sourceLabel,
         item.distribution,
         item.raw.spec.installState,
+        item.raw.spec.updatePolicy,
         JSON.stringify(item.raw.spec.interface),
         JSON.stringify(item.raw.spec.componentStates),
         item.raw.spec.sourcePayload?.localPresent,

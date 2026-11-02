@@ -4989,6 +4989,56 @@ describe('PluginsWorkspace', () => {
     expect(marketplace.getSyncDeviceCalls()).toBe(0)
   })
 
+  test.each(['auto', 'manual'] as const)(
+    'refreshes a server-side update policy change to %s before checking a new release',
+    async policy => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const previousPolicy = policy === 'auto' ? 'manual' : 'auto'
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceUpdatePolicy: previousPolicy,
+        autoUpdateBatchSizes: [1],
+        deviceAutoSyncSucceeds: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+      expect(await screen.findByTestId('plugin-auto-update-toggle-101')).toHaveAttribute(
+        'aria-checked',
+        String(previousPolicy === 'auto')
+      )
+      await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+
+      await fetch('/api/plugins/installed/101?device_id=current-device', {
+        method: 'PUT',
+        body: JSON.stringify({ updatePolicy: policy }),
+      })
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
+      await userEvent.click(screen.getByTestId('plugins-installed-strip-item-101'))
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-auto-update-toggle-101')).toHaveAttribute(
+          'aria-checked',
+          String(policy === 'auto')
+        )
+      )
+
+      marketplace.publishMarketplaceUpdate()
+      await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      if (policy === 'auto') {
+        await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+        await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+      } else {
+        await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
+        await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+        expect(await screen.findByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+        expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+      }
+    }
+  )
+
   test('refreshes the runtime record for a manual upgrade and retains the composer inventory identity', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const deviceId = 'electron-plugins'
