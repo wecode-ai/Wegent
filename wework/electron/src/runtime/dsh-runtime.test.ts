@@ -242,23 +242,28 @@ describe('DSH runtime readiness', () => {
   })
 
   test('reports the last HTTP status and endpoint without exposing its query', async () => {
-    const server = createServer((_request, response) => {
-      response.writeHead(503)
-      response.end()
-    })
-    servers.push(server)
-    await listen(server)
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
-    const endpoint = `http://127.0.0.1:${address.port}/pending`
-    const failure = await new DshRuntime({ url: `${endpoint}?token=private-test-token` })
-      .start(100)
-      .catch((error: unknown) => error)
+    const endpoint = 'http://127.0.0.1:12345/pending'
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const pending = new DshRuntime({ url: `${endpoint}?token=private-test-token` })
+        .start(100)
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      const failure = await pending
 
-    expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toBe(`DSH startup timed out: ${endpoint} (HTTP 503)`)
-    expect((failure as Error).message).not.toContain('private-test-token')
-    expect((failure as Error).cause).toEqual(new Error('DSH startup timed out'))
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${endpoint}?token=private-test-token`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toBe(`DSH startup timed out: ${endpoint} (HTTP 503)`)
+      expect((failure as Error).message).not.toContain('private-test-token')
+      expect((failure as Error).cause).toEqual(new Error('DSH startup timed out'))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test.each([

@@ -90,7 +90,7 @@ describe('workbench DSH runtime', () => {
         expect(launch.environment.WEWORK_DSH_BROWSER_AUTH_FD).toBeUndefined()
         expect(
           options.run.mock.calls.filter(([, args]) =>
-            args.some(argument => String(argument).endsWith('/plugins/wework-browser-auth'))
+            args.includes(`file:${join(fixture.runtimeRoot, 'plugins', 'wework-browser-auth')}`)
           )
         ).toHaveLength(authenticates ? 1 : 0)
         for (const [, , { env }] of options.run.mock.calls) {
