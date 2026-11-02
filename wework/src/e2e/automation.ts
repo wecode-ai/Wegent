@@ -183,7 +183,15 @@ export interface WeworkAutomationBridge {
 declare global {
   interface Window {
     __WEWORK_E2E__?: WeworkAutomationBridge
+    __WEWORK_DSH_TELEMETRY_FIXTURE__?: DshTelemetrySinkFixtureState
   }
+}
+
+interface DshTelemetrySinkFixtureState {
+  registered: boolean
+  registeredAt: string | null
+  error: string | null
+  facts: Readonly<Record<string, unknown>>[]
 }
 
 export function isWeworkAutomationEnabled(): boolean {
@@ -2473,6 +2481,55 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'installDshTelemetrySinkFixture': {
+      const input = JSON.parse(command.value ?? '{}') as { delayMs?: number; id?: string }
+      if (!input.id) throw new Error('installDshTelemetrySinkFixture requires an id')
+      if (
+        typeof input.delayMs !== 'number' ||
+        !Number.isFinite(input.delayMs) ||
+        input.delayMs < 0
+      ) {
+        throw new Error('installDshTelemetrySinkFixture requires a non-negative delayMs')
+      }
+      const host = window.__WEWORK_DSH_EXTENSIONS__
+      if (!host?.telemetry) {
+        throw new Error('The DSH telemetry sink registry is unavailable')
+      }
+      const fixture: DshTelemetrySinkFixtureState = {
+        registered: false,
+        registeredAt: null,
+        error: null,
+        facts: [],
+      }
+      window.__WEWORK_DSH_TELEMETRY_FIXTURE__ = fixture
+      const sinkId = input.id
+      setTimeout(() => {
+        try {
+          host.telemetry.sinks.register(
+            {
+              effect(factory: () => () => void) {
+                factory()
+                return () => {}
+              },
+            } as unknown as Parameters<typeof host.telemetry.sinks.register>[0],
+            {
+              id: sinkId,
+              protocol: 'telemetry-sink/v1',
+              accept: envelope => {
+                fixture.facts.push(envelope)
+              },
+            }
+          )
+          fixture.registered = true
+          fixture.registeredAt = new Date().toISOString()
+        } catch (error) {
+          fixture.error = error instanceof Error ? error.message : String(error)
+        }
+      }, input.delayMs)
+      return ''
+    }
+    case 'readDshTelemetrySinkFixture':
+      return JSON.stringify(window.__WEWORK_DSH_TELEMETRY_FIXTURE__ ?? null)
     case 'storeLocalProxyUrl': {
       const config = saveLocalProxyUrl(command.value?.trim() ?? '')
       await flushDesktopLocalStoragePersistence()

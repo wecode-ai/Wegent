@@ -322,6 +322,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getLocalStorageItem',
   'getLocationOrigin',
   'getPluginSyncDiagnostics',
+  'readDshTelemetrySinkFixture',
   'getTerminalText',
   'getText',
   'metrics',
