@@ -637,6 +637,14 @@ fn human_round_keeps_audit_identity_and_waits_for_original_delivery() {
         )
         .unwrap();
     assert_eq!(human.created_by_user_id, 7);
+    assert_eq!(
+        fixture
+            .store
+            .get_project(&fixture.project.id)
+            .unwrap()
+            .version,
+        fixture.project.version
+    );
     assert_eq!(human.assignee_user_id, Some(8));
     assert_eq!(fixture.count(), 1);
     assert!(fixture

@@ -9,7 +9,9 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         let project = get_item_from(&connection, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
-        let group = collaboration_group(&project, group_id)?;
+        let mut group = collaboration_group(&project, group_id)?;
+        let revision = Self::coordination_event_version(&group);
+        group["version"] = json!(revision);
         let agent = if group["leader"]["kind"] == "agent" {
             let id = group["leader"]["id"]
                 .as_str()
@@ -24,7 +26,7 @@ impl LocalTaskStore {
             Value::Null
         };
         Ok(
-            json!({"project":{"id":project.id,"name":project.name,"description":project.description},"group":group,"agent":agent}),
+            json!({"project":{"id":project.id,"name":project.name,"description":project.description,"version":project.version},"group":group,"agent":agent}),
         )
     }
 }

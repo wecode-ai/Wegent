@@ -670,7 +670,7 @@ fn create_human_assignment_task(
     });
     connection.execute(
         "UPDATE loop_items
-         SET next_item_number = ?1, version = version + 1, updated_at = ?2
+         SET next_item_number = ?1, updated_at = ?2
          WHERE id = ?3",
         params![sequence + 1, timestamp, manager.cloud_project_id],
     )?;

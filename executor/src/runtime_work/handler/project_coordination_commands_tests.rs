@@ -263,3 +263,93 @@ async fn cloud_command_protocol_keeps_actor_device_and_structured_error_boundari
     assert_eq!(submitted.lock().unwrap().len(), 3);
     server.abort();
 }
+
+#[tokio::test]
+async fn private_project_turns_reject_changed_project_or_group_configuration() {
+    let (_directory, handler, store, payload, _) = fixture();
+    let project = payload["projectId"].as_str().unwrap();
+    let context = store.project_coordinator_context(project, "group").unwrap();
+    let again = store.project_coordinator_context(project, "group").unwrap();
+    assert_eq!(context["group"]["version"], again["group"]["version"]);
+    assert!(context["group"]["version"].is_string());
+    let current = store.get_project(project).unwrap();
+    assert_eq!(context["project"]["version"], current.version);
+    assert_eq!(
+        context["group"]["version"],
+        LocalTaskStore::coordination_event_version(&current.metadata["collaboration_groups"][0])
+    );
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("origin".into(),json!({"type":"project_coordinator","userId":7,"deviceId":"runner-a","projectStore":"local",
+        "cloudProjectId":project,"groupId":"group","projectVersion":context["project"]["version"],
+        "groupVersion":context["group"]["version"],"leaderId":context["group"]["leader"]["id"],"agentVersion":context["agent"]["version"]}));
+    handler
+        .validate_project_coordinator_request(&request)
+        .await
+        .unwrap();
+    let updated = store
+        .update_project(
+            project,
+            serde_json::from_value(
+                json!({"version":current.version,"description":"New project goal"}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert!(handler
+        .validate_project_coordinator_request(&request)
+        .await
+        .is_err());
+    request.extra["origin"]["projectVersion"] = json!(updated.version);
+    handler
+        .validate_project_coordinator_request(&request)
+        .await
+        .unwrap();
+    let mut groups = updated.metadata["collaboration_groups"].clone();
+    groups[0]["instructions"] = json!("Updated shared instructions");
+    let updated = store
+        .update_project(
+            project,
+            serde_json::from_value(
+                json!({"version":updated.version,"collaboration_groups":groups}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    request.extra["origin"]["projectVersion"] = json!(updated.version);
+    assert_eq!(
+        store.project_coordinator_context(project, "group").unwrap()["group"]["leader"]["id"],
+        context["group"]["leader"]["id"]
+    );
+    assert!(handler
+        .validate_project_coordinator_request(&request)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn missing_cloud_project_version_never_becomes_a_valid_null_revision() {
+    let app = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route(
+            "/api/v1/cloud-projects/1001",
+            get(|| async { Json(json!({"id":"1001","name":"Project"})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("runner-a", "/bin/false");
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "fixture".into(),
+        ..Default::default()
+    })));
+    assert_eq!(
+        handler
+            .project_coordinator_context(7, "cloud", "1001", "101")
+            .await
+            .unwrap_err()
+            .code,
+        "cloud_response_invalid"
+    );
+    server.abort();
+}

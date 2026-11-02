@@ -47,6 +47,15 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
+        if !details["version"]
+            .as_i64()
+            .is_some_and(|version| version > 0)
+        {
+            return Err(AppIpcError::new(
+                "cloud_response_invalid",
+                "Project configuration version is unavailable",
+            ));
+        }
         let groups = self
             .stand_in_http(
                 reqwest::Method::GET,
@@ -64,6 +73,12 @@ impl RuntimeWorkRpcHandler {
                 )
             })?
             .clone();
+        if !group["version"].as_i64().is_some_and(|version| version > 0) {
+            return Err(AppIpcError::new(
+                "cloud_response_invalid",
+                "Project group configuration version is unavailable",
+            ));
+        }
         let agent = if group["leader"]["kind"] == "agent" {
             let rows = self
                 .stand_in_http(
@@ -96,7 +111,7 @@ impl RuntimeWorkRpcHandler {
             Value::Null
         };
         Ok(
-            json!({"project":{"id":details["id"],"name":details["name"],"description":details["description"],"workflow":details["workflow"]},"group":group,"agent":agent}),
+            json!({"project":{"id":details["id"],"name":details["name"],"description":details["description"],"workflow":details["workflow"],"version":details["version"]},"group":group,"agent":agent}),
         )
     }
 
@@ -167,7 +182,7 @@ impl RuntimeWorkRpcHandler {
                 &payload["options"],
             )
             .await?;
-        let origin = json!({"type":"project_coordinator","initiatedBy":"project_coordinator","userId":user,"deviceId":self.device_id,"cloudProjectId":payload["projectId"],"projectStore":payload["projectStore"],"groupId":payload["groupId"],"leaderId":context["group"]["leader"]["id"],"groupVersion":context["group"]["version"],"agentVersion":context["agent"]["version"]});
+        let origin = json!({"type":"project_coordinator","initiatedBy":"project_coordinator","userId":user,"deviceId":self.device_id,"cloudProjectId":payload["projectId"],"projectStore":payload["projectStore"],"projectVersion":context["project"]["version"],"groupId":payload["groupId"],"leaderId":context["group"]["leader"]["id"],"groupVersion":context["group"]["version"],"agentVersion":context["agent"]["version"]});
         let input = json!({"taskId":task_id,"title":context["project"]["name"],"message":message,"origin":origin,"cloudProjectId":payload["projectId"],"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"],"queueIfBusy":true});
         let mut prepared = self
             .prepare_stand_in_execution_with_agent(input, &config, Some(agent))
@@ -276,7 +291,8 @@ impl RuntimeWorkRpcHandler {
         self.normalize_stand_in_agent(context["agent"].clone())
             .await
             .map_err(|e| e.message)?;
-        if context["group"]["leader"]["id"] != origin["leaderId"]
+        if context["project"]["version"] != origin["projectVersion"]
+            || context["group"]["leader"]["id"] != origin["leaderId"]
             || context["group"]["version"] != origin["groupVersion"]
             || context["agent"]["version"] != origin["agentVersion"]
         {
