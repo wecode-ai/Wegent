@@ -1,17 +1,74 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
 import { AppUpdateService } from './app-update-service.js'
-import { atomicReleaseWrite, ReleaseStore } from '../runtime/release-store.js'
+import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from '../runtime/release-store.js'
 import type { UpgradeCatalog } from '../runtime/upgrade-policy.mjs'
 import type { ComponentPaths } from '../runtime/component-update-manager.js'
-import { currentCoreProfile } from '../runtime/release-profile.js'
+import { currentCoreProfile, profileRevision } from '../runtime/release-profile.js'
+import * as physicalRelease from '../runtime/physical-release-files.js'
+import * as releaseSignature from '../runtime/release-signature.js'
 
 const roots: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const path of roots.splice(0)) await rm(path, { recursive: true, force: true })
 })
+
+function publishNextTarget(catalog: UpgradeCatalog) {
+  const target = catalog.releases[2]
+  catalog.edges.push({
+    ...catalog.edges[0],
+    to: target.version,
+    toSha256: target.sha256,
+    toSourceSha: target.sourceSha,
+  })
+  target.notes = 'Refreshed release notes'
+  return target
+}
+
+async function readyFixture() {
+  const context = await fixture()
+  const { service, options, catalog, store } = context
+  const profile = currentCoreProfile(options.dataDirectory)
+  await mkdir(profile, { recursive: true })
+  await writeFile(join(profile, 'package.json'), '{}')
+  const target = catalog.releases[1]
+  target.sha256 = createHash('sha256').update('damaged').digest('hex')
+  catalog.edges[0].toSha256 = target.sha256
+  vi.spyOn(physicalRelease, 'extractPhysicalRelease').mockImplementation(async (_archive, host) => {
+    await writeFile(
+      join(host, 'wework-release.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        version: target.version,
+        sourceSha: target.sourceSha,
+        executable: 'host',
+        resources: 'resources',
+      })
+    )
+  })
+  vi.spyOn(releaseSignature, 'verifyReleaseSignature').mockResolvedValue(undefined)
+  // Unit tests isolate the target-owned preparation subprocess; the packaged
+  // upgrade checkpoint exercises its real extraction, signature and runtime.
+  const preparation = vi
+    .spyOn(
+      service as unknown as { prepareHostEnvironment: (release: DesktopRelease) => Promise<void> },
+      'prepareHostEnvironment'
+    )
+    .mockImplementation(async release => {
+      await store.save(release)
+      await atomicReleaseWrite(
+        join(store.slot(release.id), 'prepared.json'),
+        JSON.stringify({ sourceRevision: await profileRevision(profile) })
+      )
+    })
+  await service.check('stable')
+  await service.download('stable')
+  return { ...context, preparation }
+}
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'wework-updater-test-'))
   roots.push(directory)
@@ -259,4 +316,179 @@ test('rollback cannot restore incompatible data without an explicit boolean conf
   await store.save(previous)
   await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'previous')
   await expect(service.createRollbackAction(false)()).rejects.toThrow('requires confirmation')
+})
+
+test.each(['delayed download', 'failed retry'])(
+  '%s refreshes the verified target and release notes',
+  async mode => {
+    const { service, catalog, fetch } = await fixture()
+    await service.check('stable')
+    if (mode === 'failed retry')
+      await expect(service.download('stable')).rejects.toThrow('integrity')
+    fetch.mockClear()
+    const target = publishNextTarget(catalog)
+
+    await expect(service.download('stable')).rejects.toThrow('integrity')
+
+    expect(
+      fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz')).map(([url]) => url)
+    ).toEqual([target.url])
+    expect(service.downloadProgress()).toMatchObject({
+      phase: 'failed',
+      update: { version: target.version, body: target.notes, path: [target.version] },
+    })
+  }
+)
+
+test('refresh failure never falls back to the previously checked package', async () => {
+  const { service, fetch } = await fixture()
+  await service.check('stable')
+  fetch.mockClear().mockRejectedValueOnce(new Error('Catalog offline'))
+
+  await expect(service.download('stable')).rejects.toThrow('Catalog offline')
+
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(service.downloadProgress()).toMatchObject({
+    phase: 'failed',
+    failure: { message: 'Catalog offline' },
+  })
+})
+
+test('withdrawn targets clear the old offer without downloading an obsolete package', async () => {
+  const { service, catalog, fetch } = await fixture()
+  await service.check('stable')
+  catalog.releases = catalog.releases.slice(0, 1)
+  catalog.edges = []
+  fetch.mockClear()
+
+  await service.download('stable')
+
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(service.downloadProgress()).toMatchObject({ phase: 'upToDate', update: null })
+  expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
+})
+
+test('revoked paths remain errors and are never treated as permission to download an old target', async () => {
+  const { service, catalog, fetch } = await fixture()
+  await service.check('stable')
+  catalog.edges[0].revoked = true
+  fetch.mockClear()
+
+  await expect(service.download('stable')).rejects.toMatchObject({
+    code: 'UPGRADE_PATH_UNAVAILABLE',
+  })
+
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(service.downloadProgress()).toMatchObject({
+    phase: 'failed',
+    failure: { code: 'UPGRADE_PATH_UNAVAILABLE' },
+  })
+})
+
+test('downloads wait for an earlier check and coalesce checks around the refreshed target', async () => {
+  const { service, catalog, fetch } = await fixture()
+  const held = Promise.withResolvers<Response>()
+  fetch.mockReturnValueOnce(held.promise)
+  const checking = service.check('stable')
+  const results = Promise.allSettled([service.download('stable'), service.download('stable')])
+  const observed = service.check('stable')
+  expect(fetch).toHaveBeenCalledOnce()
+  held.resolve(new Response(JSON.stringify({ upgradePolicy: catalog })))
+  await checking
+  publishNextTarget(catalog)
+
+  expect(await observed).toMatchObject({ version: '1.2.0' })
+  expect((await results).every(result => result.status === 'rejected')).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(1)
+  expect(service.downloadProgress().update?.version).toBe('1.2.0')
+})
+
+test('serializes checks for different channels instead of allowing a late result to overwrite the target', async () => {
+  const { service, catalog, fetch } = await fixture()
+  const held = Promise.withResolvers<Response>()
+  const stable = JSON.stringify({ upgradePolicy: catalog })
+  fetch.mockReturnValueOnce(held.promise)
+  const first = service.check('stable')
+  catalog.channel = 'beta'
+  publishNextTarget(catalog)
+  const second = service.check('beta')
+  expect(fetch).toHaveBeenCalledOnce()
+  held.resolve(new Response(stable))
+
+  expect(await first).toMatchObject({ version: '1.1.0' })
+  expect(await second).toMatchObject({ version: '1.2.0' })
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
+test('reuses a ready package without another catalog or archive request', async () => {
+  const { service, fetch, preparation } = await readyFixture()
+  const ready = service.downloadProgress()
+  fetch.mockClear()
+
+  await Promise.all([service.download('stable'), service.download('stable')])
+
+  expect(service.downloadProgress()).toEqual(ready)
+  expect(fetch).not.toHaveBeenCalled()
+  expect(preparation).toHaveBeenCalledOnce()
+})
+
+test('rejects an obsolete installation version and revalidates a deferred installation', async () => {
+  const { service, catalog, shutdown } = await readyFixture()
+  expect(() => service.createInstallAction('1.2.0')).toThrow('not ready')
+  const install = service.createInstallAction('1.1.0')
+  publishNextTarget(catalog)
+  await service.check('stable')
+
+  expect(install).toThrow('not ready')
+  expect(shutdown).not.toHaveBeenCalled()
+})
+
+test('an installation cannot start while a check may change its prepared target', async () => {
+  const { service, fetch } = await readyFixture()
+  const held = Promise.withResolvers<Response>()
+  fetch.mockReturnValueOnce(held.promise)
+  const checked = service.check('stable')
+
+  expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
+  held.reject(new Error('Catalog offline'))
+  await expect(checked).rejects.toThrow('Catalog offline')
+})
+
+test('invalidates a prepared package when its declared source identity changes', async () => {
+  const { service, catalog } = await readyFixture()
+  catalog.releases[1].sourceSha = 'd'.repeat(40)
+  catalog.edges[0].toSourceSha = catalog.releases[1].sourceSha
+
+  await service.check('stable')
+
+  expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
+})
+
+test('installation revalidation rejects changed source identity before shutdown', async () => {
+  const { service, catalog, shutdown } = await readyFixture()
+  const install = service.createInstallAction('1.1.0')
+  catalog.releases[1].sourceSha = 'd'.repeat(40)
+  catalog.edges[0].toSourceSha = catalog.releases[1].sourceSha
+
+  await expect(install()).rejects.toThrow('revoked or changed')
+
+  expect(shutdown).not.toHaveBeenCalled()
+})
+
+test('locks the selected target throughout installation and shutdown', async () => {
+  const { service, shutdown, restart } = await readyFixture()
+  const stopped = Promise.withResolvers<void>()
+  shutdown.mockReturnValueOnce(stopped.promise)
+  const install = service.createInstallAction('1.1.0')()
+  const rejected = expect(install).rejects.toThrow('Shutdown interrupted')
+  await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+
+  await expect(service.download('stable')).rejects.toThrow('operation is in progress')
+  await expect(service.check('stable')).rejects.toThrow('operation is in progress')
+  expect(() => service.createInstallAction('1.1.0')).toThrow('operation is in progress')
+  stopped.reject(new Error('Shutdown interrupted'))
+  await rejected
+  expect(restart).not.toHaveBeenCalled()
+  // Once shutdown starts the runtime may be partially stopped; keep the target locked.
+  await expect(service.check('stable')).rejects.toThrow('operation is in progress')
 })

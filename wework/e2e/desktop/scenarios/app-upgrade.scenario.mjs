@@ -97,6 +97,9 @@ export async function createDesktopScenario(options) {
   let passed = false
   let origin
   let modelRequests = 0
+  const verifiesTargetRefresh = checkpoint === 'app-update-full'
+  let obsoleteTarget = verifiesTargetRefresh
+  const obsoletePath = `/obsolete-${pair.to.name}`
   const requests = []
   const server = createServer((request, response) => {
     const url = new URL(request.url, origin)
@@ -108,7 +111,8 @@ export async function createDesktopScenario(options) {
     if (url.pathname.startsWith('/components-')) {
       const releases = [pair.from, pair.to].map(asset => ({
         ...asset,
-        url: `${origin}/${asset.name}`,
+        url: `${origin}${obsoleteTarget && asset.version === pair.to.version ? obsoletePath : `/${asset.name}`}`,
+        notes: obsoleteTarget ? 'Before retry' : 'Refreshed update target',
         minSourceVersion: pair.from.version === asset.version ? '0.0.0' : pair.from.version,
         revoked: false,
       }))
@@ -140,6 +144,9 @@ export async function createDesktopScenario(options) {
           },
         })
       )
+    } else if (url.pathname === obsoletePath) {
+      response.writeHead(503)
+      response.end('The previously advertised asset is unavailable')
     } else if (url.pathname === `/${pair.to.name}`) {
       response.writeHead(200, {
         'content-type': 'application/gzip',
@@ -406,6 +413,18 @@ export async function createDesktopScenario(options) {
         })
         await control.command('clickWhenEnabled', updateButton)
       }
+      if (verifiesTargetRefresh) {
+        await assert.rejects(
+          waitForUpdatePreparation(async () =>
+            JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+          ),
+          /Release download failed: HTTP 503/
+        )
+        obsoleteTarget = false
+        // Publish the corrected immutable asset location while the renderer
+        // still holds the failed offer, then retry through the same UI action.
+        await control.command('clickWhenEnabled', updateButton)
+      }
       const accepted = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       assert.notEqual(
         accepted.phase,
@@ -425,6 +444,15 @@ export async function createDesktopScenario(options) {
       )
       assert.equal(observedProgress.downloadedBytes, pair.to.bytes)
       assert.equal(observedProgress.totalBytes, pair.to.bytes)
+      assert.equal(observedProgress.update.version, pair.to.version)
+      if (verifiesTargetRefresh) {
+        assert.equal(observedProgress.update.body, 'Refreshed update target')
+        assert.equal(
+          requests.filter(request => request.path === obsoletePath).length,
+          1,
+          'A retry must refresh the catalog instead of requesting the obsolete asset again'
+        )
+      }
       const requestCount = requests.length
       await control.command('downloadPendingAppUpdate', 'body')
       assert.equal(requests.length, requestCount, 'Repeated preparation started another transfer')

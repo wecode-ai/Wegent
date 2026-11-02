@@ -2975,7 +2975,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
     case 'startAppUpdateDownload':
-      await invokeDesktopHost<void>('appUpdate.download')
+      await invokeDesktopHost<void>('appUpdate.download', { channel: 'stable' })
       return 'started'
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()

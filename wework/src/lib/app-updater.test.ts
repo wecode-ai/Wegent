@@ -7,6 +7,11 @@ import {
 
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  flush: vi.fn(async () => undefined),
+}))
+
+vi.mock('@/desktop/localStoragePersistence', () => ({
+  flushDesktopLocalStoragePersistence: desktopHostMocks.flush,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -27,6 +32,7 @@ describe('Wework app updater', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     desktopHostMocks.invoke.mockReset()
+    desktopHostMocks.flush.mockReset().mockResolvedValue(undefined)
   })
 
   test('does not invoke the Electron updater on Linux', async () => {
@@ -61,7 +67,7 @@ describe('Wework app updater', () => {
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'appUpdate.check') return update
       if (capability === 'appUpdate.downloadProgress') {
-        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready' }
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready', update }
       }
       return undefined
     })
@@ -73,15 +79,16 @@ describe('Wework app updater', () => {
 
     expect(desktopHostMocks.invoke.mock.calls).toEqual(
       expect.arrayContaining([
-        ['appUpdate.download'],
+        ['appUpdate.download', { channel: 'stable' }],
         ['appUpdate.downloadProgress'],
-        ['appUpdate.install'],
+        ['appUpdate.install', { version: '0.2.7' }],
       ])
     )
     expect(onProgress).toHaveBeenLastCalledWith({
       downloadedBytes: 100,
       totalBytes: 100,
       phase: 'ready',
+      update,
     })
     expect(
       desktopHostMocks.invoke.mock.calls.filter(
@@ -101,7 +108,12 @@ describe('Wework app updater', () => {
         polls += 1
         return polls < 3
           ? { downloadedBytes: polls * 40, totalBytes: 100, phase: 'host' }
-          : { downloadedBytes: 100, totalBytes: 100, phase: 'ready' }
+          : {
+              downloadedBytes: 100,
+              totalBytes: 100,
+              phase: 'ready',
+              update: { currentVersion: '0.2.6', version: '0.2.7' },
+            }
       }
       return undefined
     })
@@ -111,12 +123,13 @@ describe('Wework app updater', () => {
     const download = downloadPendingWeworkUpdate(onProgress)
     await vi.advanceTimersByTimeAsync(1_000)
 
-    await expect(download).resolves.toBeUndefined()
+    await expect(download).resolves.toEqual({ currentVersion: '0.2.6', version: '0.2.7' })
     expect(polls).toBe(3)
     expect(onProgress).toHaveBeenLastCalledWith({
       downloadedBytes: 100,
       totalBytes: 100,
       phase: 'ready',
+      update: { currentVersion: '0.2.6', version: '0.2.7' },
     })
   })
 
@@ -143,5 +156,58 @@ describe('Wework app updater', () => {
     await expect(downloadPendingWeworkUpdate()).rejects.toThrow(
       'Cannot download "https://example.com/private" status 404'
     )
+  })
+
+  test('returns the refreshed download target and installs that exact version', async () => {
+    const oldUpdate = { currentVersion: '1.0.1-beta.5', version: '1.0.1-beta.6' }
+    const newUpdate = { ...oldUpdate, version: '1.1.0-beta.1', body: 'New notes' }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return oldUpdate
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready', update: newUpdate }
+      }
+    })
+    await checkForWeworkUpdate('beta')
+
+    await expect(downloadPendingWeworkUpdate()).resolves.toEqual(newUpdate)
+    await installDownloadedWeworkUpdate()
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.download', { channel: 'beta' })
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.install', {
+      version: newUpdate.version,
+    })
+  })
+
+  test('stops polling and clears a withdrawn target', async () => {
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return { currentVersion: '0.2.6', version: '0.2.7' }
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 0, totalBytes: null, phase: 'upToDate', update: null }
+      }
+    })
+    await checkForWeworkUpdate('stable')
+
+    await expect(downloadPendingWeworkUpdate()).resolves.toBeNull()
+    await expect(installDownloadedWeworkUpdate()).rejects.toThrow('No pending Wework update')
+    expect(
+      desktopHostMocks.invoke.mock.calls.filter(([name]) => name === 'appUpdate.downloadProgress')
+    ).toHaveLength(1)
+  })
+
+  test('preserves the confirmed install version while local storage is being flushed', async () => {
+    const flushed = Promise.withResolvers<undefined>()
+    desktopHostMocks.flush.mockReturnValueOnce(flushed.promise)
+    desktopHostMocks.invoke.mockResolvedValueOnce({ currentVersion: '0.2.6', version: '0.2.7' })
+    await checkForWeworkUpdate('stable')
+    const installing = installDownloadedWeworkUpdate()
+    desktopHostMocks.invoke.mockResolvedValueOnce({ currentVersion: '0.2.6', version: '0.2.8' })
+    await checkForWeworkUpdate('stable')
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('appUpdate.install', expect.anything())
+
+    flushed.resolve(undefined)
+    await installing
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.install', { version: '0.2.7' })
+    expect(desktopHostMocks.flush).toHaveBeenCalledOnce()
   })
 })

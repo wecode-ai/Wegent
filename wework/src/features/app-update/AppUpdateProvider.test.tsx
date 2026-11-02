@@ -38,6 +38,10 @@ function disableElectron() {
   delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
+function checkedUpdate() {
+  return vi.mocked(checkForWeworkUpdate).mock.results.at(-1)!.value
+}
+
 describe('AppUpdateProvider', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -46,7 +50,7 @@ describe('AppUpdateProvider', () => {
     enableElectron()
     appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
-    vi.mocked(downloadPendingWeworkUpdate).mockResolvedValue()
+    vi.mocked(downloadPendingWeworkUpdate).mockImplementation(async () => checkedUpdate())
     vi.mocked(installDownloadedWeworkUpdate).mockResolvedValue()
   })
 
@@ -143,7 +147,7 @@ describe('AppUpdateProvider', () => {
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
       onProgress =>
         new Promise(resolve => {
-          finishDownload = resolve
+          finishDownload = () => resolve(checkedUpdate())
           reportProgress = onProgress
         })
     )
@@ -266,7 +270,7 @@ describe('AppUpdateProvider', () => {
       .mockImplementationOnce(
         () =>
           new Promise(resolve => {
-            finishRetry = resolve
+            finishRetry = () => resolve(checkedUpdate())
           })
       )
 
@@ -472,7 +476,7 @@ describe('AppUpdateProvider', () => {
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(onProgress => {
       onProgress?.({ downloadedBytes: 50, totalBytes: 100 })
       return new Promise(resolve => {
-        finishDownload = resolve
+        finishDownload = () => resolve(checkedUpdate())
       })
     })
 

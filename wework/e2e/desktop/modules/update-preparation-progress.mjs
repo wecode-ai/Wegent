@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { UPGRADE_PREPARATION_PHASE_TIMEOUT_MS } from '../upgrade-suite.mjs'
 
-const PHASES = ['host', 'extracting', 'runtime', 'ready']
+const PHASES = ['preparing', 'host', 'extracting', 'runtime', 'ready']
 
 export async function waitForUpdatePreparation(
   readProgress,

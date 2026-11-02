@@ -4,7 +4,11 @@ import { mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { cloudFetch } from './cloud-http.js'
-import type { WeworkUpdateDownloadProgress } from './app-update-progress.js'
+import type {
+  WeworkUpdateChannel,
+  WeworkUpdateDownloadProgress,
+  WeworkUpdateInfo,
+} from './app-update-progress.js'
 import {
   compareVersions,
   planUpgrade,
@@ -30,14 +34,7 @@ import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physic
 
 const execute = promisify(execFile)
 
-export type WeworkUpdateChannel = 'stable' | 'beta'
-export interface WeworkUpdateInfo {
-  currentVersion: string
-  version: string
-  body?: string
-  targetVersion?: string
-  path?: string[]
-}
+export type { WeworkUpdateChannel, WeworkUpdateInfo } from './app-update-progress.js'
 export type AppUpdateController = Pick<
   AppUpdateService,
   'check' | 'download' | 'downloadProgress' | 'createInstallAction'
@@ -69,9 +66,19 @@ export interface AppUpdateServiceOptions {
 export class AppUpdateService {
   private progress: WeworkUpdateDownloadProgress = { downloadedBytes: 0, totalBytes: null }
   private pending: UpgradeRelease | null = null
+  private pendingUpdate: WeworkUpdateInfo | null = null
   private prepared: DesktopRelease | null = null
+  private readyProgress: WeworkUpdateDownloadProgress | null = null
   private channel: WeworkUpdateChannel = 'stable'
-  private downloadPromise: Promise<void> | null = null
+  private checkTask: {
+    channel: WeworkUpdateChannel
+    promise: Promise<WeworkUpdateInfo | null>
+  } | null = null
+  private downloadTask: {
+    channel: WeworkUpdateChannel
+    refresh: Promise<WeworkUpdateInfo | null>
+    promise: Promise<void>
+  } | null = null
   private installPromise: Promise<void> | null = null
   private stopping = false
   private readonly fetch: typeof fetch
@@ -103,10 +110,31 @@ export class AppUpdateService {
   }
 
   async check(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
+    this.assertNotInstalling()
+    const download = this.downloadTask
+    if (download) {
+      if (download.channel === channel) return download.refresh
+      await download.promise.catch(() => undefined)
+      return this.check(channel)
+    }
+    const check = this.checkTask
+    if (check) {
+      if (check.channel === channel) return check.promise
+      await check.promise.catch(() => undefined)
+      return this.check(channel)
+    }
+    const promise = this.performCheck(channel)
+    this.checkTask = { channel, promise }
+    try {
+      return await promise
+    } finally {
+      this.checkTask = null
+    }
+  }
+
+  private async performCheck(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null> {
     if (!this.options.isPackaged)
       throw new Error('Wework updater is only available in a packaged desktop app.')
-    if (this.downloadPromise || this.installPromise)
-      throw new Error('An update operation is in progress')
     const catalog = await this.readCatalog(channel)
     const rolledBack = await optionalText(
       join(this.options.store.root, 'rolled-back-versions.json')
@@ -124,6 +152,9 @@ export class AppUpdateService {
     this.channel = channel
     if (!plan) {
       this.pending = null
+      this.pendingUpdate = null
+      this.prepared = null
+      this.readyProgress = null
       if (
         catalog.releases.some(
           r => !r.revoked && compareVersions(r.version, this.options.currentVersion) > 0
@@ -138,29 +169,45 @@ export class AppUpdateService {
       }
       return null
     }
-    if (this.pending?.sha256 !== plan.next.sha256) this.prepared = null
+    if (!matchesRelease(this.pending, plan.next)) {
+      this.prepared = null
+      this.readyProgress = null
+    }
     this.pending = plan.next
-    return {
+    this.pendingUpdate = {
       currentVersion: this.options.currentVersion,
       version: plan.next.version,
       body: plan.next.notes,
       targetVersion: plan.targetVersion,
       path: plan.path,
     }
+    return this.pendingUpdate
   }
 
   downloadProgress(): WeworkUpdateDownloadProgress {
     return this.progress
   }
 
-  async download(): Promise<void> {
-    if (this.downloadPromise) return this.downloadPromise
-    if (!this.pending) throw new Error('No verified Wework update is available')
-    if (this.prepared && (await this.profileStillCurrent())) return
-    const pending = this.pending
-    this.downloadPromise = this.prepare(pending)
+  async download(channel = this.channel): Promise<void> {
+    this.assertNotInstalling()
+    const download = this.downloadTask
+    if (download) {
+      if (download.channel === channel) return download.promise
+      await download.promise.catch(() => undefined)
+      return this.download(channel)
+    }
+    const canReuse = this.channel === channel && this.progress.phase === 'ready'
+    this.progress = { downloadedBytes: 0, totalBytes: null, phase: 'preparing' }
+    const refresh = Promise.resolve(this.checkTask?.promise)
+      .catch(() => undefined)
+      .then(async () => {
+        if (canReuse && this.prepared && (await this.profileStillCurrent()))
+          return this.pendingUpdate
+        return this.performCheck(channel)
+      })
+    const promise = this.performDownload(refresh)
       .catch(error => {
-        this.options.log?.({
+        this.log({
           event: 'release-preparation-failed',
           phase: this.progress.phase,
           errorType: error instanceof Error ? error.name : typeof error,
@@ -172,20 +219,48 @@ export class AppUpdateService {
         this.progress = {
           ...this.progress,
           phase: 'failed',
-          failure: { message: error instanceof Error ? error.message : String(error) },
+          failure: {
+            message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
+              ? { code: error.code }
+              : {}),
+          },
         }
         throw error
       })
       .finally(() => {
-        this.downloadPromise = null
+        this.downloadTask = null
       })
-    return this.downloadPromise
+    this.downloadTask = { channel, refresh, promise }
+    return promise
+  }
+
+  private async performDownload(refresh: Promise<WeworkUpdateInfo | null>): Promise<void> {
+    const update = await refresh
+    if (!update) {
+      this.progress = { ...this.progress, phase: 'upToDate', update: null }
+      return
+    }
+    this.progress = { ...this.progress, update }
+    if (this.prepared && this.readyProgress && (await this.profileStillCurrent())) {
+      this.progress = { ...this.readyProgress, update }
+      return
+    }
+    this.prepared = null
+    this.readyProgress = null
+    await this.prepare(this.pending!)
+    this.readyProgress = this.progress
   }
 
   private async prepare(pending: UpgradeRelease): Promise<void> {
     const started = performance.now()
-    this.options.log?.({ event: 'release-preparation-started', version: pending.version })
-    this.progress = { downloadedBytes: 0, totalBytes: pending.bytes, phase: 'host' }
+    this.log({ event: 'release-preparation-started', version: pending.version })
+    this.progress = {
+      ...this.progress,
+      downloadedBytes: 0,
+      totalBytes: pending.bytes,
+      phase: 'host',
+    }
     const store = this.options.store
     await this.registerInstalledRelease()
     // Download preparation owns cleanup. Startup cleanup could race creation
@@ -230,7 +305,7 @@ export class AppUpdateService {
       await this.prepareHostEnvironment(release)
       this.prepared = await store.read(id)
       this.progress = { ...this.progress, phase: 'ready' }
-      this.options.log?.({
+      this.log({
         event: 'release-prepared',
         version: release.version,
         durationMs: Math.round(performance.now() - started),
@@ -339,13 +414,16 @@ export class AppUpdateService {
     )
   }
 
-  createInstallAction(): () => Promise<void> {
-    if (!this.prepared || this.prepared.version !== this.pending?.version)
-      throw new Error('The pending Wework update is not ready')
+  createInstallAction(version = this.pending?.version): () => Promise<void> {
+    this.assertReady(version)
     return () => {
-      if (this.installPromise) return this.installPromise
+      this.assertReady(version)
+      const release = this.prepared!
+      const pending = this.pending!
+      const channel = this.channel
       this.progress = { ...this.progress, phase: 'installing' }
-      this.installPromise = this.install()
+      this.installPromise = Promise.resolve()
+        .then(() => this.install(release, pending, channel))
         .catch(error => {
           this.failInstall(error)
           throw error
@@ -357,14 +435,34 @@ export class AppUpdateService {
     }
   }
 
-  private async install(): Promise<void> {
-    const release = this.prepared!
-    const catalog = await this.readCatalog(this.channel)
+  private assertNotInstalling(): void {
+    if (this.installPromise || this.stopping) throw new Error('An update operation is in progress')
+  }
+
+  private assertReady(version: string | undefined): void {
+    this.assertNotInstalling()
+    if (
+      this.downloadTask ||
+      this.checkTask ||
+      !version ||
+      !this.prepared ||
+      this.prepared.version !== version ||
+      this.pending?.version !== version
+    )
+      throw new Error('The pending Wework update is not ready')
+  }
+
+  private async install(
+    release: DesktopRelease,
+    pending: UpgradeRelease,
+    channel: WeworkUpdateChannel
+  ): Promise<void> {
+    const catalog = await this.readCatalog(channel)
     const edge = catalog.edges.find(
       e => e.from === this.options.currentVersion && e.to === release.version && !e.revoked
     )
     const target = catalog.releases.find(r => r.version === release.version && !r.revoked)
-    if (!edge || !target || target.sha256 !== this.pending?.sha256)
+    if (!edge || !target || !matchesRelease(pending, target))
       throw new Error('The verified upgrade path was revoked or changed')
     if (!(await this.profileStillCurrent()))
       throw new Error(
@@ -406,7 +504,7 @@ export class AppUpdateService {
   createRollbackAction(restoreConfirmed: boolean): () => Promise<void> {
     return () => {
       if (this.installPromise) return this.installPromise
-      if (this.downloadPromise)
+      if (this.downloadTask || this.checkTask || this.stopping)
         return Promise.reject(new Error('An update operation is in progress'))
       this.progress = { ...this.progress, phase: 'installing' }
       this.installPromise = (async () => {
@@ -452,17 +550,33 @@ export class AppUpdateService {
       phase: 'failed',
       failure: { message: error instanceof Error ? error.message : String(error) },
     }
-    try {
-      this.options.log?.({
-        event: 'release-operation-failed',
-        stopping: this.stopping,
-        message: this.progress.failure?.message,
-      })
-    } catch {
-      console.error('[app-update] failed to persist release operation failure')
-    }
+    this.log({
+      event: 'release-operation-failed',
+      stopping: this.stopping,
+      message: this.progress.failure?.message,
+    })
     this.options.onInstallFailure?.(error, this.stopping)
   }
+
+  private log(event: Record<string, unknown>): void {
+    try {
+      this.options.log?.(event)
+    } catch {
+      console.error('[app-update] failed to persist release operation log')
+    }
+  }
+}
+
+function matchesRelease(left: UpgradeRelease | null, right: UpgradeRelease): boolean {
+  return (
+    left?.version === right.version &&
+    left.sha256 === right.sha256 &&
+    left.sourceSha === right.sourceSha &&
+    left.bytes === right.bytes &&
+    left.dataSchema === right.dataSchema &&
+    left.readableDataSchemas.length === right.readableDataSchemas.length &&
+    left.readableDataSchemas.every(schema => right.readableDataSchemas.includes(schema))
+  )
 }
 
 function ownedPath(root: string, path: string): string {
