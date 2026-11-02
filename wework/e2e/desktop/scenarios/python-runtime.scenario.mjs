@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
 
 import {
   assertManagedPythonSettings,
@@ -17,7 +18,15 @@ export async function createDesktopScenario({
   captureScreenshot,
   electronUserDataDirectory,
   resultDir,
+  workspacePath,
+  uiTimeoutMs,
 }) {
+  const chat = createPluginPythonChat({
+    resultDir,
+    workspacePath,
+    electronUserDataDirectory,
+    uiTimeoutMs,
+  })
   const launchDirectory = join(resultDir, 'untrusted-launch-directory')
   const marker = join(resultDir, 'project-python-executed')
   const appLog = join(resultDir, 'app.log')
@@ -40,12 +49,14 @@ export async function createDesktopScenario({
       restartDesktopApp = restart
     },
     async prepareApp() {
+      await chat.prepare()
       await assertPathMissing(pythonPath, 'The cold-start fixture already had a Python launcher')
       await assertPathMissing(
         join(electronUserDataDirectory, 'managed-runtimes', 'python'),
         'The cold-start fixture already had managed Python data'
       )
     },
+    handleHttp: chat.handleHttp,
     async verify(control) {
       await control.command('navigate', 'body', { value: '/settings/execution-environments' })
       await control.command('waitFor', '[data-testid="execution-environment-python-status"]', {
@@ -53,13 +64,14 @@ export async function createDesktopScenario({
       })
       await assertPathMissing(pythonPath, 'Startup or opening settings installed Python before use')
       assert.ok(!(await readFile(appLog, 'utf8')).includes('python-runtime-ensure-started'))
-      await requestManagedPythonInstall(control)
+      await chat.start(control)
       try {
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
           text: '首次使用 Python 插件',
         })
         await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+        await chat.verify(control)
       } catch (error) {
         try {
           const diagnostic = await collectManagedPythonStatus(control)

@@ -478,11 +478,16 @@ fn execution_system_prompt(request: &ExecutionRequest) -> Option<String> {
         return base_prompt.map(ToOwned::to_owned);
     }
     Some(
-        [base_prompt, Some(crate::artifact_cli::AGENT_INSTRUCTIONS)]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join("\n\n"),
+        [
+            base_prompt,
+            crate::python_runtime::managed_python_bridge_configured()
+                .then_some(crate::plugin_python::INSTRUCTIONS),
+            Some(crate::artifact_cli::AGENT_INSTRUCTIONS),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n"),
     )
 }
 

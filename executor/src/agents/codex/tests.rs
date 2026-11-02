@@ -5163,6 +5163,41 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
 }
 
 #[test]
+fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
+    let _lock = crate::test_env::lock();
+    let _url = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_URL");
+    let _token = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_TOKEN");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_URL");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_TOKEN");
+    assert!(
+        !codex_thread_developer_instructions("", "").contains(crate::plugin_python::INSTRUCTIONS)
+    );
+    let mut request = ExecutionRequest::default();
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    env::set_var(
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "http://127.0.0.1:1234/runtime/python/ensure",
+    );
+    assert!(
+        codex_thread_developer_instructions("", "").contains(crate::plugin_python::INSTRUCTIONS)
+    );
+    assert!(crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    request
+        .extra
+        .insert("enable_tools".to_owned(), json!(false));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+}
+
+#[test]
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
