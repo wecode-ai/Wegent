@@ -2029,7 +2029,11 @@ async fn run_codex_app_server_turn_on_shared_client(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    if super::instance_home::request_home(&request).is_some() {
+    // Tool registration is process-scoped in Codex. A shared process cannot
+    // establish a no-tools boundary through thread overrides alone.
+    if super::instance_home::request_home(&request).is_some()
+        || request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false)
+    {
         let mut options = options;
         if let Some(thread_id) = options.direct_thread_id.take() {
             options.resume_thread_id = Some(thread_id);
@@ -4366,6 +4370,11 @@ fn build_codex_launch_config_with_route_scope(
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);
+        if let Some(path) = request.extra.get("weworkTextModelCatalog") {
+            launch_config
+                .config_overrides
+                .push(format!("model_catalog_json={path}"));
+        }
     } else {
         external_work::configure(request, &mut launch_config, &codex_home)?;
     }
@@ -5727,11 +5736,13 @@ async fn prepare_codex_execution_request(
     } else {
         prepare_request.await?
     };
+    let mut generated_files = Vec::new();
+    text_generation::prepare_text_model_catalog(&mut request, &mut generated_files).await?;
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
         return Ok(PreparedCodexExecutionRequest {
             request,
-            generated_files: Vec::new(),
+            generated_files,
         });
     }
     log_executor_event(
@@ -5762,7 +5773,6 @@ async fn prepare_codex_execution_request(
         ],
     );
 
-    let mut generated_files = Vec::new();
     let subtask_id = attachment_subtask_id(&attachments, &request.subtask_id);
     let mut success = Vec::new();
     let mut failed = Vec::new();
@@ -6633,6 +6643,10 @@ fn turn_start_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
+        // A per-turn cwd must not restore environment tools on an auxiliary turn.
+        params.insert("environments".to_owned(), json!([]));
+    }
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

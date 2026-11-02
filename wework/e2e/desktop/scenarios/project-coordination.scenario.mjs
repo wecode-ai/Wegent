@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
   createSse,
   isReplyPredictionRequest,
   readRequestBody,
@@ -25,8 +27,15 @@ function strings(value) {
 }
 
 /** Uses the real DSH plugin, Native queue and SQLite; mocks only model HTTP. */
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  restartDesktopApp,
+  resultDir,
+}) {
   let assessments = 0
+  let expectedModel
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   async function until(load, ready, label) {
     const deadline = Date.now() + uiTimeoutMs + modelResponseTimeoutMs
@@ -48,14 +57,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         text.includes('Assess only the supplied shared project events')
       )
       if (!prompt) return false
+      assert.equal(body.model, expectedModel, 'Assessment keeps the selected Native model')
+      assert.ok(req.headers.authorization, 'The original Native provider authenticates the request')
       assert.ok(
         !JSON.stringify(body).includes(PRIVATE),
         'Private memory cannot enter shared assessment'
       )
-      assert.equal(
-        (body.tools ?? []).length,
-        0,
-        'Assessment has no execution or private search tools'
+      const tools = [
+        ...(body.tools ?? []),
+        ...(body.input ?? [])
+          .filter(item => item.type === 'additional_tools')
+          .flatMap(item => item.tools ?? []),
+      ]
+      assert.deepEqual(
+        tools,
+        [],
+        `Assessment has no execution or private search tools, including incremental definitions; kind=${codexRequestKind(body)}`
       )
       const input = JSON.parse(prompt.slice(prompt.lastIndexOf('\n{') + 1))
       assert.ok(input.events.length > 0)
@@ -90,12 +107,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
       assert.ok(model)
+      expectedModel = model.model_id
       const agent = await rpc(control, 'chat_agents.create', {
         project_id: project.id,
         agent: {
           name: '项目统筹负责人',
           runtime: 'codex',
-          execution_mode: 'manual',
+          execution_mode: 'manual_approval',
           execution_policy: { mode: 'project_pool' },
           model_policy: {
             mode: 'fixed',
@@ -103,6 +121,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
           },
         },
       })
+      assert.equal(agent.execution_mode, 'manual_approval')
       const group = {
         id: 'coordination-group',
         name: '项目验证组',
@@ -168,6 +187,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         { timeoutMs: modelResponseTimeoutMs }
       )
       assert.equal(assessments, 1)
+      await until(
+        () => rpc(control, 'runtime.project_coordinator.processing.get', target),
+        state => !state.running,
+        'The clarification assessment settles before capture'
+      )
+      await control.command('waitFor', '[data-testid="project-coordinator-dialog"]', {
+        text: '等待新的项目事件',
+      })
       assert.equal(
         (await rpc(control, 'executions.list', { project_id: project.id, include_terminal: true }))
           .length,
@@ -222,7 +249,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         'The dispatch receipt settles'
       )
       assert.equal(status.error, null)
+      await control.command('click', '[data-testid="project-coordinator-work-list"]')
+      await control.command('click', `[data-testid="cloud-todo-card-${issue.id}"]`)
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-issue-detail"]`, {
+        text: issue.title,
+      })
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-issue-detail"]`, {
+        text: '等待审批',
+      })
       await captureScreenshot(control, 'project-coordination-05-one-original-issue-work.png')
+      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('waitFor', '[data-testid="project-coordination-check"]')
       await control.command('click', '[data-testid="project-coordination-check"]')
       await until(
         () => rpc(control, 'runtime.project_coordinator.processing.get', target),
@@ -235,15 +272,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
           .length,
         1
       )
-      await rpc(control, 'runtime.project_coordinator.binding.save', {
-        ...target,
-        userId: USER + 1,
-        binding: { enabled: true, expectedGeneration: enabled.binding.generation, takeover: true },
+      // Switch the real hosting device instead of impersonating another member.
+      // The original binding remains persisted and must require explicit takeover.
+      await restartDesktopApp({
+        appEnvironmentOverrides: { WEWORK_USER_DATA_DIR: join(resultDir, 'device-b-user-data') },
+        expectNewDeviceIdentity: true,
       })
+      await control.command('waitFor', '[data-testid="telemetry-consent-decline"]')
+      await control.command('click', '[data-testid="telemetry-consent-decline"]')
+      await ensureExperimentalFeaturesEnabled(control)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command(
+        'click',
+        `[data-testid="collaboration-workspace-project-${project.id}"]`
+      )
+      await control.command('click', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]', {
         text: '接管',
       })
-      await captureScreenshot(control, 'project-coordination-06-other-member-binding.png')
+      await captureScreenshot(control, 'project-coordination-06-other-device-binding.png')
       const before = await rpc(control, 'runtime.project_coordinator.binding.get', target)
       await control.command('click', '[data-testid="project-coordination-enable"]')
       await control.command('waitFor', '[data-testid="project-coordination-takeover-confirm"]')
@@ -256,6 +303,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
       const taken = await rpc(control, 'runtime.project_coordinator.binding.get', target)
       assert.equal(taken.binding.userId, USER)
+      assert.notEqual(taken.binding.deviceId, enabled.binding.deviceId)
       assert.notEqual(taken.binding.generation, before.binding.generation)
       await captureScreenshot(control, 'project-coordination-08-single-active-binding.png')
       await control.command('click', '[data-testid="project-coordination-stop"]')
