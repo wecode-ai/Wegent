@@ -60,6 +60,7 @@ function diskUsage() {
     directories: output
       .trim()
       .split('\n')
+      .filter(line => /^\d+\t.+/.test(line))
       .map(line => {
         const separator = line.indexOf('\t')
         return {

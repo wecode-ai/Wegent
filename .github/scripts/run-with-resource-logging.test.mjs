@@ -93,11 +93,19 @@ test('records process identities in a configurable artifact without command argu
   }
 })
 
-test('retains partial disk diagnostics without changing the child failure', () => {
-  const result = run(
-    [process.execPath, '-e', 'process.exit(23)'],
-    {},
-    `
+for (const { name, output, directories } of [
+  {
+    name: 'partial',
+    output: '8\tfixture cache\n',
+    directories: [{ allocatedBytes: 8192, path: 'fixture cache' }],
+  },
+  { name: 'empty', output: '', directories: [] },
+]) {
+  test(`retains ${name} disk diagnostics without changing the child failure`, () => {
+    const result = run(
+      [process.execPath, '-e', 'process.exit(23)'],
+      {},
+      `
       import fs from 'node:fs'
       import childProcess from 'node:child_process'
       import { syncBuiltinESMExports } from 'node:module'
@@ -106,19 +114,18 @@ test('retains partial disk diagnostics without changing the child failure', () =
       childProcess.execFileSync = () => {
         const error = new Error('A directory disappeared during the scan')
         error.status = 1
-        error.stdout = '8\\tfixture cache\\n'
+        error.stdout = ${JSON.stringify(output)}
         throw error
       }
       Object.defineProperty(process, 'platform', { value: 'linux' })
       syncBuiltinESMExports()
     `
-  )
-  assert.equal(result.status, 23)
-  assert.equal(result.records[0].diskAvailableInodes, 17)
-  assert.deepEqual(result.records[0].diskUsage.directories, [
-    { allocatedBytes: 8192, path: 'fixture cache' },
-  ])
-  assert.equal(result.records[0].diskUsage.incomplete.status, 1)
-  assert.equal(result.records.at(-1).diskUsage, undefined)
-  assert.equal(result.records.at(-1).exitCode, 23)
-})
+    )
+    assert.equal(result.status, 23)
+    assert.equal(result.records[0].diskAvailableInodes, 17)
+    assert.deepEqual(result.records[0].diskUsage.directories, directories)
+    assert.equal(result.records[0].diskUsage.incomplete.status, 1)
+    assert.equal(result.records.at(-1).diskUsage, undefined)
+    assert.equal(result.records.at(-1).exitCode, 23)
+  })
+}
