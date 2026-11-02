@@ -101,6 +101,13 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
       >
         select-marketplace
       </button>
+      <button
+        type="button"
+        data-testid="select-personal"
+        onClick={() => onCreateOptionsChange({ scope: 'personal' }, false, [])}
+      >
+        select-personal
+      </button>
       <button type="button" data-testid="save-skill" onClick={() => onClose(true, 42)}>
         save-skill
       </button>
@@ -141,12 +148,24 @@ describe('SkillManagementModal group publishing', () => {
     expect(screen.getByTestId('upload-namespace')).toHaveTextContent('engineering')
   })
 
-  it('keeps the upload in the personal namespace until a team is selected', async () => {
+  it('defaults a team-scoped upload to the team namespace', async () => {
     render(<SkillManagementModal open onClose={jest.fn()} scope="group" groupName="rcdp" />)
 
     fireEvent.click(await screen.findByRole('button', { name: /common:skills\.upload_skill/ }))
 
-    expect(await screen.findByTestId('upload-namespace')).toHaveTextContent('')
+    expect(await screen.findByTestId('upload-namespace')).toHaveTextContent('rcdp')
+    expect(screen.getByTestId('create-target')).toHaveTextContent('rcdp')
+  })
+
+  it('uses the personal namespace when the create target switches to personal', async () => {
+    render(<SkillManagementModal open onClose={jest.fn()} scope="group" groupName="rcdp" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /common:skills\.upload_skill/ }))
+    fireEvent.click(screen.getByTestId('select-personal'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('upload-namespace')).toHaveTextContent('')
+    })
   })
 
   it('passes group-load errors and the retry action to the upload dialog', async () => {

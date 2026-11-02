@@ -212,7 +212,13 @@ export default function SkillManagementModal({
 
   const handleCreateSkill = () => {
     setEditingSkill(null)
-    setCreateTarget({ scope: 'personal' })
+    // A team entry defaults to that team so the upload lands in the team
+    // namespace; choosing Personal explicitly still targets the default one.
+    setCreateTarget(
+      scope === 'group' && groupName
+        ? { scope: 'group', groupName, groupNames: [groupName] }
+        : { scope: 'personal' }
+    )
     setCreateOptions({ publishAfterCreate: false, marketplaceTags: [] })
     setUploadModalOpen(true)
   }
