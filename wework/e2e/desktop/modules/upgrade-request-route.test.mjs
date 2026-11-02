@@ -19,6 +19,8 @@ test('routes the default update URL through the real Electron network stack', as
     response.end('real loopback transport')
   })
   let child
+  let output = ''
+  let errors = ''
   try {
     await new Promise(accept => server.listen(0, '127.0.0.1', accept))
     await mkdir(join(root, 'app'))
@@ -44,8 +46,6 @@ test('routes the default update URL through the real Electron network stack', as
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    let output = ''
-    let errors = ''
     child.stdout.on('data', chunk => {
       output += chunk
     })
@@ -57,6 +57,14 @@ test('routes the default update URL through the real Electron network stack', as
     assert.deepEqual(await exited, [0, null], errors)
     assert.ok(output.includes('TRANSPORT_RESULT=real loopback transport'), output)
     assert.deepEqual(requests, ['/components-beta-macos-arm64.json'])
+  } catch (error) {
+    console.error('Isolated Electron startup diagnostics:', {
+      exitCode: child?.exitCode,
+      signalCode: child?.signalCode,
+      stdout: output,
+      stderr: errors,
+    })
+    throw error
   } finally {
     child?.kill()
     server.closeAllConnections()
