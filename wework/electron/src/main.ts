@@ -1660,6 +1660,18 @@ function menuLabelForWindow(window: BrowserWindow): string {
   return dshWindowLabels.get(window.webContents.id) ?? 'main'
 }
 
+/**
+ * In-app menu destinations need a visible window. Opening the About page or
+ * feedback dialog in a minimized/hidden window would otherwise appear to do
+ * nothing, unlike the external link and native panel these actions replace.
+ */
+function revealApplicationMenuWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
 /** Applies the capabilities of the window that currently owns the menu. */
 function syncApplicationMenuCapabilities(): void {
   const window = applicationMenuWindow()
@@ -1697,6 +1709,12 @@ function installApplicationMenu(): void {
       ) {
         processExplorerWindow?.close()
         return
+      }
+      if (
+        action === APPLICATION_MENU_ACTIONS.openAbout ||
+        action === APPLICATION_MENU_ACTIONS.openFeedback
+      ) {
+        revealApplicationMenuWindow(window)
       }
       desktopHostEvents.publish('application-menu.action', {
         action,
