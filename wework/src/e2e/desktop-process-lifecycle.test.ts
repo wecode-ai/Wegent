@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import childProcess, { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -162,7 +162,12 @@ describe('desktop process lifecycle', () => {
 
   test('does not wait for a process group that is no longer signalable', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()
+    let stopped = false
+    const inspect = vi
+      .spyOn(childProcess, 'execFileSync')
+      .mockImplementation(() => (stopped ? '43 42 Z\n' : '43 42 S\n'))
     const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -42 && signal === 'SIGTERM') stopped = true
       if (pid === -42 && signal === 0) {
         const error = Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
         throw error
@@ -178,6 +183,7 @@ describe('desktop process lifecycle', () => {
       expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM')
     } finally {
       kill.mockRestore()
+      inspect.mockRestore()
     }
   })
 
@@ -193,6 +199,9 @@ describe('desktop process lifecycle', () => {
       }),
       off: vi.fn(),
     } as unknown as ChildProcess
+    const inspect = vi
+      .spyOn(childProcess, 'execFileSync')
+      .mockImplementation(() => (child.exitCode === null ? '42 42 S\n' : '42 42 Z\n'))
     const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
       if (pid === -42 && signal === 0) {
         const error = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
@@ -207,6 +216,7 @@ describe('desktop process lifecycle', () => {
       expect(child.off).toHaveBeenCalledWith('exit', expect.any(Function))
     } finally {
       kill.mockRestore()
+      inspect.mockRestore()
     }
   })
 

@@ -1,14 +1,46 @@
-import { execFile, spawn } from 'node:child_process'
+import childProcess from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
-const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
-const execFileAsync = promisify(execFile)
+const DEAD_PROCESS_STATES = new Set(['Z', 'X', 'x'])
+const execFileAsync = promisify(childProcess.execFile)
 // Use the same PowerShell runtime as the Windows E2E workflow.
 const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 30_000
+
+class ProcessExitTimeoutError extends Error {}
+
+function processStateIsAlive(state) {
+  return !DEAD_PROCESS_STATES.has(state[0])
+}
+
+export function processStatesFromDarwinPs(output) {
+  return output
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/)
+      if (!match) throw new Error(`Invalid process state from ps: ${line}`)
+      return { pid: Number(match[1]), groupId: Number(match[2]), state: match[3] }
+    })
+}
+
+function inspectDarwinProcesses() {
+  return processStatesFromDarwinPs(
+    childProcess.execFileSync('/bin/ps', ['-axo', 'pid=,pgid=,stat='], {
+      encoding: 'utf8',
+      timeout: PROCESS_STOP_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    })
+  )
+}
+
+function inspectDarwinProcessGroup(processGroupId) {
+  const members = inspectDarwinProcesses().filter(entry => entry.groupId === processGroupId)
+  return { members, alive: members.some(entry => processStateIsAlive(entry.state)) }
+}
 
 function linuxProcessStateFromStat(stat) {
   const commandEnd = stat.lastIndexOf(')')
@@ -24,7 +56,7 @@ function linuxProcessStateFromStat(stat) {
 export function processIsAliveFromLinuxStat(stat) {
   const state = linuxProcessStateFromStat(stat)
   if (state === null) return null
-  return !DEAD_LINUX_PROCESS_STATES.has(state)
+  return processStateIsAlive(state)
 }
 
 async function waitForProcessExit(child, timeoutMs) {
@@ -40,7 +72,7 @@ async function waitForProcessExit(child, timeoutMs) {
       if (process.platform !== 'win32' && Number.isInteger(child.pid) && !processIsAlive(child.pid))
         return
       if (Date.now() - startedAt >= timeoutMs) {
-        throw new Error(
+        throw new ProcessExitTimeoutError(
           `Timed out waiting for process ${child.pid ?? 'unknown'} to exit: ${JSON.stringify(processExitDiagnostics(child))}`
         )
       }
@@ -58,6 +90,16 @@ async function waitForProcessExit(child, timeoutMs) {
 
 function processExitDiagnostics(child) {
   const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
+  if (process.platform === 'darwin' && Number.isInteger(child.pid)) {
+    try {
+      diagnostics.darwin = inspectDarwinProcesses().filter(
+        entry => entry.pid === child.pid || entry.groupId === child.pid
+      )
+    } catch (error) {
+      diagnostics.darwin = { readError: error.code ?? String(error) }
+    }
+    return diagnostics
+  }
   if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
   try {
     const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
@@ -90,7 +132,7 @@ export function processGroupHasLiveMembersFromLinuxStats(stats, processGroupId) 
     const statProcessGroupId = Number.parseInt(fields[2], 10)
     if (statProcessGroupId !== processGroupId) continue
     foundProcessGroupMember = true
-    if (!DEAD_LINUX_PROCESS_STATES.has(state)) return true
+    if (processStateIsAlive(state)) return true
   }
   return foundProcessGroupMember ? false : null
 }
@@ -125,6 +167,11 @@ function inspectLinuxProcess(processId) {
 }
 
 export function processIsAlive(processId) {
+  if (process.platform === 'darwin') {
+    return inspectDarwinProcesses().some(
+      entry => entry.pid === processId && processStateIsAlive(entry.state)
+    )
+  }
   try {
     process.kill(processId, 0)
   } catch (error) {
@@ -204,6 +251,9 @@ export async function collectWindowsProcessIdentity(processId) {
 }
 
 export function processGroupIsAlive(processGroupId) {
+  if (process.platform === 'darwin') {
+    return inspectDarwinProcessGroup(processGroupId).alive
+  }
   try {
     process.kill(-processGroupId, 0)
     if (process.platform === 'linux') {
@@ -233,7 +283,8 @@ export async function stopProcess(child) {
   child.kill('SIGTERM')
   try {
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  } catch {
+  } catch (error) {
+    if (!(error instanceof ProcessExitTimeoutError)) throw error
     child.kill('SIGKILL')
     await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
   }
@@ -251,11 +302,22 @@ export async function stopProcessGroup(child) {
   }
 
   const processGroupId = child.pid
+  if (process.platform === 'darwin') {
+    const snapshot = inspectDarwinProcessGroup(processGroupId)
+    console.log('[desktop-e2e] Darwin process group teardown', {
+      processGroupId,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+      ...snapshot,
+    })
+    if (!snapshot.alive) return
+  }
   signalProcessGroup(processGroupId, 'SIGTERM')
   if (child.exitCode === null && child.signalCode === null) {
     try {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ProcessExitTimeoutError)) throw error
       signalProcessGroup(processGroupId, 'SIGKILL')
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     }
@@ -273,7 +335,7 @@ export function windowsTaskkillArguments(processId) {
 
 async function stopWindowsProcessTree(child) {
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
-  const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {
+  const killer = childProcess.spawn('taskkill', windowsTaskkillArguments(child.pid), {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -301,6 +363,19 @@ function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal)
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error
+    if (error?.code === 'ESRCH') return
+    if (error?.code === 'EPERM' && process.platform === 'darwin') {
+      let snapshot
+      try {
+        snapshot = inspectDarwinProcessGroup(processGroupId)
+      } catch (inspectionError) {
+        error.processGroupInspectionError = String(inspectionError)
+        throw error
+      }
+      // Darwin rejects killpg when the last live member exits before the signal.
+      if (!snapshot.alive) return
+      error.processGroup = { processGroupId, signal, members: snapshot.members }
+    }
+    throw error
   }
 }
