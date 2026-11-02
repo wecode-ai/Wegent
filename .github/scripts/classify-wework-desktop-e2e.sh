@@ -534,11 +534,14 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/harness-apps.scenario.mjs | \
-      wework/e2e/desktop/modules/harness-app-* | \
-      wework/e2e/desktop/modules/smart-app-*)
+      wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
+      return
+      ;;
+    wework/e2e/desktop/modules/smart-app-*)
+      select_target "core:harness-app-lifecycle"
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \
@@ -1344,7 +1347,14 @@ classify_wework_path() {
       return
       ;;
 
-    # The embedded browser has dedicated agent, toolbar, and annotation checkpoints.
+    # Scheme interception and the agent fixture exercise the shared embedded browser.
+    wework/electron/src/host/embedded-browser-manager* | \
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      select_target "core:embedded-browser"
+      return
+      ;;
+
+    # The remaining embedded browser code has dedicated toolbar and annotation checkpoints.
     wework/electron/src/host/browser-runtime/* | \
       wework/electron/src/host/browser-annotation* | \
       wework/electron/src/browser-annotation* | \
@@ -1357,7 +1367,6 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/browser-annotation/* | \
       wework/src/pages/BrowserAnnotationOverlayPage* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
-      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
