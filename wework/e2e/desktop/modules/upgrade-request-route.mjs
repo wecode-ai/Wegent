@@ -6,11 +6,37 @@ export async function routeUpgradeRequests(child, origin) {
   const target = new URL(origin)
   if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || target.pathname !== '/')
     throw new Error('The upgrade test transport must use its own loopback HTTP server')
+  const pauseArgument = child.spawnargs.find(argument =>
+    argument.startsWith('--inspect-brk=127.0.0.1:')
+  )
+  if (!pauseArgument) throw new Error('Upgrade transport requires a driver-paused child')
   await inspectBeforeStart(
     child,
     `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
     const {app, session} = require('electron')
+    const pauseArgument = ${JSON.stringify(pauseArgument)}
+    const launchArguments = process.argv.slice(1).filter(argument => argument !== pauseArgument)
+    process.argv = [process.argv[0], ...launchArguments]
+    process.execArgv = process.execArgv.filter(argument => argument !== pauseArgument)
+    app.commandLine.removeSwitch('inspect-brk')
+    // Electron caches its initial arguments for relaunch. Remove only the pause
+    // switch introduced by this driver, including from an explicit handoff.
+    const relaunch = app.relaunch.bind(app)
+    app.relaunch = options => relaunch({
+      ...options,
+      args: (options?.args ?? launchArguments).filter(argument => argument !== pauseArgument)
+    })
+    if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+      const report = () => console.log('[desktop-e2e-startup]', JSON.stringify({
+        pid: process.pid, ready: app.isReady(), userData: app.getPath('userData')
+      }))
+      report()
+      const timer = setInterval(report, 5000)
+      timer.unref()
+      app.once('ready', report)
+      app.once('will-quit', () => clearInterval(timer))
+    }
     const install = () => session.defaultSession.webRequest.onBeforeRequest(
       {urls:[${JSON.stringify(publishedBase + '*')}]},
       (request, callback) => callback({redirectURL:

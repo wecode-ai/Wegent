@@ -32,6 +32,9 @@ test('routes the default update URL through the real Electron network stack', as
       join(root, 'app/main.cjs'),
       `
       const {app,net} = require('electron')
+      if ([...process.argv, ...process.execArgv].some(argument => argument.startsWith('--inspect-brk=')) ||
+          app.commandLine.hasSwitch('inspect-brk'))
+        throw new Error('The driver pause switch must not reach application handoff code')
       app.setPath('userData', ${JSON.stringify(join(root, 'user-data'))})
       app.whenReady().then(async () => {
         const response = await net.fetch('https://github.com/wecode-ai/Wegent/releases/download/wework-updater/components-beta-macos-arm64.json')
