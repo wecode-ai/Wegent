@@ -61,3 +61,65 @@ fn file_mode(metadata: &fs::Metadata) -> u32 {
         u32::from(metadata.permissions().readonly())
     }
 }
+
+pub(super) fn tree_fingerprint(
+    path: &Path,
+) -> Result<BTreeMap<PathBuf, String>, CapabilitySyncError> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        result: &mut BTreeMap<PathBuf, String>,
+    ) -> Result<(), CapabilitySyncError> {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Runtime ownership cannot be proved through a symlink",
+            ));
+        }
+        if metadata.is_dir() {
+            for child in fs::read_dir(path)? {
+                visit(root, &child?.path(), result)?;
+            }
+        } else if metadata.is_file() {
+            result.insert(
+                path.strip_prefix(root).unwrap().to_owned(),
+                sha256_digest(&fs::read(path)?),
+            );
+        } else {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Runtime contains a special file",
+            ));
+        }
+        Ok(())
+    }
+    let mut result = BTreeMap::new();
+    visit(path, path, &mut result)?;
+    Ok(result)
+}
+
+pub(super) fn same_runtime_contents(
+    left: &Path,
+    right: &Path,
+) -> Result<bool, CapabilitySyncError> {
+    if !left.is_dir() || left.is_symlink() || !right.is_dir() || right.is_symlink() {
+        return Ok(false);
+    }
+    Ok(same_fingerprints(
+        tree_fingerprint(left)?,
+        &tree_fingerprint(right)?,
+    ))
+}
+
+pub(super) fn same_fingerprints(
+    mut left: BTreeMap<PathBuf, String>,
+    right: &BTreeMap<PathBuf, String>,
+) -> bool {
+    left.retain(|path, _| {
+        !(path
+            .components()
+            .any(|component| component.as_os_str() == "__pycache__")
+            && path.extension().is_some_and(|extension| extension == "pyc")
+            && !right.contains_key(path))
+    });
+    left == *right
+}
