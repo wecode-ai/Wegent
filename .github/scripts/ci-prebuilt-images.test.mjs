@@ -443,6 +443,37 @@ test("prebuild publication is limited to main and explicit manual dispatches", (
   assert.match(downloads, /codex-binaries.lock.json/);
 });
 
+test("native CI promotion uses the existing publisher on Linux without rebuilding Rust", () => {
+  const job =
+    workflow("ci-cache-warmup").jobs["publish-macos-runtime-prebuilds"];
+  const rust = job.steps.find(
+    (step) => step.uses === "./.github/actions/setup-rust-cache",
+  );
+  const build = job.steps.find(
+    (step) => step.name === "Restore or build native runtime prebuilds",
+  );
+  const restore = job.steps.find(
+    (step) => step.name === "Restore verified native runtimes from CI",
+  );
+  assert.equal(job.permissions.actions, "read");
+  assert.equal(job.permissions.packages, "write");
+  assert.equal(
+    restore.env.SOURCE_RUN,
+    "${{ inputs.macos_runtime_source_run }}",
+  );
+  assert.match(restore.run, /restore-macos-ci-runtimes.mjs "\$SOURCE_RUN"/);
+  for (const source of ["", "41521135983"]) {
+    const context = { inputs: { macos_runtime_source_run: source } };
+    assert.equal(
+      runInNewContext(job["runs-on"].slice(3, -2), context),
+      source ? "ubuntu-latest" : "macos-15",
+    );
+    for (const step of [rust, build])
+      assert.equal(runInNewContext(step.if, context), !source);
+    assert.equal(runInNewContext(restore.if, context), Boolean(source));
+  }
+});
+
 test("download bundles are restored once and reject unexpected archive paths", () => {
   const directory = mkdtempSync(join(tmpdir(), "wegent-ci-downloads-"));
   try {

@@ -63,6 +63,10 @@ on:
         type: choice
         options: [linux, macos-runtimes]
         default: linux
+      macos_runtime_source_run:
+        description: Optional upstream Wework CI run whose successful macOS producer supplies the native binaries.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -564,10 +568,11 @@ jobs:
   publish-macos-runtime-prebuilds:
     name: Publish native macOS runtime prebuilds
     if: github.event_name == 'workflow_dispatch' && inputs.prebuild == 'macos-runtimes'
-    runs-on: macos-15
+    runs-on: ${{ inputs.macos_runtime_source_run != '' && 'ubuntu-latest' || 'macos-15' }}
     timeout-minutes: 25
     permissions:
       contents: read
+      actions: read
       packages: write
     steps:
       - name: Checkout code
@@ -591,24 +596,39 @@ jobs:
         run: echo "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Set up shared Rust toolchain and cache
+        if: inputs.macos_runtime_source_run == ''
         uses: ./.github/actions/setup-rust-cache
         with:
           manifest-path: executor/Cargo.toml
           targets: aarch64-apple-darwin
 
-      - name: Restore or build native runtime prebuilds
+      - name: Resolve native runtime references
         id: native
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          for component in executor backend-rs; do
+            digest="$(node .github/scripts/macos-e2e-source-digest.mjs "$component")"
+            echo "$component=ghcr.io/$owner/wegent-wework-macos-e2e-runtime:$component-v1-$digest" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Restore verified native runtimes from CI
+        if: inputs.macos_runtime_source_run != ''
+        env:
+          SOURCE_RUN: ${{ inputs.macos_runtime_source_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/restore-macos-ci-runtimes.mjs "$SOURCE_RUN" "$RUNNER_TEMP/native-prebuilds"
+
+      - name: Restore or build native runtime prebuilds
+        if: inputs.macos_runtime_source_run == ''
         env:
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
           WEWORK_BACKEND_RS_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
+          EXECUTOR_REF: ${{ steps.native.outputs.executor }}
+          BACKEND_REF: ${{ steps.native.outputs.backend-rs }}
         run: |
           test "$(uname -m)" = arm64
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          repository="ghcr.io/$owner/wegent-wework-macos-e2e-runtime"
           for component in executor backend-rs; do
-            digest="$(node .github/scripts/macos-e2e-source-digest.mjs "$component")"
-            reference="$repository:$component-v1-$digest"
-            echo "$component=$reference" >> "$GITHUB_OUTPUT"
+            if [[ "$component" == executor ]]; then reference="$EXECUTOR_REF"; else reference="$BACKEND_REF"; fi
             .github/scripts/restore-macos-e2e-runtime-oci.sh \
               "$RUNNER_TEMP/native-prebuilds/wegent-$component" "wegent-$component" "$reference"
           done

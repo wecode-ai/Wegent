@@ -16,6 +16,62 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runtimeArtifact } from "./runtime-artifact.mjs";
+import { validateMacosRuntimeProducer } from "./restore-macos-ci-runtimes.mjs";
+
+test("native publication requires the exact successful producer and its real checkpoints", () => {
+  const run = {
+    id: 10,
+    head_sha: "a".repeat(40),
+    repository: { full_name: "wecode-ai/Wegent" },
+    path: ".github/workflows/wework-e2e.yml",
+    event: "pull_request",
+    status: "completed",
+    conclusion: "failure",
+  };
+  const job = {
+    name: "Wework Desktop macOS E2E",
+    run_id: 10,
+    head_sha: run.head_sha,
+    status: "completed",
+    conclusion: "success",
+    html_url: "producer-url",
+    steps: [
+      "Run Wework desktop macOS Inspector E2E",
+      "Describe verified native macOS runtimes",
+      "Upload verified macOS Executor runtime",
+      "Upload verified macOS Backend runtime",
+    ].map((name) => ({ name, conclusion: "success" })),
+  };
+  // An unrelated Linux failure does not invalidate a successful native producer.
+  assert.deepEqual(validateMacosRuntimeProducer(run, [job]), {
+    sha: run.head_sha,
+    provenance: job.html_url,
+  });
+  for (const override of [
+    { conclusion: "failure" },
+    { conclusion: "cancelled" },
+    { status: "in_progress" },
+    { head_sha: "b".repeat(40) },
+    { run_id: 11 },
+    { name: "unrelated job" },
+    { steps: [] },
+    { steps: job.steps.map((step) => ({ ...step, conclusion: "skipped" })) },
+  ])
+    assert.throws(() =>
+      validateMacosRuntimeProducer(run, [{ ...job, ...override }]),
+    );
+  assert.throws(() => validateMacosRuntimeProducer(run, [job, job]));
+  for (const override of [
+    { repository: { full_name: "other/Wegent" } },
+    { path: ".github/workflows/other.yml" },
+    { event: "workflow_dispatch" },
+    { conclusion: "cancelled" },
+    { head_sha: "invalid" },
+  ])
+    assert.throws(() =>
+      validateMacosRuntimeProducer({ ...run, ...override }, [job]),
+    );
+});
 
 test("native runtime manifests preserve their target and compilation profile", () => {
   const root = mkdtempSync(join(tmpdir(), "native-runtime-artifact-"));
