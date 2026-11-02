@@ -6197,6 +6197,173 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
+  test('preserves expanded tool details when transcript reconciliation reanchors the assistant view', () => {
+    const block: ProcessingBlock = {
+      id: 'reanchored-tool',
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'pwd' },
+      toolOutput: '/workspace/persistent-tool-output',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+    const user: RuntimeConversationTurn['items'][number] = {
+      id: 'optimistic-user',
+      type: 'user_message',
+      message: {
+        id: 'optimistic-user',
+        role: 'user',
+        content: 'Inspect the workspace',
+        status: 'done',
+        runtimeGuidance: true,
+        createdAt: '2026-11-02T13:45:30Z',
+      },
+    }
+    const tool: RuntimeConversationTurn['items'][number] = { id: block.id, type: 'block', block }
+    const turn: RuntimeConversationTurn = {
+      id: 'reanchored-turn',
+      status: 'streaming',
+      items: [user, tool],
+    }
+    const initialMessages = projectRuntimeConversationTurns([turn])
+    const { container, rerender } = render(
+      <MessageList conversationKey="reanchored-conversation" messages={initialMessages} />
+    )
+    const toolToggle = () =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-processing-block-id="${block.id}"] [data-tool-detail-toggle]`
+      )!
+    fireEvent.click(toolToggle())
+    expect(toolToggle()).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('/workspace/persistent-tool-output')).toBeInTheDocument()
+
+    const reconciledTurn: RuntimeConversationTurn = {
+      ...turn,
+      items: [
+        { ...user, message: { ...user.message, runtimeGuidance: false } },
+        tool,
+        {
+          id: 'native-final-text',
+          type: 'assistant_text',
+          content: 'The workspace has been inspected.',
+          createdAt: '2026-11-02T13:45:32Z',
+        },
+      ],
+    }
+    const reconciledMessages = projectRuntimeConversationTurns([reconciledTurn])
+    expect(reconciledMessages.at(-1)?.id).not.toBe(initialMessages.at(-1)?.id)
+    rerender(
+      <MessageList conversationKey="reanchored-conversation" messages={reconciledMessages} />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(toolToggle()).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('/workspace/persistent-tool-output')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        conversationKey="reanchored-conversation"
+        messages={projectRuntimeConversationTurns([{ ...reconciledTurn, status: 'done' }])}
+      />
+    )
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(toolToggle()).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('isolates tool detail expansion by conversation, turn and call across guidance segments', () => {
+    const buildTurn = (id: string): RuntimeConversationTurn => ({
+      id,
+      status: 'streaming',
+      items: [
+        {
+          id: 'before-guidance',
+          type: 'block',
+          block: {
+            id: 'before-guidance',
+            type: 'tool',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+        },
+        {
+          id: 'guidance-user',
+          type: 'user_message',
+          message: {
+            id: 'guidance-user',
+            role: 'user',
+            content: 'Also inspect the files',
+            runtimeGuidance: true,
+            status: 'done',
+            createdAt: '2026-11-02T13:45:30Z',
+          },
+        },
+        {
+          id: 'after-guidance',
+          type: 'block',
+          block: {
+            id: 'after-guidance',
+            type: 'tool',
+            toolName: 'Bash',
+            toolInput: { command: 'ls' },
+            status: 'done',
+            createdAt: 1770000001000,
+          },
+        },
+      ],
+    })
+    const messages = (turnId: string) => projectRuntimeConversationTurns([buildTurn(turnId)])
+    const { container, rerender } = render(
+      <MessageList conversationKey="detail-scope-a" messages={messages('detail-turn-a')} />
+    )
+    const toolToggle = (id: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-processing-block-id="${id}"] [data-tool-detail-toggle]`
+      )!
+    fireEvent.click(toolToggle('after-guidance'))
+    expect(toolToggle('after-guidance')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
+    expect(screen.getAllByTestId('processing-summary-toggle')[0]).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    fireEvent.click(screen.getAllByTestId('processing-summary-toggle')[0])
+    expect(toolToggle('before-guidance')).toHaveAttribute('aria-expanded', 'false')
+    expect(toolToggle('after-guidance')).toHaveAttribute('aria-expanded', 'true')
+
+    rerender(<MessageList conversationKey="detail-scope-a" messages={messages('detail-turn-b')} />)
+    expect(toolToggle('after-guidance')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    rerender(<MessageList conversationKey="detail-scope-b" messages={messages('detail-turn-a')} />)
+    expect(toolToggle('after-guidance')).toHaveAttribute('aria-expanded', 'false')
+    rerender(<MessageList conversationKey="detail-scope-a" messages={messages('detail-turn-a')} />)
+    expect(toolToggle('after-guidance')).toHaveAttribute('aria-expanded', 'true')
+    expect(toolToggle('before-guidance')).toHaveAttribute('aria-expanded', 'false')
+
+    const completedTurn = buildTurn('detail-turn-a')
+    completedTurn.status = 'done'
+    completedTurn.items.push({
+      id: 'guidance-final-text',
+      type: 'assistant_text',
+      content: 'Both tools have completed.',
+      createdAt: '2026-11-02T13:45:32Z',
+    })
+    rerender(
+      <MessageList
+        conversationKey="detail-scope-a"
+        messages={projectRuntimeConversationTurns([completedTurn])}
+      />
+    )
+    fireEvent.click(toolToggle('after-guidance'))
+    const summaries = screen.getAllByTestId('processing-summary-toggle')
+    expect(summaries[0]).toHaveAttribute('aria-expanded', 'true')
+    expect(summaries[1]).toHaveAttribute('aria-expanded', 'false')
+  })
+
   test('collapses expanded tool details when the completed processing shell is toggled', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-final-toggle',

@@ -1506,6 +1506,12 @@ async function selectE2EModel(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     visible: true,
   })
+  if (expectedProviderId) {
+    // The recovery control stays mounted while startup reconciles the local catalog.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })

@@ -78,9 +78,11 @@ export function PluginAutoUpdateCoordinator() {
     let pending = false
     let connectedTriggerSeen = false
     let cancelScheduledUpdate: (() => void) | null = null
+    const waiting = new AbortController()
 
     const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
+        signal: waiting.signal,
         listLocalInstalledPlugins: () =>
           localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
@@ -163,6 +165,7 @@ export function PluginAutoUpdateCoordinator() {
 
     return () => {
       disposed = true
+      waiting.abort()
       cancelScheduledUpdate?.()
       socketClient.socket.off('connect', handleConnect)
       socketClient.socket.off(PLUGIN_RELEASE_AVAILABLE_EVENT, handleReleaseAvailable)

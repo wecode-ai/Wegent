@@ -7,6 +7,7 @@ import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
 
 interface HarnessAppInstallDialogProps {
   busy: boolean
+  installDisabled?: boolean
   error: string | null
   modelKey: string
   modelOptions: LocalHarnessModelOption[]
@@ -18,6 +19,7 @@ interface HarnessAppInstallDialogProps {
 
 export function HarnessAppInstallDialog({
   busy,
+  installDisabled = false,
   error,
   modelKey,
   modelOptions,
@@ -29,7 +31,8 @@ export function HarnessAppInstallDialog({
   const { t } = useTranslation('common')
   const packageName = preview.archivePath.split(/[\\/]/).pop() ?? preview.archivePath
   const manifest = preview.manifest
-  const canInstall = preview.valid && Boolean(manifest) && Boolean(modelKey) && !busy
+  const canInstall =
+    preview.valid && Boolean(manifest) && Boolean(modelKey) && !busy && !installDisabled
 
   return (
     <div
