@@ -79,7 +79,6 @@ export async function installDownloadedWeworkUpdate(): Promise<void> {
     await flushDesktopLocalStoragePersistence()
     await invokeDesktopHost<void>('appUpdate.install', { version: update.version })
   } catch (error) {
-    pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })
   }
 }

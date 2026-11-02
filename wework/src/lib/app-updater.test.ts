@@ -228,6 +228,29 @@ describe('Wework app updater', () => {
     })
   })
 
+  test('installation and recheck failures still allow a fresh download retry', async () => {
+    const update = { currentVersion: '0.2.6', version: '0.2.7', readyToInstall: true }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return update
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready', update }
+      }
+    })
+    await checkForWeworkUpdate('stable')
+    await downloadPendingWeworkUpdate()
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Installation revalidation offline'))
+    await expect(installDownloadedWeworkUpdate()).rejects.toThrow(
+      'Installation revalidation offline'
+    )
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Catalog offline'))
+    await expect(checkForWeworkUpdate('stable')).rejects.toThrow('Catalog offline')
+
+    await expect(downloadPendingWeworkUpdate()).resolves.toEqual(update)
+    expect(
+      desktopHostMocks.invoke.mock.calls.filter(([name]) => name === 'appUpdate.download')
+    ).toHaveLength(2)
+  })
+
   test.each(['withdrawn', 'channel-change'] as const)(
     'clears the prior offer after %s',
     async reason => {
