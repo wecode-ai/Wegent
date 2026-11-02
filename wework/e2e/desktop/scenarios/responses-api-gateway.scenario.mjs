@@ -18,10 +18,15 @@ const RUNTIME_RESULT = `NATIVE_RUNTIME_COMPLETED_${process.pid}`
 
 // Only the upstream model is simulated. HTTP, auth, dispatch, MySQL, Redis,
 // Chat Shell and the desktop Runtime all use the common Cloud E2E services.
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, resultDir }) {
+export function createDesktopScenario({
+  checkpoint,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  resultDir,
+}) {
   let cloud, environment, user, apiKey
   const modelRequests = []
-  const evidence = {}
+  const evidence = { checkpoint: 'responses-api-gateway', hostCheckpoint: checkpoint }
 
   async function request(path, body, token = cloud.authToken) {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
@@ -337,6 +342,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
     },
     async verify() {
       const started = Date.now()
+      evidence.environment = {
+        processId: process.pid,
+        backendUrl: environment.backendUrl,
+        backendLogPath: environment.backendLogPath,
+        runtimeLogPath: environment.remoteExecutorLogPath,
+      }
       try {
         const device = await environment.device(CLOUD_DEVICE_ID)
         assert.equal(device.status, 'online', 'The real remote Runtime must be connected')
@@ -356,5 +367,34 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
         )
       }
     },
+  }
+}
+
+// Run the same independent checkpoint inside an already bootstrapped Cloud
+// lifecycle. Each invocation creates its own data; only model handling is scoped.
+export async function verifyResponsesApiGateway(control, environment, options) {
+  const scenario = createDesktopScenario(options)
+  const previous = control.desktopScenario
+  const started = Date.now()
+  console.log(`[desktop-e2e] START responses-api-gateway (shared Cloud: ${options.checkpoint})`)
+  try {
+    control.setDesktopScenario({
+      ...previous,
+      async handleHttp(request, response, url) {
+        return (
+          (await scenario.handleHttp(request, response, url)) ||
+          (await previous?.handleHttp?.(request, response, url)) ||
+          false
+        )
+      },
+    })
+    await scenario.prepareCloud(environment)
+    scenario.setCloudEnvironment(environment)
+    await scenario.verify()
+    console.log(
+      `[desktop-e2e] PASS responses-api-gateway: duration=${Date.now() - started}ms, assertion-errors=none, shared-cloud=${options.checkpoint}, evidence=${options.resultDir}`
+    )
+  } finally {
+    control.setDesktopScenario(previous)
   }
 }

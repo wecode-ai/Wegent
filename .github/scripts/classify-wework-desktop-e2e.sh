@@ -175,7 +175,6 @@ cloud_worktree_segments=(
   cloud-worktree-archive-restore
 )
 cloud_segments=(
-  responses-api-gateway
   cloud-model-recovery
   task-model-deletion
   cloud-model-presets
@@ -233,7 +232,7 @@ cloud_shards=(
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
-  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github,responses-api-gateway
+  plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
@@ -355,6 +354,7 @@ validate_registered_checkpoint_coverage() {
       import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
+        DESKTOP_CHECKPOINT_CI_HOSTS,
         DESKTOP_CHECKPOINT_GROUPS,
         expandDesktopCheckpoints,
       } from "./wework/e2e/desktop/checkpoints.mjs"
@@ -370,7 +370,8 @@ validate_registered_checkpoint_coverage() {
       }
       const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
       for (const checkpoint of registered) {
-        if (!covered.has(checkpoint)) {
+        const host = DESKTOP_CHECKPOINT_CI_HOSTS.get(checkpoint) ?? checkpoint
+        if (!covered.has(host)) {
           console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)
           process.exit(1)
         }
@@ -802,7 +803,8 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs)
-      select_target "cloud:responses-api-gateway"
+      # The registered Responses checkpoint runs inside this existing Cloud lifecycle.
+      select_target "cloud:plugin-account-auth-dws"
       return
       ;;
 
@@ -1960,7 +1962,7 @@ classify_path() {
       backend/app/services/wework_api/* | \
       backend/tests/api/test_openapi_responses.py | \
       backend/tests/api/test_wework_api.py)
-      select_target "cloud:responses-api-gateway"
+      select_target "cloud:plugin-account-auth-dws"
       ;;
     backend/app/api/endpoints/adapter/attachments.py | \
       backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \

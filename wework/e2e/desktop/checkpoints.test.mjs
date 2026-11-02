@@ -2,10 +2,21 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DESKTOP_CHECKPOINTS,
+  DESKTOP_CHECKPOINT_CI_HOSTS,
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+
+test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
+  assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
+  assert.equal(DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway'), 'plugin-account-auth-dws')
+  for (const [checkpoint, host] of DESKTOP_CHECKPOINT_CI_HOSTS) {
+    assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint), checkpoint)
+    assert.ok(DESKTOP_CHECKPOINTS.includes(host), host)
+    assert.notEqual(checkpoint, host)
+  }
+})
 
 test('upgrade verification has one maintained group for all supported operating systems', () => {
   assert.deepEqual(expandDesktopCheckpoints([UPGRADE_CHECKPOINT_GROUP]), UPGRADE_CHECKPOINTS)
