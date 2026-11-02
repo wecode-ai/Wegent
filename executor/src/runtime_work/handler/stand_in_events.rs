@@ -72,42 +72,10 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
 
-        let user = configs[0]["userId"].as_i64().unwrap_or_default();
-        {
-            let assignments = self
-                .stand_in_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/loop-items/{issue_id}/assignments"),
-                    None,
-                )
-                .await?;
-            let Some(active) = assignments["items"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|row| row["id"] == assignment && row["status"] == "active")
-            else {
-                return Ok(());
-            };
-            let roles: Vec<Value> =
-                super::personal_stand_in::matching_personal_roles(&configs, &issue)
-                    .iter()
-                    .filter(|role| {
-                        super::stand_in::assignment_after_enable(active, role)
-                            && self
-                                .local_task_link(
-                                    &self.stand_in_task_id(role, &issue["human_task_binding"]),
-                                )
-                                .is_none()
-                    })
-                    .map(|role| role["id"].clone())
-                    .collect();
-            if !roles.is_empty() {
-                store.enqueue_stand_in_event(user, json!(["assignment","cloud",project,issue_id,assignment]),
-                json!({"kind":"assignment","projectId":project,"projectStore":"cloud","issueId":issue_id,"assignmentId":assignment,"issue":issue,"roleIds":roles})
-            ).map_err(settings_error)?;
-            }
-        }
+        // Explicit assignments use the existing native dispatch lifecycle, including
+        // devices without a DSH host. Ordinary source events remain plugin-routed.
+        self.start_cloud_stand_in_with_roles(&configs, &issue)
+            .await?;
         Ok(())
     }
 }
@@ -179,7 +147,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admitted_assignment_cannot_overwrite_a_binding_on_another_device() {
+    async fn explicit_assignment_cannot_overwrite_a_binding_on_another_device() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         fixture
             .handler
@@ -187,10 +155,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        // Admission persists an event; only dispatch queries execution bindings.
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
         let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
-        assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+        assert!(store.stand_in_events(7).unwrap().is_empty());
         assert!(fixture.handler.local_task_links(true).is_empty());
 
         let error = fixture
@@ -210,12 +177,12 @@ mod tests {
             "This assignment has already been handled or is no longer active"
         );
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
 
     #[tokio::test]
-    async fn silent_notifications_are_durable_intake_without_task_dispatch() {
+    async fn explicit_assignments_ignore_ordinary_source_delay_without_a_plugin_host() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
@@ -228,17 +195,14 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
-        assert_eq!(
-            store.stand_in_events(7).unwrap()[0]["assignmentId"],
-            "assignment"
-        );
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        assert!(store.stand_in_events(7).unwrap().is_empty());
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
         assert!(fixture.handler.local_task_links(true).is_empty());
     }
 
     #[tokio::test]
-    async fn received_notification_only_admits_intake_and_local_discovery_stays_local() {
+    async fn received_notification_dispatches_once_and_local_discovery_stays_local() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         fixture
             .handler
@@ -246,7 +210,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
         assert!(fixture
             .handler
             .local_task_link("stand-in-human-default")

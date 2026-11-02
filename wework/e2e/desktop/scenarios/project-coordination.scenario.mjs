@@ -1,23 +1,33 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  configureFirstProjectExecutionEnvironment,
+  reloadMainWindow,
+} from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
   createSse,
   isReplyPredictionRequest,
+  mcpToolRequestEvents,
+  requestContainsToolOutput,
   readRequestBody,
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
 const USER = 9001
+const LOCAL_OWNER = 0
 const PROJECT = `项目自动统筹-${process.pid}`
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PRIVATE = 'PRIVATE_COORDINATION_MEMORY_MUST_NOT_ENTER_SHARED_ASSESSMENT'
 const CONFIRMED = '验收标准已确认：完成权限隔离验证'
+const WORK_MARKER = 'PROJECT_COORDINATION_APPROVED_NATIVE_WORK'
+const WORK_RESULT = '项目原队列中的负责人已完成权限隔离验证，请确认结果。'
+const OUTCOME_CALL = 'project-coordination-original-work-outcome'
 
 function strings(value) {
   if (typeof value === 'string') return [value]
@@ -36,12 +46,24 @@ export function createDesktopScenario({
 }) {
   let assessments = 0
   let expectedModel
+  let workRequests = 0
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   async function until(load, ready, label) {
     const deadline = Date.now() + uiTimeoutMs + modelResponseTimeoutMs
     let value
     while (Date.now() < deadline) {
-      value = await load()
+      try {
+        value = await load()
+      } catch (error) {
+        console.error('[project-coordination-observation-error]', {
+          message: error.message,
+          cause: error.cause?.message,
+          code: error.cause?.code,
+          nestedCause: error.cause?.cause?.message,
+          nestedCode: error.cause?.cause?.code,
+        })
+        throw error
+      }
       if (ready(value)) return value
       await new Promise(resolve => setTimeout(resolve, 100))
     }
@@ -56,6 +78,27 @@ export function createDesktopScenario({
       const prompt = strings(body.input).find(text =>
         text.includes('Assess only the supplied shared project events')
       )
+      if (!prompt && JSON.stringify(body).includes(WORK_MARKER)) {
+        assert.ok(!JSON.stringify(body).includes(PRIVATE))
+        assert.equal(body.model, expectedModel)
+        assert.ok(req.headers.authorization)
+        const id = `project-original-work-${++workRequests}`
+        const events = requestContainsToolOutput(body, OUTCOME_CALL)
+          ? [assistantMessage(WORK_RESULT)]
+          : mcpToolRequestEvents(body, {
+              toolName: 'update_issue_status',
+              argumentsValue: {
+                status: 'in_review',
+                reason: WORK_RESULT,
+                comment: WORK_RESULT,
+              },
+              searchCallId: `${OUTCOME_CALL}-search`,
+              toolCallId: OUTCOME_CALL,
+            }).events
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+        return true
+      }
       if (!prompt) return false
       assert.equal(body.model, expectedModel, 'Assessment keeps the selected Native model')
       assert.ok(req.headers.authorization, 'The original Native provider authenticates the request')
@@ -102,6 +145,7 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       const project = (await rpc(control, 'projects.list', {})).find(row => row.name === PROJECT)
       assert.ok(project)
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
@@ -114,6 +158,7 @@ export function createDesktopScenario({
           name: '项目统筹负责人',
           runtime: 'codex',
           execution_mode: 'manual_approval',
+          created_by_user_id: LOCAL_OWNER,
           execution_policy: { mode: 'project_pool' },
           model_policy: {
             mode: 'fixed',
@@ -122,9 +167,11 @@ export function createDesktopScenario({
         },
       })
       assert.equal(agent.execution_mode, 'manual_approval')
+      assert.equal(agent.created_by_user_id, LOCAL_OWNER)
       const group = {
         id: 'coordination-group',
         name: '项目验证组',
+        instructions: `${WORK_MARKER}。核验当前 Issue 的验收标准后提交待确认，并说明结果。`,
         leader: { kind: 'agent', id: agent.id, name: agent.name },
         members: [],
       }
@@ -132,7 +179,6 @@ export function createDesktopScenario({
         project_id: project.id,
         project: {
           version: project.version,
-          execution_environment: { repositories: [], setup_steps: [], devices: {} },
           collaboration_groups: [group],
         },
       })
@@ -149,6 +195,13 @@ export function createDesktopScenario({
         projectId: project.id,
         groupId: group.id,
       }
+      await reloadMainWindow(control, 'Load the Native-seeded project and Agent configuration')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="collaboration-workspace-project-${project.id}"]`
+      )
+      await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
       await control.command('click', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]')
       assert.notEqual(
@@ -258,6 +311,51 @@ export function createDesktopScenario({
         text: '等待审批',
       })
       await captureScreenshot(control, 'project-coordination-05-one-original-issue-work.png')
+      await control.command('waitFor', `[data-testid="cloud-task-activity-approve-${issue.id}"]`)
+      await control.command('click', `[data-testid="cloud-task-activity-approve-${issue.id}"]`)
+      const completed = await until(
+        () => rpc(control, 'executions.list', { project_id: project.id, include_terminal: true }),
+        rows => rows.some(row => row.id === bindings[0].id && row.status === 'completed'),
+        'The approved original execution actually completes through Native'
+      )
+      assert.equal(completed.length, 1)
+      assert.equal(completed[0].assigner_user_id, USER)
+      assert.ok(completed[0].runtime_task_id)
+      assert.ok(workRequests > 0)
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-issue-detail"]`, {
+        text: WORK_RESULT,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const resultComments = await rpc(control, 'todos.comment.list', {
+        project_id: project.id,
+        task_id: issue.id,
+      })
+      const outcome = resultComments.find(
+        comment =>
+          comment.content === WORK_RESULT &&
+          comment.metadata.activity_type === 'manager_status_comment'
+      )
+      assert.ok(outcome, 'The scoped manager tool published the result to the original Issue')
+      const resultSelector = `[data-testid="cloud-task-activity-message-${outcome.message_id}"]`
+      await control.command('waitFor', resultSelector, { text: WORK_RESULT })
+      await control.command('scrollIntoView', resultSelector)
+      assert.equal(
+        (await rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id })).status,
+        'in_review'
+      )
+      await captureScreenshot(
+        control,
+        'project-coordination-05b-approved-original-work-completed.png'
+      )
+      const acceptSelector = `[data-testid="cloud-task-activity-accept-${issue.id}"]`
+      await control.command('scrollIntoView', acceptSelector)
+      await control.command('clickWhenEnabled', acceptSelector)
+      await until(
+        () => rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id }),
+        item => item.status === 'completed',
+        'The human accepts the result through the original Issue flow'
+      )
+      await captureScreenshot(control, 'project-coordination-05c-human-accepted-result.png')
       await control.command('click', '[data-testid="project-coordinator-open"]')
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
       await control.command('click', '[data-testid="project-coordination-check"]')
@@ -283,7 +381,7 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
-        'click',
+        'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
       )
       await control.command('click', '[data-testid="project-coordinator-open"]')
@@ -315,7 +413,7 @@ export function createDesktopScenario({
         false
       )
       await captureScreenshot(control, 'project-coordination-09-stopped.png')
-      return { assessments, originalIssueId: issue.id, bindings: bindings.length }
+      return { assessments, originalIssueId: issue.id, bindings: bindings.length, workRequests }
     },
   }
 }

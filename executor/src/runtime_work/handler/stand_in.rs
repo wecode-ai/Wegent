@@ -440,22 +440,28 @@ impl RuntimeWorkRpcHandler {
             if bindings.iter().any(|row| row.task_id == previous) {
                 continue;
             }
-            let user = configs[0]["userId"].as_i64().unwrap_or_default();
+            for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
-                let roles: Vec<Value> =
-                    super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
-                        .iter()
-                        .filter(|role| {
-                            let id = self.stand_in_task_id(role, &binding);
-                            self.local_task_link(&id).is_none()
-                                && !bindings.iter().any(|row| row.task_id == id)
-                        })
-                        .map(|role| role["id"].clone())
-                        .collect();
-                if !roles.is_empty() {
-                    store.enqueue_stand_in_event(user, json!(["assignment","local",project,issue.id,binding["humanAssignmentId"]]),
-                        json!({"kind":"assignment","projectId":project,"projectStore":"local","issueId":issue.id,"assignmentId":binding["humanAssignmentId"],"issue":issue_value,"roleIds":roles})
-                    ).map_err(settings_error)?;
+                let task_id = self.stand_in_task_id(config, &binding);
+                if self.stand_in_task_is_handled(
+                    config,
+                    &task_id,
+                    bindings.iter().any(|binding| binding.task_id == task_id),
+                ) {
+                    continue;
+                }
+                if let Err(error) = self
+                    .start_local_stand_in(config, &issue_value, &binding)
+                    .await
+                {
+                    log_executor_event(
+                        "stand-in assignment failed",
+                        &[
+                            ("issue_id", issue.id.clone()),
+                            ("role_id", config["id"].to_string()),
+                            ("error", error.message),
+                        ],
+                    );
                 }
             }
         }

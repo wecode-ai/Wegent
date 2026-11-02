@@ -320,7 +320,7 @@ export function StandInOverviewPage({
           <button
             type="button"
             data-testid="stand-in-settings-open"
-            disabled={state.loading || state.saving}
+            disabled={(!state.saved && state.loading) || state.saving}
             onClick={() => setProfile(role ? 'role' : 'primary')}
             className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
           >

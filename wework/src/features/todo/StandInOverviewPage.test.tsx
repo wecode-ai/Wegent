@@ -561,3 +561,29 @@ it('refreshes external configuration and returns to the primary identity on expl
   expect(screen.getByTestId('identity-conversation')).toHaveTextContent('primary')
   await waitFor(() => expect(screen.getByTestId('stand-in-settings-open')).toBeEnabled())
 })
+
+it('keeps saved settings accessible while explicit navigation refreshes configuration', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await waitFor(() => expect(screen.getByTestId('stand-in-memory-open')).toBeVisible())
+  let finish!: (value: PersonalStandInSettings) => void
+  const settings = await props.services.standInApi!.personalGet(7, 'device')
+  vi.mocked(props.services.standInApi!.personalGet).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+        detail: { kind: 'task', contentRoute: '/stand-in' },
+      })
+    )
+  })
+  await waitFor(() => expect(finish).toBeTypeOf('function'))
+  await user.click(screen.getByTestId('stand-in-settings-open'))
+  expect(screen.getByTestId('stand-in-profile-panel')).toBeVisible()
+  await act(async () => finish(settings))
+})
