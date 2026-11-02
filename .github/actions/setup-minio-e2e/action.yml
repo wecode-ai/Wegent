@@ -1,12 +1,21 @@
 name: Set up real object storage for E2E
-description: Verify the pinned MinIO binary supplied by the Linux desktop E2E image.
+description: Verify the pinned MinIO binary restored from the shared Linux desktop E2E artifact.
 runs:
   using: composite
   steps:
+    - name: Download shared real object storage
+      uses: actions/download-artifact@v6
+      with:
+        name: wework-desktop-minio-e2e
+        path: ${{ runner.temp }}/wework-minio/bin
+
     - name: Enable real object storage
       shell: bash
+      env:
+        WEWORK_E2E_MINIO_BIN: ${{ runner.temp }}/wework-minio/bin/minio
       run: |
-        binary="${WEWORK_E2E_MINIO_BIN:?The desktop E2E image must provide MinIO}"
+        binary="${WEWORK_E2E_MINIO_BIN:?The shared desktop E2E artifact must provide MinIO}"
+        chmod 0755 "$binary"
         test -x "$binary"
         "$binary" --version
         echo "WEWORK_E2E_MINIO_BIN=$binary" >> "$GITHUB_ENV"

@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,36 +22,36 @@ const measurements = JSON.parse(
     'utf8',
   ),
 )
-const workflow = JSON.parse(
-  execFileSync(
-    'ruby',
-    [
-      '-ryaml',
-      '-rjson',
-      '-e',
-      'puts JSON.generate(YAML.load_file(ARGV[0]))',
-      '.github/workflows/wework-e2e.yml',
-    ],
-    { cwd: root, encoding: 'utf8' },
-  ),
-)
+function readYaml(path) {
+  return JSON.parse(
+    execFileSync(
+      'ruby',
+      [
+        '-ryaml',
+        '-rjson',
+        '-e',
+        'puts JSON.generate(YAML.load_file(ARGV[0]))',
+        path,
+      ],
+      { cwd: root, encoding: 'utf8' },
+    ),
+  )
+}
 
-function classifiedMatrices(paths) {
+const workflow = readYaml('.github/workflows/wework-e2e.yml')
+
+function classifiedMatrices(
+  paths,
+  script = '.github/scripts/classify-wework-desktop-e2e.sh',
+) {
   const directory = mkdtempSync(join(tmpdir(), 'wework-linux-order-'))
   try {
     const output = join(directory, 'github-output')
-    execFileSync(
-      'bash',
-      [
-        '.github/scripts/classify-wework-desktop-e2e.sh',
-        ...(paths ? [] : ['--all']),
-      ],
-      {
-        cwd: root,
-        env: { ...process.env, GITHUB_OUTPUT: output },
-        input: paths ? `${paths.join('\n')}\n` : undefined,
-      },
-    )
+    execFileSync('bash', [script, ...(paths ? [] : ['--all'])], {
+      cwd: root,
+      env: { ...process.env, GITHUB_OUTPUT: output },
+      input: paths ? `${paths.join('\n')}\n` : undefined,
+    })
     return Object.fromEntries(
       readFileSync(output, 'utf8')
         .trim()
@@ -73,20 +74,15 @@ test('changes to Linux scheduling or MinIO setup select the existing desktop sui
     '.github/scripts/order-wework-linux-e2e.mjs',
     '.github/scripts/order-wework-linux-e2e.test.mjs',
     '.github/actions/setup-minio-e2e/action.yml',
+    '.github/actions/build-minio-e2e/action.yml',
   ]) {
     const outputs = classifiedMatrices([path])
     assert.deepEqual(outputs, matrices, path)
-    const result = execFileSync(
-      'bash',
-      ['.github/scripts/classify-ci-changes.sh'],
-      {
-        cwd: root,
-        input: `${path}\n`,
-        encoding: 'utf8',
-        env: { ...process.env, GITHUB_OUTPUT: '' },
-      },
+    const result = classifiedMatrices(
+      [path],
+      '.github/scripts/classify-ci-changes.sh',
     )
-    assert.match(result, /^wework_e2e=true$/m, path)
+    assert.equal(result.wework_e2e, 'true', path)
   }
 })
 
@@ -233,27 +229,16 @@ test('the CI command expands selected groups and fails on invalid input', () => 
   assert.notEqual(invalid.status, 0)
 })
 
-test('MinIO setup uses the image binary and fails closed when it is missing or unusable', () => {
-  const action = JSON.parse(
-    execFileSync(
-      'ruby',
-      [
-        '-ryaml',
-        '-rjson',
-        '-e',
-        'puts JSON.generate(YAML.load_file(ARGV[0]))',
-        '.github/actions/setup-minio-e2e/action.yml',
-      ],
-      { cwd: root, encoding: 'utf8' },
-    ),
-  )
+test('MinIO setup uses the shared artifact binary and fails closed when it is missing or unusable', () => {
+  const action = readYaml('.github/actions/setup-minio-e2e/action.yml')
   const steps = action.runs.steps
   assert.equal(
     steps.length,
-    1,
+    2,
     'No runner-local Go compiler or dependency cache setup',
   )
-  const directory = mkdtempSync(join(tmpdir(), 'wework-minio-image-'))
+  assert.match(steps[0].uses, /^actions\/download-artifact@/)
+  const directory = mkdtempSync(join(tmpdir(), 'wework-minio-artifact-'))
   try {
     const binary = join(directory, 'minio')
     const output = join(directory, 'github-env')
@@ -263,7 +248,7 @@ test('MinIO setup uses the image binary and fails closed when it is missing or u
       GITHUB_ENV: output,
     }
     const setup = (values) =>
-      spawnSync('bash', ['-e', '-o', 'pipefail', '-c', steps[0].run], {
+      spawnSync('bash', ['-e', '-o', 'pipefail', '-c', steps[1].run], {
         env: values,
         encoding: 'utf8',
       })
@@ -273,8 +258,14 @@ test('MinIO setup uses the image binary and fails closed when it is missing or u
     chmodSync(binary, 0o755)
     assert.notEqual(setup(env).status, 0)
     writeFileSync(binary, '#!/bin/sh\n[ "$1" = "--version" ]\n')
+    chmodSync(binary, 0o644)
     const enabled = setup(env)
     assert.equal(enabled.status, 0, enabled.stderr)
+    assert.equal(
+      statSync(binary).mode & 0o777,
+      0o755,
+      'Artifact downloads must restore execute permissions',
+    )
     assert.equal(
       readFileSync(output, 'utf8'),
       `WEWORK_E2E_MINIO_BIN=${binary}\n`,
@@ -282,20 +273,83 @@ test('MinIO setup uses the image binary and fails closed when it is missing or u
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
-  const image = readFileSync(
-    new URL('../../docker/wework-e2e/desktop.Dockerfile', import.meta.url),
+  const build = readFileSync(
+    new URL('../actions/build-minio-e2e/action.yml', import.meta.url),
     'utf8',
   )
-  assert.match(image, /FROM golang:1\.25\.9-bookworm AS minio-build/)
+  assert.match(build, /go-version: "1\.25\.9"/)
   assert.match(
-    image,
-    /CGO_ENABLED=0 go install github\.com\/minio\/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/,
+    build,
+    /go install github\.com\/minio\/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/,
   )
-  assert.match(
-    image,
-    /COPY --from=minio-build \/go\/bin\/minio \/usr\/local\/bin\/minio/,
+})
+
+test('one existing producer builds MinIO for exactly the consumers that need it without GHCR writes', () => {
+  const producers = Object.entries(workflow.jobs).flatMap(([job, value]) =>
+    value.steps
+      .filter((step) => step.uses === './.github/actions/build-minio-e2e')
+      .map((step) => ({ job, step })),
   )
-  assert.match(image, /ENV WEWORK_E2E_MINIO_BIN=\/usr\/local\/bin\/minio/)
+  assert.equal(producers.length, 1)
+  assert.equal(producers[0].job, 'build-wework-desktop-core-e2e')
+  const required = []
+  for (const scope of ['core', 'cloud']) {
+    const consumer = workflow.jobs[`wework-desktop-${scope}-e2e`]
+    const setup = consumer.steps.find(
+      (step) => step.uses === './.github/actions/setup-minio-e2e',
+    )
+    assert.ok(setup)
+    assert.ok(consumer.needs.includes(producers[0].job))
+    for (const match of setup.if.matchAll(
+      /contains\(matrix.segments, '([^']+)'\)/g,
+    )) {
+      required.push({ scope, segment: match[1] })
+    }
+  }
+  assert.equal(required.length, 6)
+  const evaluate = new Function(
+    'needs',
+    'contains',
+    `return ${producers[0].step.if}`,
+  )
+  for (const selection of [
+    ...required,
+    { scope: 'core', segment: 'split-workbench' },
+    null,
+  ]) {
+    const outputs = Object.fromEntries(
+      ['core', 'cloud'].map((scope) => [
+        `wework_desktop_${scope}_e2e_matrix`,
+        JSON.stringify({
+          include:
+            selection?.scope === scope ? [{ segments: selection.segment }] : [],
+        }),
+      ]),
+    )
+    assert.equal(
+      evaluate({ changes: { outputs } }, (source, value) =>
+        source.includes(value),
+      ),
+      required.includes(selection),
+    )
+  }
+  const build = readYaml('.github/actions/build-minio-e2e/action.yml').runs
+    .steps
+  assert.ok(build.every((step) => !step.uses?.startsWith('docker/')))
+  assert.equal(
+    build.find((step) => step.name === 'Set up Go for real object storage')
+      .with['go-version'],
+    '1.25.9',
+  )
+  const upload = build.find((step) =>
+    step.uses?.startsWith('actions/upload-artifact@'),
+  )
+  const download = readYaml('.github/actions/setup-minio-e2e/action.yml').runs
+    .steps[0]
+  assert.equal(upload.with.name, download.with.name)
+  assert.equal(upload.with['if-no-files-found'], 'error')
+  assert.equal(upload.with.path, '${{ runner.temp }}/wework-minio/bin/minio')
+  assert.equal(download.with.path, '${{ runner.temp }}/wework-minio/bin')
 })
 
 test('timing evidence and scheduling regression tests are bound to CI', () => {

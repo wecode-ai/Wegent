@@ -253,6 +253,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Build shared real object storage for desktop E2E
+        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile')
+        uses: ./.github/actions/build-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Verify isolated Xvfb lifecycle
         run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
 

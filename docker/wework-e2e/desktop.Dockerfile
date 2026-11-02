@@ -1,11 +1,4 @@
-FROM golang:1.25.9-bookworm AS minio-build
-
-RUN CGO_ENABLED=0 go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-
 FROM ubuntu:24.04
-
-COPY --from=minio-build /go/bin/minio /usr/local/bin/minio
-ENV WEWORK_E2E_MINIO_BIN=/usr/local/bin/minio
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_MAJOR=24
@@ -65,7 +58,6 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
-  && minio --version \
   && pnpm --version \
   && gh --version \
   && python3 --version \
