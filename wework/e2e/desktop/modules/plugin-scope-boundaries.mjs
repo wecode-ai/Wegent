@@ -119,25 +119,9 @@ export async function verifyPluginScopeBoundaries({
   }
 
   async function backToCatalog() {
-    // Restarts preserve the previous sidebar state and can leave this desktop
-    // checkpoint with off-canvas navigation. Restore the desktop layout before
-    // locating the plugin catalog instead of clicking hidden controls.
-    await control.command('setMainWindowSize', 'body', {
-      value: JSON.stringify({ width: 900, height: 800 }),
-    })
-    const expandSidebar = testId('expand-sidebar-button')
-    if (Number(await control.command('getElementCount', expandSidebar)) > 0) {
-      await control.command('click', expandSidebar)
-      await control.command('waitFor', testId('collapse-sidebar-button'), {
-        visible: true,
-      })
-    }
-    await control.command('waitFor', testId('plugins-button'), {
-      visible: true,
-      enabled: true,
-      stableMs: 250,
-    })
-    await control.command('click', testId('plugins-button'), { visible: true })
+    // The sidebar may be off-canvas after a real restart. Use the production
+    // route directly, then verify the catalog itself before any further action.
+    await control.command('navigate', 'body', { value: '/plugins' })
     for (const id of ['plugin-management-back-button', 'plugin-detail-back-button']) {
       if (Number(await control.command('getElementCount', testId(id))) > 0) {
         await control.command('click', testId(id))
