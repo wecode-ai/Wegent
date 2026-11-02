@@ -14,6 +14,12 @@ import { waitForUpdatePreparation } from '../modules/update-preparation-progress
 import { acquireProcessLock } from '../../../scripts/lib/process-lock.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import {
+  assertMacosUpgradeIdentity,
+  macosUpgradeIdentity,
+  pruneWithRolledBackSource,
+  useVersionedMacosRecoveryBridge,
+} from '../modules/macos-upgrade-identity.mjs'
+import {
   assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
@@ -183,6 +189,7 @@ export async function createDesktopScenario(options) {
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
   const compositions = []
+  let macosIdentity
   const assertSelectedComposition = async version => {
     const id = (await readFile(join(root, 'active'), 'utf8')).trim()
     const slot = join(root, 'slots', id)
@@ -205,6 +212,7 @@ export async function createDesktopScenario(options) {
       assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
     }
     compositions.push({ version, ...actual, coreDsh: components.coreDsh })
+    await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
   }
   const about = async () => {
     await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
@@ -343,6 +351,7 @@ export async function createDesktopScenario(options) {
       const { release: sourceRuntime } = JSON.parse(
         await control.command('getDesktopRuntimeDiagnostics', 'body')
       )
+      macosIdentity = await macosUpgradeIdentity(sourceRuntime.hostExecutable)
       await writeFile(
         join(resultDir, 'source-runtime-result.json'),
         `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
@@ -445,6 +454,8 @@ export async function createDesktopScenario(options) {
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
       )
+      if (checkpoint === 'app-upgrade-recovery')
+        await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
@@ -582,6 +593,7 @@ export async function createDesktopScenario(options) {
           0
         )
           await control.command('click', '[data-testid="settings-back-button"]')
+        await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await send(`${PROMPT} continue after rollback`)
         await assertSelectedComposition(pair.from.version)
         if (restoreRequired) {

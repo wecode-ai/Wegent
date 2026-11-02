@@ -275,10 +275,12 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.created_at,
                 self.options,
             ),
-            "plan" => self
-                .assistant
-                .blocks
-                .push(plan_block(item, self.created_at, self.options)),
+            "plan" => self.assistant.blocks.push(plan_block(
+                item,
+                self.created_at,
+                self.assistant_status,
+                self.options,
+            )),
             "commandexecution" => merge_tool_output(
                 &mut self.assistant.blocks,
                 item,

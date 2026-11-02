@@ -38,6 +38,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'board-transcript-followup': './scenarios/board-transcript-followup.scenario.mjs',
   'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
   'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
+  'local-artifact-declaration': './scenarios/local-artifact-declaration.scenario.mjs',
   'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'project-space-tool-discovery': './scenarios/project-space-tool-discovery.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
@@ -150,6 +151,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-runtime-reconciliation.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
+  'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
@@ -219,9 +222,12 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
+  'local-artifact-declaration',
   'mcp-apps',
   'project-space-tool-discovery',
   'notification-tab-navigation',

@@ -615,18 +615,23 @@ pub(super) fn push_reasoning_block(
 pub(super) fn plan_block(
     item: &Value,
     fallback_timestamp: i64,
+    turn_status: &str,
     options: TranscriptBuildOptions,
 ) -> Value {
+    // Native Plan items omit status; their owning turn supplies the streaming boundary.
     let status = string_field(item, "status")
         .map(normalized_phase_or_status)
-        .filter(|status| {
-            matches!(
+        .map(|status| {
+            if matches!(
                 status.as_str(),
                 "inprogress" | "pending" | "running" | "streaming"
-            )
+            ) {
+                "streaming"
+            } else {
+                "done"
+            }
         })
-        .map(|_| "streaming")
-        .unwrap_or("done");
+        .unwrap_or(turn_status);
     let mut block = json!({
         "id": format!("plan-{}", item_id(item, "plan")),
         "type": "plan",

@@ -36,17 +36,21 @@ flowchart LR
 
 ### Device artifact declaration and download
 
-Claude Code and Wegent executors linked to a Backend Task can declare final deliverables:
+Claude Code and Codex can declare final deliverables through the Wegent executor:
 
 ```bash
 $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 ```
 
-A declaration sends only the filename, relative path, canonical workspace root, size, modification time, and SHA-256. It does not upload file contents. `WEGENT_BACKEND_TASK_ID` identifies the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential.
+A declaration first verifies that the canonical file path stays inside the current Task workspace and computes the filename, relative path, canonical workspace root, size, modification time, and SHA-256.
+
+A local Runtime conversation has no Backend Task. The executor leaves `WEGENT_BACKEND_TASK_ID` unset; declaration returns metadata and `local_path` without contacting Backend or requiring cloud credentials. The final response links to `local_path` with a Markdown file link, reusing the desktop file card and local preview. The link remains in conversation history while the file remains in its original workspace.
+
+For linked Backend Tasks, `WEGENT_BACKEND_TASK_ID` must be a positive integer identifying the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Declaration sends only the metadata above, never file contents. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential. Invalid Backend IDs fail before any request; a `runtime-*` conversation ID must never be sent to a cloud Task endpoint.
 
 The executor working directory, `WEGENT_TASK_WORKSPACE`, and the declaration command share the same workspace path resolver. When a local device configures `LOCAL_WORKSPACE_ROOT`, the logical `/workspace` alias must not be treated as its physical workspace directory.
 
-The updated default `Ghost/default/wegent-wework` requires successful declaration before directing users to conversation file cards, rather than local paths or `computer://` links. Initialization YAML does not overwrite existing Ghosts. Claude Code (with tools enabled) and Codex inject declaration instructions at execution time, so legacy Ghosts can use this delivery flow without rewriting database configuration. The prompt data migration and its no-op revision are removed without application-data reads or writes. Environments already recording `a9c4e7b2d610` require separate version compatibility handling before deployment. Previously migrated prompts are not automatically restored. See the [withdrawal and revision-chain notes](./device-artifact-prompt-migration.md).
+The updated default `Ghost/default/wegent-wework` requires successful declaration for linked Backend Tasks before directing users to conversation file cards. Local Runtime conversations follow the local declaration instructions injected at execution time. Initialization YAML does not overwrite existing Ghosts. Claude Code (with tools enabled) and Codex inject declaration instructions at execution time, so legacy Ghosts can use this delivery flow without rewriting database configuration. The prompt data migration and its no-op revision are removed without application-data reads or writes. Environments already recording `a9c4e7b2d610` require separate version compatibility handling before deployment. Previously migrated prompts are not automatically restored. See the [withdrawal and revision-chain notes](./device-artifact-prompt-migration.md).
 
 Backend captures the executor name and namespace from the Task Token's assistant subtask and persists them with the workspace root as the artifact source. Downloads always use this source snapshot, never the task's latest executor. Recovery that rebinds the original subtask cannot redirect an old card to a new device. An unavailable original source remains unavailable; shared and copied tasks do not carry these device artifacts.
 

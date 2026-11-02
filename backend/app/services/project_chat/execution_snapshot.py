@@ -339,6 +339,15 @@ def _persist_outcome(
     if execution is not None:
         if execution.status != status and execution.status not in CAPACITY_STATUSES:
             return False
+        logger.info(
+            "[ExecutionSnapshot] Matched terminal turn execution=%s activity=%s "
+            "bound_turn=%s snapshot_turn=%s status=%s",
+            execution.id,
+            row.message_id,
+            metadata.get("runtime_turn_id"),
+            turn.id,
+            execution.status,
+        )
         # Reconciliation commits the terminal root and activity. Persist their
         # turn binding in that same commit so a final event can recover text
         # even when it arrives before this outcome-only report returns.

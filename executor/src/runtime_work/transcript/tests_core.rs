@@ -1200,6 +1200,22 @@ fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
 }
 
 #[test]
+fn transcript_plan_without_item_status_inherits_its_turn_status() {
+    for (turn_status, expected) in [("inProgress", "streaming"), ("completed", "done")] {
+        let thread = json!({
+            "id": "thread-1",
+            "turns": [{
+                "id": "turn-1",
+                "status": turn_status,
+                "items": [{"id": "plan-1", "type": "plan", "text": "# Partial plan"}]
+            }]
+        });
+        let messages = transcript_messages(&thread, "device-1");
+        assert_eq!(messages[0]["blocks"][0]["status"], expected);
+    }
+}
+
+#[test]
 fn transcript_keeps_in_progress_codex_plan_items_streaming() {
     let thread = json!({
         "id": "thread-1",

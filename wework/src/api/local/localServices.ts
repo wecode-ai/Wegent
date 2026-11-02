@@ -5,6 +5,7 @@ import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   cloudRunnerModels,
+  requiresCloudModelCatalog,
   resolveRunnerSelection,
   runnerModelKey,
   type RunnerSelection,
@@ -4004,10 +4005,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     runnerSelection?: RunnerSelection
   ) => {
     const environments = agent.executionPolicy ? await listRunnerEnvironments(projectId) : []
-    const modelRequirement =
-      agent.modelPolicy?.mode === 'fixed' ? agent.modelPolicy.model : runnerSelection?.model
     const cloudModels =
-      agent.executionPolicy && (!modelRequirement || modelRequirement.source === 'cloud')
+      agent.executionPolicy && requiresCloudModelCatalog(agent.modelPolicy, runnerSelection)
         ? await (deps.listCloudModels?.() ?? Promise.resolve([]))
         : []
     let routing: ReturnType<typeof resolveRunnerSelection> | null = null

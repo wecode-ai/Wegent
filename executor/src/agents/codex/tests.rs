@@ -4057,6 +4057,7 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 
 #[test]
 fn single_collaboration_mode_disables_codex_native_subagents() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         model_config: json!({"model_id": "gpt-5.5-codex"}),
         ..ExecutionRequest::default()

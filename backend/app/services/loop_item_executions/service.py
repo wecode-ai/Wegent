@@ -2038,6 +2038,15 @@ class LoopItemExecutionService:
                 else {}
             )
             bound_turn_id = metadata.get("runtime_turn_id")
+            logger.info(
+                "[LoopItemExecution] Delayed completion candidate execution=%s "
+                "activity=%s bound_turn=%s requested_turn=%s request_turn=%s",
+                execution.id,
+                activity.message_id,
+                bound_turn_id,
+                turn_id,
+                execution_runtime_turn_id(execution),
+            )
             if isinstance(bound_turn_id, str) and bound_turn_id:
                 if bound_turn_id == turn_id:
                     return activity
@@ -2596,7 +2605,7 @@ class LoopItemExecutionService:
         logger.info(
             "[LoopItemExecution] Terminal transition execution=%s status=%s "
             "expected_status=%s expected_version=%s reason=%s event_seq=%s "
-            "reconciled=%s device=%s task=%s committed=%s",
+            "reconciled=%s device=%s task=%s committed=%s content_length=%s",
             execution_id,
             terminal_status,
             expected_status,
@@ -2607,6 +2616,7 @@ class LoopItemExecutionService:
             execution.runtime_device_id,
             execution.runtime_task_id,
             commit,
+            len(content or ""),
         )
         return execution
 
@@ -3184,10 +3194,13 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
 
-        # Thread-level Goal notifications can retain the previous request's
-        # turn identity while a continuation starts. They cannot establish
-        # the current execution's turn binding or renew its lease.
-        if event_name.startswith("runtime.goal."):
+        # Thread metadata, Goal and lifecycle notifications can retain the
+        # previous request's turn identity while a continuation starts. Per-turn
+        # response events establish the execution binding and renew its lease.
+        if (
+            event_name.startswith(("runtime.goal.", "thread/"))
+            or event_name == "runtime.turn.updated"
+        ):
             return None
 
         row = self.execution_for_runtime(
