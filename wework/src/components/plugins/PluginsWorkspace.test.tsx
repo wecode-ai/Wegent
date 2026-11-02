@@ -4919,6 +4919,38 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
   })
 
+  test('uses a policy changed outside the page after an explicit catalog refresh', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-all'))
+    const refresh = await screen.findByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))
+          ?.installedPlugins[0]?.spec.updatePolicy
+      ).toBe('manual')
+    )
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+
+    await fetch('/api/plugins/installed/101', {
+      method: 'PUT',
+      body: JSON.stringify({ updatePolicy: 'auto' }),
+    })
+    await userEvent.click(refresh)
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+  })
+
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({

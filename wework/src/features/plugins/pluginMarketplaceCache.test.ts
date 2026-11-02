@@ -867,6 +867,18 @@ describe('pluginMarketplaceCache', () => {
     expect(sameInstalledPlugins(left, componentsChanged)).toBe(false)
   })
 
+  test.each([
+    ['manual', 'auto'],
+    ['auto', 'manual'],
+  ] as const)('detects an update policy change from %s to %s', (before, after) => {
+    const previous = installedItem('101', 'wegent', 'documents')
+    previous.raw.spec.updatePolicy = before
+    const refreshed = structuredClone(previous)
+    refreshed.raw.spec.updatePolicy = after
+    expect(sameInstalledPlugins([previous], [refreshed])).toBe(false)
+    expect(sameInstalledPlugins([refreshed], [structuredClone(refreshed)])).toBe(true)
+  })
+
   test('keeps memory and listeners immediate while delaying durable persist', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-debounce')
