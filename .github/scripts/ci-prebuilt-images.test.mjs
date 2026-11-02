@@ -220,6 +220,7 @@ test("download bundles are restored once and reject unexpected archive paths", (
     };
     for (const input of [
       ".github/scripts/ci-prebuilt-images.mjs",
+      ".github/scripts/resolve-ci-image.mjs",
       ".github/scripts/restore-ci-downloads.sh",
       ".github/runtime-images/ci-downloads.Dockerfile",
       "wework/electron/package.json",

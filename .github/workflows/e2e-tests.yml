@@ -209,6 +209,7 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
@@ -231,6 +232,10 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+          if [[ "$IMAGE" == *@sha256:* ]] && ! grep -Fxq 'exists=true' "$GITHUB_OUTPUT"; then
+            echo "The locked prebuilt runtime is unavailable: $IMAGE" >&2
+            exit 1
+          fi
 
       - name: Build Backend Rust E2E runtime
         if: steps.image-check.outputs.exists != 'true'
@@ -238,7 +243,7 @@ jobs:
           IMAGE: ${{ steps.runtime.outputs.image }}
         run: |
           metadata="$(node .github/scripts/ci-prebuilt-images.mjs backend-rs-deps "$GITHUB_REPOSITORY_OWNER")"
-          dependencies="$(jq -r .image <<< "$metadata")"
+          dependencies="$(jq -r .restoreImage <<< "$metadata")"
           arguments=()
           if docker manifest inspect "$dependencies" >/dev/null 2>&1; then
             arguments+=(--build-arg "DEPS_IMAGE=$dependencies")
@@ -374,6 +379,10 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+          if [[ "$IMAGE" == *@sha256:* ]] && ! grep -Fxq 'exists=true' "$GITHUB_OUTPUT"; then
+            echo "The locked prebuilt runtime is unavailable: $IMAGE" >&2
+            exit 1
+          fi
 
       - name: Resolve prebuilt Executor dependencies
         if: steps.image-check.outputs.exists != 'true'
@@ -382,7 +391,7 @@ jobs:
           BASE_IMAGE: ${{ steps.runtime.outputs.base-image }}
         run: |
           metadata="$(node .github/scripts/ci-prebuilt-images.mjs executor-deps "$GITHUB_REPOSITORY_OWNER" "$BASE_IMAGE")"
-          image="$(jq -r .image <<< "$metadata")"
+          image="$(jq -r .restoreImage <<< "$metadata")"
           if docker manifest inspect "$image" >/dev/null 2>&1; then
             echo "image=$image" >> "$GITHUB_OUTPUT"
           else

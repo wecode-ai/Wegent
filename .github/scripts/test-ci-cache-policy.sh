@@ -700,6 +700,7 @@ fi
 
 node --test "$script_dir/runtime-artifact.test.mjs"
 node --test "$script_dir/ci-prebuilt-images.test.mjs"
+node --test "$script_dir/resolve-ci-image.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 

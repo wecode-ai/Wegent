@@ -1984,6 +1984,7 @@ classify_path() {
       ;;
     .github/ci/rust-toolchain | \
       .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/actions/setup-rust-cache/* | \
       .github/actions/setup-sccache/* | \

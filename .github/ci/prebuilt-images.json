@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "images": {
+    "ghcr.io/wecode-ai/wegent-ci-executor-deps:v1-45e30b705c0dda0253e0b61745deb43e89e3c54cecfc3fbfe719585abbbe312a": {
+      "image": "ghcr.io/ficohu/wegent-ci-executor-deps@sha256:f004a6d34c20c2f73abcf23435bd8e8d9d8b14083531ee9996774290b59085cb",
+      "platform": "linux/amd64",
+      "source_commit": "d8807124fe7f4eef8181354e78090f32ec9c574e",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41472780647/job/125370446113"
+    },
+    "ghcr.io/wecode-ai/wegent-e2e-claudecode-executor:b6c20d7a17d4e2ff53e5d3f52c2d44dd7901983ed3c45e1676e0b52e83dd19b6": {
+      "image": "ghcr.io/ficohu/wegent-e2e-claudecode-executor@sha256:98b2f81006e9ed77019101dba8d54805125cf6d993ea6160ee87fb256275f6fa",
+      "platform": "linux/amd64",
+      "source_commit": "d8807124fe7f4eef8181354e78090f32ec9c574e",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41472780647/job/125370446113"
+    },
+    "ghcr.io/wecode-ai/wegent-ci-backend-rs-deps:v1-f384e8ec6b9d13db79bdbe971fa68f5ede8cfda648184bac854ce366976bcb31": {
+      "image": "ghcr.io/ficohu/wegent-ci-backend-rs-deps@sha256:b59b604ec71ad70631c1e1ee5b559268855970b8ff986764460a1c127f7b6d5e",
+      "platform": "linux/amd64",
+      "source_commit": "d8807124fe7f4eef8181354e78090f32ec9c574e",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41472780647/job/125370446625"
+    },
+    "ghcr.io/wecode-ai/wegent-backend-rs-e2e:v3-noble-2c96cd007963d712a804f0f86323c99c15485ac8017d614520fbd438445ffdc8": {
+      "image": "ghcr.io/ficohu/wegent-backend-rs-e2e@sha256:55046635d73eb4a976c7c55af54be531b25d6f52220b4d172894dc0c72c522d8",
+      "platform": "linux/amd64",
+      "source_commit": "d8807124fe7f4eef8181354e78090f32ec9c574e",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41472780647/job/125370446625"
+    },
+    "ghcr.io/wecode-ai/wegent-ci-downloads:v1-64b3036d6b79a6e870f0420b39c77ee5456d496b9fe55fa375036ec5328bcfaf": {
+      "image": "ghcr.io/ficohu/wegent-ci-downloads@sha256:d394fbf8d3986901fbe1f954d3457149fa3b05a60a6338783147b3c594bacdc0",
+      "platform": "linux/amd64",
+      "source_commit": "1b96d101efbdea245597ecbe107d825d213aa1d4",
+      "provenance": "https://github.com/FicoHu/Wegent/actions/runs/41476355921/job/125382848638"
+    }
+  }
+}

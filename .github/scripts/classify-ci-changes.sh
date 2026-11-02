@@ -56,6 +56,7 @@ classify_path() {
       ;;
     .github/scripts/download-actions-artifact.sh | .github/scripts/restore-actions-runtime.sh | \
       .github/scripts/runtime-artifact.mjs | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/runtime-images/*)
       changed[platform_e2e]=true
@@ -65,6 +66,7 @@ classify_path() {
     # These checks execute in the unconditional CI configuration gate.
     .github/scripts/ci-scheduling.test.mjs | .github/scripts/runtime-artifact.test.mjs | \
       .github/scripts/ci-prebuilt-images.test.mjs | \
+      .github/scripts/resolve-ci-image.test.mjs | \
       .github/scripts/macos-e2e-source-digest.test.mjs | .github/scripts/test-rust-cache.sh)
       return
       ;;

@@ -53,7 +53,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.mkdir_p(File.join(directory, File.dirname(recipe)))
   FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
   %w[.github/runtime-images/backend-rs-builder.Dockerfile .github/ci/rust-toolchain
-    .github/scripts/ci-prebuilt-images.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
+    .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
   end

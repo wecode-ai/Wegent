@@ -38,6 +38,8 @@ on:
       - "knowledge_engine/uv.lock"
       - ".github/runtime-images/**"
       - ".github/scripts/ci-prebuilt-images.*"
+      - ".github/scripts/resolve-ci-image.*"
+      - ".github/ci/prebuilt-images.json"
       - ".github/scripts/publish-ci-prebuild.sh"
       - ".github/scripts/restore-ci-downloads.sh"
       - "sdk/plugin-auth/**"

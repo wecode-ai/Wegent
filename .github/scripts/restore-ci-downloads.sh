@@ -3,7 +3,7 @@ set -euo pipefail
 
 owner="${GITHUB_REPOSITORY_OWNER:?registry owner is required}"
 metadata="$(node .github/scripts/ci-prebuilt-images.mjs downloads "$owner")"
-image="$(node -p 'JSON.parse(process.argv[1]).image' "$metadata")"
+image="$(node -p 'JSON.parse(process.argv[1]).restoreImage' "$metadata")"
 cache_root="${WEWORK_CI_DOWNLOAD_CACHE_DIR:-${HOME:?}/.cache/wegent}"
 marker="$cache_root/ci-downloads-image"
 if [[ -f "$marker" && "$(cat "$marker")" == "$image" ]]; then exit 0; fi

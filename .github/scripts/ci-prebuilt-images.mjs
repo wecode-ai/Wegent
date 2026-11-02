@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCiImage } from "./resolve-ci-image.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const definitions = {
@@ -77,10 +78,12 @@ export function prebuiltImage(kind, owner, baseImage = "", directory = root) {
       .update(readFileSync(resolve(directory, input)))
       .update("\0");
   }
+  const image = `ghcr.io/${owner.toLowerCase()}/wegent-ci-${kind}:v1-${hash.digest("hex")}`;
   return {
     kind,
     ...definition,
-    image: `ghcr.io/${owner.toLowerCase()}/wegent-ci-${kind}:v1-${hash.digest("hex")}`,
+    image,
+    restoreImage: resolveCiImage(image, directory),
   };
 }
 

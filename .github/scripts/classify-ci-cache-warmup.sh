@@ -27,6 +27,7 @@ classify_path() {
       mark_all
       ;;
     .github/runtime-images/* | .github/scripts/ci-prebuilt-images.* | LICENSES/Apache-2.0.txt | \
+      .github/ci/prebuilt-images.json | .github/scripts/resolve-ci-image.* | \
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
