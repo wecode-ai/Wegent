@@ -39,9 +39,10 @@ describe('desktop host events', () => {
     })
     if (logged) {
       expect(debug).toHaveBeenCalledExactlyOnceWith(
-        '[Wework] Slow Electron host request ' +
+        '[Wework] Electron host diagnostic ' +
           JSON.stringify({
             capability: 'secureStorage.get',
+            phase: 'completed',
             elapsedMs,
             status: 200,
             ok: true,
@@ -50,6 +51,28 @@ describe('desktop host events', () => {
     } else {
       expect(debug).not.toHaveBeenCalled()
     }
+  })
+
+  test('records pending metadata before a slow response and clears its timer on failure', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    let rejectRequest!: (error: Error) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise((_, reject) => (rejectRequest = reject)))
+    )
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const { invokeDesktopHost } = await import('./desktopHost')
+    const pending = invokeDesktopHost('secureStorage.get', { key: 'private-key' })
+    const failed = expect(pending).rejects.toThrow('transport closed')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(debug).toHaveBeenCalledExactlyOnceWith(
+      '[Wework] Electron host diagnostic ' +
+        JSON.stringify({ capability: 'secureStorage.get', phase: 'pending', elapsedMs: 1_000 })
+    )
+    rejectRequest(new Error('transport closed'))
+    await failed
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   test('E2E can delay only delivery of a completed real host response', async () => {
