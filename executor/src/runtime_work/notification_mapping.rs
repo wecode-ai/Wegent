@@ -214,6 +214,36 @@ pub(crate) fn codex_stream_debug_enabled() -> bool {
     codex_stream_debug_flag().load(Ordering::Relaxed)
 }
 
+pub(crate) fn log_agent_message_completion(
+    local_task_id: &str,
+    subtask_id: &str,
+    params: &Value,
+    resolved_phase: Option<&str>,
+) {
+    if !codex_stream_debug_enabled() {
+        return;
+    }
+    let item = params.get("item").unwrap_or(params);
+    if !is_assistant_text_item(item) {
+        return;
+    }
+    log_executor_event(
+        "codex runtime agent message completed",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("item_id", notification_item_id(params).unwrap_or_default()),
+            ("thread_id", json_string_field(params, "threadId")),
+            ("turn_id", json_string_field(params, "turnId")),
+            ("item_phase", json_string_field(item, "phase")),
+            (
+                "resolved_phase",
+                resolved_phase.unwrap_or("<none>").to_owned(),
+            ),
+        ],
+    );
+}
+
 pub(crate) fn set_codex_stream_debug_enabled(enabled: bool) {
     codex_stream_debug_flag().store(enabled, Ordering::Relaxed);
 }

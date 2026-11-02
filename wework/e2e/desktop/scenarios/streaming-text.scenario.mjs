@@ -277,6 +277,7 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+      WEGENT_CODEX_STREAM_DEBUG: 'true',
     },
 
     async prepareApp({ appEnvironment, codexHome }) {
@@ -851,6 +852,9 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {

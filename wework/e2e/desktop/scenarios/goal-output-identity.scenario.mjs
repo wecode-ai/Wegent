@@ -198,6 +198,9 @@ export function createDesktopScenario(options) {
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
       let address
       let recoveredTranscript
       const recoveryEvidence = {}
