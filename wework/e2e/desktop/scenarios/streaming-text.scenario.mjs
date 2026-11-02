@@ -98,6 +98,8 @@ import { createStreamingContentChecks } from '../modules/streaming-text-content.
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
+import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
+import { createVisualizationScrollChecks } from '../modules/streaming-visualization-scroll.mjs'
 
 export function createDesktopScenario({
   checkpoint,
@@ -114,6 +116,11 @@ export function createDesktopScenario({
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
   const conversationScrollbar = createConversationScrollbarChecks({ uiTimeoutMs })
+  const interactiveVisualization = createInteractiveVisualizationChecks({
+    workspacePath,
+    uiTimeoutMs,
+  })
+  const visualizationScroll = createVisualizationScrollChecks({ workspacePath, uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -335,6 +342,8 @@ export function createDesktopScenario({
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await fileCitations.handleModelRequest(body, response, responseId)) return true
+      if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
+      if (await visualizationScroll.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
         recordScenarioRequest('markdown_original_links', body)
@@ -896,6 +905,8 @@ export function createDesktopScenario({
           'streaming-content',
           async control => {
             await verifyContent(control)
+            await interactiveVisualization.verify(control)
+            await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
           },
         ],

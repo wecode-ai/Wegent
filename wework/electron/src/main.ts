@@ -84,6 +84,7 @@ import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
+import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
 import {
   POPOUT_WINDOW_SIZES,
@@ -2312,62 +2313,8 @@ async function configureDesktopRuntime(): Promise<void> {
             target.setAlwaysOnTop(alwaysOnTop)
             return { alwaysOnTop: target.isAlwaysOnTop() }
           },
-          processExplorerWindowSnapshot: async () => {
-            const target = processExplorerWindow
-            if (!target || target.isDestroyed()) {
-              return {
-                exists: false,
-                visible: false,
-                applicationPid: process.pid,
-                url: '',
-                windowLabel: '',
-                windowWidth: 0,
-                windowHeight: 0,
-                alwaysOnTop: false,
-                menuBarVisible: false,
-                testIds: [] as string[],
-                text: '',
-                layout: { viewportWidth: 0, tableClientWidth: 0, tableScrollWidth: 0 },
-              }
-            }
-            const contents = await target.webContents.executeJavaScript(
-              `(() => {
-                const table = document.querySelector('table')
-                return {
-                  url: window.location.href,
-                  windowLabel: window.__WEWORK_RUNTIME_CONFIG__?.desktopWindowLabel ?? '',
-                  text: document.body.innerText,
-                  testIds: Array.from(document.querySelectorAll('[data-testid]'))
-                    .map(element => element.getAttribute('data-testid'))
-                    .filter(value => typeof value === 'string'),
-                  layout: {
-                    viewportWidth: document.documentElement.clientWidth,
-                    tableClientWidth: table?.clientWidth ?? 0,
-                    tableScrollWidth: table?.scrollWidth ?? 0
-                  }
-                }
-              })()`
-            )
-            const bounds = target.getBounds()
-            return {
-              exists: true,
-              visible: target.isVisible(),
-              applicationPid: process.pid,
-              url: contents.url as string,
-              windowLabel: contents.windowLabel as string,
-              windowWidth: bounds.width,
-              windowHeight: bounds.height,
-              alwaysOnTop: target.isAlwaysOnTop(),
-              menuBarVisible: target.isMenuBarVisible(),
-              testIds: contents.testIds as string[],
-              text: contents.text as string,
-              layout: contents.layout as {
-                viewportWidth: number
-                tableClientWidth: number
-                tableScrollWidth: number
-              },
-            }
-          },
+          processExplorerWindowSnapshot: () =>
+            captureProcessExplorerWindowSnapshot(processExplorerWindow, process.pid),
           setProcessExplorerWindowSize: (width, height) => {
             const target = processExplorerWindow
             if (!target || target.isDestroyed()) return
