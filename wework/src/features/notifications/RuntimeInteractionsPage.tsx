@@ -196,7 +196,7 @@ export function RuntimeInteractionsPage({
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 {item?.task.projectName && (
                   <>
-                    <span className="max-w-40 shrink-0 truncate" title={item.task.projectName}>
+                    <span className="min-w-0 max-w-40 truncate" title={item.task.projectName}>
                       {item.task.projectName}
                     </span>
                     <span aria-hidden="true" className="text-text-muted">
