@@ -35,7 +35,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   "runtime.work.changed",
   "runtime.goal.updated",
   "runtime.goal.cleared",
-  "runtime.goal.continuation",
+  "runtime.turn.updated",
   "runtime.supervisor.updated",
   "runtime.plan.updated",
   "thread/tokenUsage/updated",

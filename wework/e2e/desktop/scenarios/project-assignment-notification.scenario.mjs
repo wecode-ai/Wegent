@@ -298,12 +298,20 @@ async function createIssue(
     await control.command('click', scoped('[data-testid="cloud-todo-create-confirm-options"]'))
     await control.command('click', silentSave, { visible: true })
   }
-  return waitForValue(
+  const created = await waitForValue(
     async () => (await request(`/api/v1/cloud-projects/${projectId}/loop-items`)).items,
     items => items.find(item => item.title === title),
     '端上创建 Issue 未持久化',
     uiTimeoutMs
   )
+  const detailTitle = scoped('[data-testid="cloud-todo-detail-title"]')
+  await control.command('waitFor', detailTitle, { visible: true, timeoutMs: uiTimeoutMs })
+  assert.equal(
+    await control.command('getValue', detailTitle),
+    title,
+    'The created Issue must own the visible detail before interacting with its properties'
+  )
+  return created
 }
 
 async function verifyIssueTags(control, request, issue, uiTimeoutMs) {

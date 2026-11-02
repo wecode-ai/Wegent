@@ -8,6 +8,7 @@ export interface RuntimeTaskCompletionNotification {
   body: string
   address?: RuntimeTaskAddress
   url?: string
+  reply?: { interactionId: string; accountKey: string; placeholder: string }
 }
 
 interface SystemNotificationTestState {
@@ -28,11 +29,12 @@ export async function sendSystemNotification({
   body,
   address,
   url = address ? weworkTaskScheme(address) : undefined,
+  reply,
 }: RuntimeTaskCompletionNotification): Promise<void> {
   if (!isElectronRuntime()) return
 
   const testState = systemNotificationTestState()
-  if (testState) {
+  if (testState && !reply) {
     testState.notifications.push({ title, body, address, url })
     return
   }
@@ -42,6 +44,7 @@ export async function sendSystemNotification({
       title,
       body,
       ...(url ? { url } : {}),
+      ...(reply ? { reply } : {}),
     })
   } catch (error) {
     console.error('[Wework] Failed to send system notification', error)

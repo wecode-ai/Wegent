@@ -5,10 +5,8 @@ import { useContext, useEffect } from 'react'
 import { useNotificationTaskSource } from '@/features/notifications/NotificationTaskSourceContext'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { getDshTelemetrySinks } from '@/features/dsh-runtime/dshExtensions'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { standInCollectionSince, useTelemetryEnabled } from './client'
-import { getTelemetryConfig } from './config'
 import {
   clearStandInDeliveries,
   createStandInDelivery,
@@ -20,16 +18,14 @@ export function StandInTelemetryAgent() {
   const source = useNotificationTaskSource()
   const cloud = useContext(CloudConnectionContext)
   const preferences = useAppPreferencesState()
-  const publicEnabled = useTelemetryEnabled()
-  const distribution = getTelemetryConfig().distribution
-  const policy =
-    distribution === 'internal' || publicEnabled
-      ? true
-      : preferences?.loaded &&
-          preferences.preferences.telemetryConsentAsked === true &&
-          preferences.preferences.telemetryEnabled !== true
-        ? false
-        : null
+  const enabled = useTelemetryEnabled()
+  const policy = enabled
+    ? true
+    : preferences?.loaded &&
+        preferences.preferences.telemetryConsentAsked === true &&
+        preferences.preferences.telemetryEnabled !== true
+      ? false
+      : null
   const userId = cloud?.user?.id ?? source?.userId
   const accountKey = JSON.stringify([cloud?.apiBaseUrl ?? 'local', userId])
   const api = source?.services?.standInApi
@@ -48,7 +44,7 @@ export function StandInTelemetryAgent() {
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main' || !api || !identity || userId == null || policy == null)
       return
-    if (!policy) clearStandInDeliveries(distribution, accountKey)
+    if (!policy) clearStandInDeliveries(accountKey)
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -65,15 +61,10 @@ export function StandInTelemetryAgent() {
         }
         for (const [deviceId, location] of targets) {
           if (!active) return
-          const delivery = createStandInDelivery(`${accountKey}:${deviceId}`, distribution)
+          const delivery = createStandInDelivery(`${accountKey}:${deviceId}`)
           if (!policy) delivery.clear()
           try {
-            await api.configureTelemetry(
-              userId,
-              deviceId,
-              policy,
-              distribution === 'public' ? standInCollectionSince() : undefined
-            )
+            await api.configureTelemetry(userId, deviceId, policy, standInCollectionSince())
             if (!active || !policy) continue
             await delivery.collect(api, userId, deviceId, () => active, location)
             if (!active) return
@@ -88,16 +79,9 @@ export function StandInTelemetryAgent() {
         try {
           // Already handed-off facts do not depend on their Executor still being online.
           if (policy && active) {
-            const sinks = getDshTelemetrySinks().map(sink => ({
-              ...sink,
-              accept: (fact: Parameters<typeof sink.accept>[0]) => sink.accept(fact),
-            }))
-            for (const deviceId of queuedStandInDevices(accountKey, distribution)) {
+            for (const deviceId of queuedStandInDevices(accountKey)) {
               if (!active) break
-              await createStandInDelivery(`${accountKey}:${deviceId}`, distribution).flush(
-                sinks,
-                () => active
-              )
+              await createStandInDelivery(`${accountKey}:${deviceId}`).flush(() => active)
             }
           }
         } catch {
@@ -111,7 +95,7 @@ export function StandInTelemetryAgent() {
       active = false
       clearTimeout(timer)
     }
-  }, [accountKey, api, devices, distribution, identity, policy, userId])
+  }, [accountKey, api, devices, identity, policy, userId])
 
   return null
 }

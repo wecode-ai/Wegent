@@ -254,6 +254,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_MODEL_SERVER_URL || environment.VITE_WEWORK_E2E_MODEL_SERVER_URL,
     posthogHost: environment.WEWORK_E2E_POSTHOG_HOST || environment.VITE_WEWORK_POSTHOG_HOST,
     posthogKey: environment.WEWORK_E2E_POSTHOG_KEY || environment.VITE_WEWORK_POSTHOG_KEY,
+    telemetryIdentity: environment.WEWORK_E2E_TELEMETRY_IDENTITY,
     seedLocalModels: environmentBoolean(
       environment,
       'WEWORK_E2E_SEED_LOCAL_MODELS',

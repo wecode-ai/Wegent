@@ -189,6 +189,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
           // titlebar notifications, so wait for the button instead of clicking
           // into the still-loading surface.
           await control.command('waitFor', '[data-testid="wework-notifications-button"]', {
+            visible: true,
             timeoutMs: uiTimeoutMs,
           })
           await control.command('click', '[data-testid="wework-notifications-button"]')

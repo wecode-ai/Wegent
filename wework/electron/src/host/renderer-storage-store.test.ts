@@ -151,3 +151,13 @@ describe('RendererStorageStore', () => {
     await expect(new RendererStorageStore(root).initialize({})).resolves.toEqual({})
   })
 })
+
+it('reads without creating a snapshot or replacing the later renderer seed', async () => {
+  const { root, store } = await createStore()
+  expect(await store.read()).toEqual({})
+  await expect(readFile(join(root, 'renderer-local-storage.json'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
+  await store.initialize({ appearance: 'dark' })
+  expect(await store.read()).toEqual({ appearance: 'dark' })
+})

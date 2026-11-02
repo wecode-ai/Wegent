@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   assertStartupProgressStages,
+  startupSlowObservation,
   waitForStartupProgressEvidence,
 } from './startup-splash-progress.mjs'
 
@@ -25,6 +26,37 @@ const line = event =>
   `[startup] ${JSON.stringify(event)
     .replaceAll('"', "'")
     .replaceAll(/'([a-zA-Z]+)':/g, '$1: ')}\n`
+
+test('slow evidence uses real observations from the same renderer stage before timeout', () => {
+  const slow = {
+    progress: { stage: { id: 'renderer' }, startedAt: 100 },
+    stepCount: 'Step 9 of 9',
+    slowHidden: false,
+    timeoutHidden: true,
+    capturedAt: 200,
+  }
+  const current = { ...slow, slowHidden: true, timeoutHidden: false }
+  assert.deepEqual(startupSlowObservation({ ...current, observations: [slow, current] }), slow)
+  assert.equal(startupSlowObservation({ ...current, observations: [current] }), undefined)
+  assert.equal(
+    startupSlowObservation({
+      ...current,
+      observations: [{ ...slow, progress: { stage: { id: 'renderer' }, startedAt: 1 } }],
+    }),
+    undefined
+  )
+  assert.equal(
+    startupSlowObservation({ ...current, observations: [{ ...slow, stepCount: 'Step 8 of 9' }] }),
+    undefined
+  )
+  assert.equal(
+    startupSlowObservation({
+      ...current,
+      observations: [{ ...slow, progress: { stage: { id: 'core-dsh' } } }],
+    }),
+    undefined
+  )
+})
 
 test('startup evidence collapses adjacent repeated stages and rejects regressions', () => {
   const events = stages.flatMap(stage => [progress(stage), progress(stage)])

@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 const MARKDOWN_FILE_PATTERN = /\.(?:md|markdown)$/i
 
 export type WorkspaceFilePreviewKind = 'text' | 'binary' | 'unknown'
@@ -79,7 +80,7 @@ const BINARY_FILE_EXTENSIONS = new Set([
 const TEXT_FILE_NAMES = new Set(['dockerfile', 'license', 'makefile', 'readme'])
 
 function fileName(path: string): string {
-  return path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''
+  return normalizeWorkspaceSeparators(path).split('/').pop()?.toLowerCase() ?? ''
 }
 
 export function isMarkdownFile(path: string): boolean {

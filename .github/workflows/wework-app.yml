@@ -302,6 +302,9 @@ jobs:
           VITE_WEGENT_BACKEND_URL: https://your.wegent-backend.address
           VITE_WEWORK_POSTHOG_HOST: ${{ secrets.WEWORK_POSTHOG_HOST }}
           VITE_WEWORK_POSTHOG_KEY: ${{ secrets.WEWORK_POSTHOG_KEY }}
+          VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS: ${{ vars.WEWORK_TELEMETRY_CONTEXT_FIELDS || '[]' }}
+          VITE_WEWORK_TELEMETRY_IDENTITY: ${{ vars.WEWORK_TELEMETRY_IDENTITY || 'anonymous' }}
+          VITE_WEWORK_TELEMETRY_SOURCE: ${{ vars.WEWORK_TELEMETRY_SOURCE || 'wework' }}
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}

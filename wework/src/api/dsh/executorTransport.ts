@@ -114,6 +114,18 @@ export async function requestDshExecutor<T>(
     diagnosticCount < 3
   if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
   const diagnosticStart = performance.now()
+  const transportDiagnostic = (stage: string, details: Record<string, unknown> = {}) => {
+    console.warn(
+      '[Wework] Executor transport diagnostic ' +
+        JSON.stringify({
+          requestId,
+          method,
+          stage,
+          elapsedMs: Date.now() - startedAt,
+          ...details,
+        })
+    )
+  }
   const diagnostic = (stage: string, details: Record<string, number | boolean> = {}) => {
     if (!diagnose) return
     logModelLoading(requestId, `rpc.${method}.${stage}`, {
@@ -139,6 +151,9 @@ export async function requestDshExecutor<T>(
     })
   } catch (error) {
     diagnostic('fetch_failed')
+    transportDiagnostic('fetch_failed', {
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
     console.warn('[Wework] Executor RPC transport failed', {
       request_id: requestId,
       method,
@@ -162,6 +177,10 @@ export async function requestDshExecutor<T>(
     diagnostic('body_parsed', { ok: response.ok && body.ok === true })
   } catch (error) {
     diagnostic('body_parse_failed')
+    transportDiagnostic('body_parse_failed', {
+      status: response.status,
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
     console.warn('[Wework] Executor RPC response parsing failed', {
       request_id: requestId,
       method,
@@ -173,6 +192,7 @@ export async function requestDshExecutor<T>(
   }
   if (!response.ok || body.ok !== true) {
     const error = transportError(response.status, body as DshExecutorErrorBody)
+    transportDiagnostic('rpc_failed', { status: response.status, code: error.code })
     console.warn('[Wework] Executor RPC request failed', {
       request_id: requestId,
       method,

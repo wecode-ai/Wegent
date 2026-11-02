@@ -118,6 +118,18 @@ The cancellation flow must follow these rules:
 - The pane session must locally finalize any still-streaming assistant messages as cancelled because cancellation may not emit a normal `chat:done` or response completed event.
 - Updating only runtime work leaves the composer looking busy. Updating only message streams leaves the sidebar looking busy. Both state surfaces must be updated in the same stop path.
 
+### Async Questions and Waiting State
+
+Codex async questions can remain unanswered after their turn finishes. The
+executor's sole native notification owner must persist
+`interactionStatus: awaitingUserReply` before publishing
+the question card. Publishing only the card lets subsequent task snapshots clear
+the sidebar waiting indicator. Request receivers handle their own resources and
+hooks without maintaining question state or publishing duplicate cards.
+Preserve waiting state through turn completion and
+task-store reload, then clear it when the next user message is accepted. A child
+thread's question must not mark its parent task as awaiting a reply.
+
 ## Change Guidelines
 
 When adding or changing task runtime UI:

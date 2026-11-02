@@ -1,4 +1,59 @@
 import type { BrowserWindow } from 'electron'
+import type { StartupProgressUpdate } from './startup-progress.js'
+
+export interface StartupSplashInspection extends Record<string, unknown> {
+  progress: StartupProgressUpdate | null
+}
+
+/** Records the real splash before the workbench control client can connect. */
+export function observeStartupSplash(
+  window: BrowserWindow,
+  inspect: () => Promise<StartupSplashInspection>
+): { inspect: () => Promise<Record<string, unknown>> } {
+  const observations: StartupSplashInspection[] = []
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+  let failure: unknown
+  let previousState: string | undefined
+  const stop = () => {
+    stopped = true
+    clearTimeout(timer)
+  }
+  window.once('closed', stop)
+  const sample = async () => {
+    try {
+      const snapshot = await inspect()
+      if (stopped) return
+      const state = JSON.stringify([
+        snapshot.progress?.stage.id,
+        snapshot.progress?.startedAt,
+        snapshot.stepCount,
+        snapshot.title,
+        snapshot.slowHidden,
+        snapshot.timeoutHidden,
+        snapshot.failureHidden,
+        snapshot.recoveryHidden,
+      ])
+      if (state !== previousState) {
+        observations.push({ ...snapshot, capturedAt: Date.now() })
+        if (observations.length > 64) observations.shift()
+        previousState = state
+      }
+      timer = setTimeout(() => void sample(), 50)
+      timer.unref()
+    } catch (error) {
+      if (!stopped) failure = error
+      stop()
+    }
+  }
+  void sample()
+  return {
+    inspect: async () => {
+      if (failure) throw failure
+      return { ...(await inspect()), observations: [...observations] }
+    },
+  }
+}
 
 export async function inspectStartupSplash(
   window: BrowserWindow | null
@@ -24,6 +79,7 @@ export async function inspectStartupSplash(
       failureHidden: hidden('startup-failure'),
       recoveryHidden: hidden('startup-recovery'),
       toastText: text('startup-toast'),
+      toastHidden: hidden('startup-toast'),
       progressClassName: progress?.className,
       progressNow: progress?.getAttribute('aria-valuenow'),
     }

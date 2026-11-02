@@ -92,6 +92,15 @@ You can override the agent's default model:
 | **Timeout** | Maximum time for AI to complete task | 10 minutes |
 | **Preserve History** | AI can see previous execution records | Off |
 
+#### On-demand group silence and mentions
+
+After a subscription is bound to a group chat, the AI can control that run's group notification. This works for Chat, ClaudeCode, Codex, Agno, and Dify shells. The system appends the control instructions to the execution Prompt. The AI ends its answer with one of these lines, enclosed in `【】`:
+
+- `【silent】`: send the private notification normally, but skip the bound group chat.
+- `【@列表:1234,1235】` or `【mention:1234,1235】`: mention these DingTalk staffIds in the group chat for this run. Separate IDs with English or Chinese commas; the colon after the list keyword may be ASCII or full-width.
+
+There is no static mention list to maintain in notification settings; each run decides from the message tail. Both markers may be present; silence takes precedence. The markers control routing only and are removed from group messages, webhook payloads and execution history before use.
+
 #### Visibility Settings
 
 | Visibility | Description |

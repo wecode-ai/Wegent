@@ -37,6 +37,7 @@ import {
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
   verifyEnvironmentPanelScrollStability,
+  verifyTurnNavigationComposerClearance,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
@@ -68,6 +69,8 @@ import {
 import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
 
 import { DesktopE2EServer } from './desktop-server.mjs'
+import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -1095,16 +1098,32 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const homePath = join(resultDir, 'home')
-  const executorHome = join(resultDir, 'executor-home')
-  const codexHome = join(executorHome, 'codex')
+  const usesDefaultUserData =
+    DESKTOP_SEGMENT === 'app-upgrade' &&
+    JSON.parse(await readFile(process.env.WEWORK_E2E_UPGRADE_PAIR, 'utf8')).kind === 'regression'
+  const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
+  if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
+  const upgradeHome = nativeApplicationData
+    ? await resolveUpgradeUserHome(resultDir, nativeApplicationData)
+    : null
+  const homePath = upgradeHome?.homePath ?? join(resultDir, 'home')
+  const executorHome = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default')
+    : join(resultDir, 'executor-home')
+  const codexHome = usesDefaultUserData
+    ? join(homePath, '.wework/codex')
+    : join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
-  const electronUserDataDirectory = join(resultDir, 'electron-user-data')
+  // Cover the production path resolver in the existing upgrade flow. Other
+  // checkpoints retain explicit userData isolation, including rollback coverage.
+  const electronUserDataDirectory = usesDefaultUserData
+    ? join(homePath, '.wegent/workbench/wework/default/user-data')
+    : join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -1222,7 +1241,9 @@ async function main() {
       codexSqliteHome,
       executorHome,
       electronUserDataDirectory,
+      usesDefaultUserData,
       homePath,
+      upgradeHome,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1455,6 +1476,12 @@ async function main() {
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareUserDataLaunch?.()
+    if (usesDefaultUserData) {
+      const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
+      for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
+      Object.assign(appEnvironment, cleanEnvironment)
+    }
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(process.platform === 'win32'
@@ -1516,7 +1543,8 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
-      const previousUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const previousUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const desktopDeviceIdPath = join(previousUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
       assert.match(
@@ -1548,7 +1576,8 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      const nextUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const nextUserDataDirectory =
+        activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
       const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
       assert.match(
@@ -3747,6 +3776,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       }
       await verifyEnvironmentPanelScrollStability(control)
+      await verifyTurnNavigationComposerClearance(control, environmentPanelTurnCount)
       if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
         console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
         return
@@ -3868,7 +3898,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The encoded Markdown file link did not resolve to the workspace file path'
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterOpen = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -3931,7 +3960,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         ACTIVE_WORKBENCH_SELECTOR
       )
       await control.command('finishAnimations', 'body')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterClose = await waitForElementWidth(
         control,
         conversationScrollerSelector,
@@ -4336,8 +4364,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         Math.abs(sidebarHiddenPanelMetrics.left - collapsedWorkbenchMetrics.left) <= 1,
         `The expanded right workspace panel was not aligned with the collapsed workbench: ${sidebarHiddenPanelMetrics.left}px versus ${collapsedWorkbenchMetrics.left}px`
       )
-      await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
+      await control.command('pointerLeave', '[data-testid="desktop-sidebar-preview"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="desktop-sidebar-preview"][aria-hidden="true"]',
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
 
       await control.command('toggleSidebar', '')
@@ -4707,7 +4742,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     await writeFile(
       join(resultDir, 'failure.txt'),
-      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n${JSON.stringify(
+        {
+          code: error?.code,
+          errno: error?.errno,
+          syscall: error?.syscall,
+          errcode: error?.errcode,
+          errstr: error?.errstr,
+        }
+      )}\n`,
       'utf8'
     )
     throw error
@@ -4723,6 +4766,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('default upgrade Home', async () => {
+      if (upgradeHome?.external && teardownFailures.length === 0) {
+        await rm(upgradeHome.homePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 100,
+        })
+      }
+    })
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())

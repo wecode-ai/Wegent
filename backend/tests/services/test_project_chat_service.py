@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -3803,6 +3803,45 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].message_id == response.message_id
     assert messages[-1].status == "completed"
     assert messages[-1].metadata["run_status"] == "completed"
+
+
+def test_subscribe_does_not_reconcile_manager_assignment_as_an_execution(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="manager-assignment-session",
+        ),
+    )
+    row = (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=response.message_id)
+        .one()
+    )
+    row.status = "completed"
+    row.metadata_json = {
+        **row.metadata_json,
+        "activity_type": "manager_assignment",
+        "run_status": "running",
+    }
+    test_db.commit()
+
+    with patch.object(project_chat_service, "_commit") as commit:
+        messages = project_chat_service.subscribe(
+            test_db,
+            user_id=test_user.id,
+            request=ProjectChatSubscribe(projectId=project.id),
+        )
+        commit.assert_not_called()
+
+    assert messages[-1].metadata["run_status"] == "running"
+    assert row.metadata_json["run_status"] == "running"
 
 
 def test_subscribe_never_rewrites_wegent_activity_sender(

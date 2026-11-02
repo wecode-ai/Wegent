@@ -153,6 +153,35 @@ describe('DSH executor transport', () => {
     warning.mockRestore()
   })
 
+  test('records fetch failure correlation without logging tool arguments', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = new TypeError('Failed to fetch')
+    const fetchMock = vi.fn().mockRejectedValue(error)
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await expect(
+        requestDshExecutor('runtime.mcp_apps.request', {
+          privateArgument: 'private-value',
+        })
+      ).rejects.toBe(error)
+      const diagnostic = warning.mock.calls.find(([message]) =>
+        String(message).startsWith('[Wework] Executor transport diagnostic ')
+      )
+      const request = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(
+        JSON.parse(String(diagnostic?.[0]).replace('[Wework] Executor transport diagnostic ', ''))
+      ).toMatchObject({
+        requestId: request.id,
+        method: 'runtime.mcp_apps.request',
+        stage: 'fetch_failed',
+        errorType: 'TypeError',
+      })
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private-value')
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
   test('logs correlated metadata when an executor response is not valid json', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(

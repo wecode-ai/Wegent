@@ -141,7 +141,19 @@ impl RuntimeWorkRpcHandler {
             &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let links = self.visible_links_for_projects(collected_links, project_index);
+        let links = if bool_field(payload, "pendingOnly").unwrap_or(false) {
+            collected_links
+                .into_iter()
+                .filter(|link| {
+                    matches!(
+                        link.interaction_status.as_deref(),
+                        Some("waitingForUserInput" | "awaitingUserReply")
+                    )
+                })
+                .collect()
+        } else {
+            self.visible_links_for_projects(collected_links, project_index)
+        };
         log_runtime_work_list_diagnostic(
             "project_filter_applied",
             started_at,

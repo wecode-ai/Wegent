@@ -15,10 +15,12 @@ beforeEach(async () => {
 
 function LauncherHarness({
   projectName = 'Wegent',
+  showWorkbenchBackground = false,
   onOpenProjectSelector = vi.fn(),
   searchActive = false,
 }: {
   projectName?: string | null
+  showWorkbenchBackground?: boolean
   onOpenProjectSelector?: (anchorElement: HTMLButtonElement) => void
   searchActive?: boolean
 }) {
@@ -27,6 +29,7 @@ function LauncherHarness({
     <DesktopEmptyTaskLauncher
       searchActive={searchActive}
       projectName={projectName}
+      showWorkbenchBackground={showWorkbenchBackground}
       onOpenProjectSelector={onOpenProjectSelector}
       onSelectSuggestion={setDraft}
       composer={
@@ -108,6 +111,16 @@ describe('DesktopEmptyTaskLauncher', () => {
       'h-4 w-4 text-[#04B84C]',
       'h-4 w-4 text-[#FB6A22]',
     ])
+  })
+
+  test('renders translucent home cards when the workbench background is visible', () => {
+    render(<LauncherHarness showWorkbenchBackground />)
+
+    const categoryButtons = within(screen.getByTestId('task-suggestion-categories')).getAllByRole(
+      'button'
+    )
+    expect(categoryButtons[0]).toHaveClass('border', 'border-border/45', 'bg-transparent')
+    expect(categoryButtons[0]).not.toHaveClass('bg-background')
   })
 
   test('replaces the draft from a secondary suggestion without submitting and keeps focus local', async () => {

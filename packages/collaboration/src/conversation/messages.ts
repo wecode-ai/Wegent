@@ -197,7 +197,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.conflicted": "存在后续冲突，未修改工作区",
     "conversation.file_changes.created_file": "已创建 {{filename}}",
     "conversation.file_changes.deleted_file": "已删除 {{filename}}",
-    "conversation.file_changes.device_offline": "设备离线，无法审核或撤销",
+    "conversation.file_changes.device_offline": "设备离线，无法审查或撤销",
     "conversation.file_changes.edited_file": "已编辑 {{filename}}",
     "conversation.file_changes.edited_files": "已编辑 {{count}} 个文件",
     "conversation.file_changes.preview_file_label": "预览 {{path}} 的文件变更",
@@ -207,7 +207,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.revert_failed": "撤销文件变更失败",
     "conversation.file_changes.reverted": "已撤销",
     "conversation.file_changes.reverting": "撤销中",
-    "conversation.file_changes.review": "审核",
+    "conversation.file_changes.review": "审查",
     "conversation.file_changes.show_less": "收起文件",
     "conversation.file_changes.show_more": "再显示 {{count}} 个文件",
     "conversation.file_changes.view_changes": "查看更改",
@@ -218,6 +218,7 @@ export const conversationMessages: Record<
     "conversation.message_navigation.jump_to_message":
       "跳转到第 {{index}} 条发言",
     "conversation.message_navigation.label": "历史发言导航",
+    "conversation.message_navigation.turn_label": "第 {{index}} 轮对话",
     "conversation.message_navigation.loading_gap": "正在加载缺失记录...",
     "conversation.message_navigation.loading_target": "正在加载目标位置...",
     "conversation.plan_card.close": "关闭计划",
@@ -622,6 +623,7 @@ export const conversationMessages: Record<
     "conversation.message_navigation.jump_to_message":
       "Jump to message {{index}}",
     "conversation.message_navigation.label": "Previous message navigation",
+    "conversation.message_navigation.turn_label": "Conversation turn {{index}}",
     "conversation.message_navigation.loading_gap": "Loading missing history...",
     "conversation.message_navigation.loading_target":
       "Loading target position...",

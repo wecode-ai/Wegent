@@ -26,6 +26,7 @@ pub(super) struct JsonRpcConnection {
     stdin: ChildStdin,
     stdout: CodexStdout,
     next_id: u64,
+    runtime_notifications: Option<super::CodexNotificationHub>,
 }
 
 pub(super) struct TurnReadOptions {
@@ -60,6 +61,21 @@ impl JsonRpcConnection {
             stdin,
             stdout,
             next_id,
+            runtime_notifications: None,
+        }
+    }
+
+    pub(super) fn with_runtime_notifications(
+        mut self,
+        runtime: Option<super::CodexNotificationHub>,
+    ) -> Self {
+        self.runtime_notifications = runtime;
+        self
+    }
+
+    pub(super) async fn publish_runtime_notification(&self, message: Value) {
+        if let Some(runtime) = &self.runtime_notifications {
+            runtime.send(message).await;
         }
     }
 
@@ -153,7 +169,10 @@ impl JsonRpcConnection {
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
-        let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
+        let mut overload_recovery = super::overload_recovery::OverloadRecovery::new(
+            self.runtime_notifications.clone(),
+            notifications.clone(),
+        );
         let mut recovering_goal = false;
         loop {
             let mut message = if waiting_for_initial_progress {
@@ -219,9 +238,12 @@ impl JsonRpcConnection {
                         }
                     }
                     let _ = state.handle_message(&message);
-                    if let Some(sender) = &notifications {
-                        let _ = sender.send(notification.into());
-                    }
+                    super::local_notifications::publish(
+                        self.runtime_notifications.as_ref(),
+                        notifications.as_ref(),
+                        notification,
+                    )
+                    .await;
                     tokio::time::sleep(delay).await;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
@@ -242,12 +264,14 @@ impl JsonRpcConnection {
                         else {
                             super::overload_recovery::sync_goal_snapshot(
                                 state,
+                                self.runtime_notifications.as_ref(),
                                 notifications.as_ref(),
                                 goal["threadId"]
                                     .as_str()
                                     .ok_or("Stopped goal has no thread ID")?,
                                 &current,
-                            );
+                            )
+                            .await;
                             if !state.goal_is_active() {
                                 return Ok(ExecutionOutcome::Cancelled {
                                     message: "Goal changed during model overload recovery"
@@ -274,12 +298,11 @@ impl JsonRpcConnection {
                 }
             }
             super::elicitation::prepare(&mut message);
-            if stand_in_single_approval {
-                super::restrict_stand_in_approval(&mut message);
-            }
-            let auto_approve_mcp_tool_call =
-                auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
-            if !auto_approve_mcp_tool_call {
+            if super::prepare_runtime_notification(
+                &mut message,
+                auto_approve_mcp_tool_calls,
+                stand_in_single_approval,
+            ) {
                 if let Some(sender) = &notifications {
                     let _ = sender.send(message.clone().into());
                 }
@@ -435,9 +458,10 @@ impl JsonRpcConnection {
             }
             None => (json!({}), "cancelled"),
         };
+        let settled = super::elicitation::settled(message, status, Some(&response));
+        self.publish_runtime_notification(settled.clone()).await;
         if let Some(sender) = notifications {
-            let _ =
-                sender.send(super::elicitation::settled(message, status, Some(&response)).into());
+            let _ = sender.send(settled.into());
         }
         self.write_message(json!({
             "id": request_id,
@@ -457,20 +481,20 @@ impl JsonRpcConnection {
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
         // Auto-approved requests were not forwarded to the UI and must not create
         // a settled interaction or clear another request's waiting state.
-        let notifications = notifications.filter(|_| {
-            !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message))
-        });
+        let visible = !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message));
         let result = receive_mcp_server_elicitation_response(
             message,
             request_user_input_answers.as_mut(),
             auto_approve_mcp_tool_calls,
         )
         .await?;
-        if let Some(sender) = notifications {
-            let _ = sender.send(
-                super::elicitation::settled(message, result.status, result.response.as_ref())
-                    .into(),
-            );
+        if visible {
+            let settled =
+                super::elicitation::settled(message, result.status, result.response.as_ref());
+            self.publish_runtime_notification(settled.clone()).await;
+            if let Some(sender) = notifications {
+                let _ = sender.send(settled.into());
+            }
         }
         self.write_message(json!({
             "id": request_id,
@@ -503,8 +527,13 @@ impl JsonRpcConnection {
         if bytes_read == 0 {
             return Err("codex app-server exited before completing the turn".to_owned());
         }
-        let message: Value = serde_json::from_str(&line)
+        let mut message: Value = serde_json::from_str(&line)
             .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
+        if message.get("method").is_some() {
+            message = super::external_work::project_review_notification(message);
+            super::elicitation::prepare(&mut message);
+            self.publish_runtime_notification(message.clone()).await;
+        }
         Ok(message)
     }
 }

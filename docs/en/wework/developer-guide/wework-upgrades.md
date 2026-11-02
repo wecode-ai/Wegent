@@ -4,6 +4,41 @@ sidebar_position: 61
 
 # Desktop upgrades, rollback, and E2E maintenance
 
+## Repairs delivered with the update package
+
+Repairs run through the target package's `release-preparation-cli`, under the same integrity
+and signature checks as the host. Do not download and execute separate remote repair scripts.
+Each repair declares its supported sources, checks preconditions, supports repeated execution,
+records preparation stages, and blocks installation on failure.
+
+Delivered versions `0.6.2`, `0.6.3`, and `0.6.4-beta.1` read the default release store before
+the desktop user-data migration, using the wrong directory. Target preparation establishes
+directory handoffs to the same physical release store and profile. It verifies the source
+package, the executable identity of the parent update host, and live profile ownership. An interrupted activation is archived and cancelled only
+when its trial token matches and has no matching attempted, data-opened, healthy, or failed
+marker. It never restores snapshots or moves live user data. A compatible repair release must
+precede a data-schema upgrade from these clients.
+
+The new bootstrap passes the verified user-data directory internally when handing off to an
+affected source. Users need no environment settings. Conflicting paths or identities and
+already attempted activations cannot use this cancellation path. Clients unable to download,
+extract, or execute target preparation still need a full installer.
+
+Suite v7 runs `app-upgrade` through the normal default layout in an isolated Home, including
+rollback. After writers stop, it uses production snapshot, profile-retention, and activation code
+to establish an unstarted legacy activation. It checks source usability after restart, automatic
+target-owned repair, task preservation and continuation, and rollback. The test runner's initial app environment allows only OS session settings and test control/model services;
+product path, binary, identity, and update-source overrides are absent. Independently packaged
+fixtures embed their test identity/feed as package defaults and retain a source snapshot of the
+delivered `0.6.3` bootstrap. Never edit signed archives. Other checkpoints retain explicit
+user-data isolation and incompatible-snapshot coverage.
+
+`upgrade-policy.json` can declare `requiredDirectUpgrades[targetVersion]`. The repair release
+`0.6.4-beta.2` must verify exact-package upgrade and rollback directly from `0.6.2`, `0.6.3`, and
+`0.6.4-beta.1`. Deduplicate these with the baseline and previous release, fail publication if
+any required source fails, and never retry a failed source to obtain a pass. These requirements
+apply only to their declared target, and never authorize an edge without CI evidence.
+
 Prepare downloads, extraction, component composition, and plugin profiles while the current app remains usable. Offer restart only after the target environment is complete. Switch the host and matching components as one release; keep mutable application data separate.
 
 ## Backward-compatible manifests
@@ -26,6 +61,35 @@ Legacy clients ignore the new fields and continue updating directly to their adv
 A minimum version never proves compatibility. The client follows tested edges to the newest reachable version, minimizing hops and confirming each hop separately. A fixed test pair A → B requires B to be newer than A, not globally newest. Recheck revocation immediately before installation. Missing paths must never cause unrestricted updating.
 
 ## Release lifecycle
+
+### macOS installation and Dock identity
+
+Updates retain the outer `.app` directory and inode at the user's installation URL.
+The complete signed payload remains immutable in its release slot. Preparation copies and
+verifies it on the installation volume; supervised startup atomically exchanges physical
+`Contents` directories after writers stop, then runs the installed executable. Application or
+`Contents` symlinks cannot replace this operation. Never edit Dock preferences. An ambiguous
+installation, mismatched identity, or unwritable installation volume blocks preparation.
+For delivered clients running from a slot, prefer the original URL recorded by the previous
+healthy release over unrelated application copies. If that URL still holds an earlier healthy
+host, retain its signed program and update that inactive release's program references first.
+Preparation replaces no installed program files and preserves both current and prior rollback.
+
+Delivered launchers enter the new payload bootstrap first. Its native helper installs the
+selected host, then the bootstrap executes the installed application with the same PID.
+A retained legacy program copy references the original source's data owner. Activation uses
+the existing snapshot-preservation protocol so delivered cleaners also retain that profile.
+After the selected bootstrap loads with the matching version, it takes over recovery forwarding
+before opening data. Cached versioned entries in delivered launchers then forward through that
+loaded bootstrap to restore the installed host. This does not confirm runtime or renderer health.
+Preparation leaves the active source record unchanged; cancellation removes only owned stages.
+
+Suite v8 additionally checks the actual `NSRunningApplication` URL, bundle identifier, and
+outer directory inode after upgrade and rollback. It runs the delivered source cleaner before
+continuing the original task after rollback. Source fixtures retain snapshots of the delivered
+bootstrap, release store, and native launcher rather than reimplementing their behavior.
+Failed activation also enters through the signed versioned source to cover cached legacy recovery.
+Mechanism evidence still cannot authorize production edges bound to different package hashes.
 
 Complete hosts, runtime caches, and prepared profiles live in release slots. Preparation runs using the target package's own entry point. A stable native launcher reads the active pointer and supervises the activation journal without loading target business code.
 
@@ -78,6 +142,21 @@ The upgrade workflow covers all three platforms by default; manual dispatches ca
 have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
 75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
 
+For default-user upgrade diagnosis, also select `checkpoint=app-upgrade` to run that scenario
+through the shared runner. PRs and default manual runs execute the complete upgrade suite.
+Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
+captures stack locations once and resumes execution, without reading scopes, arguments, or
+source text. Monitoring stops when startup completes.
+An uncaught-exception monitor retains errors synchronously
+without taking over exception handling or exit behavior.
+Windows native child working directories use extended-length paths for both profile validation
+and supervised runtime startup. Command execution handles process and stdio errors while
+preserving the original spawn failure, stops failed process trees before returning, and waits
+for stdio closure on success.
+Cleanup must retain `electron-logs` and `release-logs` so the target executor's original logs
+distinguish startup failure, health-check timeout, and rollback. Missing logs are not a basis
+for guessing changes to startup behavior.
+
 ## Native launcher linker
 
 Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
@@ -108,11 +187,11 @@ assertion budget.
 
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
-| Fixed baseline X | Previous release | Publication decision |
-| --- | --- | --- |
-| Passes | Passes | Retain X and publish both verified edges |
-| Fails or is not a registered verification source | Passes | Raise the minimum to the previous release and publish only successful edges |
-| Any result | Fails | Block publication without advancing rolling manifests |
+| Fixed baseline X                                 | Previous release | Publication decision                                                        |
+| ------------------------------------------------ | ---------------- | --------------------------------------------------------------------------- |
+| Passes                                           | Passes           | Retain X and publish both verified edges                                    |
+| Fails or is not a registered verification source | Passes           | Raise the minimum to the previous release and publish only successful edges |
+| Any result                                       | Fails            | Block publication without advancing rolling manifests                       |
 
 Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
 

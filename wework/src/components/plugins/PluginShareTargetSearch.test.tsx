@@ -51,6 +51,42 @@ describe('PluginShareTargetSearch', () => {
     expect(screen.getByTestId('plugin-share-user-7')).toHaveTextContent('Admin')
   })
 
+  test('mounts the results container before a slow search has returned any results', async () => {
+    vi.useFakeTimers()
+    const searchUsers = vi.fn(
+      () =>
+        new Promise<Array<{ id: number; user_name: string; email: string }>>(resolve => {
+          setTimeout(
+            () => resolve([{ id: 7, user_name: 'Admin', email: 'admin@example.com' }]),
+            900
+          )
+        })
+    )
+    render(
+      <PluginShareTargetSearch
+        searchUsers={searchUsers}
+        searchGroups={vi.fn(async () => [])}
+        onSelect={vi.fn()}
+      />
+    )
+    fireEvent.change(screen.getByTestId('plugin-share-search'), {
+      target: { value: 'admin' },
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400)
+    })
+    expect(searchUsers).toHaveBeenCalledWith('admin')
+    expect(screen.getByTestId('plugin-share-search-results')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-share-user-7')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(680)
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-share-user-7')).toHaveTextContent('Admin')
+  })
+
   test('ignores a stale response and clears results with the query', async () => {
     vi.useFakeTimers()
     const userResolvers = new Map<

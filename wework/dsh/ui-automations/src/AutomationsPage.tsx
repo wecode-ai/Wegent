@@ -91,6 +91,7 @@ export function AutomationsPage() {
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
     refreshWorkLists,
   } = useWorkbench()
   const [automations, setAutomations] = useState<Automation[]>([])
@@ -517,6 +518,7 @@ export function AutomationsPage() {
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
+          onCloneGitRepository={cloneGitRepository}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={logout}
         />

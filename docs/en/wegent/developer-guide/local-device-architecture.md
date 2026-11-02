@@ -36,17 +36,21 @@ flowchart LR
 
 ### Device artifact declaration and download
 
-Claude Code and Wegent executors linked to a Backend Task can declare final deliverables:
+Claude Code and Codex can declare final deliverables through the Wegent executor:
 
 ```bash
 $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 ```
 
-A declaration sends only the filename, relative path, canonical workspace root, size, modification time, and SHA-256. It does not upload file contents. `WEGENT_BACKEND_TASK_ID` identifies the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential.
+A declaration first verifies that the canonical file path stays inside the current Task workspace and computes the filename, relative path, canonical workspace root, size, modification time, and SHA-256.
+
+A local Runtime conversation has no Backend Task. The executor leaves `WEGENT_BACKEND_TASK_ID` unset; declaration returns metadata and `local_path` without contacting Backend or requiring cloud credentials. The final response links to `local_path` with a Markdown file link, reusing the desktop file card and local preview. The link remains in conversation history while the file remains in its original workspace.
+
+For linked Backend Tasks, `WEGENT_BACKEND_TASK_ID` must be a positive integer identifying the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Declaration sends only the metadata above, never file contents. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential. Invalid Backend IDs fail before any request; a `runtime-*` conversation ID must never be sent to a cloud Task endpoint.
 
 The executor working directory, `WEGENT_TASK_WORKSPACE`, and the declaration command share the same workspace path resolver. When a local device configures `LOCAL_WORKSPACE_ROOT`, the logical `/workspace` alias must not be treated as its physical workspace directory.
 
-The updated default `Ghost/default/wegent-wework` requires successful declaration before directing users to conversation file cards, rather than local paths or `computer://` links. Initialization YAML does not overwrite existing Ghosts. Claude Code (with tools enabled) and Codex inject declaration instructions at execution time, so legacy Ghosts can use this delivery flow without rewriting database configuration. The prompt data migration and its no-op revision are removed without application-data reads or writes. Environments already recording `a9c4e7b2d610` require separate version compatibility handling before deployment. Previously migrated prompts are not automatically restored. See the [withdrawal and revision-chain notes](./device-artifact-prompt-migration.md).
+The updated default `Ghost/default/wegent-wework` requires successful declaration for linked Backend Tasks before directing users to conversation file cards. Local Runtime conversations follow the local declaration instructions injected at execution time. Initialization YAML does not overwrite existing Ghosts. Claude Code (with tools enabled) and Codex inject declaration instructions at execution time, so legacy Ghosts can use this delivery flow without rewriting database configuration. The prompt data migration and its no-op revision are removed without application-data reads or writes. Environments already recording `a9c4e7b2d610` require separate version compatibility handling before deployment. Previously migrated prompts are not automatically restored. See the [withdrawal and revision-chain notes](./device-artifact-prompt-migration.md).
 
 Backend captures the executor name and namespace from the Task Token's assistant subtask and persists them with the workspace root as the artifact source. Downloads always use this source snapshot, never the task's latest executor. Recovery that rebinds the original subtask cannot redirect an old card to a new device. An unavailable original source remains unavailable; shared and copied tasks do not carry these device artifacts.
 
@@ -117,6 +121,16 @@ Wework generates a request ID when a request enters a cross-process or cross-ser
 When no request ID exists, the protocol layer omits the `request_id` field instead of sending a null value, and each component uses its normal no-context log placeholder. Request IDs must be bounded printable diagnostic identifiers. Logs must not pair them with request bodies, authentication data, model keys, or local credentials.
 
 To investigate a request, take the `request_id` from the Wework frontend, DSH, or Backend log near the user-visible failure, then search for that exact value in the same diagnostic directory or centralized log system. Start and finish entries also record the method, outcome, and elapsed time, so a missing boundary identifies the component where the request stopped without relying on approximate timestamps or task names.
+
+### MCP App Discovery and Request Failure Diagnostics
+
+An ordinary MCP tool invocation does not establish that a visual app exists. The conversation first uses `discover` on `runtime.mcp_apps.request` to validate the source invocation and the app resource identity from its tool catalog. A call without an app returns `null`, creates no app card, and retains no app connection. Once an app is confirmed, the native host explicitly retains its connection before `initialize` reads its resource. Discovery failures produce diagnostics only; resource loading failures for confirmed apps retain the error and retry controls.
+
+`executor-transport.log` in the Electron log directory records local RPC request IDs, methods, elapsed time, and failure stages: `fetch_failed`, `body_parse_failed`, or `rpc_failed`. MCP discovery failures also record call IDs, task IDs, and tool status. Chromium local RPC network errors record the path, window identity, and `net::ERR_*` code without request bodies, cookies, or authentication data. Correlate request IDs with DSH and executor logs, then correlate window identity and time with Chromium errors. `Failed to fetch` alone does not establish a server business error or a specific network cause.
+
+Each app instance has an independent `sessionId` retained and released by its native owner. On component close, window destruction, renderer exit, or main-frame navigation, the owner first runs cleanup callbacks to delete isolated documents, then waits for pending acquisition to settle before releasing the instance’s connection. Late initialization cannot release a replacement instance. Each cloud instance owns an account-bound RPC client, disposed with the instance; an account switch cannot reuse its authenticated connection. Backend ownership follows the authenticated socket: disconnect releases retained instances, including acquisitions that complete after disconnect. Shutdown cleanup uses the host’s standard five-second grace period; socket closure still triggers Backend cleanup. App retention and document lifetimes use no additional periodic heartbeat or expiring lease. After an executor restart, the next app operation restores retention against the current process identity.
+
+The desktop CI `mcp-apps` checkpoint covers real app loading, resource failure recovery, ordinary historical calls, instance replacement after late initialization, session and document cleanup on reload, and the absence of cards after Chromium cancels a real discovery request, followed by network recovery. Fault injection is restricted to isolated E2E runs and never replaces Runtime responses.
 
 ### Executor Startup Environment and Codex Home Initialization
 

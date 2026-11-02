@@ -13,7 +13,10 @@ import {
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
 import { subscribeSystemResume } from '@/desktop/systemResume'
-import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import {
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
+  getDesktopE2ERuntimeConfig,
+} from '@/e2e/runtime-config'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -463,6 +466,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const { t } = useTranslation('common')
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
+  const [e2eSessionRevision, setE2ESessionRevision] = useState(0)
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
@@ -470,6 +474,27 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const refreshGenerationRef = useRef(0)
   const disconnectRequestedRef = useRef(false)
   const terminalDesktopCredentialExpiryRef = useRef(false)
+
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+    const restoreSelectedSession = () => {
+      const config = getDesktopE2ERuntimeConfig()
+      if (!config.controlUrl || config.disabled || !config.cloudToken) return
+      // The controller has already verified /users/me and persisted the native
+      // profile. Reuse normal connection consumers without remounting the app.
+      refreshGenerationRef.current += 1
+      refreshAttemptIdRef.current += 1
+      refreshPromiseRef.current = null
+      disconnectRequestedRef.current = false
+      terminalDesktopCredentialExpiryRef.current = false
+      initialRefreshStartedRef.current = true
+      setSnapshot(snapshotFromStored())
+      setE2ESessionRevision(revision => revision + 1)
+    }
+    window.addEventListener(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT, restoreSelectedSession)
+    return () =>
+      window.removeEventListener(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT, restoreSelectedSession)
+  }, [])
 
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
@@ -545,7 +570,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       .catch(error => {
         console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
-  }, [desktopRestoreSettled, snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
+  }, [
+    desktopRestoreSettled,
+    e2eSessionRevision,
+    snapshot.backendUrl,
+    snapshot.socketBaseUrlOverride,
+    snapshot.status,
+  ])
 
   const connectWithAuthorization = useCallback(
     async (

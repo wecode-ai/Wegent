@@ -7,6 +7,10 @@ import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 import { excalidrawAssets } from './vite/excalidrawAssets'
+import {
+  parseTelemetryIdentity,
+  parseTelemetryContextFields,
+} from './src/telemetry/collectionPolicy'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -127,6 +131,13 @@ export default defineConfig({
   base: appBasePath,
   customLogger: logger,
   plugins: [
+    {
+      name: 'telemetry-collection-policy',
+      configResolved(config) {
+        parseTelemetryIdentity(config.env.VITE_WEWORK_TELEMETRY_IDENTITY ?? '')
+        parseTelemetryContextFields(config.env.VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS ?? '')
+      },
+    },
     react(),
     excalidrawAssets(),
     ...internalVitePlugins,

@@ -102,6 +102,17 @@ async function waitForSplash(control, predicate, description) {
   assert.fail(`${description}: ${JSON.stringify(state)}`)
 }
 
+export function startupSlowObservation(state) {
+  return state.observations?.find(
+    snapshot =>
+      snapshot.progress?.stage.id === 'renderer' &&
+      snapshot.progress.startedAt === state.progress?.startedAt &&
+      snapshot.stepCount === state.stepCount &&
+      !snapshot.slowHidden &&
+      snapshot.timeoutHidden
+  )
+}
+
 async function waitForHandlerLog(logPath, afterBytes, step, status) {
   const deadline = Date.now() + 10_000
   do {
@@ -125,7 +136,7 @@ async function copyDiagnostics(control, testId, logPath) {
   await waitForHandlerLog(logPath, afterBytes, 'startup-diagnostics-copy', 'completed')
   await waitForSplash(
     control,
-    state => /诊断信息已复制|Diagnostics copied/.test(state.toastText),
+    state => !state.toastHidden && /诊断信息已复制|Diagnostics copied/.test(state.toastText),
     'Copying real startup diagnostics did not confirm success'
   )
   const diagnostics = await control.command('getClipboardText', 'body')
@@ -169,7 +180,9 @@ async function verifyOpenLogs(control, testId, logPath, blockedDirectory) {
     )
     const snapshot = await waitForSplash(
       control,
-      state => /无法打开日志目录|Could not open the log folder/.test(state.toastText),
+      state =>
+        !state.toastHidden &&
+        /无法打开日志目录|Could not open the log folder/.test(state.toastText),
       'A real log-directory error did not reach the splash'
     )
     return { completed, failed, toastText: snapshot.toastText }
@@ -201,11 +214,12 @@ export async function verifyStartupSplashProgress({
       WEWORK_E2E_STARTUP_STAGE_TIMEOUT_MS: '5000',
     },
   })
-  const slow = await waitForSplash(
+  const slowEvidence = await waitForSplash(
     control,
-    state => state.progress?.stage.id === 'renderer' && !state.slowHidden && state.timeoutHidden,
+    state => Boolean(startupSlowObservation(state)),
     'The real startup stage did not show its slow state before its timeout budget'
   )
+  const slow = startupSlowObservation(slowEvidence)
   assert.equal(slow.failure, null)
   assert.equal(slow.recoveryHidden, true)
   assert.match(slow.title, /启动比预期慢|Startup is taking longer than expected/)
@@ -214,10 +228,23 @@ export async function verifyStartupSplashProgress({
   assert.ok(Number(slow.progressNow) > 0 && Number(slow.progressNow) < 100)
   const timeout = await waitForSplash(
     control,
-    state => !state.timeoutHidden && !state.timeoutActionsHidden,
+    state =>
+      !state.timeoutHidden &&
+      !state.timeoutActionsHidden &&
+      state.observations.some(
+        snapshot =>
+          snapshot.progress?.startedAt === state.progress.startedAt && !snapshot.timeoutHidden
+      ),
     'The real startup timer did not show diagnostics actions'
   )
   assert.equal(timeout.failure, null)
+  assert.equal(slow.progress.startedAt, timeout.progress.startedAt)
+  const timeoutObservation = timeout.observations.find(
+    snapshot =>
+      snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
+  )
+  assert.ok(slow.capturedAt < timeoutObservation.capturedAt)
+  assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)
   assert.equal(timeout.recoveryHidden, true)
   assert.match(timeout.timeoutTitle, /首次启动可能较慢|First startup can take longer/)
   const timeoutDiagnostics = await copyDiagnostics(control, 'startup-timeout-copy-button', logPath)

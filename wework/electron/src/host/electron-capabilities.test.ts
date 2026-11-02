@@ -192,6 +192,42 @@ describe('showElectronNotification', () => {
     electronMocks.notificationShow.mockClear()
   })
 
+  test('routes a native reply through the durable account-scoped host queue without authorizing a tool', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    const accountKey = 'notification-reply-account'
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.show', {
+      title: 'Review decision',
+      body: 'Keep old behavior?',
+      url: 'wework://interactions/device/task/question',
+      reply: { interactionId: 'exact-question', accountKey, placeholder: 'Your judgment' },
+    })
+    const reply = electronMocks.notificationOnce.mock.calls.find(
+      ([event]) => event === 'reply'
+    )?.[1]
+    expect(reply).toBeTypeOf('function')
+    reply?.({ reply: 'Keep old behavior' })
+    const pending = (await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.pendingReplies', {
+      accountKey,
+    })) as Array<{ id: string; interactionId: string; text: string }>
+    expect(pending).toEqual([
+      expect.objectContaining({ interactionId: 'exact-question', text: 'Keep old behavior' }),
+    ])
+    expect(
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.pendingReplies', {
+        accountKey: 'another-account',
+      })
+    ).toEqual([])
+    expect(notificationNavigation.openScheme).not.toHaveBeenCalled()
+    expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.acknowledgeReply', {
+      id: pending[0].id,
+      accountKey,
+    })
+    expect(
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.pendingReplies', { accountKey })
+    ).toEqual([])
+  })
+
   test('carries the URL through the actual notification capability and click callback', async () => {
     const { router, notificationNavigation } = createIsolatedClipboardRouter()
     const url = 'wework://boards/12/issues/ISSUE-1'

@@ -1,10 +1,16 @@
+import { McpAppRuntime, readMcpAppConnection } from './host/mcp-app-runtime.js'
+import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { buildStartupDiagnostics, type StartupFailureSnapshot } from './host/startup-diagnostics.js'
 import { startupFailureSnapshot } from './host/startup-failure.js'
-import { clickStartupSplash, inspectStartupSplash } from './host/startup-splash-verification.js'
+import {
+  clickStartupSplash,
+  inspectStartupSplash,
+  observeStartupSplash,
+} from './host/startup-splash-verification.js'
 import { mainProcessLog } from './host/main-process-log.js'
 import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup-progress.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
@@ -52,6 +58,8 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
+import { RendererStartupLoader } from './host/renderer-startup-loader.js'
+import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -176,6 +184,7 @@ import {
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
@@ -318,6 +327,8 @@ let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log'))
 const workspaceWindows = new Map<string, BrowserWindow>()
+const mcpAppCleanups = new Set<() => Promise<void>>()
+let mcpAppRuntime: McpAppRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let lastMenuWindow: BrowserWindow | null = null
@@ -360,6 +371,7 @@ let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
+let startupSplashObserver: ReturnType<typeof observeStartupSplash> | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let lastStartupFailure: StartupFailureSnapshot | null = null
 const startupTiming = desktopE2EStartupTiming(process.env)
@@ -449,10 +461,15 @@ const pendingEmbeddedBrowserAttachments = new Map<
   >
 >()
 const rendererHealth = new RendererHealthService()
+const rendererStartupLoader = new RendererStartupLoader()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
+)
+const executorTransportDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'executor-transport.log'),
+  '[Wework] Executor transport diagnostic '
 )
 const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'smart-app-launch.log'),
@@ -511,6 +528,9 @@ app.on('web-contents-created', (_event, contents) => {
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void executorTransportDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write executor transport diagnostics', error)
     })
     void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write Smart app diagnostics', error)
@@ -832,20 +852,33 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
-  if (process.env.VITE_WEWORK_E2E === 'true') {
-    session.defaultSession.webRequest.onErrorOccurred(
-      { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
-      details => {
-        console.error('[desktop-e2e-network-error]', {
-          at: new Date().toISOString(),
-          path: new URL(details.url).pathname,
-          method: details.method,
-          error: details.error,
-          webContentsId: details.webContentsId,
-        })
+  session.defaultSession.webRequest.onErrorOccurred(
+    { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+    details => {
+      rendererStartupLoader.requestFailed(details)
+      const diagnostic = {
+        at: new Date().toISOString(),
+        path: new URL(details.url).pathname,
+        method: details.method,
+        error: details.error,
+        webContentsId: details.webContentsId,
       }
-    )
-  }
+      if (
+        diagnostic.path === '/wework/executor/v1/rpc' &&
+        typeof details.webContentsId === 'number'
+      ) {
+        void executorTransportDiagnosticsLog
+          .record(
+            details.webContentsId,
+            '[Wework] Executor transport diagnostic ' + JSON.stringify(diagnostic)
+          )
+          .catch(error => console.warn('[Wework] Failed to write network diagnostics', error))
+      }
+      if (process.env.VITE_WEWORK_E2E === 'true') {
+        console.error('[desktop-e2e-network-error]', diagnostic)
+      }
+    }
+  )
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const label =
       typeof details.webContentsId === 'number'
@@ -876,12 +909,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     registerDshWindowLabel(contents, 'main')
     primaryDshSecurityInstalled = true
   }
-  contents.once('did-finish-load', () => {
-    primaryDshLoaded = true
-    runtimeError = null
-    rendererHealth.ready()
-    logStartupStep('primary-renderer-load', 'completed')
-  })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
   contents.once('render-process-gone', (_event, details) => {
@@ -917,9 +944,29 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
     startupProgress.report('renderer')
-    await contents.loadURL(targetUrl.toString(), {
-      extraHeaders: 'X-Wework-Window-Label: main',
-    })
+    const disposeFault =
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
+        ? installStartupNetworkFault(contents.session, targetUrl.origin)
+        : undefined
+    try {
+      await rendererStartupLoader.load({
+        webContentsId: contents.id,
+        url: targetUrl.toString(),
+        load: () =>
+          contents.loadURL(targetUrl.toString(), {
+            extraHeaders: 'X-Wework-Window-Label: main',
+          }),
+        onRecovery: () =>
+          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+      })
+    } finally {
+      disposeFault?.()
+    }
+    primaryDshLoaded = true
+    runtimeError = null
+    rendererHealth.ready()
+    logStartupStep('primary-renderer-load', 'completed')
     const plugins = await desktopRuntime.listCoreDshPlugins()
     const pluginName = await detectCoreDshStartupPluginFailure(
       contents,
@@ -1452,6 +1499,9 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('startup-splash-load', 'completed')
   logStartupStep('startup-splash-show', 'started')
   await startupSplash.show()
+  if (startupTiming) {
+    startupSplashObserver = observeStartupSplash(startupSplashWindow, startupSplashInspection)
+  }
   logStartupStep('startup-splash-show', 'completed')
   logStartupStep('main-shell-load', 'started')
   startupProgress.report('shell')
@@ -1479,6 +1529,15 @@ async function holdStartupSplashForDesktopE2e(): Promise<void> {
     setTimeout(resolve, holdMs)
   })
   logStartupStep('startup-splash-hold', 'completed')
+}
+
+async function startupSplashInspection() {
+  return {
+    ...(await inspectStartupSplash(startupSplashWindow)),
+    progress: startupProgress.currentUpdate(),
+    failure: lastStartupFailure,
+    logDirectory: app.getPath('logs'),
+  }
 }
 
 async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
@@ -1877,6 +1936,20 @@ async function shutdown(): Promise<void> {
     pluginDevelopmentChildRuntime?.writeState('stopping')
   )
   await traceShutdownStep('log-retention', () => logRetention.stop())
+  await traceShutdownStep('mcp-apps', async () => {
+    try {
+      const results = await settleMcpAppCleanup(mcpAppCleanups)
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.error('[Wework] MCP App shutdown cleanup failed', result.reason)
+      }
+    } catch (error) {
+      console.error('[Wework] MCP App shutdown cleanup timed out', { name: (error as Error).name })
+    }
+    mcpAppCleanups.clear()
+    mcpAppRuntime?.dispose()
+    mcpAppRuntime = null
+  })
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -2160,6 +2233,24 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
+          registerMcpAppCleanup: cleanup => {
+            mcpAppCleanups.add(cleanup)
+          },
+          requestMcpApp: payload => {
+            mcpAppRuntime ??= new McpAppRuntime(
+              request => {
+                if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+                return desktopRuntime.requestExecutor('runtime.mcp_apps.request', request)
+              },
+              async apiBaseUrl => {
+                const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+                return credential.accessToken
+              },
+              () => readMcpAppConnection(rendererStorage!)
+            )
+            return mcpAppRuntime.request(payload)
+          },
+          executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
@@ -2172,6 +2263,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
         },
         {
+          disconnectMcpAppSession: sessionId => mcpAppRuntime?.dispose(sessionId),
           captureTarget: windowLabel =>
             windowLabel === 'main'
               ? (mainWindow?.webContents ?? null)
@@ -2280,12 +2372,7 @@ async function configureDesktopRuntime(): Promise<void> {
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
-          startupSplashInspect: async () => ({
-            ...(await inspectStartupSplash(startupSplashWindow)),
-            progress: startupProgress.currentUpdate(),
-            failure: lastStartupFailure,
-            logDirectory: app.getPath('logs'),
-          }),
+          startupSplashInspect: () => startupSplashObserver?.inspect() ?? startupSplashInspection(),
           startupSplashClick: testId => clickStartupSplash(startupSplashWindow, testId),
           startupLogPath: path => app.setPath('logs', path ?? applicationLogDirectory),
           closeStartupSplash: () => {
@@ -2639,7 +2726,9 @@ function reportLogCleanup(result: LogCleanupResult): void {
 }
 
 function desktopComponentResourcesRoot(): string {
-  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication
+    ? (installedMacosReleaseResources() ?? process.resourcesPath)
+    : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
   return !packagedApplication && configuredComponentResourcesRoot
     ? resolve(configuredComponentResourcesRoot)

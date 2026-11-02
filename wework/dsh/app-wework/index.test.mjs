@@ -118,3 +118,12 @@ test('allows plugin development E2E to use an isolated control label', () => {
   assert.ok(html.includes('"windowLabel":"plugin-development-example"'))
   assert.ok(!html.includes('"disabled":true'))
 })
+
+test('passes the verification identity mode through the desktop runtime configuration', () => {
+  const html = injectRuntimeConfig('<html><head></head><body></body></html>', {
+    WEWORK_E2E_TELEMETRY_IDENTITY: 'email_prefix',
+  })
+  assert.ok(html.includes('"telemetryIdentity":"email_prefix"'))
+  const defaultHtml = injectRuntimeConfig('<html><head></head><body></body></html>', {})
+  assert.ok(!defaultHtml.includes('"telemetryIdentity"'))
+})

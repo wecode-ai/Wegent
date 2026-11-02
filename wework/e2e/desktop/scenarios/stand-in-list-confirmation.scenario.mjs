@@ -83,9 +83,13 @@ export function createDesktopScenario(options) {
       timeoutMs: modelResponseTimeoutMs,
     })
     await control.command('click', `[data-testid="stand-in-activity-task-${taskId}"]`)
-    await control.command('waitFor', `${ROOT} ${CARD}`, { timeoutMs: modelResponseTimeoutMs })
+    await control.command('waitFor', `${ROOT} [data-testid="stand-in-work-open-pending"]`, {
+      timeoutMs: modelResponseTimeoutMs,
+    })
+    assert.equal(Number(await control.command('getElementCount', `${ROOT} ${CARD}`)), 0)
   }
   return {
+    requiresCloudEnvironment: true,
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -127,20 +131,37 @@ export function createDesktopScenario(options) {
       await openList(control, roleId, taskId)
       await assert.rejects(access(file), { code: 'ENOENT' })
       await captureScreenshot(control, '01-list-awaiting-confirmation.png', ROOT)
-      await control.command(
-        'click',
-        `${ROOT} [data-testid="request-user-input-option-__codex_approval-0"]`
+      await control.command('click', '[data-testid="stand-in-work-open-pending"]')
+      await control.command('waitFor', '[data-testid="runtime-interactions-page"]')
+      await control.command('waitFor', '[data-testid="interaction-open-original-action"]')
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="interaction-answer-0"]')),
+        0
       )
-      await control.command('waitFor', `${ROOT} [data-testid="stand-in-work-confirmation"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', `${ROOT} [data-testid="stand-in-activity-task-${taskId}"]`, {
-        text: '已完成',
+      await assert.rejects(access(file), { code: 'ENOENT' })
+      const summary = '[data-testid="interaction-list-summary"]'
+      const summaryHeight = parseFloat(
+        await control.command('getComputedStyleValue', summary, { value: 'height' })
+      )
+      const summaryLineHeight = parseFloat(
+        await control.command('getComputedStyleValue', summary, { value: 'line-height' })
+      )
+      assert.ok(
+        summaryHeight <= summaryLineHeight * 2 + 1,
+        'Approval list summary must stay within two lines'
+      )
+      await captureScreenshot(control, '02-pending-links-to-native-approval.png')
+      await control.command('click', '[data-testid="interaction-open-original-action"]')
+      await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
+      await assert.rejects(access(file), { code: 'ENOENT' })
+      await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: '已按你的单次确认完成操作',
         timeoutMs: modelResponseTimeoutMs,
       })
       await access(file)
-      assert.equal(Number(await control.command('getElementCount', `${ROOT} ${CARD}`)), 0)
-      await captureScreenshot(control, '02-confirmed-without-opening-conversation.png', ROOT)
+      assert.equal(Number(await control.command('getElementCount', CARD, { visible: true })), 0)
+      await captureScreenshot(control, '03-native-approved-operation-completed.png')
       await unlink(file)
       const declinedTask = 'stand-in-composer-decline'
       await createWork(control, declinedTask)
@@ -151,13 +172,13 @@ export function createDesktopScenario(options) {
         Number(await control.command('getElementCount', '[data-testid="chat-message-input"]')),
         0
       )
-      await captureScreenshot(control, '03-conversation-input-confirmation.png')
+      await captureScreenshot(control, '04-conversation-input-confirmation.png')
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-1"]')
       await control.command('waitFor', '[data-testid="chat-message-input"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       await assert.rejects(access(file), { code: 'ENOENT' })
-      await captureScreenshot(control, '04-declined-without-chat-answer.png')
+      await captureScreenshot(control, '05-declined-without-chat-answer.png')
     },
   }
 }
