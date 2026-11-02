@@ -4,6 +4,11 @@ import { pathToFileURL } from "node:url";
 import { UPGRADE_PACKAGE_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
 
 export function resolveUpgradeInputs(environment, execute = execFileSync) {
+  const publishedReleaseTag = environment.PUBLISHED_RELEASE_TAG || "";
+  if (publishedReleaseTag && environment.REPLAY !== "true")
+    throw new Error(
+      "A published target selection requires an existing build replay",
+    );
   const requestedCheckpoint = environment.VERIFICATION_CHECKPOINT || "all";
   const diagnosticCheckpoint =
     requestedCheckpoint === "all" ? "" : requestedCheckpoint;
@@ -86,6 +91,10 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     throw new Error("Invalid artifact version");
   if (environment.EXPECTED_VERSION && version !== environment.EXPECTED_VERSION)
     throw new Error("Artifacts do not match the planned release version");
+  if (publishedReleaseTag && publishedReleaseTag !== `wework-v${version}`)
+    throw new Error(
+      "The published target must match the input artifact version",
+    );
   return {
     run_id: runId,
     version,
@@ -93,6 +102,7 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     release_tag: `wework-v${version}`,
     verification_sha: verificationSha,
     diagnostic_checkpoint: diagnosticCheckpoint,
+    published_release_tag: publishedReleaseTag,
   };
 }
 

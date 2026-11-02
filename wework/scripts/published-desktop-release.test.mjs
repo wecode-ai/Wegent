@@ -16,7 +16,10 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
-import { downloadPublishedDesktopRelease } from './lib/published-desktop-release.mjs'
+import {
+  downloadPublishedDesktopArchive,
+  downloadPublishedDesktopRelease,
+} from './lib/published-desktop-release.mjs'
 
 async function fixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'wework-published-release-'))
@@ -71,6 +74,17 @@ async function fixture(run) {
     await rm(root, { recursive: true, force: true })
   }
 }
+
+test('downloads a published target unchanged without extracting or packaging it', () =>
+  fixture(async ({ options, release }) => {
+    const target = await downloadPublishedDesktopArchive(options)
+    assert.equal(target.sha256, release.sha256)
+    assert.deepEqual(await readFile(target.path), await readFile(release.path))
+    assert.deepEqual(
+      (await readdir(options.directory)).sort(),
+      [release.name, 'release-windows-x64.json'].sort()
+    )
+  }))
 
 test('downloads immutable delivered bytes and reuses the verified source without packaging it', () =>
   fixture(async ({ options, release, requests }) => {

@@ -36,6 +36,11 @@ on:
           - app-upgrade-recovery
           - app-update-full
         default: all
+      verification_release_tag:
+        description: "Replay using the matching published release archive instead of the original candidate"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
@@ -47,7 +52,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all'
+    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -433,7 +438,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -445,6 +450,7 @@ jobs:
       release_tag: ${{ steps.inputs.outputs.release_tag }}
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
       diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
+      published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve completed release build artifacts
@@ -457,6 +463,7 @@ jobs:
           REPLAY: ${{ inputs.verification_run_id != '' }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           VERIFICATION_CHECKPOINT: ${{ inputs.verification_checkpoint }}
+          PUBLISHED_RELEASE_TAG: ${{ inputs.verification_release_tag }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
   verify-upgrades:
@@ -505,6 +512,7 @@ jobs:
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
+          WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
@@ -536,7 +544,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/upgrade-input/wework-release-assets/upgrade-*.json
+          path: ${{ runner.temp }}/upgrade-input/wework-release-assets/**/upgrade-*.json
           if-no-files-found: error
           compression-level: 0
 

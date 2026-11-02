@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { downloadPublishedDesktopRelease } from './lib/published-desktop-release.mjs'
+import {
+  downloadPublishedDesktopArchive,
+  downloadPublishedDesktopRelease,
+} from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
   releaseUpgradePlan,
@@ -25,7 +28,20 @@ if (!assetsDirectory || !platform || !arch || !channel || !repository || !releas
 if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
 if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
-const assets = resolve(assetsDirectory)
+const publishedTarget = process.env.WEWORK_UPGRADE_PUBLISHED_TARGET_TAG || ''
+if (publishedTarget && publishedTarget !== releaseTag)
+  throw new Error('The published target must match the selected release tag')
+const assets = publishedTarget
+  ? join(resolve(assetsDirectory), 'published-target')
+  : resolve(assetsDirectory)
+if (publishedTarget)
+  await downloadPublishedDesktopArchive({
+    repository,
+    version: publishedTarget.replace(/^wework-v/, ''),
+    platform,
+    arch,
+    directory: assets,
+  })
 const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
 if (diagnosticCheckpoint && !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
   throw new Error('Invalid upgrade diagnostic checkpoint')

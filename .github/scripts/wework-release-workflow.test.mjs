@@ -144,7 +144,7 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   );
   assert.equal(
     jobs["prepare-release"].if,
-    "inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all'",
+    "inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''",
   );
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(verification.if, /!cancelled\(\)/);

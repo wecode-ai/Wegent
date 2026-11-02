@@ -131,8 +131,8 @@ export async function readDesktopReleaseInstallation(root, release) {
   return { executable, executor, resources, codex }
 }
 
-/** Download immutable delivered bytes; never compile, repackage, or re-sign a source. */
-export async function downloadPublishedDesktopRelease(options) {
+/** Download and verify immutable bytes without rebuilding or extracting a package. */
+export async function downloadPublishedDesktopArchive(options) {
   const { repository, version, platform, arch, directory, download = downloadAsset } = options
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(repository) ||
@@ -165,6 +165,16 @@ export async function downloadPublishedDesktopRelease(options) {
     }
   }
   await verifyArchive(archive, release)
-  const installation = await extractPublishedArchive(archive, join(directory, 'source'), release)
-  return { ...release, path: archive, ...installation }
+  return { ...release, path: archive }
+}
+
+/** Resolve an installed source from its unchanged delivered archive. */
+export async function downloadPublishedDesktopRelease(options) {
+  const release = await downloadPublishedDesktopArchive(options)
+  const installation = await extractPublishedArchive(
+    release.path,
+    join(options.directory, 'source'),
+    release
+  )
+  return { ...release, ...installation }
 }

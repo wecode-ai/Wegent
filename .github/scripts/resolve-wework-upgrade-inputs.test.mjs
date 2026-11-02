@@ -46,7 +46,29 @@ test("reuses successful producers even when an earlier test driver failed", () =
     release_tag: "wework-v0.6.4-beta.4",
     verification_sha: "a".repeat(40),
     diagnostic_checkpoint: "",
+    published_release_tag: "",
   });
+});
+
+test("selects a matching immutable published target only for a replay", () => {
+  const value = fixture();
+  value.environment.PUBLISHED_RELEASE_TAG = "wework-v0.6.4-beta.4";
+  assert.equal(
+    resolveUpgradeInputs(value.environment, value.execute)
+      .published_release_tag,
+    "wework-v0.6.4-beta.4",
+  );
+  value.environment.PUBLISHED_RELEASE_TAG = "wework-v0.6.4-beta.5";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /must match the input artifact version/,
+  );
+  value.environment.PUBLISHED_RELEASE_TAG = "wework-v0.6.4-beta.4";
+  value.environment.REPLAY = "false";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /requires an existing build replay/,
+  );
 });
 
 test("a focused diagnostic is limited to a non-publishing replay", () => {
