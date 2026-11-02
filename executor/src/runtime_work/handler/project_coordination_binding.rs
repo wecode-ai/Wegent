@@ -28,8 +28,8 @@ impl RuntimeWorkRpcHandler {
             input["deviceId"] = json!(self.device_id);
         }
         if storage == "cloud" {
-            let response = self
-                .stand_in_request(
+            return self
+                .project_coordination_http(
                     if save {
                         reqwest::Method::PUT
                     } else {
@@ -38,21 +38,7 @@ impl RuntimeWorkRpcHandler {
                     &format!("/v1/cloud-projects/{project}/coordinator-bindings/{group}"),
                     save.then_some(&input),
                 )
-                .await?;
-            let status = response.status();
-            if !status.is_success() {
-                let code = match status.as_u16() {
-                    409 => "stale_context",
-                    403 => "permission_denied",
-                    404 => "project_unavailable",
-                    _ => "cloud_request_failed",
-                };
-                return Err(AppIpcError::new(code,format!("Project coordination request returned {status}; refresh the project before trying again")));
-            }
-            return response
-                .json()
-                .await
-                .map_err(|error| AppIpcError::new("cloud_response_invalid", error.to_string()));
+                .await;
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;

@@ -22,6 +22,8 @@ mod issue_badges;
 mod ordering;
 #[path = "project_coordination.rs"]
 mod project_coordination;
+#[path = "project_coordination_commands.rs"]
+mod project_coordination_commands;
 mod project_coordinator;
 mod project_tags;
 
@@ -920,6 +922,15 @@ impl LocalTaskStore {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)
         };
         let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
+        if assignee_changed
+            || collaboration_group_changed
+            || assignee_user_id != current.assignee_user_id
+        {
+            metadata
+                .as_object_mut()
+                .unwrap()
+                .remove("collaboration_group_assignment_key");
+        }
         let starts_runtime_dispatch = (collaboration_group_changed
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
@@ -1794,6 +1805,7 @@ impl LocalTaskStore {
         let now = now();
         let runtime_device_id = execution_device_id.unwrap_or("local-device");
         let pending = execution_row(&connection, candidate_id)?;
+        project_coordination_commands::authorize_execution_on(&connection, &pending)?;
         let issue = get_item_from(&connection, &pending.loop_item_id, "task")?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
         let conflict = issue.metadata.get("runner_binding_conflict").is_some()
@@ -1938,6 +1950,7 @@ impl LocalTaskStore {
         {
             return Ok(None);
         }
+        project_coordination_commands::authorize_execution_on(&connection, &current)?;
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -5363,7 +5376,7 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .to_owned();
     let dispatch_id = stored.get("dispatch_id").cloned();
     let dispatch_role = stored.get("dispatch_role").cloned();
-    let origin = json!({
+    let mut origin = json!({
         "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
         "projectStore": "local",
         "cloudProjectId": execution.cloud_project_id,
@@ -5378,6 +5391,10 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         },
         "run_id": stored.get("automation_run_id"),
     });
+    if let Some(context) = stored.get("project_coordination") {
+        origin["project_coordination"] = context.clone();
+        origin["userId"] = json!(execution.assigner_user_id);
+    }
 
     let payload_object = payload
         .as_object_mut()
@@ -5470,6 +5487,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
+        if stored.contains_key("project_coordination") {
+            request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
+        }
         request.insert(
             "new_session".to_owned(),
             json!(stored.get("continueTaskId").is_none()),
@@ -5489,6 +5509,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             .as_object_mut()
             .expect("Execution extra was normalized");
         extra.insert("origin".to_owned(), origin);
+        if stored.contains_key("project_coordination") {
+            extra.insert("user_id".to_owned(), json!(execution.assigner_user_id));
+        }
         extra.insert(
             "cloudProjectId".to_owned(),
             json!(execution.cloud_project_id),

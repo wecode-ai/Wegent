@@ -224,7 +224,36 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &ExecutionRequest,
     ) -> Result<(), String> {
-        super::project_coordination_execution::validate_request(request).await?;
+        if let Some(origin) = request
+            .extra
+            .get("origin")
+            .filter(|origin| origin["projectStore"] == "local")
+        {
+            if let Some(scope) = origin.get("project_coordination") {
+                let user = scope["userId"]
+                    .as_i64()
+                    .ok_or("Project coordination actor is missing")?;
+                if self
+                    .backend_connection_snapshot()
+                    .map_err(|error| error.message)?
+                    .is_some()
+                {
+                    self.verify_stand_in_user(&json!({"userId":user}))
+                        .await
+                        .map_err(|error| error.message)?;
+                }
+                LocalTaskStore::open(self.task_store_path.as_ref())
+                    .map_err(|error| error.to_string())?
+                    .authorize_project_coordination_request(
+                        scope,
+                        &self.device_id,
+                        &request.task_id,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+        } else {
+            super::project_coordination_execution::validate_request(request).await?;
+        }
         let Some(origin) = request
             .extra
             .get("origin")
