@@ -771,6 +771,37 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, right)).toBe(false)
   })
 
+  test('retains installed plugin device transitions even when package metadata is unchanged', () => {
+    const ready = installedItem('101', 'wegent', 'documents')
+    ready.raw.status.devices = [
+      {
+        deviceId: 'current-device',
+        state: 'installed',
+        desiredReleaseId: 1001,
+        actualReleaseId: 1001,
+        attemptCount: 0,
+      },
+    ]
+    const removing = {
+      ...ready,
+      raw: {
+        ...ready.raw,
+        status: {
+          ...ready.raw.status,
+          devices: [
+            {
+              ...ready.raw.status.devices[0]!,
+              state: 'uninstalling' as const,
+            },
+          ],
+        },
+      },
+    }
+    expect(sameInstalledPlugins([ready], [removing])).toBe(false)
+    expect(sameInstalledPlugins([removing], [ready])).toBe(false)
+    expect(sameInstalledPlugins([ready], [structuredClone(ready)])).toBe(true)
+  })
+
   test('detects device installation state changes via signature', () => {
     const base = item({ id: 1, name: 'a', installed: false })
     const failed = item({
@@ -812,6 +843,18 @@ describe('pluginMarketplaceCache', () => {
       }),
     ]
     expect(sameMarketplaceItems(available, locked)).toBe(false)
+  })
+
+  test.each([
+    ['manual', 'auto'],
+    ['auto', 'manual'],
+  ] as const)('detects a refreshed update policy changing from %s to %s', (before, after) => {
+    const previous = installedItem('83', 'wegent', 'auto-update')
+    previous.raw.spec.updatePolicy = before
+    const refreshed = structuredClone(previous)
+    refreshed.raw.spec.updatePolicy = after
+
+    expect(sameInstalledPlugins([previous], [refreshed])).toBe(false)
   })
 
   test('detects installed plugin name and distribution changes via signature', () => {

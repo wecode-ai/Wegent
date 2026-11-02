@@ -1,6 +1,7 @@
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   hasInFlightPluginDeviceSync,
 } from './pluginDeviceAutoSync'
@@ -158,7 +159,35 @@ describe('PluginAutoUpdateCoordinator', () => {
     })
   })
 
+  test('retains a release notification while a policy save holds the shared device lock', async () => {
+    const finishPolicySave = beginPluginDeviceSync('device-1')!
+    render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.listLocalInstalledPlugins).toHaveBeenCalled())
+    await act(async () => emit(PLUGIN_RELEASE_AVAILABLE_EVENT, { releaseId: 4 }))
+    expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
+
+    await act(async () => finishPolicySave())
+
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledTimes(2))
+  })
+
+  test('cancels a blocked update check when its coordinator unmounts', async () => {
+    const finishPolicySave = beginPluginDeviceSync('device-1')!
+    const view = render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.listLocalInstalledPlugins).toHaveBeenCalled())
+
+    view.unmount()
+    await act(async () => finishPolicySave())
+
+    expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(false)
+  })
+
   test('keeps an accepted device sync locked across runtime disconnect and reconnect', async () => {
+    mocks.autoUpdateInstalledPlugins
+      .mockImplementationOnce(mocks.autoUpdateInstalledPlugins.getMockImplementation()!)
+      .mockResolvedValueOnce({ updated: [], updatedCount: 0, remainingCount: 0 })
     let finishSync!: () => void
     mocks.syncInstalledPluginToDevice.mockImplementationOnce(
       () =>
@@ -192,6 +221,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
     await act(async () => finishSync())
     await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2)
     expect(mocks.clearLocalCache).not.toHaveBeenCalled()
     expect(mocks.notifyLocalPluginSkillsChanged).not.toHaveBeenCalled()
   })
@@ -268,14 +298,16 @@ describe('PluginAutoUpdateCoordinator', () => {
   })
 
   test('releases an old account pending sync on account change without publishing stale results', async () => {
-    mocks.autoUpdateInstalledPlugins.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          mocks.httpOptions?.signal?.addEventListener('abort', () =>
-            reject(new DOMException('Account changed', 'AbortError'))
-          )
-        })
-    )
+    mocks.autoUpdateInstalledPlugins
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            mocks.httpOptions?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Account changed', 'AbortError'))
+            )
+          })
+      )
+      .mockResolvedValueOnce({ updated: [], updatedCount: 0, remainingCount: 0 })
     const view = render(<PluginAutoUpdateCoordinator />)
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
     expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
@@ -286,6 +318,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
     expect(previousSignal?.aborted).toBe(true)
     await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2)
     expect(mocks.syncInstalledPluginToDevice).not.toHaveBeenCalled()
     expect(mocks.clearLocalCache).not.toHaveBeenCalled()
     expect(mocks.track).not.toHaveBeenCalled()

@@ -370,9 +370,12 @@ export class RuntimeTaskLifecycleStore {
           currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
         ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
-    const streamingTurn = transcript.turns.findLast(
-      turn => turn.status === 'pending' || turn.status === 'streaming'
-    )
+    // Only the latest canonical turn can identify the current execution.
+    const latestTurn = transcript.turns.at(-1)
+    const streamingTurn =
+      latestTurn?.status === 'pending' || latestTurn?.status === 'streaming'
+        ? latestTurn
+        : undefined
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
@@ -401,8 +404,19 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
-      if (ignoreStaleRunningTranscript) return
-      this.executorStarted(address)
+      if (!ignoreStaleRunningTranscript) {
+        this.executorStarted(address)
+      } else if (
+        current?.execution.phase === 'idle' &&
+        !current.turn.active &&
+        latestTurn?.id &&
+        isTerminalTurnStatus(latestTurn.status) &&
+        (current.turn.latestId === null || current.turn.latestId === latestTurn.id)
+      ) {
+        // Older streaming history may coexist with the latest terminal turn.
+        // Fill idle terminal identity without changing execution ownership or replacing a known turn.
+        this.turnSettled(address, latestTurn.id, terminalTurnOutcome(latestTurn.status))
+      }
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
       this.turnSettled(

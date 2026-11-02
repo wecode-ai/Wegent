@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
+  acquirePluginDeviceSync,
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   collectPluginDeviceStatusReports,
@@ -51,6 +52,44 @@ function item(
 describe('pluginDeviceAutoSync', () => {
   beforeEach(() => {
     clearPluginDeviceAutoSyncAttempts()
+  })
+
+  test('waits for another device operation and retains an independent lease', async () => {
+    const finishPolicySave = beginPluginDeviceSync('device-a')!
+    const pendingUpdate = acquirePluginDeviceSync('device-a')
+    const finishOtherDevice = await acquirePluginDeviceSync('device-b')
+    finishPolicySave()
+    const finishUpdate = await pendingUpdate
+
+    finishPolicySave()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
+    finishUpdate()
+    finishOtherDevice()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
+    expect(hasInFlightPluginDeviceSync('device-b')).toBe(false)
+  })
+
+  test('cancels a pending lease without releasing its current owner', async () => {
+    const finishPolicySave = beginPluginDeviceSync('device-a')!
+    const controller = new AbortController()
+    const pending = acquirePluginDeviceSync('device-a', controller.signal)
+    const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejection
+
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
+    finishPolicySave()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
+  })
+
+  test('does not acquire an already cancelled lease', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(acquirePluginDeviceSync('device-a', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
   })
 
   test('tracks an in-flight per-device sync lock', () => {

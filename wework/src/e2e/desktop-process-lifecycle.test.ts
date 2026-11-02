@@ -14,6 +14,7 @@ interface ProcessLifecycle {
     processGroupId: number
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
+  crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
 }
 
@@ -22,6 +23,7 @@ interface LocalHarnessCli {
 }
 
 const ownedProcessGroups = new Set<number>()
+const ownedProcesses = new Set<number>()
 
 async function loadProcessLifecycle(): Promise<ProcessLifecycle> {
   const moduleUrl = pathToFileURL(
@@ -70,6 +72,14 @@ async function readChildPid(parent: ChildProcess): Promise<number> {
 }
 
 afterEach(() => {
+  for (const processId of ownedProcesses) {
+    try {
+      process.kill(processId, 'SIGKILL')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+  }
+  ownedProcesses.clear()
   for (const processGroupId of ownedProcessGroups) {
     try {
       process.kill(-processGroupId, 'SIGKILL')
@@ -136,6 +146,84 @@ describe('desktop process lifecycle', () => {
     const { windowsTaskkillArguments } = await loadProcessLifecycle()
 
     expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
+  })
+
+  test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(
+    'rejects a %s crash snapshot before signaling any process',
+    async invalid => {
+      const { crashOwnedProcessTree } = await loadProcessLifecycle()
+      const snapshot = {
+        applicationPid: 42,
+        platform: process.platform,
+        capturedAt: Date.now(),
+        degraded: [] as string[],
+        processes: [
+          { pid: 42, parentPid: 1, startedAt: 1 },
+          { pid: 43, parentPid: 42, startedAt: 1 },
+        ],
+      }
+      if (invalid === 'degraded') snapshot.degraded.push('system-process-table-failed')
+      if (invalid === 'unowned') snapshot.processes[1]!.parentPid = 900
+      if (invalid === 'missing identity') snapshot.processes[1]!.startedAt = 0
+      if (invalid === 'future identity') snapshot.processes[1]!.startedAt = Date.now() + 60_000
+      if (invalid === 'stale') snapshot.capturedAt -= 60_000
+      const kill = vi.spyOn(process, 'kill')
+      try {
+        await expect(crashOwnedProcessTree({ pid: 42 } as ChildProcess, snapshot)).rejects.toThrow()
+        expect(kill).not.toHaveBeenCalled()
+      } finally {
+        kill.mockRestore()
+      }
+    }
+  )
+
+  test('crashes an owned descendant in a separate process group without graceful termination', async () => {
+    const { crashOwnedProcessTree } = await loadProcessLifecycle()
+    const parent = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const { spawn } = require('node:child_process')",
+          "const script = \"process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)\"",
+          "const child = spawn(process.execPath, ['-e', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] })",
+          "child.stdout.once('data', () => console.log(child.pid))",
+          "process.on('SIGTERM', () => {})",
+          'setInterval(() => {}, 1000)',
+        ].join(';'),
+      ],
+      { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    ownedProcessGroups.add(parent.pid!)
+    const childPid = await readChildPid(parent)
+    ownedProcesses.add(childPid)
+    const kill = vi.spyOn(process, 'kill')
+    try {
+      await crashOwnedProcessTree(parent, {
+        applicationPid: parent.pid,
+        platform: process.platform,
+        capturedAt: Date.now() - 1_000,
+        degraded: [],
+        processes: [
+          { pid: parent.pid, parentPid: process.pid, startedAt: Date.now() - 500 },
+          { pid: childPid, parentPid: parent.pid, startedAt: Date.now() - 500 },
+        ],
+      })
+      expect(await waitForProcessToStop(childPid, 1_000)).toBe(true)
+      expect(kill.mock.calls.some(([, signal]) => signal === 'SIGTERM')).toBe(false)
+      if (process.platform !== 'win32') {
+        const signals = kill.mock.calls.filter(([, signal]) => signal !== 0)
+        expect(signals).toEqual([
+          [parent.pid, 'SIGSTOP'],
+          [childPid, 'SIGSTOP'],
+          [childPid, 'SIGKILL'],
+          [parent.pid, 'SIGKILL'],
+        ])
+      }
+      ownedProcessGroups.delete(parent.pid!)
+    } finally {
+      kill.mockRestore()
+    }
   })
 
   test('resolves npm harness shims with the native Windows extension', async () => {
