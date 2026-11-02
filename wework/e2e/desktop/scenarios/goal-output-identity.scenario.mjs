@@ -121,6 +121,7 @@ export function createDesktopScenario(options) {
   })
 
   const scenario = {
+    appEnvironment: { WEGENT_CODEX_STREAM_DEBUG: 'true' },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
@@ -523,6 +524,7 @@ export function createDesktopScenario(options) {
         console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
         try {
           await captureIdentityFailure(control, options.resultDir, {
+            error: { name: error.name, message: error.message, stack: error.stack },
             phase,
             requestTrace,
             recoveredTranscript,

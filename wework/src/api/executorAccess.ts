@@ -315,8 +315,21 @@ export function createExecutorClientFromApis({
       return entries.map(entry => entry.device)
     },
     async getHomeDirectory(deviceId) {
+      const startedAt = performance.now()
+      console.info('[Wework] Home directory lookup', { stage: 'resolve-executor', deviceId })
       await resolve(deviceId)
-      return deviceApi.getHomeDirectory(deviceId)
+      console.info('[Wework] Home directory lookup', {
+        stage: 'read-home',
+        deviceId,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+      const path = await deviceApi.getHomeDirectory(deviceId)
+      console.info('[Wework] Home directory lookup', {
+        stage: 'completed',
+        deviceId,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+      return path
     },
     async getProjectWorkspaceRoot(deviceId) {
       await resolve(deviceId)
