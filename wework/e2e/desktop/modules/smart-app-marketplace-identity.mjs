@@ -88,10 +88,14 @@ export async function verifySmartAppMarketplaceIdentity({
     openedSnapshot.location.includes('/app/harness-'),
     `Smart app deep link did not open its harness route: ${openedSnapshot.location}`
   )
+  assert.ok(
+    !tabsBeforeDeepLink.includes(`workspace-tab-select-${appTabId}`),
+    'The first Smart app deep link did not create a new app workspace tab'
+  )
   assert.equal(
-    openedSnapshot.testIds.filter(id => id.startsWith('workspace-tab-select-')).length,
-    tabsBeforeDeepLink.length + 1,
-    'The first Smart app deep link did not create exactly one workspace tab'
+    openedSnapshot.testIds.filter(id => id === `workspace-tab-select-${appTabId}`).length,
+    1,
+    'The first Smart app deep link exposed duplicate app workspace tabs'
   )
   await control.command(
     'waitFor',
