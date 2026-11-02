@@ -741,10 +741,34 @@ function runtimeHandleDebug(value: Record<string, unknown>): Record<string, unkn
   }
 }
 
-function runtimeTranscriptMessageCount(response: unknown): number | null {
+function runtimeTranscriptSummary(response: unknown): Record<string, unknown> {
   const responseRecord = recordValue(response)
   const messages = responseRecord.messages
-  return Array.isArray(messages) ? messages.length : null
+  return {
+    messageCount: Array.isArray(messages) ? messages.length : null,
+    threadId: stringValue(responseRecord.threadId),
+    running: typeof responseRecord.running === 'boolean' ? responseRecord.running : null,
+    turns: Array.isArray(responseRecord.turns)
+      ? responseRecord.turns.map(value => {
+          const turn = recordValue(value)
+          return {
+            id: stringValue(turn.id),
+            status: stringValue(turn.status),
+            clientUserMessageId: stringValue(turn.clientUserMessageId),
+            items: Array.isArray(turn.items)
+              ? turn.items.map(value => {
+                  const item = recordValue(value)
+                  return {
+                    id: stringValue(item.id),
+                    type: stringValue(item.type),
+                    blockType: stringValue(recordValue(item.block).type),
+                  }
+                })
+              : null,
+          }
+        })
+      : null,
+  }
 }
 
 function workspaceLabel(workspacePath: string, label: unknown): string {
@@ -2498,7 +2522,7 @@ export function createRuntimeWorkApiFromIpc(
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
-          messageCount: runtimeTranscriptMessageCount(response),
+          ...runtimeTranscriptSummary(response),
         })
       }
       return response

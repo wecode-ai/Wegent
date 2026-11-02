@@ -200,6 +200,9 @@ export function createDesktopScenario(options) {
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
       })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
       let address
       let recoveredTranscript
       const recoveryEvidence = {}

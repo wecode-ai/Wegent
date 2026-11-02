@@ -855,6 +855,9 @@ export function createDesktopScenario({
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
       })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
       await requestExecutor(
         control,
         'runtime.codex.stream_debug.set',

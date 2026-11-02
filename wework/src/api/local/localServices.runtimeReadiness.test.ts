@@ -30,6 +30,65 @@ describe('local transcript startup ordering', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
+  test('logs transcript identities and lifecycle only when debugging is enabled', async () => {
+    const response = {
+      threadId: 'thread',
+      running: true,
+      messages: [{ content: 'PRIVATE_MESSAGE' }],
+      turns: [
+        {
+          id: 'turn',
+          status: 'cancelled',
+          clientUserMessageId: 'user',
+          error: 'PRIVATE_ERROR',
+          items: [
+            {
+              id: 'item',
+              type: 'assistant_text',
+              content: 'PRIVATE_CONTENT',
+              credentials: 'PRIVATE_CREDENTIALS',
+            },
+          ],
+        },
+      ],
+    }
+    const services = createLocalAppServices({
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      available: async () => status,
+      ensure: async () => status,
+      request: vi.fn().mockResolvedValue(response),
+    })
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const address = { deviceId: status.deviceId, taskId: 'persisted-task', runtime: 'codex' }
+    try {
+      await services.runtimeWorkApi!.getRuntimeTranscript(address)
+      expect(debug).not.toHaveBeenCalled()
+      localStorage.setItem('wework:debug-runtime', '1')
+
+      await services.runtimeWorkApi!.getRuntimeTranscript(address)
+
+      expect(debug).toHaveBeenCalledWith(
+        '[Wework] Local runtime IPC transcript response',
+        expect.objectContaining({
+          threadId: 'thread',
+          running: true,
+          messageCount: 1,
+          turns: [
+            {
+              id: 'turn',
+              status: 'cancelled',
+              clientUserMessageId: 'user',
+              items: [{ id: 'item', type: 'assistant_text', blockType: null }],
+            },
+          ],
+        })
+      )
+      expect(JSON.stringify(debug.mock.calls)).not.toContain('PRIVATE_')
+    } finally {
+      debug.mockRestore()
+    }
+  })
+
   test.each(['read', 'search'] as const)(
     '%s waits for startup before dispatching',
     async operation => {
