@@ -400,6 +400,15 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Install the native log-folder opener
+        if: contains(matrix.segments, 'native-window-startup')
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends file xdg-utils pcmanfm
+          XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
+          test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
+          test "$(xdg-mime query filetype /tmp)" = inode/directory
+
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
