@@ -117,9 +117,17 @@ fn managed_environment_and_arguments_are_scoped_to_the_plugin_child() {
     assert_eq!(env::var("PYTHONPATH").unwrap(), "ordinary-python-path");
 }
 
-#[tokio::test]
-async fn preparation_failure_stops_before_script_execution() {
+#[test]
+fn preparation_failure_stops_before_script_execution() {
     let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(assert_preparation_failure());
+}
+
+async fn assert_preparation_failure() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!(
         "http://{}/runtime/python/ensure",
