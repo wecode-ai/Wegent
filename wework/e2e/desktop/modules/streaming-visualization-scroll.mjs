@@ -49,6 +49,37 @@ const HTML = `<section id="scroll-fixture">
     event.preventDefault()
     wheelControl.dataset.wheelCount = String(Number(wheelControl.dataset.wheelCount) + 1)
   }, { passive: false })
+  addEventListener('DOMContentLoaded', () => {
+    const fixture = document.getElementById('scroll-fixture')
+    const panel = document.getElementById('panel')
+    const root = document.scrollingElement
+    const records = []
+    let sequence = 0
+    const describe = element => element instanceof Element ? element.id || element.tagName.toLowerCase() : null
+    fixture.dataset.wheelEvents = '[]'
+    // The host registers its bridge before DOMContentLoaded; sample after its listener.
+    addEventListener('wheel', event => {
+      queueMicrotask(() => {
+        records.push({
+          sequence: ++sequence,
+          trusted: event.isTrusted,
+          target: describe(event.target),
+          deltaX: event.deltaX,
+          deltaY: event.deltaY,
+          deltaMode: event.deltaMode,
+          cancelable: event.cancelable,
+          defaultPrevented: event.defaultPrevented,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          panelScrollTop: panel.scrollTop,
+          rootScrollTop: root.scrollTop,
+          elementFromPoint: describe(document.elementFromPoint(event.clientX, event.clientY)),
+        })
+        if (records.length > 20) records.shift()
+        fixture.dataset.wheelEvents = JSON.stringify(records)
+      })
+    }, { passive: true })
+  }, { once: true })
 </script>`
 
 const pause = duration => new Promise(resolve => setTimeout(resolve, duration))
@@ -96,7 +127,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       if (result) return result
       await pause(50)
     } while (Date.now() < deadline)
-    assert.fail(typeof description === 'function' ? description() : description)
+    assert.fail(typeof description === 'function' ? await description() : description)
   }
 
   async function centerFrame(control) {
@@ -123,6 +154,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
           distanceFromTop: distanceFromTop(outer),
         }
         return distanceFromBottom(outer) <= 2 &&
+          frame.height < 480 &&
           frame.top >= outer.top - 1 &&
           frame.bottom <= outer.bottom + 1 &&
           blankTop >= outer.top &&
@@ -196,15 +228,36 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
       index += 1
     ) {
       const previousTop = panel.scrollTop
-      await wheel(control, '#panel', 100)
+      const remaining = panel.scrollHeight - panel.clientHeight - panel.scrollTop
+      const deltaY = Math.min(100, remaining)
+      const nativeWheel = await wheel(control, '#panel', deltaY)
       let lastTop = previousTop
+      let lastPanel = panel
       let stableSamples = 0
-      panel = await waitFor(async () => {
-        const next = await panelMetrics(control)
-        stableSamples = Math.abs(next.scrollTop - lastTop) <= 0.5 ? stableSamples + 1 : 0
-        lastTop = next.scrollTop
-        return next.scrollTop > previousTop + 1 && stableSamples >= 2 ? next : null
-      }, 'Native wheel input did not scroll the nested HTML panel')
+      panel = await waitFor(
+        async () => {
+          const next = await panelMetrics(control)
+          lastPanel = next
+          stableSamples = Math.abs(next.scrollTop - lastTop) <= 0.5 ? stableSamples + 1 : 0
+          lastTop = next.scrollTop
+          return next.scrollTop > previousTop + 1 && stableSamples >= 2 ? next : null
+        },
+        async () => {
+          const outer = await outerMetrics(control)
+          const records = await frameAction(control, 'attribute', '#scroll-fixture', {
+            value: 'data-wheel-events',
+          })
+          return `Native wheel input did not scroll the nested HTML panel: ${JSON.stringify({
+            index,
+            previousTop,
+            deltaY,
+            panel: lastPanel,
+            outer,
+            nativeWheel,
+            wheelEvents: records === null ? null : JSON.parse(records),
+          })}`
+        }
+      )
       const outer = await outerMetrics(control)
       assert.ok(
         Math.abs(distanceFromTop(outer) - distanceFromTop(outerBefore)) <= 2,

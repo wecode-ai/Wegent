@@ -1,9 +1,9 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { HostCapabilityError } from './capability-router.js'
 
-type VisualizationFrame = Pick<WebFrameMain, 'url' | 'executeJavaScript'>
+type VisualizationFrame = Pick<WebFrameMain, 'url' | 'executeJavaScript' | 'processId'>
 type VisualizationContents = Pick<WebContents, 'isDestroyed' | 'sendInputEvent'> & {
-  mainFrame: Pick<WebFrameMain, 'executeJavaScript'> & {
+  mainFrame: Pick<WebFrameMain, 'executeJavaScript' | 'processId'> & {
     frames: readonly VisualizationFrame[]
   }
 }
@@ -87,13 +87,18 @@ export async function controlInlineVisualizationFrame(
     return element.textContent;
   })()`)
   if (action !== 'wheel') return result
-  return sendVisualizationWheel(
+  const input = await sendVisualizationWheel(
     contents,
     url,
     parseVisualizationRect(visualizationRecord(result).rect),
     deltaX as number,
     deltaY as number
   )
+  return {
+    ...input,
+    frameProcessId: frame.processId,
+    mainFrameProcessId: contents.mainFrame.processId,
+  }
 }
 
 function visualizationRecord(value: unknown): Record<string, unknown> {

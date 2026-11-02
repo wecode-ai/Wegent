@@ -9,11 +9,16 @@ const environment = {
 const url = 'blob:http://127.0.0.1:1234/calculator'
 
 function target() {
-  const frame = { url, executeJavaScript: vi.fn(async (script: string) => window.eval(script)) }
+  const frame = {
+    url,
+    processId: 202,
+    executeJavaScript: vi.fn(async (script: string) => window.eval(script)),
+  }
   const contents = {
     isDestroyed: () => false,
     sendInputEvent: vi.fn(),
     mainFrame: {
+      processId: 101,
       executeJavaScript: vi.fn(async (script: string) => window.eval(script)),
       frames: [frame],
     },
@@ -178,6 +183,8 @@ describe('inline visualization verification controls', () => {
       y: 210,
       deltaX: 8,
       deltaY: -40,
+      frameProcessId: 202,
+      mainFrameProcessId: 101,
     })
     expect(contents.sendInputEvent.mock.calls).toEqual([
       [{ type: 'mouseMove', x: 210, y: 210 }],
