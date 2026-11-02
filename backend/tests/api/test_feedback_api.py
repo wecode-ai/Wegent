@@ -107,13 +107,17 @@ def test_submit_feedback_creates_board_item_for_feedback_project_owner(
     item = test_db.get(LoopItem, "FEEDBACK-1")
     assert item is not None
     assert item.created_by_user_id == test_user.id
+    assert item.reporter_user_id == test_user.id
+    assert item.assignee_user_id is None
+    assert not item.assignee_agent_id
+    assert item.assignee_team_id is None
     assert item.status == "inbox"
     metadata = item.metadata_json
     assert metadata["tags"] == ["feedback", "wework"]
     assert metadata["feedback_report_id"] == "WF-100"
     assert metadata["status_history"][0]["trigger"] == "create"
     assert metadata["status_history"][0]["to_status"] == "inbox"
-    assert metadata["assignment_history"][0]["action"] == "assign"
+    assert not metadata.get("assignment_history")
     assert item.description == (
         "The send button remained disabled.\n\nFeedback report: WF-100"
     )

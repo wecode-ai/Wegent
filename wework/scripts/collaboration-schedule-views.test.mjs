@@ -11,6 +11,7 @@ import {
   ensureCalendarScheduleDatesVisible,
   verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import { scheduleRuntimeControl } from './fixtures/collaboration-schedule-runtime.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -278,9 +279,10 @@ test.each([
     },
   }
 
+  const runtime = scheduleRuntimeControl(control, 'Calendar navigation regression')
   await verifyCollaborationScheduleViews({
     capture: async () => {},
-    control,
+    control: runtime,
     issueTitle: 'Calendar navigation regression',
     scoped,
     timeoutMs: TIMEOUT_MS,
@@ -299,6 +301,7 @@ test.each([
     `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.target}"]`,
   ])
   expect(rangeIndex).toBe(3)
+  expect(runtime.requests.map(request => request.method)).toEqual(['todos.list', 'todos.get'])
 })
 
 test('waits for mounted calendar days before deciding whether to change months', async () => {
