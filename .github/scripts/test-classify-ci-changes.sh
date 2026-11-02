@@ -678,6 +678,24 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/cloud-model-recovery.mjs" \
   "wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs"
 
+for responses_gateway_path in \
+  wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs \
+  backend/app/api/endpoints/openapi_responses.py \
+  backend/app/api/endpoints/wework_api.py \
+  backend/app/services/wework_api/service.py \
+  backend/tests/api/test_openapi_responses.py \
+  backend/tests/api/test_wework_api.py; do
+  assert_desktop_case "Responses creation reuses the existing account-auth Cloud lifecycle: $responses_gateway_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$responses_gateway_path"
+done
+
 assert_desktop_case "deleted task model recovery runs in the cloud shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false

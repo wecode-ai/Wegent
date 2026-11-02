@@ -14,6 +14,8 @@ import {
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
+import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
+import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -71,6 +73,8 @@ export async function createDesktopScenario({
   electronUserDataDirectory,
   homePath,
   resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
@@ -236,6 +240,14 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
+      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+        await verifyResponsesApiGateway(control, cloud, {
+          checkpoint,
+          resultDir,
+          uiTimeoutMs,
+          modelResponseTimeoutMs,
+        })
+      }
       const local = await cloud.waitForConnectedAppDevice()
       assert.equal((await api('/plugin-connections/automation')).enabled, true)
       await rm(sourceAuth)
@@ -804,7 +816,21 @@ export async function createDesktopScenario({
       }
       await writeFile(
         join(resultDir, `${checkpoint}-verification.json`),
-        JSON.stringify({ checkpoint, completed: true, noCredentialLogs: true }, null, 2)
+        JSON.stringify(
+          {
+            checkpoint,
+            completed: true,
+            noCredentialLogs: true,
+            environment: {
+              processId: process.pid,
+              backendUrl: cloud.backendUrl,
+              backendLogPath: cloud.backendLogPath,
+              runtimeLogPath: cloud.remoteExecutorLogPath,
+            },
+          },
+          null,
+          2
+        )
       )
     },
   }

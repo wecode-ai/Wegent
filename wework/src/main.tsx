@@ -28,7 +28,7 @@ import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
 import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -105,7 +105,7 @@ function reportRendererFailure(error: unknown): void {
     errorType: error instanceof Error ? error.name : typeof error,
   })
   console.error('[Wework] Desktop frontend failed:', error)
-  void invokeDesktopHost<void>('renderer.startupFailed').catch(startupError => {
+  void reportDesktopStartupFailure(error, 'renderer_mount').catch(startupError => {
     console.error('[Wework] Failed to report desktop startup failure:', startupError)
   })
 }

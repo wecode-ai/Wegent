@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Subscription } from '@/types/subscription'
 import { loadEditableSubscription } from './subscription-form/load-editable-subscription'
-import { createLatestRequestGuard } from './subscription-form/latest-request-guard'
+import { createLatestRequestGuard } from '@/utils/latest-request-guard'
 
 const SubscriptionTimeline = dynamic(
   () => import('./SubscriptionTimeline').then(module => module.SubscriptionTimeline),
