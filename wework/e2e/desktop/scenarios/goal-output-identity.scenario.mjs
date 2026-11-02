@@ -418,6 +418,10 @@ export function createDesktopScenario(options) {
           recoveryEvidence.afterCompletedRestart.transcript.turns.at(-1).id
         )
         phase = 'restore-interrupted-native-history'
+        const sourceProjectKey = JSON.parse(
+          await control.command('getWorkbenchDebugSnapshot', 'body')
+        ).workbench.activeTaskProjectKey
+        assert.ok(sourceProjectKey, 'The source conversation needs its real sidebar project')
         const source = await rpc('runtime.tasks.get', { address })
         assert.equal(source.success, true)
         assert.ok(source.task.threadId)
@@ -444,6 +448,23 @@ export function createDesktopScenario(options) {
         assert.equal(restored.available, true)
         assert.ok(restored.threadId)
         assert.notEqual(restored.threadId, source.task.threadId)
+        const assigned = await rpc('runtime.sidebar.tasks.reorder', {
+          projectKey: sourceProjectKey,
+          threadId: restored.threadId,
+          insertAtEnd: true,
+        })
+        assert.equal(assigned.success, true)
+        assert.equal(assigned.accepted, true)
+        const sidebar = await rpc('runtime.tasks.list', {})
+        assert.equal(sidebar.success, true)
+        const restoredSidebarTask = sidebar.workspaces
+          .flatMap(workspace => workspace.tasks)
+          .find(task => task.taskId === restored.taskId)
+        assert.ok(
+          restoredSidebarTask,
+          'The restored conversation must pass the real project filter'
+        )
+        assert.equal(restoredSidebarTask.workspacePath, restored.workspacePath)
         address = {
           ...address,
           taskId: restored.taskId,
@@ -459,6 +480,7 @@ export function createDesktopScenario(options) {
         recoveryEvidence.restored = {
           transcript: restoredTranscript,
           restored,
+          sidebarTask: restoredSidebarTask,
           sha256: exported.sha256,
         }
         phase = 'restart-restored-conversation'
