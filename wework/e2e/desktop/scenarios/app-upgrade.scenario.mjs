@@ -8,7 +8,8 @@ import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mj
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
-import { prepareSourceRelease } from '../modules/source-preparation-progress.mjs'
+import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
+import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
@@ -281,13 +282,15 @@ export async function createDesktopScenario(options) {
         })
       )
       console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = prepareSourceRelease(
+      const preparation = prepareReleaseProcess(
         pair.from.executable,
         [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
         {
           env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log'),
+          progress: { logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log') },
           version: pair.from.version,
+          releaseId: 'source-preparation',
+          stop: stopProcessGroup,
         }
       )
       try {

@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
 import { cloudFetch } from './cloud-http.js'
 import type {
   WeworkUpdateChannel,
@@ -31,8 +29,8 @@ import type { ComponentPaths } from '../runtime/component-update-manager.js'
 import { restoreReleaseData, snapshotReleaseData } from '../runtime/release-snapshot.js'
 import { verifyReleaseSignature } from '../runtime/release-signature.js'
 import { extractPhysicalRelease, removePhysicalRelease } from '../runtime/physical-release-files.js'
-
-const execute = promisify(execFile)
+import { prepareReleaseProcess } from '../runtime/release-preparation-progress.mjs'
+import { terminateProcessTree } from '../runtime/runtime-supervisor.js'
 
 export type { WeworkUpdateChannel, WeworkUpdateInfo } from './app-update-progress.js'
 export type AppUpdateController = Pick<
@@ -417,7 +415,7 @@ export class AppUpdateService {
       'ELECTRON_RUN_AS_NODE',
     ])
       delete environment[key]
-    await execute(
+    await prepareReleaseProcess(
       release.executable,
       [
         join(release.resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'),
@@ -425,8 +423,10 @@ export class AppUpdateService {
       ],
       {
         env: { ...environment, ELECTRON_RUN_AS_NODE: '1' },
-        timeout: 300_000,
-        maxBuffer: 1024 * 1024,
+        progress: 'stdout',
+        releaseId: release.id,
+        version: release.version,
+        stop: child => terminateProcessTree(child, 10_000),
       }
     )
   }
