@@ -1971,6 +1971,10 @@ classify_path() {
       .github/actions/setup-rust-cache/* | \
       .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
+      .github/actions/build-minio-e2e/* | \
+      .github/actions/setup-minio-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \

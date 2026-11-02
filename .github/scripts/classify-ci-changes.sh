@@ -70,6 +70,8 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
