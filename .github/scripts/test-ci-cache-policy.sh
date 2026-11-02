@@ -666,11 +666,11 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'restore-wework-core-e2e-build-oci.sh'* ]] ||
   [[ "$desktop_build_section" != *'uses: ./.github/actions/build-wework-core-e2e'* ]] ||
   [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
-  ! grep -Fq 'BUILD_RUNTIMES_FROM_SOURCE:' "$desktop_build_action" ||
+  ! grep -Fq 'RUNTIME_ARTIFACTS:' "$desktop_build_action" ||
   ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
   ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
-  ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA"' "$desktop_build_action" ||
-  ! grep -Fq 'executor-e2e-binary "$artifact_directory"' "$desktop_build_action" ||
+  ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$RUNTIME_HEAD_SHA"' "$desktop_build_action" ||
+  ! grep -Fq 'restore_runtime executor executor-e2e-binary' "$desktop_build_action" ||
   ! grep -Fq 'WEWORK_E2E_PREBUILT_EXECUTOR_PATH' "$desktop_build_action" ||
   ! grep -Fq 'pnpm --filter wework ai:verify:electron:build' \
     "$desktop_build_action" ||
@@ -692,6 +692,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
+node --test "$script_dir/runtime-artifact.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 

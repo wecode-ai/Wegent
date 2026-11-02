@@ -28,6 +28,8 @@ classify_path() {
     .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
       .github/scripts/resolve-backend-rs-e2e-runtime.sh | \
       .github/scripts/resolve-wework-core-e2e-build-ref.sh | \

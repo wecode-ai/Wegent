@@ -320,6 +320,14 @@ jobs:
             ~/.cargo/git
           key: ${{ steps.backend-rs-cargo-sources-cache.outputs.cache-primary-key }}
 
+      - name: Describe Backend Rust E2E artifact
+        env:
+          RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          node .github/scripts/runtime-artifact.mjs create .ci-artifacts backend-rs "$IMAGE" \
+            wegent-backend-rs attachment-s3-e2e attachment-hosting-e2e
+
       - name: Upload Backend Rust E2E runtime
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -328,6 +336,7 @@ jobs:
             .ci-artifacts/wegent-backend-rs
             .ci-artifacts/attachment-s3-e2e
             .ci-artifacts/attachment-hosting-e2e
+            .ci-artifacts/backend-rs-runtime-manifest.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -441,11 +450,19 @@ jobs:
         if: steps.access.outputs.artifact == 'true'
         run: .github/scripts/archive-executor-e2e-runtime.sh
 
+      - name: Describe Executor E2E artifact
+        env:
+          RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: node .github/scripts/runtime-artifact.mjs create executor/target/release executor "$IMAGE" wegent-executor
+
       - name: Upload Executor E2E binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: executor-e2e-binary
-          path: executor/target/release/wegent-executor
+          path: |
+            executor/target/release/wegent-executor
+            executor/target/release/executor-runtime-manifest.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

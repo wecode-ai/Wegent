@@ -1971,6 +1971,8 @@ classify_path() {
       .github/actions/build-wework-core-e2e/* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
