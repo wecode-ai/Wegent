@@ -11,6 +11,7 @@ token="${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 wait_seconds="${ACTIONS_ARTIFACT_WAIT_SECONDS:-0}"
 source_workflow="${ACTIONS_ARTIFACT_WORKFLOW:-}"
 source_head_sha="${ACTIONS_ARTIFACT_HEAD_SHA:-}"
+source_job="${ACTIONS_ARTIFACT_JOB:-}"
 source_event="${GITHUB_EVENT_NAME:-}"
 if [[ -n "$source_workflow" ]]; then
   : "${ACTIONS_ARTIFACT_HEAD_SHA:?ACTIONS_ARTIFACT_HEAD_SHA is required for a source workflow}"
@@ -55,9 +56,32 @@ if (!Array.isArray(payload.workflow_runs)) throw new Error("Invalid workflow run
 const runs = payload.workflow_runs
   .filter(run => run.head_sha === sha && run.event === event)
   .sort((left, right) => right.id - left.id)
-if (runs.length) console.log(runs[0].id, runs[0].status)
+for (const run of runs) console.log(run.id, run.status)
 ' "$source_head_sha" "$source_event" <<<"$runs_json")"
-    read -r run_id source_run_status <<<"$source_run"
+    run_id=""
+    while read -r candidate_id candidate_status; do
+      [[ -n "$candidate_id" ]] || continue
+      if [[ -n "$source_job" ]]; then
+        jobs_json="$(request "$api_url/repos/$repository/actions/runs/$candidate_id/jobs?per_page=100")"
+        producer_state="$(node -e '
+const fs = require("node:fs")
+const payload = JSON.parse(fs.readFileSync(0, "utf8"))
+if (!Array.isArray(payload.jobs)) throw new Error("Invalid workflow jobs response")
+const job = payload.jobs.find(job => job.name === process.argv[1])
+console.log(job ? job.conclusion || job.status : "absent")
+' "$source_job" <<<"$jobs_json")"
+        case "$producer_state" in
+          skipped) continue ;;
+          absent) [[ "$candidate_status" != "completed" ]] || continue ;;
+          failure|cancelled|timed_out|action_required|startup_failure)
+            echo "Producer $source_job in run $candidate_id ended with $producer_state" >&2
+            exit 1 ;;
+        esac
+      fi
+      run_id="$candidate_id"
+      source_run_status="$candidate_status"
+      break
+    done <<<"$source_run"
   fi
   if [[ -n "$run_id" ]]; then
     artifacts_json="$(request \

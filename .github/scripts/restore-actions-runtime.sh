@@ -10,6 +10,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 
+case "$component" in
+  executor) export ACTIONS_ARTIFACT_JOB='Prepare Executor E2E Runtime' ;;
+  backend-rs) export ACTIONS_ARTIFACT_JOB='Build Backend Rust E2E Runtime' ;;
+  *) echo "Unsupported runtime component: $component" >&2; exit 1 ;;
+esac
+
 "$script_dir/download-actions-artifact.sh" "$artifact" "$temporary"
 RUNTIME_HEAD_SHA="${ACTIONS_ARTIFACT_HEAD_SHA:?source SHA is required}" \
   node "$script_dir/runtime-artifact.mjs" verify \

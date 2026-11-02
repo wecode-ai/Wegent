@@ -22,9 +22,21 @@ case "$url" in
       printf '{"workflow_runs":[]}'
     elif [[ "$TEST_CASE" == "wrong-sha" ]]; then
       printf '{"workflow_runs":[{"id":99,"head_sha":"wrong","event":"pull_request","status":"completed"}]}'
+    elif [[ "$TEST_CASE" == producer-* ]]; then
+      printf '{"workflow_runs":[{"id":43,"head_sha":"target","event":"pull_request","status":"completed"},{"id":42,"head_sha":"target","event":"pull_request","status":"in_progress"}]}'
     else
       printf '{"workflow_runs":[{"id":99,"head_sha":"wrong","event":"pull_request","status":"completed"},{"id":42,"head_sha":"target","event":"pull_request","status":"completed"},{"id":100,"head_sha":"target","event":"push","status":"completed"}]}'
     fi
+    ;;
+  */runs/43/jobs*)
+    if [[ "$TEST_CASE" == "producer-failed" ]]; then
+      printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"failure"}]}'
+    else
+      printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"skipped"}]}'
+    fi
+    ;;
+  */runs/42/jobs*)
+    printf '{"jobs":[{"name":"Build Backend Rust E2E Runtime","status":"completed","conclusion":"success"}]}'
     ;;
   */runs/7/artifacts*|*/runs/42/artifacts*)
     if [[ "$TEST_CASE" == "missing" ]]; then
@@ -71,6 +83,16 @@ fi
 TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
   "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/queued-run"
 cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/queued-run/wegent-executor"
+
+TEST_CASE=producer-skipped ACTIONS_ARTIFACT_JOB='Build Backend Rust E2E Runtime' \
+  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/eligible-run"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/eligible-run/wegent-executor"
+if TEST_CASE=producer-failed ACTIONS_ARTIFACT_JOB='Build Backend Rust E2E Runtime' \
+  "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/rejected" >"$temp_dir/error" 2>&1; then
+  echo 'Downloader unexpectedly masked a failed producer' >&2
+  exit 1
+fi
+grep -Fq 'ended with failure' "$temp_dir/error"
 
 for failure_case in wrong-sha missing duplicate; do
   export TEST_CASE="$failure_case"
