@@ -167,7 +167,7 @@ fn run() -> io::Result<()> {
         );
     }
     #[cfg(target_os = "macos")]
-    if first == "--macos-install" {
+    if first == "--macos-install" || first == "--macos-enter" {
         let root = PathBuf::from(
             args.next()
                 .ok_or_else(|| io::Error::other("Missing release root"))?,
@@ -175,14 +175,13 @@ fn run() -> io::Result<()> {
         let id = args
             .next()
             .ok_or_else(|| io::Error::other("Missing release ID"))?;
-        if macos_installation::install(
-            &root,
-            id.to_str()
-                .ok_or_else(|| io::Error::other("Invalid release ID"))?,
-        )?
-        .is_none()
-        {
-            return Err(io::Error::other("The macOS installation was not prepared"));
+        let id = id
+            .to_str()
+            .ok_or_else(|| io::Error::other("Invalid release ID"))?;
+        let installed = macos_installation::install(&root, id)?
+            .ok_or_else(|| io::Error::other("The macOS installation was not prepared"))?;
+        if first == "--macos-enter" {
+            return enter_installed_host(&root, id, &installed, &args.collect::<Vec<_>>());
         }
         return Ok(());
     }
@@ -192,6 +191,46 @@ fn run() -> io::Result<()> {
         .ok_or_else(|| io::Error::other("Missing recovery executable"))?;
     let forwarded: Vec<_> = args.collect();
     launch(&root, &bridge, &forwarded)
+}
+
+#[cfg(target_os = "macos")]
+fn enter_installed_host(
+    root: &Path,
+    id: &str,
+    executable: &Path,
+    args: &[OsString],
+) -> io::Result<()> {
+    // A delivered legacy supervisor still owns supervisor.lock and watches this
+    // PID. Retain its process tree until the existing health marker is confirmed;
+    // early host failure still reaches the original activation transaction.
+    let mut child = Command::new(executable)
+        .args(args)
+        .env("WEWORK_RELEASE_SUPERVISED", id)
+        .env("WEWORK_RELEASE_ROOT", root)
+        .stdin(Stdio::null())
+        .spawn()?;
+    if let Err(error) = fs::write(root.join("active-pid"), child.id().to_string()) {
+        terminate_runtime_tree(&mut child)?;
+        return Err(error);
+    }
+    let Some(token) = read(root.join("trial")).ok() else {
+        return Ok(());
+    };
+    loop {
+        if read(root.join("healthy")).ok().as_deref() == Some(&token) {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other(format!(
+                    "The installed macOS host exited: {status}"
+                )))
+            };
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()> {
@@ -278,6 +317,76 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installed_host_gets_a_fresh_supervised_pid_and_preserves_arguments() {
+        let root = fixture();
+        let script = "printf '%s\\n%s\\n%s\\n%s' \"$$\" \"$WEWORK_RELEASE_SUPERVISED\" \"$WEWORK_RELEASE_ROOT\" \"$1\" > \"$WEWORK_RELEASE_ROOT/host-entry\"";
+        enter_installed_host(
+            &root,
+            "target",
+            Path::new("/bin/sh"),
+            &[
+                "-c".into(),
+                script.into(),
+                "host".into(),
+                "wework://task/with spaces".into(),
+            ],
+        )
+        .unwrap();
+        let values = read(root.join("host-entry")).unwrap();
+        let values: Vec<_> = values.lines().collect();
+        let pid = values[0].parse::<u32>().unwrap();
+        assert_ne!(pid, std::process::id());
+        assert_eq!(read(root.join("active-pid")).unwrap(), pid.to_string());
+        assert_eq!(values[1], "target");
+        assert_eq!(Path::new(values[2]), root);
+        assert_eq!(values[3], "wework://task/with spaces");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installed_host_failure_reaches_the_legacy_supervisor() {
+        let root = fixture();
+        let result = enter_installed_host(
+            &root,
+            "target",
+            Path::new("/bin/sh"),
+            &["-c".into(), "exit 23".into()],
+        );
+        assert!(result.unwrap_err().to_string().contains("23"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installed_host_health_releases_the_relay_without_stopping_the_host() {
+        let root = fixture();
+        enter_installed_host(
+            &root,
+            "target",
+            Path::new("/bin/sh"),
+            &[
+                "-c".into(),
+                "printf trial-token > \"$WEWORK_RELEASE_ROOT/healthy\"; exec /bin/sleep 60".into(),
+            ],
+        )
+        .unwrap();
+        let pid = read(root.join("active-pid"))
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        let alive = unsafe { kill(pid as i32, 0) };
+        let cleanup = signal(pid, 9);
+        assert_eq!(
+            alive, 0,
+            "The healthy host must outlive its bootstrap relay"
+        );
+        cleanup.unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn fixture() -> PathBuf {
         let root = env::temp_dir().join(format!(
