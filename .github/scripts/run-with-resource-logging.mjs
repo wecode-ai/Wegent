@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, statfsSync } from 'node:fs'
 import { availableParallelism, cpus, freemem, loadavg, totalmem } from 'node:os'
 import { dirname, resolve } from 'node:path'
-import { openDeletedDiskFiles } from './runner-process-disk.mjs'
+import { diskRootMetadata, openDeletedDiskFiles } from './runner-process-disk.mjs'
 
 const [command, ...args] = process.argv.slice(2)
 if (!command) throw new Error('A command is required')
@@ -40,11 +40,13 @@ function diskUsage(depth) {
   const paths = [
     'wework/test-results/desktop-e2e',
     '/tmp',
+    process.env.RUNNER_TEMP ?? '/__w/_temp',
     '.ci-artifacts',
     'backend/.venv',
     '/root/.cache',
     '/root/go',
   ].filter(existsSync)
+  const filesystems = diskRootMetadata(['.', ...paths])
   let output
   let incomplete
   try {
@@ -59,6 +61,7 @@ function diskUsage(depth) {
     incomplete = { reason: error.code ?? error.name, status: error.status, signal: error.signal }
   }
   return {
+    filesystems,
     incomplete,
     directories: output
       .trim()

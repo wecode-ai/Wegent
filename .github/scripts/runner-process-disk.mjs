@@ -10,12 +10,37 @@ function descendantOf(pid, rootPid, parents) {
   return false
 }
 
+export function diskRootMetadata(paths, io = fs) {
+  return paths.map(path => {
+    try {
+      const disk = io.statfsSync(path)
+      return {
+        path,
+        device: io.statSync(path).dev,
+        filesystemType: disk.type,
+        totalBytes: disk.blocks * disk.bsize,
+        availableBytes: disk.bavail * disk.bsize,
+      }
+    } catch (error) {
+      return { path, unavailable: error.code ?? error.name }
+    }
+  })
+}
+
 export function openDeletedDiskFiles(
   rootPid,
   filesystemDevice,
   { io = fs, now = Date.now, budgetMs = 2000 } = {}
 ) {
-  const result = { rootPid, allocatedBytes: 0, files: [], errors: [], truncated: false }
+  const result = {
+    rootPid,
+    allocatedBytes: 0,
+    files: [],
+    errors: [],
+    truncated: false,
+    mountNamespaces: {},
+    excludedDevices: {},
+  }
   if (!Number.isInteger(rootPid) || rootPid <= 0) return result
   const deadline = now() + budgetMs
   const parents = new Map()
@@ -40,6 +65,12 @@ export function openDeletedDiskFiles(
       if (!descendantOf(pid, rootPid, parents)) continue
       if (now() >= deadline) break
       try {
+        const namespace = io.readlinkSync(`/proc/${pid}/ns/mnt`)
+        result.mountNamespaces[namespace] = (result.mountNamespaces[namespace] ?? 0) + 1
+      } catch (error) {
+        failure(error)
+      }
+      try {
         for (const fd of io.readdirSync(`/proc/${pid}/fd`)) {
           if (now() >= deadline) break
           const path = `/proc/${pid}/fd/${fd}`
@@ -50,12 +81,20 @@ export function openDeletedDiskFiles(
             if (
               !stat.isFile() ||
               stat.nlink !== 0 ||
-              stat.dev !== filesystemDevice ||
               allocatedBytes < 1024 ** 2 ||
               seen.has(identity)
             )
               continue
             seen.add(identity)
+            if (stat.dev !== filesystemDevice) {
+              const excluded = (result.excludedDevices[stat.dev] ??= {
+                files: 0,
+                allocatedBytes: 0,
+              })
+              excluded.files++
+              excluded.allocatedBytes += allocatedBytes
+              continue
+            }
             result.allocatedBytes += allocatedBytes
             result.files.push({
               pid,

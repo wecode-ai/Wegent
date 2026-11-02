@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { openDeletedDiskFiles } from './runner-process-disk.mjs'
+import { diskRootMetadata, openDeletedDiskFiles } from './runner-process-disk.mjs'
 
 const script = fileURLToPath(new URL('./run-with-resource-logging.mjs', import.meta.url))
 
@@ -43,6 +43,8 @@ function processDiskFixture() {
       }
     },
     readlinkSync(path) {
+      reads.push(path)
+      if (path.endsWith('/ns/mnt')) return path.includes('/12/') ? 'mnt:[2]' : 'mnt:[1]'
       return `/tmp/owned-${path.split('/').at(-1)} (deleted)`
     },
   }
@@ -70,10 +72,29 @@ test('counts unique large unlinked files only on the owned process tree and file
   )
   assert.equal(result.truncated, false)
   assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.mountNamespaces, { 'mnt:[1]': 2, 'mnt:[2]': 1 })
+  assert.deepEqual(result.excludedDevices, { 2: { files: 1, allocatedBytes: 2 * 1024 ** 2 } })
   assert.ok(!fixture.reads.some(path => path.startsWith('/proc/20/fd')))
   assert.ok(
-    fixture.reads.every(path => /^\/proc(?:\/\d+\/(?:status|comm|fd(?:\/\d+)?))?$/.test(path))
+    fixture.reads.every(path =>
+      /^\/proc(?:\/\d+\/(?:status|comm|ns\/mnt|fd(?:\/\d+)?))?$/.test(path)
+    )
   )
+})
+
+test('distinguishes filesystem devices and preserves unavailable root metadata', () => {
+  const io = {
+    statSync: path => ({ dev: path === '.' ? 1 : 2 }),
+    statfsSync(path) {
+      if (path === '/missing') throw Object.assign(new Error('fixture'), { code: 'ENOENT' })
+      return { type: 42, blocks: 100, bavail: 20, bsize: 4096 }
+    },
+  }
+  assert.deepEqual(diskRootMetadata(['.', '/tmp', '/missing'], io), [
+    { path: '.', device: 1, filesystemType: 42, totalBytes: 409600, availableBytes: 81920 },
+    { path: '/tmp', device: 2, filesystemType: 42, totalBytes: 409600, availableBytes: 81920 },
+    { path: '/missing', unavailable: 'ENOENT' },
+  ])
 })
 
 test('keeps partial metadata after process disappearance or permission denial', () => {
