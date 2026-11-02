@@ -9,6 +9,70 @@ import {
 const content = 'The complete answer'
 const nativeId = 'wework-e2e-response-2-message'
 
+test.each(['assistant_text', 'block'] as const)(
+  'completion updates an existing %s before a late native user item',
+  type => {
+    const output =
+      type === 'assistant_text'
+        ? { id: nativeId, position: 0, type, content: 'The complete' }
+        : {
+            id: nativeId,
+            position: 0,
+            type,
+            block: {
+              id: nativeId,
+              type: 'text' as const,
+              content: 'The complete',
+              status: 'streaming' as const,
+              createdAt: 1,
+            },
+          }
+    const turn: RuntimeConversationTurn = {
+      id: 'turn-1',
+      status: 'streaming',
+      items: [
+        output,
+        {
+          id: 'native-user',
+          position: 1,
+          type: 'user_message',
+          message: {
+            id: 'client-user',
+            role: 'user',
+            content: 'Question',
+            status: 'done',
+            createdAt: '2026-11-02T23:38:33.000Z',
+          },
+        },
+      ],
+    }
+    const completed = reduceRuntimeConversationTurns([turn], {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+      itemId: nativeId,
+      content,
+    })
+    expect.soft(completed[0].items.map(item => item.id)).toEqual([nativeId, 'native-user'])
+    expect.soft(completed[0].items[0]).toMatchObject({
+      id: nativeId,
+      position: 0,
+      type: 'assistant_text',
+      content,
+    })
+    const native: RuntimeConversationTurn = {
+      ...turn,
+      status: 'done',
+      items: [{ id: nativeId, position: 0, type: 'assistant_text', content }, turn.items[1]],
+    }
+    const hydrated = mergeRuntimeConversationTurns(completed, [native])
+    expect(hydrated[0].items).toEqual(native.items)
+    expect(projectRuntimeConversationTurns(hydrated).map(message => message.content)).toEqual([
+      content,
+      'Question',
+    ])
+  }
+)
+
 test('completion replaces a partial process item by native identity before history arrives', () => {
   const streaming: RuntimeConversationTurn = {
     id: 'turn-1',
