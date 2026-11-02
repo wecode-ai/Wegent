@@ -1952,6 +1952,9 @@ classify_path() {
       ;;
     .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
+      .github/actions/setup-minio-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
