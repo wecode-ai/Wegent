@@ -1825,12 +1825,15 @@ class ExternalLoopItemProvider:
             description=str(values["description"]),
             sequence_number=int(values["sequence_number"]),
             created_by_user_id=int(values["created_by_user_id"]),
-            reporter_user_id=int(values["created_by_user_id"]),
             assignee_user_id=values["assignee_user_id"],
             status=str(values["status"]),
             priority=str(values["priority"]),
             sort_order=int(values["sort_order"]),
-            metadata_json={"tags": values["tags"], "external_shadow": True},
+            metadata_json={
+                "tags": values["tags"],
+                "external_shadow": True,
+                "reporter_user_id": int(values["created_by_user_id"]),
+            },
             version=int(values["version"]),
         )
         db.add(item)
@@ -1921,17 +1924,11 @@ class ExternalLoopItemProvider:
             if ids
             else {}
         )
-        from app.models.issue_follower import IssueFollower
-
-        reporters = (
-            dict(
-                db.query(LoopItem.id, LoopItem.reporter_user_id).filter(
-                    LoopItem.id.in_(ids)
-                )
-            )
-            if ids
-            else {}
-        )
+        reporters = {
+            item_id: values.get("reporter_user_id")
+            for item_id, values in metadata.items()
+            if isinstance(values, dict)
+        }
         reporter_ids = {
             reporters.get(str(value["id"])) or value.get("created_by_user_id")
             for value in responses
@@ -1945,16 +1942,12 @@ class ExternalLoopItemProvider:
             else {}
         )
 
-        followed_ids = (
-            {
-                issue_id
-                for (issue_id,) in db.query(IssueFollower.issue_id).filter(
-                    IssueFollower.user_id == user_id, IssueFollower.issue_id.in_(ids)
-                )
-            }
-            if ids
-            else set()
-        )
+        followed_ids = {
+            item_id
+            for item_id, values in metadata.items()
+            if isinstance(values, dict)
+            and user_id in values.get("follower_user_ids", [])
+        }
         for value in responses:
             value["is_following"] = str(value["id"]) in followed_ids
             reporter_id = reporters.get(str(value["id"])) or value.get(

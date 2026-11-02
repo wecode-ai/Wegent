@@ -26,6 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import column_property
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.sql import func
 
 from app.core.provider_credentials import mask_provider_config
@@ -100,7 +101,6 @@ class LoopNode(Base):
     sequence_number = Column(Integer, nullable=True)
     next_item_number = Column(Integer, nullable=True, default=1)
     created_by_user_id = Column(Integer, nullable=True, index=True)
-    reporter_user_id = Column(Integer, nullable=True)
     updated_by_user_id = Column(Integer, nullable=True)
     assignee_user_id = Column(Integer, nullable=True, index=True)
     user_id = Column(Integer, nullable=True, index=True)
@@ -159,7 +159,9 @@ class LoopNode(Base):
     markdown_object_key = Column(String(1024), nullable=True)
     chat_object_key = Column(String(1024), nullable=True)
     manifest_object_key = Column(String(1024), nullable=True)
-    metadata_json = Column("metadata", JSON, nullable=True)
+    metadata_json = column_property(
+        Column("metadata", JSON, nullable=True), active_history=True
+    )
     version = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
@@ -266,6 +268,19 @@ class LoopItem(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "task"}
 
     @property
+    def reporter_user_id(self) -> int | None:
+        metadata = self.metadata_json or {}
+        return metadata.get("reporter_user_id") or self.created_by_user_id
+
+    @reporter_user_id.setter
+    def reporter_user_id(self, value: int) -> None:
+        self.metadata_json = {**(self.metadata_json or {}), "reporter_user_id": value}
+
+    @property
+    def follower_user_ids(self) -> list[int]:
+        return list((self.metadata_json or {}).get("follower_user_ids", []))
+
+    @property
     def badges(self) -> list[dict[str, object]]:
         metadata = self.metadata_json
         values = metadata.get("badges") if isinstance(metadata, dict) else None
@@ -298,22 +313,38 @@ class ProjectChatAgent(LoopNode):
 
 
 @event.listens_for(LoopItem, "before_update")
-def _preserve_issue_runner_binding(
+def _preserve_independent_issue_metadata(
     _mapper: object, connection: Connection, target: LoopItem
 ) -> None:
-    """Protect server-owned affinity from concurrent content metadata rewrites."""
-    if not inspect(target).attrs.metadata_json.history.has_changes():
+    """Preserve independently written identity and subscriptions under the row lock."""
+    history = inspect(target).attrs.metadata_json.history
+    if not history.has_changes():
         return
     persisted = connection.execute(
         select(LoopItem.metadata_json).where(LoopItem.id == target.id).with_for_update()
     ).scalar_one()
+    before = (history.deleted[0] if history.deleted else None) or {}
+    after = target.metadata_json or {}
+    merged = dict(after)
+    for key in (
+        "reporter_user_id",
+        "follower_user_ids",
+        "follower_since",
+        "follow_poll",
+    ):
+        if key not in after or before.get(key) == after.get(key):
+            if key in (persisted or {}):
+                merged[key] = persisted[key]
+            else:
+                merged.pop(key, None)
     protected = {
         key: persisted[key]
         for key in ("runner_binding", "runner_binding_conflict")
         if key in (persisted or {})
     }
-    if protected:
-        target.metadata_json = {**(target.metadata_json or {}), **protected}
+    target.metadata_json = {**merged, **protected}
+    # Restoring independent keys must not hide nested content edits from the ORM.
+    flag_modified(target, "metadata_json")
 
 
 class RuntimeProfile(LoopNode):

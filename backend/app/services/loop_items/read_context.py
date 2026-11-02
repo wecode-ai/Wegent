@@ -5,11 +5,10 @@
 
 from dataclasses import dataclass
 
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
-from app.models.issue_follower import IssueFollower
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -40,7 +39,8 @@ class LoopItemReadContext:
         access: CloudProjectAccess,
     ) -> "LoopItemReadContext":
         item_ids = [item.id for item in items]
-        executions, followed_ids = _latest_executions_and_follows(db, item_ids, user_id)
+        executions = _latest_executions(db, item_ids)
+        followed_ids = {item.id for item in items if user_id in item.follower_user_ids}
         user_ids = {
             user_id
             for item in items
@@ -86,38 +86,22 @@ class LoopItemReadContext:
         )
 
 
-def _latest_executions_and_follows(
-    db: Session, item_ids: list[str], user_id: int
-) -> tuple[dict[str, LoopItemExecution], set[str]]:
+def _latest_executions(
+    db: Session, item_ids: list[str]
+) -> dict[str, LoopItemExecution]:
     if not item_ids:
-        return {}, set()
+        return {}
     latest_ids = (
         db.query(func.max(LoopItemExecution.id))
         .filter(LoopItemExecution.loop_item_id.in_(item_ids))
         .group_by(LoopItemExecution.loop_item_id)
     )
-    rows = (
-        db.query(LoopItem.id, LoopItemExecution, IssueFollower.issue_id)
-        .outerjoin(
-            LoopItemExecution,
-            and_(
-                LoopItemExecution.loop_item_id == LoopItem.id,
-                LoopItemExecution.id.in_(latest_ids),
-            ),
+    return {
+        execution.loop_item_id: execution
+        for execution in db.query(LoopItemExecution).filter(
+            LoopItemExecution.id.in_(latest_ids)
         )
-        .outerjoin(
-            IssueFollower,
-            and_(
-                IssueFollower.issue_id == LoopItem.id, IssueFollower.user_id == user_id
-            ),
-        )
-        .filter(LoopItem.id.in_(item_ids))
-        .all()
-    )
-    return (
-        {item_id: execution for item_id, execution, _ in rows if execution is not None},
-        {item_id for item_id, _, followed in rows if followed is not None},
-    )
+    }
 
 
 def _visible_ids(

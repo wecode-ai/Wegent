@@ -251,6 +251,7 @@ class LoopItemService:
             "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
             "is_following": can_view_detail and item.id in context.followed_ids,
+            "reporter_user_id": item.reporter_user_id,
             "created_by_user_name": (
                 context.users[item.created_by_user_id].user_name
                 if item.created_by_user_id in context.users
@@ -796,12 +797,12 @@ class LoopItemService:
             task_metadata, "issue", f"{values.title}\n{values.description}"
         )
         task_metadata = initialize_content_revision(task_metadata, user_id)
+        task_metadata["reporter_user_id"] = user_id
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
             sequence_number=sequence,
             created_by_user_id=user_id,
-            reporter_user_id=user_id,
             metadata_json=task_metadata or None,
             **payload,
         )
@@ -1596,6 +1597,7 @@ class LoopItemService:
                 "runner_selection",
                 "assignee_group_id",
                 "security_level",
+                "reporter_user_id",
                 "position",
             },
             exclude_unset=True,
@@ -1678,7 +1680,8 @@ class LoopItemService:
                 "start_at cannot be after due_at",
             )
         if (
-            "tags" in values.model_fields_set
+            "reporter_user_id" in values.model_fields_set
+            or "tags" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
             or "security_level" in values.model_fields_set
@@ -1686,6 +1689,8 @@ class LoopItemService:
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
+            if "reporter_user_id" in values.model_fields_set:
+                metadata["reporter_user_id"] = values.reporter_user_id
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
             if "security_level" in values.model_fields_set:

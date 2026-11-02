@@ -22,7 +22,6 @@ from app.models.delivery import (
     LoopItemComment,
     ProjectChatAgent,
 )
-from app.models.issue_follower import IssueFollower
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -465,15 +464,17 @@ def test_follow_projection_does_not_change_issue_assignment(
         "is_following"
     ]
 
-    follower = IssueFollower(issue_id=item.id, user_id=test_user.id)
-    test_db.add(follower)
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
     test_db.commit()
     assert loop_item_service.response_values(test_db, item, test_user.id)[
         "is_following"
     ]
     assert item.assignee_user_id is None
 
-    test_db.delete(follower)
+    item.metadata_json = {**(item.metadata_json or {}), "follower_user_ids": []}
     test_db.commit()
     assert not loop_item_service.response_values(test_db, item, test_user.id)[
         "is_following"
@@ -492,8 +493,10 @@ def test_followed_issue_filter_is_per_user_and_reflects_unfollow(
     loop_item_service.create(
         test_db, project.id, test_user.id, LoopItemCreate(title="Not followed")
     )
-    follower = IssueFollower(issue_id=first.id, user_id=test_user.id)
-    test_db.add(follower)
+    first.metadata_json = {
+        **(first.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
     test_db.commit()
 
     _, mine = project_board_snapshot_service.list_item_views(
@@ -504,7 +507,7 @@ def test_followed_issue_filter_is_per_user_and_reflects_unfollow(
     )
     assert [item.id for item in mine] == [first.id]
     assert theirs == []
-    test_db.delete(follower)
+    first.metadata_json = {**(first.metadata_json or {}), "follower_user_ids": []}
     test_db.commit()
     assert (
         project_board_snapshot_service.list_item_views(
@@ -521,8 +524,10 @@ def test_follower_receives_comment_status_and_assignment_until_unfollowed(
     item = loop_item_service.create(
         test_db, project.id, test_user.id, LoopItemCreate(title="Followed issue")
     )
-    follower = IssueFollower(issue_id=item.id, user_id=test_user.id)
-    test_db.add(follower)
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
     test_db.commit()
 
     loop_item_service.add_comment(test_db, item.id, test_user.id, "New information")
@@ -552,7 +557,7 @@ def test_follower_receives_comment_status_and_assignment_until_unfollowed(
         notification.payload["itemId"] == item.id for notification in notifications
     )
 
-    test_db.delete(follower)
+    item.metadata_json = {**(item.metadata_json or {}), "follower_user_ids": []}
     test_db.commit()
     loop_item_service.add_comment(test_db, item.id, test_user.id, "No longer followed")
     assert (
@@ -571,7 +576,10 @@ def test_follower_loses_notifications_when_issue_access_is_revoked(
     item = loop_item_service.create(
         test_db, project.id, test_user.id, LoopItemCreate(title="Private issue")
     )
-    test_db.add(IssueFollower(issue_id=item.id, user_id=viewer.id))
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [viewer.id],
+    }
     test_db.commit()
 
     loop_item_service.add_comment(test_db, item.id, test_user.id, "Visible")
@@ -610,7 +618,10 @@ def test_reporter_and_following_do_not_grant_related_issue_access(
         test_user.id,
         LoopItemUpdate(version=item.version, reporter_user_id=member.id),
     )
-    test_db.add(IssueFollower(issue_id=item.id, user_id=member.id))
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [member.id],
+    }
     test_db.commit()
     item = loop_item_service.update(
         test_db,

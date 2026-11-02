@@ -154,20 +154,22 @@ pub(crate) async fn followers_for_event_on(
     let authorized_readers = external.as_ref().map(|value| value.authorized_readers);
     let external = external.map(|value| value.event);
     #[derive(FromMysqlRow)]
-    struct Follower {
-        user_id: i32,
-        created_at: chrono::NaiveDateTime,
-    }
-    #[derive(FromMysqlRow)]
     struct Visible {
         id: String,
     }
-    let followers: Vec<Follower> = tx
-        .fetch_all(
-            "SELECT user_id, created_at FROM issue_followers WHERE issue_id = ? FOR UPDATE",
+    let current: Option<Node> = tx
+        .fetch_optional(
+            format!(
+                "SELECT {} FROM loop_items WHERE id=? AND resource_type='task' AND {} FOR UPDATE",
+                super::store::COLUMNS,
+                super::store::LIVE
+            ),
             (issue.id.as_str(),),
         )
         .await?;
+    let Some(current) = current else {
+        return Ok(Vec::new());
+    };
     let project_id: i64 = project
         .id
         .parse()
@@ -175,19 +177,13 @@ pub(crate) async fn followers_for_event_on(
             reason: "Invalid project identity".into(),
         })?;
     let mut pending = Vec::new();
-    for follower in followers {
-        let receipt = external.map(|event| {
-            receipt_id(
-                &issue.id,
-                follower.user_id,
-                follower.created_at,
-                &event.identity,
-            )
-        });
+    for (user_id, created_at) in current.followers() {
+        let receipt =
+            external.map(|event| receipt_id(&issue.id, user_id, created_at, &event.identity));
         if let Some(external) = external {
             if external
                 .occurred_at
-                .is_some_and(|at| at + 999 < follower.created_at.and_utc().timestamp_millis())
+                .is_some_and(|at| at + 999 < created_at.and_utc().timestamp_millis())
             {
                 continue;
             }
@@ -203,7 +199,7 @@ pub(crate) async fn followers_for_event_on(
         }
         let access: Option<MysqlRow> = tx
             .fetch_optional(
-                crate::cloud_projects::project_access_point_statement(follower.user_id, project_id),
+                crate::cloud_projects::project_access_point_statement(user_id, project_id),
                 (),
             )
             .await?;
@@ -216,7 +212,7 @@ pub(crate) async fn followers_for_event_on(
             project.metadata.0["task_provider"].as_str(),
             Some("github" | "gitlab")
         ) {
-            if !authorized_readers.is_some_and(|readers| readers.contains(&follower.user_id)) {
+            if !authorized_readers.is_some_and(|readers| readers.contains(&user_id)) {
                 continue;
             }
         } else if priority > 1 {
@@ -226,7 +222,7 @@ pub(crate) async fn followers_for_event_on(
                 "open"
             };
             let filter = crate::loop_tasks::loop_repository::visible_item_filter_sql(
-                follower.user_id,
+                user_id,
                 default_security,
             );
             let visible: Option<Visible> = tx.fetch_optional(
@@ -256,7 +252,7 @@ pub(crate) async fn followers_for_event_on(
             create_on(
                 tx,
                 state,
-                follower.user_id.into(),
+                user_id.into(),
                 actor,
                 "issue_follow",
                 title,
@@ -269,7 +265,7 @@ pub(crate) async fn followers_for_event_on(
             .await?,
         );
         if let Some(receipt) = receipt {
-            super::store::insert(tx, "issue_follow_event", json!({"id":receipt,"cloud_project_id":project.id,"loop_item_id":issue.id,"user_id":follower.user_id})).await?;
+            super::store::insert(tx, "issue_follow_event", json!({"id":receipt,"cloud_project_id":project.id,"loop_item_id":issue.id,"user_id":user_id})).await?;
         }
     }
     Ok(pending)
@@ -506,7 +502,7 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
         let subscribed: Result<i64, _> = state
             .mysql
             .fetch_one(
-                "SELECT EXISTS(SELECT 1 FROM issue_followers WHERE issue_id=? AND user_id=?)",
+                "SELECT EXISTS(SELECT 1 FROM loop_items WHERE id=? AND resource_type='task' AND JSON_CONTAINS(COALESCE(JSON_EXTRACT(metadata,'$.follower_user_ids'),JSON_ARRAY()),CAST(? AS JSON)))",
                 (issue, user_id),
             )
             .await;

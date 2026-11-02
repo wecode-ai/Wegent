@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{Result, anyhow};
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
-use chrono::{SubsecRound, Utc};
+use chrono::Utc;
 use serde_json::json;
 use std::collections::HashSet;
 
@@ -85,15 +85,25 @@ pub(crate) async fn set_follow(
         if current_project.metadata.0["task_provider"] != project.metadata.0["task_provider"] || current_project.metadata.0["provider_config"] != project.metadata.0["provider_config"] {
             return Ok(Some(false));
         }
-        if !following {
-            tx.execute("DELETE FROM issue_followers WHERE issue_id=? AND user_id=?",(issue_id,user)).await?;
-            return Ok(Some(true))
+        let mut metadata = current.meta();
+        let mut followers = metadata["follower_user_ids"].as_array().cloned().unwrap_or_default();
+        if following && followers.iter().any(|value| value.as_i64() == Some(i64::from(user))) {
+            return Ok(Some(true));
         }
-        let existing: Option<(i64,)> = tx.fetch_optional("SELECT 1 FROM issue_followers WHERE issue_id=? AND user_id=?",(issue_id,user)).await?;
-        if existing.is_some() {return Ok(Some(true))}
-        // The receipt identity must use exactly the precision persisted by MySQL.
-        let since = Utc::now().naive_utc().trunc_subsecs(6);
-        tx.execute("INSERT INTO issue_followers(issue_id,user_id,created_at) VALUES (?,?,?)",(issue_id,user,since)).await?;
+        followers.retain(|value| value.as_i64() != Some(i64::from(user)));
+        if !metadata["follower_since"].is_object() {
+            metadata["follower_since"] = json!({});
+        }
+        if !following {
+            metadata["follower_since"].as_object_mut().unwrap().remove(&user.to_string());
+        } else {
+            followers.push(json!(user));
+            metadata["follower_since"][user.to_string()] = json!(Utc::now().timestamp_millis());
+        }
+        metadata["follower_user_ids"] = json!(followers);
+        tx.execute("UPDATE loop_items SET metadata=? WHERE id=?",(Json(metadata.clone()),issue_id)).await?;
+        if !following { return Ok(Some(true)); }
+        let since = chrono::DateTime::from_timestamp_millis(metadata["follower_since"][user.to_string()].as_i64().unwrap()).unwrap().naive_utc();
         for event in &baseline {
             store::insert(tx,"issue_follow_event",json!({"id":notifications::receipt_id(issue_id,user,since,&event.identity),"cloud_project_id":project.id,"loop_item_id":issue_id,"user_id":user})).await?;
         }
@@ -121,7 +131,7 @@ fn subscription_error(error: impl std::fmt::Display) -> FastApiError {
 pub(super) async fn check(state: &AppState) -> Result<usize> {
     let now = Utc::now().timestamp_millis();
     let candidates: Vec<Candidate> = state.mysql.fetch_all(
-        "SELECT i.id FROM loop_items i JOIN issue_followers f ON f.issue_id=i.id JOIN loop_items p ON p.id=i.cloud_project_id AND p.resource_type='project' WHERE i.resource_type='task' AND (i.deleted_at IS NULL OR i.deleted_at<='1970-01-02') AND (p.deleted_at IS NULL OR p.deleted_at<='1970-01-02') AND JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.task_provider')) IN ('github','gitlab') AND COALESCE(JSON_EXTRACT(i.metadata,'$.follow_poll.next_at'),0)<=? GROUP BY i.id ORDER BY COALESCE(JSON_EXTRACT(i.metadata,'$.follow_poll.next_at'),0),i.id LIMIT 100", (now,)
+        "SELECT i.id FROM loop_items i JOIN loop_items p ON p.id=i.cloud_project_id AND p.resource_type='project' WHERE i.resource_type='task' AND JSON_LENGTH(JSON_EXTRACT(i.metadata,'$.follower_user_ids'))>0 AND (i.deleted_at IS NULL OR i.deleted_at<='1970-01-02') AND (p.deleted_at IS NULL OR p.deleted_at<='1970-01-02') AND JSON_UNQUOTE(JSON_EXTRACT(p.metadata,'$.task_provider')) IN ('github','gitlab') AND COALESCE(JSON_EXTRACT(i.metadata,'$.follow_poll.next_at'),0)<=? GROUP BY i.id ORDER BY COALESCE(JSON_EXTRACT(i.metadata,'$.follow_poll.next_at'),0),i.id LIMIT 100", (now,)
     ).await?;
     let mut count = 0;
     for candidate in candidates {
@@ -139,15 +149,11 @@ pub(super) async fn check(state: &AppState) -> Result<usize> {
 // Provider checks may use the application pool and network. Complete them before
 // locking Issue rows; project access is checked again inside the write transaction.
 async fn external_readers(state: &AppState, issue_id: &str) -> Result<HashSet<i32>> {
-    let followers: Vec<(i32,)> = state
-        .mysql
-        .fetch_all(
-            "SELECT user_id FROM issue_followers WHERE issue_id=?",
-            (issue_id,),
-        )
-        .await?;
+    let Some(issue) = store::get(&state.mysql, "task", issue_id).await? else {
+        return Ok(HashSet::new());
+    };
     let mut readers = HashSet::new();
-    for (user_id,) in followers {
+    for (user_id, _) in issue.followers() {
         match crate::loop_tasks::assignments::provider_get(state, issue_id, user_id).await {
             Ok(()) => {
                 readers.insert(user_id);
@@ -279,13 +285,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subscription_receipts_keep_the_persisted_mysql_precision() {
-        let since = Utc::now().naive_utc().trunc_subsecs(6);
-        let persisted = chrono::NaiveDateTime::parse_from_str(
-            &since.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
-            "%Y-%m-%d %H:%M:%S%.f",
-        )
-        .unwrap();
+    fn subscription_receipts_keep_the_persisted_json_precision() {
+        let milliseconds = Utc::now().timestamp_millis();
+        let since = chrono::DateTime::from_timestamp_millis(milliseconds)
+            .unwrap()
+            .naive_utc();
+        let encoded = serde_json::to_string(&json!({"17": milliseconds})).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let persisted = chrono::DateTime::from_timestamp_millis(metadata["17"].as_i64().unwrap())
+            .unwrap()
+            .naive_utc();
         assert_eq!(
             notifications::receipt_id("issue", 17, since, "event"),
             notifications::receipt_id("issue", 17, persisted, "event")

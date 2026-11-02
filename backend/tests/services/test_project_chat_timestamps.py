@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.db import timezone as database_timezone
 from app.models.delivery import LoopItem
-from app.models.issue_follower import IssueFollower
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
@@ -186,7 +185,10 @@ def test_followers_are_notified_when_runtime_starts_and_finishes(
     )
     test_db.add(task)
     test_db.flush()
-    test_db.add(IssueFollower(issue_id=task.id, user_id=test_user.id))
+    task.metadata_json = {
+        **(task.metadata_json or {}),
+        "follower_user_ids": [test_user.id],
+    }
     test_db.commit()
     with patch("app.core.async_utils.schedule_async_task"):
         project_chat_service.start_agent_response(

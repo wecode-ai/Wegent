@@ -282,12 +282,11 @@ pub(crate) async fn ensure_shadow(
                     "status",
                     "priority",
                     "created_by_user_id",
-                    "reporter_user_id",
                     "metadata",
                     "version",
                 ],
                 &[
-                    "?", "'task'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?",
+                    "?", "'task'", "?", "?", "?", "?", "?", "?", "?", "?", "?",
                 ],
                 &required,
             );
@@ -302,8 +301,7 @@ pub(crate) async fn ensure_shadow(
                     issue_status,
                     priority,
                     creator,
-                    creator,
-                    brz_mysql::Json(serde_json::json!({"external_shadow": true, "tags": []})),
+                    brz_mysql::Json(serde_json::json!({"external_shadow": true, "tags": [], "reporter_user_id": creator})),
                     version,
                 ),
             )

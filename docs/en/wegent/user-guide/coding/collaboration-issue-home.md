@@ -102,3 +102,5 @@ Each lane on a native project board has a **Sort by** control in its header. Lan
 The collaboration sidebar no longer includes My Work or Run Center. Their former URLs return to collaboration home. Open Issues that need action or review from Inbox or the project board.
 
 Web regression: `pnpm --dir frontend exec playwright test collaboration/collaboration-project-views.spec.ts --project=chromium`. The existing Chromium CI suite includes this file. It uses real workspaces, projects, and unread Issues created by another member, then archives its fixtures.
+
+Reporter identity and subscriptions use the existing Issue metadata; no database tables, columns or indexes are added. Legacy Issues display their creator as the default reporter. Changing the reporter leaves the creator, assignee and subscriptions unchanged.

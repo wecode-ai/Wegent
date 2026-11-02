@@ -9,7 +9,6 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.models.issue_follower import IssueFollower
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -49,8 +48,10 @@ async def test_follow_delivery_rechecks_access_and_subscription(
     project = _make_project(test_db, test_user)
     follower = _make_member(test_db, project, "delivery-follower", BaseRole.Viewer)
     item = _make_item(test_db, project, test_user)
-    relation = IssueFollower(issue_id=item.id, user_id=follower.id)
-    test_db.add(relation)
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "follower_user_ids": [follower.id],
+    }
     test_db.commit()
     row = create_notification(
         test_db,
@@ -65,7 +66,7 @@ async def test_follow_delivery_rechecks_access_and_subscription(
     )
     test_db.commit()
     if change == "unfollow":
-        test_db.delete(relation)
+        item.metadata_json = {**(item.metadata_json or {}), "follower_user_ids": []}
     elif change == "lose_access":
         item.metadata_json = {**(item.metadata_json or {}), "security_level": "related"}
     elif change == "deleted":

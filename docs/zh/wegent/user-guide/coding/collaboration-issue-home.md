@@ -102,3 +102,5 @@ sidebar_position: 12
 协作侧栏已移除“我的工作”和“运行中心”；旧页面地址返回协作首页。需要处理或验收的 Issue 可以从收件箱或项目看板打开。
 
 网页回归：`pnpm --dir frontend exec playwright test collaboration/collaboration-project-views.spec.ts --project=chromium`。该文件由现有网页 Chromium CI 套件执行，使用真实空间、项目和不同成员创建的未读 Issue，结束后归档夹具。
+
+报告人和关注关系保存在 Issue 既有扩展字段中，不新增数据库表、列或索引。历史 Issue 未指定报告人时显示创建人；修改报告人不会改变创建人、负责人或关注关系。

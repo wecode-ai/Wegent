@@ -4,7 +4,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, loop_datetime_value_is_unset
-from app.models.issue_follower import IssueFollower
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.access import can_view_item
 from app.services.notification_copy import comment_preview
@@ -26,10 +25,12 @@ def issue_assignee(item: LoopItem) -> tuple[object, ...]:
 
 def can_receive_follow_notification(db: Session, item_id: str, user_id: int) -> bool:
     """Recheck subscription and visibility before an asynchronous delivery."""
-    if db.get(IssueFollower, (item_id, user_id)) is None:
-        return False
     item = db.get(LoopItem, item_id)
-    if item is None or not loop_datetime_value_is_unset(item.deleted_at):
+    if (
+        item is None
+        or user_id not in item.follower_user_ids
+        or not loop_datetime_value_is_unset(item.deleted_at)
+    ):
         return False
     project = db.get(CloudProject, item.cloud_project_id)
     if project is None:
@@ -60,15 +61,14 @@ def notify_issue_followers(
     comment_id: str | None = None,
     content: str = "",
 ) -> None:
-    # Match subscription writes: lock the Issue before its follower rows.
-    # Comment transactions may update Issue metadata after creating notifications.
-    db.query(LoopItem.id).filter(LoopItem.id == item.id).with_for_update().first()
-    followers = (
-        db.query(IssueFollower.user_id)
-        .filter(IssueFollower.issue_id == item.id)
+    # Read current subscriptions under the same Issue lock used by follow writes.
+    metadata = (
+        db.query(LoopItem.metadata_json)
+        .filter(LoopItem.id == item.id)
         .with_for_update()
-    )
-    for (recipient_id,) in followers:
+        .scalar()
+    ) or {}
+    for recipient_id in metadata.get("follower_user_ids", []):
         try:
             if project.task_provider in {"github", "gitlab"}:
                 from app.services.loop_items.external_provider import (
