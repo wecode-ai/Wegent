@@ -143,7 +143,7 @@ export function createDesktopScenario({
     },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       const project = (await rpc(control, 'projects.list', {})).find(row => row.name === PROJECT)
@@ -196,7 +196,7 @@ export function createDesktopScenario({
         groupId: group.id,
       }
       await reloadMainWindow(control, 'Load the Native-seeded project and Agent configuration')
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
@@ -379,7 +379,7 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="telemetry-consent-decline"]')
       await control.command('click', '[data-testid="telemetry-consent-decline"]')
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`

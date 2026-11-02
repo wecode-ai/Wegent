@@ -16,6 +16,8 @@ import {
 const USER = 9001
 const ROLE = 'router-owner'
 const MARKER = 'COORDINATION_RUNTIME_NATIVE_WORK'
+// The status panel polls every 15 seconds; allow one poll plus UI settlement.
+const PROCESSING_NOTICE_TIMEOUT_MS = 20_000
 
 /** Real Core DSH -> Executor -> Codex. Only the model's HTTP responses are scripted. */
 export function createDesktopScenario({
@@ -185,7 +187,9 @@ export function createDesktopScenario({
         )
         assert.equal(pending.running, false)
         assert.equal(assessments, 0)
-        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]')
+        await control.command('waitFor', '[data-testid="stand-in-processing-notice"]', {
+          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
+        })
         await captureScreenshot(control, 'router-03-feedback-silent-intake.png')
         await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
         const failed = await until(
@@ -203,7 +207,9 @@ export function createDesktopScenario({
           userId: USER,
         })
         assert.equal(failedReceipt.state, 'failed')
-        await control.command('waitFor', '[data-testid="stand-in-processing-check"]')
+        await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {
+          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
+        })
         await control.command('waitFor', '[data-testid="stand-in-processing-open-task"]')
         await captureScreenshot(control, 'router-04-assessment-failure-recovery-entry.png')
         failAssessment = false
@@ -259,6 +265,7 @@ export function createDesktopScenario({
         )
         await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {
           visible: false,
+          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
         })
         await captureScreenshot(control, 'router-05-explicit-recovery-completed.png')
         assert.equal((await rpc(control, 'todos.bindings', { task_id: issue.id })).length, 1)
