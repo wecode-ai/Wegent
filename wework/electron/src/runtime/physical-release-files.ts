@@ -14,10 +14,18 @@ const SCRIPT = `
   const tar = operation === 'extract' ? require(tarModule) : null
   process.noAsar = true
   const fs = require('node:fs/promises')
-  if (operation === 'copy') await fs.cp(source, destination, {
+  if (operation === 'copy' && process.platform === 'darwin') {
+    const metadata = await fs.lstat(source)
+    const directory = metadata.isDirectory()
+    if (directory) await fs.mkdir(destination, {recursive:true,mode:metadata.mode & 0o777})
+    await require('node:util').promisify(require('node:child_process').execFile)(
+      '/bin/cp', ['-cRPp', directory ? source + '/.' : source, destination],
+      {timeout:290_000,maxBuffer:1024*1024}
+    )
+  }
+  else if (operation === 'copy') await fs.cp(source, destination, {
     recursive:true,
     verbatimSymlinks:true,
-    mode:process.platform === 'darwin' ? require('node:fs').constants.COPYFILE_FICLONE : 0,
   })
   else if (operation === 'remove') await fs.rm(source, {recursive:true,force:true})
   else if (operation === 'extract') await tar.extract({file:source,cwd:destination,strict:true})
