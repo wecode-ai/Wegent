@@ -48,6 +48,7 @@ export async function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
+  const startedAt = performance.now()
   const response = await fetch('/wework/electron-host/v1/invoke', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -57,6 +58,17 @@ export async function invokeDesktopHost<Result>(
     ok?: boolean
     result?: Result
     error?: DesktopHostErrorPayload
+  }
+  if (
+    (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
+    performance.now() - startedAt >= 1_000
+  ) {
+    console.warn('[Wework] Slow Electron host request', {
+      capability,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      status: response.status,
+      ok: response.ok && body.ok === true,
+    })
   }
   if (!response.ok || body.ok !== true) {
     throw new DesktopHostError(

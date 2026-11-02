@@ -7,9 +7,46 @@ describe('desktop host events', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
+  })
+
+  test.each([
+    { e2e: 'true', elapsedMs: 1_500, logged: true },
+    { e2e: 'true', elapsedMs: 500, logged: false },
+    { e2e: 'false', elapsedMs: 1_500, logged: false },
+  ])('reports slow host metadata only in E2E: %j', async ({ e2e, elapsedMs, logged }) => {
+    vi.stubEnv('MODE', 'production')
+    vi.stubEnv('VITE_WEWORK_E2E', e2e)
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => {
+        clock.mockReturnValue(elapsedMs)
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, result: { token: 'private-result' } }),
+        }
+      })
+    )
+    const { invokeDesktopHost } = await import('./desktopHost')
+    await expect(invokeDesktopHost('secureStorage.get', { key: 'private-key' })).resolves.toEqual({
+      token: 'private-result',
+    })
+    if (logged) {
+      expect(warn).toHaveBeenCalledExactlyOnceWith('[Wework] Slow Electron host request', {
+        capability: 'secureStorage.get',
+        elapsedMs,
+        status: 200,
+        ok: true,
+      })
+    } else {
+      expect(warn).not.toHaveBeenCalled()
+    }
   })
 
   test('E2E can delay only delivery of a completed real host response', async () => {
