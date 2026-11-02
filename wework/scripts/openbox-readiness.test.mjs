@@ -62,11 +62,9 @@ fi
     )
     // Keep the mocked delay in-process instead of spawning it for every probe.
     const fixtureLauncher = join(directory, 'launch')
-    writeFileSync(
-      fixtureLauncher,
-      '#!/bin/sh\nsleep() { :; }\n. "$OPENBOX_TEST_LAUNCHER"\n',
-      { mode: 0o755 }
-    )
+    writeFileSync(fixtureLauncher, '#!/bin/sh\nsleep() { :; }\n. "$OPENBOX_TEST_LAUNCHER"\n', {
+      mode: 0o755,
+    })
     const result = spawnSync(
       'sh',
       [
