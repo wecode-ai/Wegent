@@ -815,7 +815,7 @@ export async function verifyPluginDetailResilience({
     report.failures = failures.map(error => String(error?.message ?? error))
     report.passed =
       report.preconditions.completed &&
-      report.phases.length === 7 &&
+      report.phases.length === 8 &&
       report.blocked.length === 0 &&
       failures.length === 0
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
