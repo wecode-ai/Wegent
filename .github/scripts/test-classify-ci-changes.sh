@@ -130,11 +130,13 @@ assert_checkpoint_runtime_failure_rejected() {
 
 assert_checkpoint_runtime_failure_rejected
 
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-full' \
-  "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-full\n' >&2
+if ! grep -Fq 'node wework/scripts/verify-release-upgrades.mjs' "$wework_app_workflow" ||
+  ! grep -Fq '${UPGRADE_CHECKPOINT_GROUP},app-update-full' \
+    "$repo_root/wework/scripts/verify-release-upgrades.mjs"; then
+  printf 'The formal release verifier must invoke app-update-full with the upgrade group\n' >&2
   exit 1
 fi
+
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
   ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then
