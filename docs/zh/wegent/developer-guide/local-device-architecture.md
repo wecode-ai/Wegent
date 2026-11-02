@@ -36,17 +36,21 @@ flowchart LR
 
 ### 设备产物声明与下载
 
-关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+Claude Code 和 Codex 可以通过 Wegent executor 声明最终交付文件：
 
 ```bash
 $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 ```
 
-声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+声明先校验文件真实路径位于当前任务工作区内，并计算文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256。
+
+本地 Runtime 会话没有 Backend Task。Executor 不为它设置 `WEGENT_BACKEND_TASK_ID`；声明直接返回元数据和 `local_path`，不请求 Backend，也不需要云端凭据。最终回复使用指向 `local_path` 的 Markdown 文件链接，复用桌面的文件卡片和本地预览；链接随会话记录保留，文件仍在原工作区。
+
+关联 Backend Task 时，`WEGENT_BACKEND_TASK_ID` 必须是正整数，用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。声明仅发送上述元数据，不上传文件内容。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。非法 Backend ID 会在发出请求前明确报错，不能将 `runtime-*` 会话 ID 传给云端 Task 接口。
 
 Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
 
-新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
+新版默认 `Ghost/default/wegent-wework` 要求关联 Backend Task 的交付先成功声明，再引导用户使用对话文件卡片；本地 Runtime 会话使用执行时注入的本地声明规则。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
 
 Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
 

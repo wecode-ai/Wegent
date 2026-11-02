@@ -1,3 +1,4 @@
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
@@ -71,10 +72,7 @@ export function WorkspaceFileRootSelector({
   )
   if (unique.length < 2) return null
   const label = (value: WorkspaceTarget) =>
-    value.path
-      .replace(/[\\/]+$/, '')
-      .split(/[\\/]/)
-      .at(-1) || value.path
+    normalizeWorkspaceSeparators(value.path).replace(/\/+$/, '').split('/').at(-1) || value.path
   return (
     <ActionMenu
       testId="workspace-file-root-selector"
@@ -126,7 +124,7 @@ export function WorkspaceFileToolbar({
     local && !contextIsDirectory && hostedFileTarget?.path === contextPath
       ? hostedFileTarget.target
       : null
-  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedPath = normalizeWorkspaceSeparators(path)
   const separator = normalizedPath.lastIndexOf('/')
   const name = normalizedPath.slice(separator + 1) || path
 

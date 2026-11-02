@@ -228,8 +228,7 @@ export class AppUpdateService {
       await verifyReleaseSignature(this.options.executable, release.executable)
       this.progress = { ...this.progress, phase: 'runtime' }
       await this.prepareHostEnvironment(release)
-      await store.read(id)
-      this.prepared = release
+      this.prepared = await store.read(id)
       this.progress = { ...this.progress, phase: 'ready' }
       this.options.log?.({
         event: 'release-prepared',

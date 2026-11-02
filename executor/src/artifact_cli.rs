@@ -19,7 +19,7 @@ const RESULT_MARKER: &str = "[WEGENT_ARTIFACT]";
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The command sends metadata only; the file remains in the Task workspace on the execution device. Mention the declared filename in the final response so the user can use the artifact card in the conversation.";
+pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The file remains in the Task workspace on the execution device. For local conversations the command validates the file and returns local_path without contacting Backend; include a Markdown file link to that local_path in the final response so the existing file card can open it. For Backend Tasks, declaration registers an artifact. The command sends metadata only; mention the declared filename in the final response so the user can use its artifact card.";
 
 pub fn is_artifact_command() -> bool {
     env::args().nth(1).as_deref() == Some(COMMAND_PREFIX)
@@ -37,7 +37,6 @@ pub async fn run() -> Result<(), String> {
 }
 
 async fn declare(args: &[String]) -> Result<(), String> {
-    let task_id = required_env("WEGENT_BACKEND_TASK_ID")?;
     let workspace = task_workspace(&required_env("WEGENT_TASK_ID")?)?;
     let path = required_path_option(args, "--path")?;
     let artifact = artifact_metadata(&workspace, &path)?;
@@ -51,6 +50,44 @@ async fn declare(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| infer_mime_type(&artifact.relative_path).to_owned());
+    let payload = declaration_payload(&artifact, &name, &mime_type);
+    let result = match env::var("WEGENT_BACKEND_TASK_ID") {
+        Ok(task_id) => {
+            let task_id = task_id.trim();
+            if !task_id.parse::<i64>().is_ok_and(|id| id > 0) {
+                return Err("WEGENT_BACKEND_TASK_ID must be a positive integer".to_owned());
+            }
+            declare_backend(task_id, &payload).await?
+        }
+        Err(env::VarError::NotPresent) => {
+            let mut result = payload;
+            result["local_path"] = json!(local_reference_path(
+                &artifact.workspace_root,
+                &artifact.relative_path,
+            ));
+            result
+        }
+        Err(error) => return Err(format!("read WEGENT_BACKEND_TASK_ID failed: {error}")),
+    };
+    println!(
+        "{RESULT_MARKER}{}",
+        serde_json::to_string(&result)
+            .map_err(|error| format!("serialize artifact result failed: {error}"))?
+    );
+    Ok(())
+}
+
+fn local_reference_path(workspace_root: &str, relative_path: &str) -> String {
+    let path = Path::new(workspace_root).join(relative_path);
+    let readable = crate::path_compat::strip_windows_verbatim_prefix(&path);
+    if cfg!(windows) || readable != path {
+        readable.to_string_lossy().replace('\\', "/")
+    } else {
+        readable.to_string_lossy().into_owned()
+    }
+}
+
+async fn declare_backend(task_id: &str, payload: &Value) -> Result<Value, String> {
     let backend = backend_url()?;
     let token = auth_token()?;
     let response = http_client()?
@@ -58,7 +95,7 @@ async fn declare(args: &[String]) -> Result<(), String> {
             "{backend}/api/tasks/{task_id}/remote-workspace/artifacts"
         ))
         .bearer_auth(token)
-        .json(&declaration_payload(&artifact, &name, &mime_type))
+        .json(payload)
         .send()
         .await
         .map_err(|error| format!("declare artifact failed: {error}"))?;
@@ -68,14 +105,8 @@ async fn declare(args: &[String]) -> Result<(), String> {
         .await
         .map_err(|error| format!("read artifact declaration response failed: {error}"))?;
     ensure_success(status, &body)?;
-    let result: Value = serde_json::from_str(&body)
-        .map_err(|error| format!("invalid artifact declaration response: {error}"))?;
-    println!(
-        "{RESULT_MARKER}{}",
-        serde_json::to_string(&result)
-            .map_err(|error| format!("serialize artifact result failed: {error}"))?
-    );
-    Ok(())
+    serde_json::from_str(&body)
+        .map_err(|error| format!("invalid artifact declaration response: {error}"))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -128,7 +159,9 @@ fn artifact_metadata(workspace: &Path, requested_path: &Path) -> Result<Artifact
         .strip_prefix(&canonical_workspace)
         .map_err(|_| "artifact file is outside the Task workspace".to_owned())?
         .to_string_lossy()
-        .replace('\\', "/");
+        .into_owned();
+    #[cfg(windows)]
+    let relative_path = relative_path.replace('\\', "/");
     let name = canonical_file
         .file_name()
         .and_then(|value| value.to_str())
@@ -267,6 +300,35 @@ fn ensure_success(status: StatusCode, body: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn local_references_use_markdown_safe_windows_drive_and_unc_paths() {
+        assert_eq!(
+            local_reference_path(r"\\?\C:\Users\test\.wegent\workspace", "local report.md"),
+            "C:/Users/test/.wegent/workspace/local report.md",
+        );
+        assert_eq!(
+            local_reference_path(r"\\?\UNC\server\share\workspace", "local report.md"),
+            "//server/share/workspace/local report.md",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_references_preserve_posix_backslashes() {
+        assert_eq!(
+            local_reference_path(r"/tmp/back\slash", "local report.md"),
+            r"/tmp/back\slash/local report.md",
+        );
+
+        let workspace = tempdir().unwrap();
+        let file = workspace.path().join(r"report\2026.md");
+        fs::write(&file, b"original POSIX filename").unwrap();
+        let metadata = artifact_metadata(workspace.path(), &file).unwrap();
+        assert_eq!(metadata.relative_path, r"report\2026.md");
+        let reference = local_reference_path(&metadata.workspace_root, &metadata.relative_path);
+        assert_eq!(fs::read(reference).unwrap(), b"original POSIX filename");
+    }
 
     #[test]
     fn metadata_keeps_file_inside_workspace_and_hashes_without_uploading() {

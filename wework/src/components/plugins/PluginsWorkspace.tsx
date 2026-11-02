@@ -1945,6 +1945,10 @@ export function PluginsWorkspace({
       return
     }
     if (isReconcilingPlugins) return
+    const attemptScope = `${marketplaceCacheKeyValue}:${currentDeviceId}:`
+    for (const key of autoUpdateAttemptKeysRef.current) {
+      if (key.startsWith(attemptScope)) autoUpdateAttemptKeysRef.current.delete(key)
+    }
     openAiCatalog.refresh()
     manualReconciliationTickRef.current = {
       tick: marketplaceRefreshTick + 1,
@@ -4325,6 +4329,7 @@ export function PluginsWorkspace({
     pluginMarketplaceState.isLoading,
     pluginMarketplaceState.items,
     pluginMutationInFlight,
+    deviceSyncRevision,
     t,
   ])
 

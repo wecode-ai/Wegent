@@ -14,6 +14,8 @@ import identityModule from './build-identity.cjs'
 import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import { resolveDesktopPackageTargets } from '../../scripts/lib/desktop-package-target.mjs'
+import { buildLauncher } from './build-launcher.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
 process.noAsar = true
@@ -92,7 +94,29 @@ if (fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP === '1
       compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     }).outputText
   )
+  const legacyStore = await readFile(
+    join(electronRoot, '../e2e/desktop/fixtures/legacy-release-store.ts'),
+    'utf8'
+  )
+  await writeFile(
+    join(staging, 'dist/runtime/release-store.js'),
+    ts.transpileModule(legacyStore, {
+      compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
+    }).outputText
+  )
 }
+const launcherPath =
+  fixtureVersion && process.env.WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP === '1'
+    ? await buildLauncher(
+        join(dirname(output), 'legacy-launcher', `${process.platform}-${process.arch}`),
+        resolveDesktopPackageTargets(process.env).cargoTarget,
+        join(electronRoot, '../e2e/desktop/fixtures/legacy-release-launcher.rs')
+      )
+    : join(
+        electronRoot,
+        'resources',
+        `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
+      )
 await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
@@ -131,7 +155,7 @@ try {
     name: identity.productName,
     electronVersion: sourcePackage.devDependencies.electron,
     electronZipDir,
-    appBundleId: identity.identifier,
+    appBundleId: fixtureVersion ? fixtureApplicationId : identity.identifier,
     ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: packageVersion,
@@ -143,11 +167,7 @@ try {
       unpack: '**/*.{node,dylib,so,dll}',
     },
     extraResource: [
-      join(
-        electronRoot,
-        'resources',
-        `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
-      ),
+      launcherPath,
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
       ...(thinFixture
         ? []
