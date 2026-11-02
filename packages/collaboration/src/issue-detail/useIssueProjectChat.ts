@@ -4,7 +4,9 @@ import { generateMessageId } from '@wegent/chat-core'
 
 function runtimeSequence(message: ProjectChatMessage): bigint {
   const sequence = message.metadata.runtime_event_sequence
-  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence) ? BigInt(sequence) : 0n
+  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence)
+    ? BigInt(sequence)
+    : BigInt(0)
 }
 
 function acceptsMessage(previous: ProjectChatMessage, incoming: ProjectChatMessage): boolean {
