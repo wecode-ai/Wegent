@@ -286,6 +286,11 @@ export async function verifyHarnessLifecycle(
   )
 
   const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    stableMs: 300,
+    timeoutMs: uiTimeoutMs,
+  })
   const initialModelKey = await control.command('getValue', modelSelector)
   await control.command('select', modelSelector, {
     by: 'label',
