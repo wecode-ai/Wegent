@@ -305,10 +305,11 @@ pub(crate) async fn session_headers<M>(
     mysql: &M,
     app: &ConnectorApp,
     user: &UserRow,
-) -> Result<Vec<(String, String)>, SessionError>
+) -> Result<(Vec<(String, String)>, Option<String>), SessionError>
 where
     M: Mysql,
 {
+    let mut attempted_access = None;
     let mut headers = provider_headers(app)?;
     if app.auth_type != "none" {
         let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
@@ -348,12 +349,14 @@ where
                 SessionError::Crypto
             });
         }
+        // Pair the ciphertext with the exact bearer token placed in `headers`.
+        // A lookup after the request could observe a newer grant instead.
+        attempted_access = Some(connection.access_token_encrypted.clone());
         insert_header(
             &mut headers,
             "Authorization",
             format!("Bearer {access_token}"),
         );
-        return Ok(headers);
     }
     insert_header(
         &mut headers,
@@ -361,29 +364,7 @@ where
         user.users_user_name.clone(),
     );
     insert_header(&mut headers, "X-Wegent-User-Id", user.users_id.to_string());
-    Ok(headers)
-}
-
-/// The access-token ciphertext used by `session_headers`, if this call needs
-/// OAuth credentials. A late upstream 401 is checked against this grant.
-pub(crate) async fn session_access_ciphertext<M>(
-    mysql: &M,
-    app: &ConnectorApp,
-    user: &UserRow,
-) -> Result<Option<String>, SessionError>
-where
-    M: Mysql,
-{
-    if app.auth_type == "none" {
-        return Ok(None);
-    }
-    let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
-        .await
-        .map_err(SessionError::Database)?
-        .ok_or(SessionError::AuthorizationRequired)?;
-    Ok(Some(
-        ConnectorConnection::from_row(&row).access_token_encrypted,
-    ))
+    Ok((headers, attempted_access))
 }
 
 /// `_decrypt_json(app.provider_headers_encrypted)`: the decrypted JSON object's
@@ -472,7 +453,7 @@ where
             }
             continue;
         }
-        let headers = match session_headers(mysql, app, user).await {
+        let (headers, _) = match session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             // `_upstream_tools` wraps configuration failures in its 502
             // `HTTPException`, which `list_tools` skips.
@@ -870,10 +851,13 @@ mod tests {
         };
         assert_eq!(
             session_headers(&mysql, &app, &user).await.unwrap(),
-            vec![
-                ("X-Wegent-Username".to_string(), "junshu".to_string()),
-                ("X-Wegent-User-Id".to_string(), "83".to_string()),
-            ]
+            (
+                vec![
+                    ("X-Wegent-Username".to_string(), "junshu".to_string()),
+                    ("X-Wegent-User-Id".to_string(), "83".to_string()),
+                ],
+                None,
+            )
         );
         assert!(mysql.queries().is_empty());
     }

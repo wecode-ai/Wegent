@@ -659,6 +659,37 @@ mod tests {
         assert!(matches!(error, RefreshError::Provider(_)));
     }
 
+    #[tokio::test]
+    async fn a_rate_limited_grant_is_reused_for_a_successful_retry() {
+        let limited = serve_response(
+            "HTTP/1.1 429 Too Many Requests\r\nretry-after: 1\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        let error = request_tokens(&limited, &[("grant_type", "refresh_token")])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RefreshError::Provider(_)));
+
+        let body = r#"{"access_token":"renewed-access","refresh_token":"renewed-refresh","expires_in":3600}"#;
+        let endpoint = serve_owned_response(format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        ))
+        .await;
+        let payload = request_tokens(
+            &endpoint,
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", "original-refresh"),
+            ],
+        )
+        .await
+        .expect("the original grant can refresh after throttling clears");
+        let grant = parse_grant(&payload).expect("the renewed grant decodes");
+        assert_eq!(grant.access_token, "renewed-access");
+        assert_eq!(grant.refresh_token.as_deref(), Some("renewed-refresh"));
+    }
+
     /// A rejection clears exactly the grant it replaced, and only while that
     /// grant is still stored.
     #[tokio::test]

@@ -193,7 +193,7 @@ async fn list_tools(
             tools.extend(cached);
             continue;
         }
-        let headers = match service::session_headers(&state.mysql, app, &user).await {
+        let (headers, _) = match service::session_headers(&state.mysql, app, &user).await {
             Ok(headers) => headers,
             Err(error) => {
                 tracing::warn!(connector = %app.slug, %error, "skipping unavailable connector");
@@ -308,24 +308,17 @@ async fn call_tool(
     {
         return failure("Connector tool is disabled");
     }
-    let headers = match service::session_headers(&state.mysql, &app, &user).await {
-        Ok(headers) => headers,
-        Err(SessionError::AuthorizationRequired) => {
-            return failure(connector_auth_required(&app.slug));
-        }
-        Err(error) => {
-            tracing::warn!(connector = %app.slug, %error, "connector tool session failed");
-            return failure(error.to_string());
-        }
-    };
-    let attempted_access = match service::session_access_ciphertext(&state.mysql, &app, &user).await
-    {
-        Ok(access) => access,
-        Err(error) => {
-            tracing::warn!(connector = %app.slug, %error, "connector tool credential lookup failed");
-            return failure(error.to_string());
-        }
-    };
+    let (headers, attempted_access) =
+        match service::session_headers(&state.mysql, &app, &user).await {
+            Ok(headers) => headers,
+            Err(SessionError::AuthorizationRequired) => {
+                return failure(connector_auth_required(&app.slug));
+            }
+            Err(error) => {
+                tracing::warn!(connector = %app.slug, %error, "connector tool session failed");
+                return failure(error.to_string());
+            }
+        };
     if app.transport == "http" {
         return call_http_tool(&app, upstream_name, &arguments, &headers).await;
     }

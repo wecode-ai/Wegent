@@ -282,12 +282,15 @@ class ConnectorRuntimeService:
         the connection recovered.
         """
         try:
+            attempted = (
+                connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+                if app.auth_type != "none"
+                else None
+            )
             await ConnectorRuntimeService.refresh_tool_summary_cache(db, app, user)
         except Exception as error:  # noqa: BLE001 - upstream failures vary
-            if ConnectorRuntimeService._is_auth_failure(error) or (
-                ConnectorRuntimeService._mark_expired_on_auth_error(
-                    db, app, user, error
-                )
+            if ConnectorRuntimeService._mark_expired_on_auth_error(
+                db, app, user, error, attempted
             ):
                 return
             connection = connector_connection_service.get(
@@ -490,17 +493,15 @@ class ConnectorRuntimeService:
         ):
             return False
         if attempted is None:
-            # A direct discovery/probe helper that has no request-scoped grant
-            # keeps its historical behavior. Tool calls pass their own grant.
-            attempted = connector_connection_service.get(
-                db, slug=app.slug, user_id=user.id
-            )
-        if attempted is not None:
-            connector_connection_service.reject_credential_if_current(
-                db,
-                connection=attempted,
-                expected_access_token_encrypted=attempted.access_token_encrypted,
-            )
+            # Without a request-scoped grant there is no safe way to attribute
+            # this failure. Reading the connection now could select a grant
+            # authorized after the failed request started.
+            return False
+        connector_connection_service.reject_credential_if_current(
+            db,
+            connection=attempted,
+            expected_access_token_encrypted=attempted.access_token_encrypted,
+        )
         return True
 
     @staticmethod

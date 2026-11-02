@@ -91,7 +91,7 @@ where
         }
         // `_upstream_tools` wraps `_server_config` and session failures into a
         // 502 `HTTPException`, which `list_tools` skips.
-        let headers = match apps::session_headers(mysql, app, user).await {
+        let (headers, _) = match apps::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
                 tracing::warn!(

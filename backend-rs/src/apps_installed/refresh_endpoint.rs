@@ -98,21 +98,16 @@ where
             )
             .await;
         }
-        Err(ProbeError::Unauthorized(message)) => {
+        Err(ProbeError::Unauthorized(message, attempted_access)) => {
             // The upstream rejected the stored credential: an entry point for
             // re-authorization must appear even though the token has not
             // reached its `expiresAt` yet.
             tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
-            let _ = refresh::write_discovery_state(
-                mysql,
-                &row,
-                &refresh::DiscoveryState {
-                    last_error: Some(&message),
-                    expired: true,
-                    ..Default::default()
-                },
-            )
-            .await;
+            if let Some(attempted_access) = attempted_access {
+                let _ =
+                    refresh::reject_credential_if_current(mysql, row.kinds_id, &attempted_access)
+                        .await;
+            }
         }
         Err(ProbeError::Transport(message)) => {
             let _ = refresh::write_discovery_state(
@@ -152,12 +147,12 @@ where
         // session; the recorded deployment exposes none.
         return Ok(Vec::new());
     }
-    let headers = service::session_headers(mysql, app, user)
+    let (headers, attempted_access) = service::session_headers(mysql, app, user)
         .await
         .map_err(|error| ProbeError::Transport(error.to_string()))?;
     mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers)
         .await
-        .map_err(ProbeError::from)
+        .map_err(|error| ProbeError::from_mcp(error, attempted_access))
 }
 
 /// `_cache_tool_summaries`: the cached surface the settings view renders.
@@ -182,15 +177,15 @@ fn tool_summaries(app: &ConnectorApp, tools: &[mcp::UpstreamTool]) -> Vec<serde_
 #[derive(Debug)]
 enum ProbeError {
     /// The upstream answered `401`/`403`: the stored grant is rejected.
-    Unauthorized(String),
+    Unauthorized(String, Option<String>),
     /// Any other transport, status, or configuration failure.
     Transport(String),
 }
 
-impl From<mcp::McpError> for ProbeError {
-    fn from(error: mcp::McpError) -> Self {
+impl ProbeError {
+    fn from_mcp(error: mcp::McpError, attempted_access: Option<String>) -> Self {
         match error {
-            mcp::McpError::Unauthorized(message) => Self::Unauthorized(message),
+            mcp::McpError::Unauthorized(message) => Self::Unauthorized(message, attempted_access),
             mcp::McpError::Transport(message) => Self::Transport(message),
         }
     }
@@ -329,11 +324,11 @@ mod tests {
     #[test]
     fn only_authorization_failures_are_unauthorized() {
         assert!(matches!(
-            ProbeError::from(mcp::McpError::Unauthorized("401".to_string())),
-            ProbeError::Unauthorized(_)
+            ProbeError::from_mcp(mcp::McpError::Unauthorized("401".to_string()), None),
+            ProbeError::Unauthorized(..)
         ));
         assert!(matches!(
-            ProbeError::from(mcp::McpError::Transport("boom".to_string())),
+            ProbeError::from_mcp(mcp::McpError::Transport("boom".to_string()), None),
             ProbeError::Transport(_)
         ));
     }

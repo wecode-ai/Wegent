@@ -14,8 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use brz_mysql::MysqlService;
 use serde_json::{Value, json};
 
-use super::db;
+use super::db::{self, UserRow};
 use super::refresh::{self, DiscoveryState};
+use super::service::{self, ConnectorApp};
 
 const USER_ID: i64 = 4242;
 const SLUG: &str = "mysql-refresh-fixture";
@@ -131,6 +132,47 @@ async fn read_spec(mysql: &MysqlService) -> Value {
         .unwrap()
         .expect("the fixture connection exists");
     row.kinds_json.0.to_value()["spec"].clone()
+}
+
+fn oauth_app() -> ConnectorApp {
+    service::row_to_app(&db::KindRow {
+        kinds_id: 1,
+        kinds_user_id: 0,
+        kinds_kind: "ConnectorApp".to_string(),
+        kinds_name: SLUG.to_string(),
+        kinds_namespace: "system".to_string(),
+        kinds_json: brz_mysql::Json(
+            json!({
+                "kind": "ConnectorApp",
+                "spec": {
+                    "name": SLUG,
+                    "mcpUrl": "https://mcp.example.test/mcp",
+                    "authType": "oauth2",
+                    "transport": "streamable-http",
+                }
+            })
+            .into(),
+        ),
+        kinds_is_active: true,
+        kinds_created_at: chrono::NaiveDateTime::default(),
+        kinds_updated_at: chrono::NaiveDateTime::default(),
+    })
+}
+
+fn user() -> UserRow {
+    UserRow {
+        users_id: USER_ID,
+        users_user_name: "integration-user".to_string(),
+        users_password_hash: String::new(),
+        users_email: None,
+        users_git_info: brz_mysql::Json(Value::Null.into()),
+        users_is_active: true,
+        users_role: "user".to_string(),
+        users_auth_source: "oidc".to_string(),
+        users_preferences: String::new(),
+        users_created_at: chrono::NaiveDateTime::default(),
+        users_updated_at: chrono::NaiveDateTime::default(),
+    }
 }
 
 /// The stale row a listing read before the grant rotation must not put the old
@@ -585,16 +627,39 @@ async fn a_late_tool_rejection_does_not_expire_a_newer_grant() {
     let result = tokio::spawn({
         let mysql = mysql.clone();
         async move {
-            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            seed_expired_grant(&mysql, "2035-01-01T00:00:00").await;
             let attempted = db::find_connector_connection(&mysql, SLUG, USER_ID)
                 .await
                 .unwrap()
                 .expect("seeded row");
-            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
-
-            refresh::reject_credential_if_current(&mysql, attempted.kinds_id, "old-access")
+            crate::subscriptions_item::crypto::use_test_key();
+            let old_access = crate::subscriptions_item::crypto::encrypt_sensitive_data("A0")
+                .unwrap();
+            mysql
+                .execute(
+                    "UPDATE kinds SET json = JSON_SET(json, '$.spec.accessTokenEncrypted', ?) WHERE id = ?",
+                    (old_access.as_str(), attempted.kinds_id),
+                )
                 .await
                 .unwrap();
+            let (headers, attempted_access) =
+                service::session_headers(&mysql, &oauth_app(), &user())
+                    .await
+                    .unwrap();
+            assert!(headers.contains(&(
+                "Authorization".to_string(),
+                "Bearer A0".to_string(),
+            )));
+            assert_eq!(attempted_access.as_deref(), Some(old_access.as_str()));
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+
+            refresh::reject_credential_if_current(
+                &mysql,
+                attempted.kinds_id,
+                attempted_access.as_deref().unwrap(),
+            )
+            .await
+            .unwrap();
 
             let spec = read_spec(&mysql).await;
             assert_eq!(spec["status"], json!("connected"));
