@@ -423,11 +423,31 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
-  const modeChangedRef = useRef(false)
-  const previousResetDepsRef = useRef<{
-    open: boolean
+  const formSessionRef = useRef<{
     formTeamId: number | null
+    sourceTeam: Team | null
+    pendingBotId: number | null
   } | null>(null)
+
+  const initializeBotFields = useCallback((bot: Bot | undefined) => {
+    const executor = resolveSimpleExecutorFromBot(bot)
+    setSimpleExecutorMode(executor.mode)
+    setSimpleCodingRuntime(executor.codingRuntime)
+    setSimpleCustomShellName(executor.customShellName)
+    setSimpleBotName(bot?.name || '')
+    setSimplePrompt(bot?.system_prompt || '')
+    setSimpleInheritBaseCapabilities(bot?.inherit_base_capabilities === true)
+    setSimpleSelectedSkills(bot?.skills || [])
+    setSimpleSelectedSkillRefs(bot?.skill_refs || {})
+    setSimplePreloadSkills(bot?.preload_skills || [])
+    setSimpleDefaultKnowledgeBaseRefs(bot?.default_knowledge_base_refs || [])
+    setSimpleMcpConfig(stringifyMcpConfig(bot?.mcp_servers || {}))
+    setSimpleModelName(bot?.agent_config ? getModelFromConfig(bot.agent_config) : '')
+    setSimpleModelType(bot?.agent_config ? getModelTypeFromConfig(bot.agent_config) : undefined)
+    setSimpleModelNamespace(
+      bot?.agent_config ? getModelNamespaceFromConfig(bot.agent_config) : undefined
+    )
+  }, [])
 
   // Load shells data on mount
   useEffect(() => {
@@ -550,41 +570,36 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
   }, [simpleModelsLoaded, simpleModelShellChanged, simpleModelName, simpleModelIsCompatible])
 
-  // Reset form when dialog opens
+  // Team drafts belong to the editing session, not the Bot catalog.
   useEffect(() => {
     if (!open) {
-      previousResetDepsRef.current = null
+      formSessionRef.current = null
       return
     }
 
-    const previous = previousResetDepsRef.current
-    const current = {
-      open,
-      formTeamId: formTeam?.id ?? null,
-    }
-    previousResetDepsRef.current = current
-    const isNewFormSession = !previous?.open || previous.formTeamId !== current.formTeamId
+    const formTeamId = formTeam?.id ?? null
+    if (formSessionRef.current?.formTeamId === formTeamId) return
 
-    // Catalog refreshes must not undo a mode switch or its new member selection.
-    if (!isNewFormSession && (!formTeam || modeChangedRef.current)) {
-      return
+    const leaderBot = formTeam?.bots.find(bot => bot.role === 'leader') || formTeam?.bots[0]
+    const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
+    formSessionRef.current = {
+      formTeamId,
+      sourceTeam: formTeam,
+      pendingBotId: fullLeaderBot ? null : (leaderBot?.bot_id ?? null),
     }
-    if (isNewFormSession) modeChangedRef.current = false
 
     if (formTeam) {
-      if (isNewFormSession) {
-        setTechnicalNameUnlocked(false)
-        setIdentityConfirmVisible(false)
-        setIdentityConfirmation('')
-        const currentNamespace = formTeam.namespace || 'default'
-        const isPublished = formTeam.publication_status === 'published'
-        setEditingWasPublished(isPublished)
-        setEditingPublishTarget(
-          isPublished ? 'marketplace' : currentNamespace === 'default' ? 'personal' : 'team'
-        )
-        setEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
-        setInitialEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
-      }
+      setTechnicalNameUnlocked(false)
+      setIdentityConfirmVisible(false)
+      setIdentityConfirmation('')
+      const currentNamespace = formTeam.namespace || 'default'
+      const isPublished = formTeam.publication_status === 'published'
+      setEditingWasPublished(isPublished)
+      setEditingPublishTarget(
+        isPublished ? 'marketplace' : currentNamespace === 'default' ? 'personal' : 'team'
+      )
+      setEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
+      setInitialEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
       setName(formTeam.name)
       setDisplayName(formTeam.displayName || formTeam.name)
       setDescription(formTeam.description || '')
@@ -595,9 +610,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setMode(m)
       const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
-      const leaderBot = formTeam.bots.find(b => b.role === 'leader') || formTeam.bots[0]
       setLeaderBotId(leaderBot?.bot_id ?? null)
-      const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
       const executor = resolveSimpleExecutorFromBot(fullLeaderBot)
       const initialBindMode = getInitialBindMode(formTeam, m === 'solo')
       const usesAutomaticBindMode =
@@ -606,28 +619,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           shellType: fullLeaderBot?.shell_type || '',
         })
       setBindMode(usesAutomaticBindMode ? [] : initialBindMode)
-      setSimpleExecutorMode(executor.mode)
-      setSimpleCodingRuntime(executor.codingRuntime)
-      setSimpleCustomShellName(executor.customShellName)
-      setSimpleBotName(fullLeaderBot?.name || '')
-      setSimplePrompt(fullLeaderBot?.system_prompt || '')
-      setSimpleInheritBaseCapabilities(fullLeaderBot?.inherit_base_capabilities === true)
-      setSimpleSelectedSkills(fullLeaderBot?.skills || [])
-      setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
-      setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
-      setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
-      setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
-      setSimpleModelName(
-        fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
-      )
-      setSimpleModelType(
-        fullLeaderBot?.agent_config ? getModelTypeFromConfig(fullLeaderBot.agent_config) : undefined
-      )
-      setSimpleModelNamespace(
-        fullLeaderBot?.agent_config
-          ? getModelNamespaceFromConfig(fullLeaderBot.agent_config)
-          : undefined
-      )
+      initializeBotFields(fullLeaderBot)
       // Initialize requireConfirmationMap from existing team data
       const confirmMap: Record<number, boolean> = {}
       const passingMap: Record<number, PipelineContextPassing> = {}
@@ -645,18 +637,16 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       // Default to true for legacy data that doesn't have this field
       setRequiresWorkspace(formTeam.requires_workspace ?? true)
     } else {
-      if (isNewFormSession) {
-        setTechnicalNameUnlocked(true)
-        setIdentityConfirmVisible(false)
-        setIdentityConfirmation('')
-        setCreatingPublishTarget(
-          publishAfterCreate
-            ? 'marketplace'
-            : createTarget.scope === 'group' || scope === 'group'
-              ? 'team'
-              : 'personal'
-        )
-      }
+      setTechnicalNameUnlocked(true)
+      setIdentityConfirmVisible(false)
+      setIdentityConfirmation('')
+      setCreatingPublishTarget(
+        publishAfterCreate
+          ? 'marketplace'
+          : createTarget.scope === 'group' || scope === 'group'
+            ? 'team'
+            : 'personal'
+      )
       setEditingWasPublished(false)
       setEditingPublishTarget('personal')
       setEditingGroupNames([])
@@ -693,7 +683,29 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequiresWorkspace(true)
     }
     setUnsavedPrompts({})
-  }, [bots, createTarget.scope, formTeam, open, publishAfterCreate, scope])
+  }, [bots, createTarget.scope, formTeam, initializeBotFields, open, publishAfterCreate, scope])
+
+  // A late catalog response may hydrate Bot fields once, without resetting the Team draft.
+  useEffect(() => {
+    const session = formSessionRef.current
+    if (!open || !session?.pendingBotId) return
+    const bot = bots.find(candidate => candidate.id === session.pendingBotId)
+    if (!bot) return
+    session.pendingBotId = null
+    initializeBotFields(bot)
+
+    if (session.sourceTeam && (session.sourceTeam.workflow?.mode || 'solo') === 'solo') {
+      const initialBindMode = getInitialBindMode(session.sourceTeam, true)
+      const executor = resolveSimpleExecutorFromBot(bot)
+      setBindMode(
+        matchesAutomaticSimpleBindMode(initialBindMode, executor.mode, {
+          shellType: bot.shell_type,
+        })
+          ? []
+          : initialBindMode
+      )
+    }
+  }, [bots, formTeam, initializeBotFields, open])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) {
@@ -754,20 +766,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       active = false
     }
   }, [formTeam?.id, isEditing, open])
-
-  // Update bot selection when bots change
-  useEffect(() => {
-    if (!open || !formTeam || modeChangedRef.current) return
-
-    const ids = formTeam.bots
-      .filter(b => filteredBots.some((bot: Bot) => bot.id === b.bot_id))
-      .map(b => String(b.bot_id))
-    setSelectedBotKeys(ids)
-    const leaderBot = formTeam.bots.find(
-      b => b.role === 'leader' && filteredBots.some((bot: Bot) => bot.id === b.bot_id)
-    )
-    setLeaderBotId(leaderBot?.bot_id ?? null)
-  }, [open, filteredBots, formTeam])
 
   useEffect(() => {
     if (!useSimpleEditor) return
@@ -862,7 +860,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Execute mode change with reset
   const executeModeChange = useCallback((newMode: TeamMode) => {
-    modeChangedRef.current = true
+    if (formSessionRef.current) formSessionRef.current.pendingBotId = null
     setMode(newMode)
     if (newMode !== 'solo') {
       setBindMode(current => (current.length > 0 ? current : DEFAULT_NEW_AGENT_BIND_MODE))
