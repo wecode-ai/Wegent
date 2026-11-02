@@ -333,7 +333,10 @@ describe('bundled plugin resources', () => {
       expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
       expect(workflow).toContain('generate-desktop-update-manifests.mjs')
       expect(workflow).toContain('plan-desktop-release.mjs')
-      expect(workflow).toContain('group: ${{ github.workflow }}')
+      const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
+      expect(concurrencyGroup).toContain("inputs.verification_run_id != '' && format(")
+      expect(concurrencyGroup).toContain('github.ref, inputs.verification_run_id)')
+      expect(concurrencyGroup).toMatch(/\|\| github\.workflow \}\}$/)
       expect(workflow).not.toContain('group: ${{ github.workflow }}-${{ github.ref }}')
       expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
       expect(workflow).toContain('CURRENT_SOURCE_REF')
@@ -422,7 +425,12 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"')
     expect(workflow).toContain('--parallel-segments release-package-startup,component-update')
-    expect(workflow).toContain('e2e:desktop -- --segment app-update-full')
+    expect(workflow).toContain('node wework/scripts/verify-release-upgrades.mjs')
+    const upgradeVerifier = readFileSync(
+      resolve(process.cwd(), 'scripts/verify-release-upgrades.mjs'),
+      'utf8'
+    )
+    expect(upgradeVerifier).toContain('`${UPGRADE_CHECKPOINT_GROUP},app-update-full`')
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

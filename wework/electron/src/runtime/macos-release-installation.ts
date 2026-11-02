@@ -265,7 +265,7 @@ export async function prepareMacosReleaseInstallation(
   await store.save(installedTarget)
 }
 
-/** Preserve the supervised PID while a legacy launcher enters the installed host. */
+/** Keep the legacy supervisor's child alive while a fresh PID enters AppKit. */
 export async function enterInstalledMacosRelease(
   store: ReleaseStore,
   release: DesktopRelease,
@@ -281,12 +281,17 @@ export async function enterInstalledMacosRelease(
   // Only the selected payload can perform this one-use handoff, before opening data.
   if (resolve(process.execPath) !== resolve(installation.payloadExecutable))
     throw new Error('The macOS bootstrap is not the selected release payload')
-  await execute(join(resources, 'wework-launcher'), ['--macos-install', store.root, release.id], {
-    timeout: 45_000,
-  })
-  process.execve!(release.executable, [release.executable, ...process.argv.slice(1)], {
-    ...environment,
-    WEWORK_RELEASE_SUPERVISED: release.id,
-  } as NodeJS.ProcessEnv & Record<string, string>)
+  const launcher = join(resources, 'wework-launcher')
+  // Re-execing Electron at the same PID leaves RunningBoard's cached PID version
+  // stale. Control Center then rejects every NSStatusItem scene for the host.
+  // The native relay preserves supervision but spawns Electron with a new PID.
+  process.execve!(
+    launcher,
+    [launcher, '--macos-enter', store.root, release.id, ...process.argv.slice(1)],
+    {
+      ...environment,
+      WEWORK_RELEASE_SUPERVISED: release.id,
+    } as NodeJS.ProcessEnv & Record<string, string>
+  )
   throw new Error('The installed macOS host handoff returned unexpectedly')
 }
