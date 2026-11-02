@@ -47,6 +47,7 @@ export function unavailableUpdatePolicy(packaged, target, origin) {
 export async function verifyAppUpdateRetry(control, { policy, requests, advertise }) {
   await control.command('navigate', 'body', { value: '/settings/about' })
   const autoUpdate = '[data-testid="about-auto-update-switch"]'
+  await control.command('waitFor', autoUpdate)
   if ((await control.command('getAttribute', autoUpdate, { value: 'data-state' })) === 'checked')
     await control.command('click', autoUpdate)
   await control.command('waitFor', `${autoUpdate}[data-state="unchecked"]`)
