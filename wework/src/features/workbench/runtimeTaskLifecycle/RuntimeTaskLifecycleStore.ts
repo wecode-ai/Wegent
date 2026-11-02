@@ -404,8 +404,19 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
-      if (ignoreStaleRunningTranscript) return
-      this.executorStarted(address)
+      if (!ignoreStaleRunningTranscript) {
+        this.executorStarted(address)
+      } else if (
+        current?.execution.phase === 'idle' &&
+        !current.turn.active &&
+        latestTurn?.id &&
+        isTerminalTurnStatus(latestTurn.status) &&
+        (current.turn.latestId === null || current.turn.latestId === latestTurn.id)
+      ) {
+        // Older streaming history may coexist with the latest terminal turn.
+        // Fill idle terminal identity without changing execution ownership or replacing a known turn.
+        this.turnSettled(address, latestTurn.id, terminalTurnOutcome(latestTurn.status))
+      }
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
       this.turnSettled(
