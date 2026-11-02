@@ -240,18 +240,17 @@ export async function verifyPluginDetailResilience({
   }
 
   async function rowFor(item) {
+    // Catalog refresh can replace a Codex row ID with its disk-personal alias.
+    // Resolve the same plugin by its accessible name on every control poll.
+    const selector =
+      '[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label$=' +
+      JSON.stringify(` ${item.displayName}`) +
+      '])'
     return until(
-      async () => {
-        const snapshot = JSON.parse(
-          await control.command('snapshot', testId('plugins-page-content'))
-        )
-        return snapshot.testIds.filter(
-          id => id.startsWith('plugin-marketplace-row-') && id.includes(item.name)
-        )
-      },
-      values => values.length === 1,
+      async () => Number(await control.command('getElementCount', selector)),
+      count => count === 1,
       `A unique real catalog row for ${item.name} was not available`
-    ).then(values => testId(values[0]))
+    ).then(() => selector)
   }
 
   async function openDetail(item) {
@@ -816,7 +815,7 @@ export async function verifyPluginDetailResilience({
     report.failures = failures.map(error => String(error?.message ?? error))
     report.passed =
       report.preconditions.completed &&
-      report.phases.length === 7 &&
+      report.phases.length === 8 &&
       report.blocked.length === 0 &&
       failures.length === 0
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)

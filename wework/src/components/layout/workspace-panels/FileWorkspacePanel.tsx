@@ -15,6 +15,7 @@ import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFi
 import {
   isAbsoluteWorkspacePath,
   normalizeAbsoluteWorkspacePath,
+  normalizeWorkspaceSeparators,
 } from '@/lib/workspace-file-contract'
 import {
   createFilePreviewTraceId,
@@ -125,9 +126,9 @@ function mimeTypeForFileName(name: string): string {
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
-  const normalizedPath = path.trim().replace(/\\/g, '/')
+  const normalizedPath = normalizeWorkspaceSeparators(path, target.path)
   if (!normalizedPath) return null
-  if (isAbsoluteWorkspacePath(normalizedPath)) {
+  if (isAbsoluteWorkspacePath(normalizedPath, target.path)) {
     try {
       return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
     } catch {
@@ -135,15 +136,19 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
     }
   }
 
+  const root = normalizeWorkspaceSeparators(target.path).replace(/\/+$/, '') || '/'
+  const prefix = root.endsWith('/') ? root : `${root}/`
+  const relativePath = normalizeWorkspaceSeparators(`${prefix}${normalizedPath}`).slice(
+    prefix.length
+  )
   const segments: string[] = []
-  for (const segment of normalizedPath.split('/')) {
+  for (const segment of relativePath.split('/')) {
     if (!segment || segment === '.') continue
     if (segment === '..') return null
     segments.push(segment)
   }
   if (segments.length === 0) return null
 
-  const root = target.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
   const child = segments.join('/')
   return root === '/' ? `/${child}` : `${root}/${child}`
 }
@@ -911,6 +916,7 @@ export function FileWorkspacePanel({
         <button
           type="button"
           data-testid="workspace-file-toggle-tree-button"
+          aria-expanded={directoryTreeVisible}
           onClick={() => setDirectoryTreeVisible(visible => !visible)}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
           aria-label={directoryTreeToggleLabel}

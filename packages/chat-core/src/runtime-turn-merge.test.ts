@@ -122,6 +122,30 @@ describe('runtime question history reconciliation for both hosts', () => {
   })
 })
 
+it('keeps a streaming plan prefix when an earlier plan snapshot resolves', () => {
+  const plan = (
+    content: string,
+    status: 'streaming' | 'done' = 'streaming'
+  ): RuntimeConversationTurn => ({
+    id: 'turn-1',
+    status: status === 'streaming' ? 'streaming' : 'done',
+    items: [
+      {
+        id: 'plan-1',
+        type: 'block',
+        block: { id: 'plan-1', type: 'plan', content, status, createdAt: 1 },
+      },
+    ],
+  })
+  const prefix = '# Running plan\n\n- Preserve the generated prefix.'
+  expect(merged(plan(prefix), plan(''))).toMatchObject({ content: prefix, status: 'streaming' })
+  expect(merged(plan(prefix), plan('# Running plan'))).toMatchObject({ content: prefix })
+  expect(merged(plan(prefix), plan('Authoritative revised plan', 'done'))).toMatchObject({
+    content: 'Authoritative revised plan',
+    status: 'done',
+  })
+})
+
 it('keeps live command output when a transcript read races with a later output event', () => {
   const command = (
     output: string,

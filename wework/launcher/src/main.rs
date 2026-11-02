@@ -1,5 +1,7 @@
 //! Stable supervisor. It never loads code or opens data from the selected release.
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#[cfg(target_os = "macos")]
+mod macos_installation;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -154,10 +156,37 @@ fn release_id(value: &str) -> io::Result<&str> {
 
 fn run() -> io::Result<()> {
     let mut args = env::args_os().skip(1);
-    let root = PathBuf::from(
-        args.next()
-            .ok_or_else(|| io::Error::other("Missing release root"))?,
-    );
+    let first = args
+        .next()
+        .ok_or_else(|| io::Error::other("Missing release root"))?;
+    #[cfg(target_os = "macos")]
+    if first == "--macos-applications" {
+        return macos_installation::applications(
+            args.next()
+                .ok_or_else(|| io::Error::other("Missing bundle identifier"))?,
+        );
+    }
+    #[cfg(target_os = "macos")]
+    if first == "--macos-install" {
+        let root = PathBuf::from(
+            args.next()
+                .ok_or_else(|| io::Error::other("Missing release root"))?,
+        );
+        let id = args
+            .next()
+            .ok_or_else(|| io::Error::other("Missing release ID"))?;
+        if macos_installation::install(
+            &root,
+            id.to_str()
+                .ok_or_else(|| io::Error::other("Invalid release ID"))?,
+        )?
+        .is_none()
+        {
+            return Err(io::Error::other("The macOS installation was not prepared"));
+        }
+        return Ok(());
+    }
+    let root = PathBuf::from(first);
     let bridge = args
         .next()
         .ok_or_else(|| io::Error::other("Missing recovery executable"))?;
@@ -190,6 +219,17 @@ fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()>
         }
         fs::write(root.join("attempted"), token)?;
     }
+    #[cfg(target_os = "macos")]
+    let executable = match macos_installation::install(root, &id) {
+        Ok(Some(installed)) => installed.into_os_string(),
+        Ok(None) => executable.into(),
+        Err(error) => {
+            if let Some(token) = &trial {
+                return recover(root, &bridge, forwarded, token);
+            }
+            return Err(error);
+        }
+    };
     let spawned = Command::new(&executable)
         .args(forwarded)
         .env("WEWORK_RELEASE_SUPERVISED", &id)

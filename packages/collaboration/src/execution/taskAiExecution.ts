@@ -27,6 +27,29 @@ export interface CommentExecutionTask {
   description?: string | null
   status: string
 }
+
+export async function refreshTaskAfterComment<Task>({
+  projectId,
+  taskId,
+  getTask,
+  onTaskUpdated,
+}: {
+  projectId: string | number
+  taskId: string
+  getTask?: (taskId: string) => Promise<Task>
+  onTaskUpdated?: (task: Task) => void
+}): Promise<void> {
+  if (!getTask || !onTaskUpdated) return
+  try {
+    onTaskUpdated(await getTask(taskId))
+  } catch (error) {
+    console.warn('[collaboration] Failed to refresh Issue after saving comment', {
+      projectId,
+      issueId: taskId,
+      error,
+    })
+  }
+}
 export interface CommentRuntimeCreateOptions<ExecutionProject> {
   project?: ExecutionProject | null
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
