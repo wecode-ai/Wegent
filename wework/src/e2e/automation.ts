@@ -2,6 +2,7 @@ import { rendererCrashStore } from './rendererCrashStore'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
+import { captureDesktopModelPickerDiagnostics } from './desktop-model-picker-diagnostics'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
@@ -890,6 +891,7 @@ function desktopControlSnapshot(selector = 'body'): string {
     location: window.location.href,
     text: root.innerText,
     testIds: Array.from(new Set(testIds)).sort(),
+    modelPicker: captureDesktopModelPickerDiagnostics(testIdElements, desktopControlElementVisible),
     browserPanels: Array.from(
       root.querySelectorAll<HTMLElement>('[data-testid="workspace-browser-panel"]')
     ).map(panel => ({
