@@ -18,7 +18,7 @@ on:
     - cron: "0 4 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name || 'code' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 permissions:
@@ -33,6 +33,7 @@ defaults:
 jobs:
   changes:
     name: Detect Wework E2E Changes
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1081,7 +1082,7 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:

@@ -2534,10 +2534,7 @@ if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]
   exit 1
 fi
 
-if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
-  printf 'Wework label events must not cancel code-change E2E runs\n' >&2
-  exit 1
-fi
+node --test "$script_dir/ci-scheduling.test.mjs"
 
 if ! grep -q "name: Platform E2E Summary" \
   "$script_dir/../workflows/e2e-tests.yml"; then
