@@ -47,7 +47,7 @@ jobs:
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
       windows_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-      wework_desktop_core_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
+      wework_desktop_core_e2e_matrix: ${{ steps.linux-matrix.outputs.matrix }}
       windows_desktop_core_e2e_matrix: ${{ steps.windows-matrix.outputs.matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
       wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
@@ -91,6 +91,12 @@ jobs:
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Isolate long Linux history work within existing Core shards
+        id: linux-matrix
+        env:
+          CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
+        run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
         id: image

@@ -13,7 +13,10 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
-import { orderLinuxCheckpoints } from './order-wework-linux-e2e.mjs'
+import {
+  balanceLinuxCoreMatrix,
+  orderLinuxCheckpoints,
+} from './order-wework-linux-e2e.mjs'
 
 const root = new URL('../../', import.meta.url)
 const measurements = JSON.parse(
@@ -67,6 +70,65 @@ function classifiedMatrices(
 }
 
 const matrices = classifiedMatrices()
+
+test('Linux balancing isolates history without changing coverage, runners or exclusive benchmarks', () => {
+  const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix)
+  const snapshot = JSON.stringify(original)
+  const balanced = balanceLinuxCoreMatrix(original)
+  const cli = execFileSync(
+    process.execPath,
+    ['.github/scripts/order-wework-linux-e2e.mjs', '--balance-core'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, CORE_MATRIX: JSON.stringify(original) },
+    },
+  ).trim()
+  assert.equal(cli.startsWith('matrix='), true)
+  assert.deepEqual(JSON.parse(cli.slice('matrix='.length)), balanced)
+  assert.equal(JSON.stringify(original), snapshot)
+  assert.deepEqual(
+    balanced.include.map((entry) => entry.id),
+    original.include.map((entry) => entry.id),
+  )
+  assert.equal(balanced.include.length, 10)
+  const expand = (matrix) =>
+    matrix.include
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+      .sort()
+  assert.deepEqual(expand(balanced), expand(original))
+  assert.equal(new Set(expand(balanced)).size, expand(original).length)
+  assert.equal(
+    balanced.include.find((entry) => entry.id === 'core-6').segments,
+    'running-conversation-history',
+  )
+  for (const id of ['core-9', 'core-10'])
+    assert.deepEqual(
+      balanced.include.find((entry) => entry.id === id),
+      original.include.find((entry) => entry.id === id),
+    )
+  const alone = {
+    include: original.include.filter((entry) => entry.id === 'core-6'),
+  }
+  assert.deepEqual(balanceLinuxCoreMatrix(alone), alone)
+  assert.deepEqual(balanceLinuxCoreMatrix({ include: [] }), { include: [] })
+  assert.deepEqual(balanceLinuxCoreMatrix(balanced), balanced)
+  const step = workflow.jobs.changes.steps.find(
+    (step) => step.id === 'linux-matrix',
+  )
+  assert.match(step.run, /order-wework-linux-e2e.mjs --balance-core/)
+  assert.equal(
+    workflow.jobs.changes.outputs.wework_desktop_core_e2e_matrix,
+    '${{ steps.linux-matrix.outputs.matrix }}',
+  )
+  const windows = workflow.jobs.changes.steps.find(
+    (step) => step.id === 'windows-matrix',
+  )
+  assert.equal(
+    windows.env.CORE_MATRIX,
+    '${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}',
+  )
+})
 
 test('changes to Linux scheduling or MinIO setup select the existing desktop suites', () => {
   for (const path of [

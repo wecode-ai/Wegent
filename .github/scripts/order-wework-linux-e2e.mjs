@@ -13,6 +13,55 @@ const measurements = JSON.parse(
   ),
 )
 
+export function balanceLinuxCoreMatrix(
+  matrix,
+  seconds = measurements.scopes.core,
+) {
+  if (!Array.isArray(matrix?.include))
+    throw new Error('Invalid Linux Core matrix')
+  const include = matrix.include.map((entry) => ({ ...entry }))
+  const history = include.find((entry) =>
+    entry.segments.split(',').includes('running-conversation-history'),
+  )
+  if (!history) return { ...matrix, include }
+  // Keep the two latency benchmark shards exclusive and never add a runner.
+  const receivers = include.filter(
+    (entry) =>
+      entry.id !== history.id && !['core-9', 'core-10'].includes(entry.id),
+  )
+  if (!receivers.length) return { ...matrix, include }
+  const checkpoints = (entry) =>
+    expandDesktopCheckpoints(entry.segments.split(','))
+  const before = include.flatMap(checkpoints).sort()
+  if (new Set(before).size !== before.length)
+    throw new Error('Overlapping Linux Core checkpoints')
+  const cost = (segments) =>
+    orderLinuxCheckpoints(segments, 'core', seconds).reduce(
+      (total, checkpoint) => total + (seconds[checkpoint] ?? 180),
+      0,
+    )
+  const moved = history.segments
+    .split(',')
+    .filter((segment) => segment !== 'running-conversation-history')
+    .sort((a, b) => cost([b]) - cost([a]))
+  history.segments = 'running-conversation-history'
+  for (const segment of moved) {
+    const target = receivers.reduce((best, entry) =>
+      cost(entry.segments.split(',')) < cost(best.segments.split(','))
+        ? entry
+        : best,
+    )
+    target.segments += `,${segment}`
+  }
+  if (
+    JSON.stringify(include.flatMap(checkpoints).sort()) !==
+    JSON.stringify(before)
+  ) {
+    throw new Error('Linux Core checkpoint coverage changed')
+  }
+  return { ...matrix, include }
+}
+
 export function orderLinuxCheckpoints(
   segments,
   scope,
@@ -46,14 +95,22 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const segments = (process.env.WEWORK_E2E_SEGMENTS ?? '')
-    .split(',')
-    .filter(Boolean)
-  if (!segments.length)
-    throw new Error('WEWORK_E2E_SEGMENTS must select at least one checkpoint')
-  console.log(
-    orderLinuxCheckpoints(segments, process.env.WEWORK_E2E_PARALLEL_SCOPE).join(
-      ',',
-    ),
-  )
+  if (process.argv[2] === '--balance-core') {
+    if (!process.env.CORE_MATRIX) throw new Error('CORE_MATRIX is required')
+    console.log(
+      `matrix=${JSON.stringify(balanceLinuxCoreMatrix(JSON.parse(process.env.CORE_MATRIX)))}`,
+    )
+  } else {
+    const segments = (process.env.WEWORK_E2E_SEGMENTS ?? '')
+      .split(',')
+      .filter(Boolean)
+    if (!segments.length)
+      throw new Error('WEWORK_E2E_SEGMENTS must select at least one checkpoint')
+    console.log(
+      orderLinuxCheckpoints(
+        segments,
+        process.env.WEWORK_E2E_PARALLEL_SCOPE,
+      ).join(','),
+    )
+  }
 }
