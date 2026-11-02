@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { CLOUD_PUBLIC_MODEL_NAME } from '../modules/shared.mjs'
+import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -20,7 +19,7 @@ const RUNTIME_RESULT = `NATIVE_RUNTIME_COMPLETED_${process.pid}`
 // Only the upstream model is simulated. HTTP, auth, dispatch, MySQL, Redis,
 // Chat Shell and the desktop Runtime all use the common Cloud E2E services.
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, resultDir }) {
-  let cloud, environment, user, apiKey, pythonPostsBefore
+  let cloud, environment, user, apiKey
   const modelRequests = []
   const evidence = {}
 
@@ -70,7 +69,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
     const conversations = await request(conversationsPath, null, apiKey)
     const dispatched = modelRequests.length
     for (const body of [
-      { model: `default#${TEAM}`, input: CHAT_PROMPT },
+      { model: `default#${TEAM}`, input: CHAT_PROMPT, background: true },
       {
         model,
         input: RUNTIME_PROMPT,
@@ -103,24 +102,30 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
   async function verifyChat() {
     const created = await request(
       '/v1/responses',
-      { model: `default#${TEAM}`, input: CHAT_PROMPT },
+      { model: `default#${TEAM}`, input: CHAT_PROMPT, background: true },
       apiKey
     )
-    assert.equal(created.status, 'completed', JSON.stringify(created))
-    assert.equal(outputText(created), CHAT_RESULT)
+    // The shared environment's package mode dispatches asynchronously.
+    assert.equal(created.status, 'queued', JSON.stringify(created))
     assert.match(created.id, /^resp_\d+$/)
-    assert.ok(
-      modelRequests.some(row => row.kind === 'chat'),
-      'Chat Shell never called the model'
-    )
     const taskId = Number(created.id.slice(5))
-    const tasks = await cloud.queryDatabase(
-      'SELECT id, user_id, kind, namespace, json FROM tasks ' +
-        'WHERE id = %s AND user_id = %s AND namespace = %s',
-      [taskId, user.id, 'default']
+    const tasks = await until(
+      () =>
+        cloud.queryDatabase(
+          'SELECT id, user_id, kind, namespace, ' +
+            "JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) AS status FROM tasks " +
+            'WHERE id = %s AND user_id = %s AND namespace = %s',
+          [taskId, user.id, 'default']
+        ),
+      rows => {
+        assert.notEqual(rows[0]?.status, 'FAILED', JSON.stringify(rows))
+        return rows.length === 1 && rows[0].status === 'COMPLETED'
+      },
+      'Chat Shell did not persist a completed Task'
     )
     assert.equal(tasks.length, 1)
     assert.equal(tasks[0].kind, 'Task')
+    assert.equal(tasks[0].status, 'COMPLETED')
     const subtasks = await until(
       () =>
         cloud.queryDatabase(
@@ -139,6 +144,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
     const result =
       typeof subtasks[1].result === 'string' ? JSON.parse(subtasks[1].result) : subtasks[1].result
     assert.equal(result.value, CHAT_RESULT)
+    assert.ok(
+      modelRequests.some(row => row.kind === 'chat'),
+      'Chat Shell never called the model'
+    )
     const retrieved = await request(`/v1/responses/${created.id}`, null, apiKey)
     assert.equal(retrieved.id, created.id)
     assert.equal(retrieved.status, 'completed')
@@ -147,40 +156,42 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
     return created.id
   }
 
-  async function verifyRuntime(control, deviceId, model) {
+  async function verifyRuntime(deviceId, model) {
     const created = await request(
       '/v1/responses',
       {
         model,
         input: RUNTIME_PROMPT,
-        background: true,
         execution: { type: 'wework', device_id: deviceId, title: 'Responses gateway E2E' },
       },
       apiKey
     )
-    assert.equal(created.status, 'queued')
+    assert.equal(created.status, 'completed', JSON.stringify(created))
+    assert.equal(outputText(created), RUNTIME_RESULT)
     const [actualDevice, taskId, messageId] = JSON.parse(
       Buffer.from(created.id.slice(5), 'base64url').toString('utf8')
     )
     assert.equal(actualDevice, deviceId)
     assert.ok(taskId && messageId)
     const runtime = await until(
-      () => requestExecutor(control, 'runtime.tasks.get', { taskId }, uiTimeoutMs),
+      () => environment.runtimeTask(taskId),
       value => {
-        assert.equal(value.success, true, JSON.stringify(value))
-        assert.notEqual(value.task.status, 'failed', JSON.stringify(value))
-        return value.task.status === 'done' && !value.task.running
+        assert.notEqual(value?.status, 'failed', JSON.stringify(value))
+        return value?.status === 'done' && !value.running
       },
-      'The real desktop Runtime did not complete the API-created task'
+      'The real remote Runtime did not complete the API-created task'
     )
-    const transcript = await requestExecutor(
-      control,
-      'runtime.tasks.transcript',
-      { taskId, limit: 100, includeFullContent: true },
-      uiTimeoutMs
-    )
+    assert.equal(runtime.taskId, taskId)
+    const transcript = await request('/runtime-work/transcript', {
+      deviceId,
+      taskId,
+      limit: 100,
+      includeFullContent: true,
+    })
     assert.ok(
-      transcript.messages.some(message => message.id === messageId && message.role === 'user'),
+      transcript.messages.some(
+        message => message.clientUserMessageId === messageId && message.role === 'user'
+      ),
       'The real Runtime did not persist the API user-message identity'
     )
     assert.ok(
@@ -193,22 +204,34 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
       modelRequests.some(row => row.kind === 'runtime'),
       'Native Codex never called the model'
     )
-    const retrieved = await until(
-      () => request(`/v1/responses/${created.id}`, null, apiKey),
-      value => {
-        assert.notEqual(value.status, 'failed', JSON.stringify(value))
-        return value.status === 'completed'
-      },
-      'The API could not read the completed native Runtime response'
-    )
+    // Native turns are read through their production conversation API. The
+    // retained Rust Responses GET contract uses numeric Wegent task IDs.
+    const conversation = await request(`/v1/conversations/${created.conversation.id}`, null, apiKey)
+    assert.equal(conversation.id, created.conversation.id)
+    const retrieved = conversation.latest_response
+    assert.equal(retrieved.id, created.id)
+    assert.equal(retrieved.status, 'completed')
     assert.equal(outputText(retrieved), RUNTIME_RESULT)
     assert.equal(retrieved.conversation.id, created.conversation.id)
-    evidence.runtime = { response: retrieved, task: runtime.task, transcript }
+    evidence.runtime = {
+      response: retrieved,
+      task: { taskId, status: runtime.status, running: runtime.running },
+      messages: transcript.messages.map(({ id, clientUserMessageId, role, content }) => ({
+        id,
+        clientUserMessageId,
+        role,
+        content,
+      })),
+    }
   }
 
   async function verifyRouting(responseId) {
     const pythonPosts = log =>
-      log.split('\n').filter(line => line.includes('request : POST /api/v1/responses ')).length
+      log
+        .split('\n')
+        .filter(
+          line => line.includes('response: POST /api/v1/responses ') && line.includes(' 200 ')
+        ).length
     await until(
       async () => ({
         python: await readFile(environment.backendLogPath, 'utf8'),
@@ -218,7 +241,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
         ),
       }),
       logs =>
-        pythonPosts(logs.python) === pythonPostsBefore + 2 &&
+        pythonPosts(logs.python) === 2 &&
         logs.rust.includes(`[API] GET /api/v1/responses/${responseId} `),
       'The real Python POST and Rust GET ownership was not observed in process logs'
     )
@@ -312,19 +335,17 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
       }
       return true
     },
-    async verify(control) {
+    async verify() {
       const started = Date.now()
       try {
-        const device = await environment.waitForConnectedAppDevice()
+        const device = await environment.device(CLOUD_DEVICE_ID)
+        assert.equal(device.status, 'online', 'The real remote Runtime must be connected')
         const models = await request('/v1/models?execution=wework', null, apiKey)
         const model = models.data.find(candidate => candidate.name === CLOUD_PUBLIC_MODEL_NAME)
         assert.ok(model, 'The real API model catalog did not expose the native model fixture')
         await verifyRejectedCreates(device.device_id, model.id)
-        pythonPostsBefore = (await readFile(environment.backendLogPath, 'utf8'))
-          .split('\n')
-          .filter(line => line.includes('request : POST /api/v1/responses ')).length
         const responseId = await verifyChat()
-        await verifyRuntime(control, device.device_id, model.id)
+        await verifyRuntime(device.device_id, model.id)
         await verifyRouting(responseId)
       } finally {
         evidence.durationMs = Date.now() - started
