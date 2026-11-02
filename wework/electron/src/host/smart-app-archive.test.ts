@@ -28,7 +28,8 @@ describe('Smart App ZIP extraction', () => {
 
       await extractSmartAppArchive(archive, destination)
 
-      await expect(readFile(join(destination, 'package/client.js'))).resolves.toEqual(bytes)
+      const extracted = await readFile(join(destination, 'package/client.js'))
+      expect(extracted.equals(bytes)).toBe(true)
       await expect(readFile(join(destination, 'tail.txt'), 'utf8')).resolves.toBe(
         'archive completed'
       )
@@ -48,7 +49,8 @@ describe('Smart App ZIP extraction', () => {
     await extractSmartAppArchive(archive, destination)
 
     for (const file of files) {
-      await expect(readFile(join(destination, file.name))).resolves.toEqual(file.bytes)
+      const extracted = await readFile(join(destination, file.name))
+      expect(extracted.equals(file.bytes), file.name).toBe(true)
     }
   })
 

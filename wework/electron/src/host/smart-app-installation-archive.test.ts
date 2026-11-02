@@ -54,9 +54,8 @@ describe('Smart App archive installation regression', () => {
         })
 
         expect(installed.manifest.version).toBe(`${index + 1}.0.0`)
-        await expect(readFile(join(installed.packagePath, 'app/client.js'))).resolves.toEqual(
-          payloads[index]
-        )
+        const extracted = await readFile(join(installed.packagePath, 'app/client.js'))
+        expect(extracted.equals(payloads[index]!)).toBe(true)
         expect(await manager.list()).toEqual([installed])
         await expect(stagingDirectories(root)).resolves.toEqual([])
       }
