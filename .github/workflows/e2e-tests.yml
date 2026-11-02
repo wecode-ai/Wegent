@@ -321,10 +321,9 @@ jobs:
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
-    # Fork pull requests cannot pull the executor E2E image from GHCR, so the
-    # Wework desktop E2E build downloads the executor-e2e-binary artifact from
-    # this job instead. That artifact must exist whenever a fork PR selects
-    # desktop E2E, even when platform_e2e itself is not selected.
+    # Every fork still publishes a same-head binary artifact for desktop consumers.
+    # Published immutable seeds can be pulled anonymously; unpublished fork images
+    # retain the existing image-archive transport.
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -333,7 +332,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.runtime.outputs.image }}
-      artifact: ${{ steps.access.outputs.artifact }}
+      artifact: ${{ steps.transport.outputs.artifact }}
 
     steps:
       - name: Checkout code
@@ -398,6 +397,16 @@ jobs:
             echo "image=builder-deps" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve Executor E2E image transport
+        id: transport
+        env:
+          FORK_ARTIFACT: ${{ steps.access.outputs.artifact }}
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          artifact="$FORK_ARTIFACT"
+          if [[ "$IMAGE" == *@sha256:* ]]; then artifact=false; fi
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
       - name: Build and publish Executor E2E image
         if: steps.access.outputs.artifact != 'true' && steps.image-check.outputs.exists != 'true'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
@@ -454,7 +463,7 @@ jobs:
           chmod 0755 executor/target/release/wegent-executor
 
       - name: Archive fork Executor E2E runtime
-        if: steps.access.outputs.artifact == 'true'
+        if: steps.transport.outputs.artifact == 'true'
         run: .github/scripts/archive-executor-e2e-runtime.sh
 
       - name: Describe Executor E2E artifact
@@ -475,7 +484,7 @@ jobs:
           compression-level: 0
 
       - name: Upload fork Executor E2E runtime
-        if: steps.access.outputs.artifact == 'true'
+        if: steps.transport.outputs.artifact == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: executor-e2e-runtime
@@ -1541,10 +1550,18 @@ jobs:
           EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
           USE_EXECUTOR_ARTIFACT: ${{ needs.build-executor-e2e-runtime.outputs.artifact }}
         run: |
+          public_config="$(mktemp -d)"
+          trap 'rm -rf "$public_config"' EXIT
+          printf '{"auths":{}}\n' > "$public_config/config.json"
           docker pull "$PLATFORM_E2E_IMAGE" &
           platform_pid=$!
           if [[ "$USE_EXECUTOR_ARTIFACT" != "true" ]]; then
-            docker pull "$EXECUTOR_E2E_IMAGE" &
+            # Locked seeds are public; do not send a different owner's fork token.
+            if [[ "$EXECUTOR_E2E_IMAGE" == *@sha256:* ]]; then
+              docker --config "$public_config" pull "$EXECUTOR_E2E_IMAGE" &
+            else
+              docker pull "$EXECUTOR_E2E_IMAGE" &
+            fi
             executor_pid=$!
           fi
 
@@ -1652,10 +1669,14 @@ jobs:
       - name: Download Executor E2E binary
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
         run: |
           .github/scripts/download-actions-artifact.sh \
             executor-e2e-binary \
             .ci-artifacts
+          node .github/scripts/runtime-artifact.mjs verify .ci-artifacts \
+            executor "$EXECUTOR_E2E_IMAGE" wegent-executor
           mkdir -p executor/target/release
           cp .ci-artifacts/wegent-executor executor/target/release/wegent-executor
           chmod 0755 executor/target/release/wegent-executor
@@ -1675,6 +1696,16 @@ jobs:
       - name: Restore fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
         run: .github/scripts/restore-executor-e2e-runtime.sh
+
+      - name: Verify Executor E2E image against the same-head binary manifest
+        env:
+          RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
+          USE_EXECUTOR_ARTIFACT: ${{ needs.build-executor-e2e-runtime.outputs.artifact }}
+        run: |
+          image="$EXECUTOR_E2E_IMAGE"
+          if [[ "$USE_EXECUTOR_ARTIFACT" == "true" ]]; then image=wegent/e2e-claudecode-executor:latest; fi
+          .github/scripts/verify-executor-e2e-image.sh "$image" "$EXECUTOR_E2E_IMAGE"
 
       - name: Run database migrations
         working-directory: ./backend

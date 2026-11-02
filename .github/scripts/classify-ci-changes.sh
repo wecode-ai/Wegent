@@ -104,6 +104,7 @@ classify_path() {
       .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/resolve-executor-e2e-runtime.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
+      .github/scripts/verify-executor-e2e-image.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/setup-dingtalk-oauth-e2e.sh | \
       .github/scripts/start-frontend-e2e-server.sh)

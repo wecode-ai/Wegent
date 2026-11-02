@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,6 +16,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { prebuiltImage } from "./ci-prebuilt-images.mjs";
+import { runtimeArtifact } from "./runtime-artifact.mjs";
 
 const root = new URL("../../", import.meta.url);
 const pinnedBase = `ghcr.io/example/base@sha256:${"a".repeat(64)}`;
@@ -134,41 +136,264 @@ test("publication normalizes registry caches and manual seeds cannot overwrite s
 
 test("fork and trusted PRs reuse image hits while missing images build exactly once", () => {
   const producer = workflow("e2e-tests").jobs["build-executor-e2e-runtime"];
+  const transport = producer.steps.find((step) => step.id === "transport");
+  assert.equal(
+    producer.outputs.artifact,
+    "${{ steps.transport.outputs.artifact }}",
+  );
+  assert.equal(
+    producer.steps.find((step) => step.name === "Upload Executor E2E binary")
+      .if,
+    undefined,
+  );
   for (const artifact of ["true", "false"]) {
     for (const exists of ["true", "false"]) {
-      const steps = {
-        access: { outputs: { artifact } },
-        "image-check": { outputs: { exists } },
-      };
-      const enabled = (name) => {
-        const step = producer.steps.find((item) => item.name === name);
-        assert.ok(step, name);
-        return step.if
-          ? runInNewContext(
-              step.if.replaceAll("steps.image-check", 'steps["image-check"]'),
-              { steps },
-            )
-          : true;
-      };
-      assert.equal(enabled("Check content-addressed Executor E2E image"), true);
-      assert.equal(
-        enabled("Build fork Executor E2E image"),
-        artifact === "true" && exists !== "true",
-      );
-      assert.equal(
-        enabled("Build and publish Executor E2E image"),
-        artifact !== "true" && exists !== "true",
-      );
-      assert.equal(
-        enabled("Restore published fork Executor runtime"),
-        artifact === "true" && exists === "true",
-      );
-      assert.equal(
-        enabled("Archive fork Executor E2E runtime"),
-        artifact === "true",
-      );
-      assert.equal(enabled("Log in to GHCR"), artifact !== "true");
+      for (const pinned of [true, false]) {
+        const directory = mkdtempSync(
+          join(tmpdir(), "executor-image-transport-"),
+        );
+        const output = join(directory, "output");
+        const result = spawnSync("bash", ["-e", "-c", transport.run], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            FORK_ARTIFACT: artifact,
+            IMAGE: pinned
+              ? `ghcr.io/example/executor@sha256:${"a".repeat(64)}`
+              : "ghcr.io/example/executor:source",
+            GITHUB_OUTPUT: output,
+          },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const archive = artifact === "true" && !pinned;
+        assert.equal(readFileSync(output, "utf8"), `artifact=${archive}\n`);
+        rmSync(directory, { recursive: true, force: true });
+        const steps = {
+          access: { outputs: { artifact } },
+          "image-check": { outputs: { exists } },
+          transport: { outputs: { artifact: String(archive) } },
+        };
+        const enabled = (name) => {
+          const step = producer.steps.find((item) => item.name === name);
+          assert.ok(step, name);
+          return step.if
+            ? runInNewContext(
+                step.if.replaceAll("steps.image-check", 'steps["image-check"]'),
+                { steps },
+              )
+            : true;
+        };
+        assert.equal(
+          enabled("Check content-addressed Executor E2E image"),
+          true,
+        );
+        assert.equal(
+          enabled("Build fork Executor E2E image"),
+          artifact === "true" && exists !== "true",
+        );
+        assert.equal(
+          enabled("Build and publish Executor E2E image"),
+          artifact !== "true" && exists !== "true",
+        );
+        assert.equal(
+          enabled("Restore published fork Executor runtime"),
+          artifact === "true" && exists === "true",
+        );
+        assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
+        assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
+        assert.equal(enabled("Log in to GHCR"), artifact !== "true");
+      }
     }
+  }
+});
+
+test("Executor consumers pull public pins anonymously and propagate either image pull failure", () => {
+  const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
+  const pull = consumer.steps.find((step) => step.name === "Pull E2E images");
+  const verification = consumer.steps.find((step) =>
+    step.name.startsWith("Verify Executor E2E image against"),
+  );
+  assert.equal(verification.if, undefined);
+  assert.match(verification.run, /verify-executor-e2e-image\.sh/);
+  const binary = consumer.steps.find(
+    (step) => step.name === "Download Executor E2E binary",
+  );
+  assert.match(binary.run, /runtime-artifact\.mjs verify/);
+
+  const directory = mkdtempSync(join(tmpdir(), "executor-image-pull-"));
+  try {
+    const docker = join(directory, "docker");
+    writeFileSync(
+      docker,
+      `#!${process.execPath}
+import { appendFileSync, readFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+const config = args[0] === '--config' ? args[1] : undefined
+appendFileSync(process.env.TEST_DOCKER_LOG, JSON.stringify({ args, config: config ? JSON.parse(readFileSync(config + '/config.json')) : undefined }) + '\\n')
+const image = args.at(-1)
+if (image.includes(process.env.TEST_PULL_FAILURE || 'no-failure')) process.exit(37)
+`,
+    );
+    chmodSync(docker, 0o755);
+    const log = join(directory, "docker.log");
+    const run = (archive, pinned, failure = "") => {
+      writeFileSync(log, "");
+      const result = spawnSync("bash", ["-e", "-c", pull.run], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          TMPDIR: directory,
+          PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
+          EXECUTOR_E2E_IMAGE: pinned
+            ? pinnedBase
+            : "ghcr.io/example/executor:source",
+          USE_EXECUTOR_ARTIFACT: String(archive),
+          TEST_DOCKER_LOG: log,
+          TEST_PULL_FAILURE: failure,
+        },
+      });
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      assert.equal(result.status, failure ? 37 : 0, result.stderr);
+      for (const call of calls) {
+        if (call.args[0] === "--config") {
+          assert.deepEqual(call.config, { auths: {} });
+          assert.equal(
+            existsSync(call.args[1]),
+            false,
+            "anonymous config must be removed",
+          );
+        }
+      }
+      return calls;
+    };
+    for (const archive of [false, true]) {
+      for (const pinned of [false, true]) {
+        const calls = run(archive, pinned);
+        assert.equal(calls.length, archive ? 1 : 2);
+        assert.deepEqual(
+          calls.find((call) => call.args.at(-1).includes("platform")).args,
+          ["pull", "ghcr.io/example/platform:source"],
+        );
+        if (!archive) {
+          const executor = calls.find(
+            (call) => !call.args.at(-1).includes("platform"),
+          );
+          assert.equal(executor.args[0], pinned ? "--config" : "pull");
+        }
+      }
+    }
+    run(false, true, "platform");
+    run(false, true, "base");
+    run(false, false, "executor");
+    run(true, true, "platform");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Executor image payload must match the same-head runtime manifest and always cleans up", () => {
+  const directory = mkdtempSync(join(tmpdir(), "executor-image-verify-"));
+  try {
+    const bin = join(directory, "bin");
+    const scratch = join(directory, "scratch");
+    const artifact = join(directory, "artifact");
+    for (const path of [bin, scratch, artifact]) mkdirSync(path);
+    const expected = join(artifact, "wegent-executor");
+    const corrupt = join(directory, "corrupt");
+    writeFileSync(expected, "same-head executable bytes");
+    writeFileSync(corrupt, "different image payload");
+    const head = "b".repeat(40);
+    runtimeArtifact(
+      "create",
+      artifact,
+      "executor",
+      pinnedBase,
+      ["wegent-executor"],
+      head,
+    );
+    const log = join(directory, "docker.log");
+    const docker = join(bin, "docker");
+    writeFileSync(
+      docker,
+      `#!${process.execPath}
+import { appendFileSync, copyFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.TEST_DOCKER_LOG, JSON.stringify(args) + '\\n')
+if (args[0] === process.env.TEST_DOCKER_FAILURE) process.exit(38)
+if (args[0] === 'create') process.stdout.write('test-container\\n')
+else if (args[0] === 'cp') {
+  if (args[1] !== 'test-container:/app/executor') process.exit(39)
+  copyFileSync(process.env.TEST_BINARY, args[2])
+} else if (args[0] !== 'rm') process.exit(40)
+`,
+    );
+    chmodSync(docker, 0o755);
+    const run = ({
+      image = pinnedBase,
+      source = pinnedBase,
+      sha = head,
+      binary = expected,
+      failure = "",
+    } = {}) => {
+      writeFileSync(log, "");
+      const result = spawnSync(
+        "bash",
+        [
+          ".github/scripts/verify-executor-e2e-image.sh",
+          image,
+          source,
+          artifact,
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            TMPDIR: scratch,
+            RUNTIME_HEAD_SHA: sha,
+            TEST_BINARY: binary,
+            TEST_DOCKER_LOG: log,
+            TEST_DOCKER_FAILURE: failure,
+          },
+        },
+      );
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      assert.deepEqual(calls[0], ["create", image]);
+      if (failure !== "create")
+        assert.deepEqual(calls.at(-1), ["rm", "-f", "test-container"]);
+      assert.deepEqual(
+        readdirSync(scratch),
+        [],
+        "temporary image payload must be removed",
+      );
+      return result;
+    };
+    assert.equal(run().status, 0);
+    assert.equal(
+      run({ image: "wegent/e2e-claudecode-executor:latest" }).status,
+      0,
+    );
+    const corrupted = run({ binary: corrupt });
+    assert.notEqual(corrupted.status, 0);
+    assert.match(corrupted.stderr, /checksum mismatch/);
+    const wrongHead = run({ sha: "c".repeat(40) });
+    assert.notEqual(wrongHead.status, 0);
+    assert.match(wrongHead.stderr, /headSha mismatch/);
+    const wrongSource = run({ source: "ghcr.io/example/other:source" });
+    assert.notEqual(wrongSource.status, 0);
+    assert.match(wrongSource.stderr, /sourceRef mismatch/);
+    for (const failure of ["create", "cp", "rm"])
+      assert.notEqual(run({ failure }).status, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
