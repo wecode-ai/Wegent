@@ -84,18 +84,20 @@ def _reference_shell(test_db, shell: Kind, namespace: Namespace) -> None:
     test_db.commit()
 
 
-def _create_bot(test_db, user, namespace: str, shell_namespace: str) -> Kind:
+def _create_bot(
+    test_db, user, namespace: str, shell_namespace: str, name: str = "group-bot"
+) -> Kind:
     bot = Kind(
         user_id=user.id,
         kind="Bot",
-        name="group-bot",
+        name=name,
         namespace=namespace,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Bot",
-            "metadata": {"name": "group-bot", "namespace": namespace},
+            "metadata": {"name": name, "namespace": namespace},
             "spec": {
-                "ghostRef": {"name": "group-bot-ghost", "namespace": namespace},
+                "ghostRef": {"name": f"{name}-ghost", "namespace": namespace},
                 "shellRef": {
                     "name": "group-claude",
                     "namespace": shell_namespace,
@@ -137,6 +139,34 @@ def test_bot_detail_resolves_shell_by_reference_namespace(
 
     assert result["shell_name"] == "group-claude"
     assert result["shell_type"] == "ClaudeCode"
+
+
+def test_bot_update_preserves_existing_shell_namespace(
+    test_db, test_user, referenced_shell_bot
+):
+    _bot, shell, source_group = referenced_shell_bot
+    bot = _create_bot(
+        test_db,
+        test_user,
+        namespace=source_group,
+        shell_namespace=source_group,
+        name="direct-shell-bot",
+    )
+
+    result = BotKindsService(Kind).update_with_user(
+        test_db,
+        bot_id=bot.id,
+        obj_in=BotUpdate(
+            name=bot.name,
+            shell_name=shell.name,
+            system_prompt="updated prompt",
+        ),
+        user_id=test_user.id,
+    )
+
+    refreshed = test_db.get(Kind, bot.id)
+    assert result["shell_type"] == "ClaudeCode"
+    assert refreshed.json["spec"]["shellRef"]["namespace"] == source_group
 
 
 def test_bot_list_resolves_referenced_shells_in_batch(

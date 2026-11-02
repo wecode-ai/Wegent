@@ -1046,34 +1046,40 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")  # Mark JSON field as modified
         if "shell_name" in update_data:
-            # Update Bot's shellRef to point directly to the user-selected Shell
+            # Apply the selected Shell, preserving an existing resolvable reference.
             new_shell_name = update_data["shell_name"]
-            try:
-                shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-
-            logger.info(
-                f"[DEBUG] update_with_user: shell_name={new_shell_name}, "
-                f"resolved shell_type={shell_info['shell_type']}, "
-                f"execution_type={shell_info['execution_type']}, "
-                f"base_image={shell_info['base_image']}, "
-                f"is_custom={shell_info['is_custom']}, "
-                f"namespace={shell_info.get('namespace', 'default')}"
-            )
-
-            # Update Bot's shellRef to point to the user-selected Shell
-            # Use the shell's actual namespace (public shells are in 'default' namespace)
             bot_crd = Bot.model_validate(bot.json)
-            bot_crd.spec.shellRef.name = new_shell_name
-            bot_crd.spec.shellRef.namespace = shell_info.get("namespace", "default")
-            bot.json = bot_crd.model_dump()
-            flag_modified(bot, "json")
+            shell_ref = bot_crd.spec.shellRef
+            shell = None
+            if shell_ref.name == new_shell_name:
+                shell = get_shell_by_name(
+                    db, new_shell_name, user_id, shell_ref.namespace or "default"
+                )
 
-            # Update shell reference for response using the namespace we just wrote.
-            shell = get_shell_by_name(
-                db, new_shell_name, user_id, shell_info.get("namespace", "default")
-            )
+            if shell is None:
+                try:
+                    shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                logger.info(
+                    f"[DEBUG] update_with_user: shell_name={new_shell_name}, "
+                    f"resolved shell_type={shell_info['shell_type']}, "
+                    f"execution_type={shell_info['execution_type']}, "
+                    f"base_image={shell_info['base_image']}, "
+                    f"is_custom={shell_info['is_custom']}, "
+                    f"namespace={shell_info.get('namespace', 'default')}"
+                )
+
+                # Re-resolve only when the shell changed or the existing
+                # reference is no longer resolvable.
+                shell_ref.name = new_shell_name
+                shell_ref.namespace = shell_info.get("namespace", "default")
+                bot.json = bot_crd.model_dump()
+                flag_modified(bot, "json")
+                shell = get_shell_by_name(
+                    db, new_shell_name, user_id, shell_ref.namespace
+                )
 
         if "agent_config" in update_data:
             bot_crd = Bot.model_validate(bot.json)
