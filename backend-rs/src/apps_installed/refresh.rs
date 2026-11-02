@@ -314,7 +314,7 @@ async fn request_tokens(endpoint: &str, form: &[(&str, &str)]) -> Result<Value, 
         .await
         .map_err(|error| RefreshError::Provider(error.to_string()))?;
     let status = response.status();
-    if status.is_client_error() {
+    if status.is_client_error() && status.as_u16() != 429 {
         return Err(RefreshError::Rejected);
     }
     if !status.is_success() {
@@ -554,19 +554,22 @@ where
     }
 }
 
-/// `set_status("expired")` for a credential the upstream rejected.
-///
-/// The grant is kept (`refreshTokenEncrypted` untouched) so a later retry can
-/// still renew it, and only the status member is patched.
-pub(crate) async fn mark_expired<M>(mysql: &M, kind_id: i64) -> Result<(), RefreshError>
+/// Expire only the credential an in-flight request actually used. A late 401
+/// for an older access token must not invalidate a grant committed meanwhile.
+pub(crate) async fn reject_credential_if_current<M>(
+    mysql: &M,
+    kind_id: i64,
+    expected_access: &str,
+) -> Result<(), RefreshError>
 where
     M: Mysql,
 {
     mysql
         .execute(
             "UPDATE kinds SET json = JSON_SET(json, '$.spec.status', 'expired'), \
-             updated_at = NOW() WHERE id = ?",
-            (kind_id,),
+             updated_at = NOW() WHERE id = ? \
+             AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.accessTokenEncrypted')), '') = ?",
+            (kind_id, expected_access),
         )
         .await
         .map(|_| ())
@@ -636,6 +639,18 @@ mod tests {
     async fn token_endpoint_5xx_answers_keep_the_grant() {
         let endpoint = serve_response(
             "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        let error = request_tokens(&endpoint, &[("grant_type", "refresh_token")])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RefreshError::Provider(_)));
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_rate_limits_keep_the_grant() {
+        let endpoint = serve_response(
+            "HTTP/1.1 429 Too Many Requests\r\nretry-after: 1\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
         )
         .await;
         let error = request_tokens(&endpoint, &[("grant_type", "refresh_token")])
@@ -986,7 +1001,9 @@ mod tests {
     async fn marking_a_connection_expired_keeps_the_grant() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
 
-        mark_expired(&mysql, 42).await.unwrap();
+        reject_credential_if_current(&mysql, 42, "access-ciphertext")
+            .await
+            .unwrap();
 
         let writes = mysql.writes();
         assert_eq!(writes.len(), 1);
@@ -994,6 +1011,23 @@ mod tests {
         assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
         assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
         assert_eq!(writes[0].first_integer, Some(42));
+    }
+
+    /// A late upstream 401 only expires the access token that produced it.
+    #[tokio::test]
+    async fn a_rejected_credential_update_is_conditional_on_its_grant() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+
+        reject_credential_if_current(&mysql, 42, "access-ciphertext")
+            .await
+            .unwrap();
+
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
+        assert!(sql.contains("accessTokenEncrypted"), "{sql}");
+        assert!(sql.contains("= ?"), "{sql}");
     }
 
     fn connection(refresh_token_encrypted: Option<&str>) -> ConnectorConnection {

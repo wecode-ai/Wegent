@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterator
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -20,6 +21,7 @@ from app.schemas.connector import ConnectorAppWrite
 from app.services.connector_apps import connector_app_service
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import ConnectorOAuthService
+from app.services.connector_runtime import ConnectorRuntimeService
 from shared.utils.crypto import encrypt_sensitive_data
 
 SLUG = "race-connector"
@@ -376,3 +378,124 @@ async def test_a_rejection_does_not_reopen_a_reauthorized_account(
     assert current.access_token() == "A2"
     assert current.refresh_token() == "R2"
     assert current.external_account_name == "other@example.test"
+
+
+def _rate_limit_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://race.example.test/token")
+    response = httpx.Response(
+        status_code, headers={"Retry-After": "1"}, request=request
+    )
+    return httpx.HTTPStatusError("limited", request=response.request, response=response)
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_refresh_keeps_the_grant_for_a_successful_retry(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 is temporary throttling, not a revoked refresh token."""
+    _create_app(test_db, test_user)
+    stale = _connect(test_db, test_user, access="A0", refresh="R0")
+    responses = [
+        _rate_limit_error(429),
+        {
+            "access_token": "A1",
+            "refresh_token": "R1",
+            "expires_in": 3600,
+        },
+    ]
+
+    def next_response(_data: dict[str, Any]) -> dict[str, Any]:
+        outcome = responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    _install_token_endpoint(monkeypatch, next_response)
+
+    assert await ConnectorOAuthService.refresh_connection(test_db, stale) is None
+    throttled = _current(test_db, test_user)
+    assert throttled is not None
+    assert throttled.status == "expired"
+    assert throttled.refresh_token() == "R0"
+
+    refreshed = await ConnectorOAuthService.refresh_connection(test_db, throttled)
+
+    assert refreshed is not None
+    assert refreshed.access_token() == "A1"
+    assert refreshed.refresh_token() == "R1"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_current_grant_still_clears_its_refresh_token(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """invalid_grant remains a real rejection, unlike a transient 429."""
+    _create_app(test_db, test_user)
+    stale = _connect(test_db, test_user, access="A0", refresh="R0")
+    _install_token_endpoint(
+        monkeypatch, lambda _data: (_ for _ in ()).throw(_rate_limit_error(400))
+    )
+
+    assert await ConnectorOAuthService.refresh_connection(test_db, stale) is None
+    rejected = _current(test_db, test_user)
+    assert rejected is not None
+    assert rejected.refresh_token() is None
+
+
+@pytest.mark.asyncio
+async def test_a_late_tool_401_does_not_expire_a_newer_grant(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """The 401 expires A0, never the A1 grant committed during the call."""
+    _create_app(test_db, test_user)
+    attempted = _connect(test_db, test_user, access="A0", refresh="R0")
+
+    with _competing_writer(test_db) as competing:
+        _connect(competing, test_user, access="A1", refresh="R1")
+
+    assert ConnectorRuntimeService._mark_expired_on_auth_error(
+        test_db,
+        app=_app(test_db, test_user),
+        user=test_user,
+        error=RuntimeError("401 unauthorized"),
+        attempted=attempted,
+    )
+
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.status == "connected"
+    assert current.access_token() == "A1"
+    assert current.refresh_token() == "R1"
+
+
+@pytest.mark.asyncio
+async def test_the_same_grant_rejection_marks_it_expired(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """An upstream 401 still expires the access token that produced it."""
+    _create_app(test_db, test_user)
+    attempted = _connect(test_db, test_user, access="A0", refresh="R0")
+
+    assert ConnectorRuntimeService._mark_expired_on_auth_error(
+        test_db,
+        app=_app(test_db, test_user),
+        user=test_user,
+        error=RuntimeError("401 unauthorized"),
+        attempted=attempted,
+    )
+
+    current = _current(test_db, test_user)
+    assert current is not None
+    assert current.status == "expired"
+    assert current.access_token() == "A0"
+    assert current.refresh_token() == "R0"
+
+
+def _app(db: Session, user: User):
+    return connector_app_service.get_app_by_slug(db, SLUG)

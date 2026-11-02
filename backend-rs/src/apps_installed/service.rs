@@ -353,6 +353,7 @@ where
             "Authorization",
             format!("Bearer {access_token}"),
         );
+        return Ok(headers);
     }
     insert_header(
         &mut headers,
@@ -361,6 +362,28 @@ where
     );
     insert_header(&mut headers, "X-Wegent-User-Id", user.users_id.to_string());
     Ok(headers)
+}
+
+/// The access-token ciphertext used by `session_headers`, if this call needs
+/// OAuth credentials. A late upstream 401 is checked against this grant.
+pub(crate) async fn session_access_ciphertext<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user: &UserRow,
+) -> Result<Option<String>, SessionError>
+where
+    M: Mysql,
+{
+    if app.auth_type == "none" {
+        return Ok(None);
+    }
+    let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
+        .await
+        .map_err(SessionError::Database)?
+        .ok_or(SessionError::AuthorizationRequired)?;
+    Ok(Some(
+        ConnectorConnection::from_row(&row).access_token_encrypted,
+    ))
 }
 
 /// `_decrypt_json(app.provider_headers_encrypted)`: the decrypted JSON object's

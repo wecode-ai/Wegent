@@ -467,12 +467,14 @@ class ConnectorOAuthService:
                 db, slug=connection.slug, user_id=connection.user_id
             )
         except httpx.HTTPStatusError as error:
-            # The endpoint answered, so a rejected grant is final.
+            # Rate limiting and other transient answers must not invalidate a
+            # refresh token the user could reuse once the upstream recovers.
+            transient = error.response.status_code == 429
             return ConnectorOAuthService._record_refresh_failure(
                 db,
                 connection,
                 grant=grant,
-                clear_refresh_token=error.response.status_code < 500,
+                clear_refresh_token=not transient and error.response.status_code < 500,
             )
         except ValueError:
             # The payload carried an OAuth error such as `invalid_grant`.

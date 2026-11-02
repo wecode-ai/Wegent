@@ -297,6 +297,35 @@ class ConnectorConnectionService:
         return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
+    def reject_credential_if_current(
+        db: Session,
+        *,
+        connection: ConnectorConnection,
+        expected_access_token_encrypted: str,
+    ) -> ConnectorConnection | None:
+        """Expire the credential a request actually used, never its successor.
+
+        An upstream 401/403 belongs to the access token presented by that
+        request. A newer grant may have been committed while it was in flight;
+        in that case leave the new connection untouched.
+        """
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return None
+        spec = dict((row.json or {}).get("spec") or {})
+        if not row.is_active or (
+            str(spec.get("accessTokenEncrypted") or "")
+            != expected_access_token_encrypted
+        ):
+            db.commit()
+            return None
+        spec["status"] = "expired"
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
+
+    @staticmethod
     def is_usable(connection: ConnectorConnection | None) -> bool:
         """Whether the caller can use this connection right now.
 

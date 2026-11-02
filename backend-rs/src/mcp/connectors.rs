@@ -318,6 +318,14 @@ async fn call_tool(
             return failure(error.to_string());
         }
     };
+    let attempted_access = match service::session_access_ciphertext(&state.mysql, &app, &user).await
+    {
+        Ok(access) => access,
+        Err(error) => {
+            tracing::warn!(connector = %app.slug, %error, "connector tool credential lookup failed");
+            return failure(error.to_string());
+        }
+    };
     if app.transport == "http" {
         return call_http_tool(&app, upstream_name, &arguments, &headers).await;
     }
@@ -332,7 +340,7 @@ async fn call_tool(
     {
         Ok(call) => success(&call),
         Err(mcp::McpError::Unauthorized(message)) => {
-            unauthorized(state, &app, &user, &message).await
+            unauthorized(state, &app, &user, &message, attempted_access).await
         }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector tool call failed");
@@ -373,14 +381,17 @@ async fn unauthorized(
     app: &ConnectorApp,
     user: &UserRow,
     message: &str,
+    attempted_access: Option<String>,
 ) -> Value {
     tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
     if let Some(row) = db::find_connector_connection(&state.mysql, &app.slug, user.users_id)
         .await
         .ok()
         .flatten()
+        && let Some(expected_access) = attempted_access
     {
-        let _ = refresh::mark_expired(&state.mysql, row.kinds_id).await;
+        let _ = refresh::reject_credential_if_current(&state.mysql, row.kinds_id, &expected_access)
+            .await;
     }
     failure(connector_auth_required(&app.slug))
 }

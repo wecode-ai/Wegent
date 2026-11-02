@@ -212,7 +212,9 @@ async fn discovery_does_not_revive_a_rejected_grant() {
                 .expect("seeded row");
 
             // Another request's refresh was rejected in the meantime.
-            refresh::mark_expired(&mysql, stale.kinds_id).await.unwrap();
+            refresh::reject_credential_if_current(&mysql, stale.kinds_id, "old-access")
+                .await
+                .unwrap();
             mysql
                 .execute(
                     "UPDATE kinds SET json = JSON_SET(json, '$.spec.refreshTokenEncrypted', CAST('null' AS JSON))
@@ -565,6 +567,72 @@ async fn a_delayed_rotation_does_not_replace_a_reauthorized_grant() {
             let spec = read_spec(&mysql).await;
             assert_eq!(spec["accessTokenEncrypted"], json!("new-access"));
             assert_eq!(spec["refreshTokenEncrypted"], json!("new-refresh"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// An upstream 401 for the old access token cannot invalidate a newer grant.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_late_tool_rejection_does_not_expire_a_newer_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let attempted = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+
+            refresh::reject_credential_if_current(&mysql, attempted.kinds_id, "old-access")
+                .await
+                .unwrap();
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("connected"));
+            assert_eq!(spec["accessTokenEncrypted"], json!("new-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("new-refresh"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// A rejection of the access token still in use expires that grant, keeping
+/// its refresh token available for a later renewal.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_current_tool_rejection_expires_only_the_used_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let attempted = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+
+            refresh::reject_credential_if_current(&mysql, attempted.kinds_id, "old-access")
+                .await
+                .unwrap();
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("expired"));
+            assert_eq!(spec["accessTokenEncrypted"], json!("old-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("old-refresh"));
         }
     })
     .await;

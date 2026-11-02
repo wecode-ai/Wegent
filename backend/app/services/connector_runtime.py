@@ -308,7 +308,7 @@ class ConnectorRuntimeService:
         if app.transport == "http":
             app_tools = ConnectorRuntimeService._http_tools(app)
         else:
-            config = await ConnectorRuntimeService._server_config(db, app, user)
+            config, _ = await ConnectorRuntimeService._server_config(db, app, user)
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 upstream_tools = await ConnectorRuntimeService._list_all_tools(session)
             allowlist = set(app.tool_allowlist or [])
@@ -389,6 +389,11 @@ class ConnectorRuntimeService:
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
         config = await ConnectorRuntimeService._server_config(db, app, user)
+        attempted = (
+            connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+            if app.auth_type != "none"
+            else None
+        )
         if app.transport == "http":
             definition = ConnectorRuntimeService._http_tool_definition(
                 app, upstream_name
@@ -439,7 +444,9 @@ class ConnectorRuntimeService:
                 upstream_name,
                 exc,
             )
-            if ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc):
+            if ConnectorRuntimeService._mark_expired_on_auth_error(
+                db, app, user, exc, attempted
+            ):
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     f"Connector '{app.slug}' requires authorization",
@@ -467,6 +474,7 @@ class ConnectorRuntimeService:
         app: ConnectorApp,
         user: User,
         error: Exception,
+        attempted: ConnectorConnection | None = None,
     ) -> bool:
         """Mark the user's connection expired when the upstream rejected it.
 
@@ -481,13 +489,18 @@ class ConnectorRuntimeService:
             marker in message for marker in ("401", "403", "unauthorized", "forbidden")
         ):
             return False
-        connection = connector_connection_service.get(
-            db,
-            slug=app.slug,
-            user_id=user.id,
-        )
-        if connection:
-            connector_connection_service.set_status(db, connection, "expired")
+        if attempted is None:
+            # A direct discovery/probe helper that has no request-scoped grant
+            # keeps its historical behavior. Tool calls pass their own grant.
+            attempted = connector_connection_service.get(
+                db, slug=app.slug, user_id=user.id
+            )
+        if attempted is not None:
+            connector_connection_service.reject_credential_if_current(
+                db,
+                connection=attempted,
+                expected_access_token_encrypted=attempted.access_token_encrypted,
+            )
         return True
 
     @staticmethod
@@ -607,6 +620,11 @@ class ConnectorRuntimeService:
     ) -> list[Any]:
         try:
             config = await ConnectorRuntimeService._server_config(db, app, user)
+            attempted = (
+                connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+                if app.auth_type != "none"
+                else None
+            )
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 return await ConnectorRuntimeService._list_all_tools(session)
         except HTTPException:
@@ -617,7 +635,9 @@ class ConnectorRuntimeService:
                 app.slug,
                 exc,
             )
-            if ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc):
+            if ConnectorRuntimeService._mark_expired_on_auth_error(
+                db, app, user, exc, attempted
+            ):
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     f"Connector '{app.slug}' requires authorization",
