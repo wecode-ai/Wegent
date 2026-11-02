@@ -492,6 +492,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
             "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "Chat",
         )
+        # Webhooks follow both card attempts; private delivery alone is not settlement.
+        self._wait_webhook(result)
         self.assertEqual(result["status"], "COMPLETED")
         self.assertEqual(_cards(result["requests"], "IM_GROUP"), [])
         self.assertEqual(len(_cards(result["requests"], "IM_ROBOT")), 1)
