@@ -243,7 +243,6 @@ import {
   UNSENT_BLANK_TASK_DRAFT,
   UNSENT_FIRST_TASK_DRAFT,
   UNSENT_SECOND_TASK_DRAFT,
-  USES_INTERNAL_TELEMETRY,
   VERIFIES_INITIAL_TELEMETRY_CONSENT,
   VIEW_IMAGE_ONLY,
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
@@ -1623,7 +1622,7 @@ async function main() {
         MODEL_API_KEY,
         'desktop-e2e@wework.local',
       ])
-    } else if (!USES_INTERNAL_TELEMETRY) {
+    } else {
       await declineInitialTelemetryConsent(control)
     }
     if (RUNS_PLUGIN_E2E && !shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {

@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  shouldAcceptInitialTelemetryConsent,
-  shouldPromptInitialTelemetryConsent,
-} from './telemetry-consent.mjs'
+import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 
 test('accepts telemetry consent for checkpoints that assert public telemetry', () => {
   assert.equal(shouldAcceptInitialTelemetryConsent(undefined), true)
@@ -13,14 +10,9 @@ test('accepts telemetry consent for checkpoints that assert public telemetry', (
   assert.equal(shouldAcceptInitialTelemetryConsent('native-window-startup'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-marketplace-lifecycle'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-lifecycle'), true)
+  assert.equal(shouldAcceptInitialTelemetryConsent('core-dsh-ui-plugin-composition'), true)
 })
 
 test('declines telemetry consent for unrelated isolated checkpoints', () => {
   assert.equal(shouldAcceptInitialTelemetryConsent('browser-annotation-design'), false)
-})
-
-test('does not prompt for public telemetry consent while exercising internal telemetry', () => {
-  assert.equal(shouldPromptInitialTelemetryConsent(undefined, true), false)
-  assert.equal(shouldPromptInitialTelemetryConsent('core-dsh-ui-plugin-composition', true), false)
-  assert.equal(shouldPromptInitialTelemetryConsent('telemetry-consent', false), true)
 })

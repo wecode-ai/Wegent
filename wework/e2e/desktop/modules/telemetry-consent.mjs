@@ -3,6 +3,7 @@ const TELEMETRY_CONSENT_CHECKPOINTS = new Set([
   'harness-app-development',
   'harness-app-lifecycle',
   'native-window-startup',
+  'core-dsh-ui-plugin-composition',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
 ])
@@ -11,8 +12,4 @@ function shouldAcceptInitialTelemetryConsent(selectedCheckpoint) {
   return !selectedCheckpoint || TELEMETRY_CONSENT_CHECKPOINTS.has(selectedCheckpoint)
 }
 
-function shouldPromptInitialTelemetryConsent(selectedCheckpoint, usesInternalTelemetry) {
-  return !usesInternalTelemetry && shouldAcceptInitialTelemetryConsent(selectedCheckpoint)
-}
-
-export { shouldAcceptInitialTelemetryConsent, shouldPromptInitialTelemetryConsent }
+export { shouldAcceptInitialTelemetryConsent }
