@@ -108,6 +108,134 @@ def test_runtime_message_sequence_survives_live_and_history_views(
     ] == str(sequence)
 
 
+@pytest.mark.parametrize("incoming_sequence", [9, 10])
+@pytest.mark.parametrize(
+    "event_name,data,completed",
+    [
+        ("response.output_text.delta", {"delta": "Old text"}, False),
+        ("response.output_text.done", {"text": "Old text"}, False),
+        ("response.completed", {"value": "Old text"}, False),
+        ("response.completed", {"value": "Old text"}, True),
+    ],
+)
+def test_executionless_activity_rejects_stale_runtime_content(
+    test_db, run, incoming_sequence, event_name, data, completed
+):
+    _, _, row = run
+    row.content = "Current text"
+    row.status = "completed" if completed else "streaming"
+    row.metadata_json = {
+        **row.metadata_json,
+        "runtime_event_sequence": "10",
+        "runtime_turn_id": "turn-1",
+    }
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=row.runtime_device_id,
+        runtime_task_id=row.runtime_task_id,
+        event_name=event_name,
+        payload={
+            "subtaskId": "turn-1",
+            "eventSeq": incoming_sequence,
+            "data": data,
+        },
+    )
+
+    assert projected is None
+    test_db.expire_all()
+    assert row.content == "Current text"
+    assert row.metadata_json["runtime_event_sequence"] == "10"
+
+
+def test_elected_terminal_projects_final_text_at_the_aggregate_sequence(test_db, run):
+    _, _, row = run
+    row.status = "completed"
+    row.metadata_json = {
+        **row.metadata_json,
+        "runtime_event_sequence": "10",
+        "runtime_turn_id": "turn-1",
+    }
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=row.runtime_device_id,
+        runtime_task_id=row.runtime_task_id,
+        event_name="response.completed",
+        payload={
+            "subtaskId": "turn-1",
+            "eventSeq": 10,
+            "data": {"value": "Final text"},
+        },
+        accepted_terminal=True,
+    )
+
+    assert projected is not None
+    assert projected[0].content == "Final text"
+    assert projected[0].metadata["runtime_event_sequence"] == "10"
+
+
+def test_subagent_updates_keep_their_identity_and_runtime_sequence(test_db, run):
+    _, _, parent = run
+
+    def project(sequence, text, status="running"):
+        return project_chat_service.project_runtime_event(
+            test_db,
+            device_id=parent.runtime_device_id,
+            runtime_task_id=parent.runtime_task_id,
+            event_name="response.subagent.activity",
+            payload={
+                "eventSeq": sequence,
+                "data": {
+                    "agent_id": "worker-1",
+                    "agent_name": "Worker",
+                    "status": status,
+                    "message": text,
+                },
+            },
+        )
+
+    first = project(10, "First update")
+    assert first is not None
+    assert first[0].metadata["runtime_event_sequence"] == "10"
+    latest = project(11, "Current text")
+    assert latest is not None
+    assert latest[0].message_id == first[0].message_id
+    assert latest[0].trigger_message_id == parent.message_id
+    assert latest[0].content == "Current text"
+    assert latest[0].metadata["runtime_event_sequence"] == "11"
+    assert project(9, "Old text") is None
+    assert project(11, "Duplicate text") is None
+    assert project(9, "Old completion", status="completed") is None
+    test_db.refresh(parent)
+    assert parent.status == "streaming"
+
+    unsequenced = project(None, "Legacy update")
+    assert unsequenced is not None
+    assert unsequenced[0].metadata["runtime_event_sequence"] == "11"
+    test_db.expire_all()
+    child = (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=first[0].message_id)
+        .one()
+    )
+    assert child.content == "Legacy update"
+    assert child.metadata_json["runtime_event_sequence"] == "11"
+
+    parent_delta = project_chat_service.project_runtime_event(
+        test_db,
+        device_id=parent.runtime_device_id,
+        runtime_task_id=parent.runtime_task_id,
+        event_name="response.output_text.delta",
+        payload={"eventSeq": 12, "data": {"delta": "Parent answer"}},
+    )
+    assert parent_delta is not None
+    assert parent_delta[0].message_id == parent.message_id
+    assert parent_delta[0].metadata["runtime_event_sequence"] == "12"
+
+
 @pytest.mark.parametrize(
     "event_name,data",
     [

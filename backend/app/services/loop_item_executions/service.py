@@ -2811,6 +2811,9 @@ class LoopItemExecutionService:
                     "canceled",
                 }:
                     continue
+                project_chat_service._record_runtime_sequence(
+                    child, execution.last_event_seq
+                )
                 child.status = terminal_status
                 child.message_type = "text"
                 child_metadata = dict(child.metadata_json or {})
