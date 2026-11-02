@@ -775,6 +775,7 @@ export function PluginsWorkspace({
     setInstallingMarketplacePluginIds(new Set())
     setPendingPluginUninstall(null)
     setUninstallingPluginIds(new Set())
+    setUpdatingPluginPolicyIds(new Set())
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, knownExecutorDeviceId, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
