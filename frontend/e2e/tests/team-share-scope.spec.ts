@@ -189,7 +189,10 @@ async function openChatTeamEditor(page: Page, teamId: number): Promise<Locator> 
   await page.goto(`/chat?teamId=${teamId}`)
   const badge = page.getByTestId('selected-team-badge').first()
   await expect(badge).toBeVisible({ timeout: 20000 })
-  await badge.click()
+  // The badge sits inside a tooltip trigger; pointer clicks are intercepted by
+  // the tooltip overlay, while the badge itself is keyboard activatable.
+  await badge.focus()
+  await badge.press('Enter')
   const dialog = page.getByTestId('team-edit-dialog')
   await expect(dialog).toBeVisible({ timeout: 15000 })
   return dialog

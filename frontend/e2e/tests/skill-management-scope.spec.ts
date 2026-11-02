@@ -695,20 +695,17 @@ test.describe('Agent skill management scope', () => {
       expect(payload.tags).toContain(tag!.id)
       fixture.createdSkillIds.push(payload.source_id)
 
-      await expect
-        .poll(
-          async () => {
-            const listings = await fixture.adminApi.get<{
-              items: Array<{ source_id: number; resource_type: string; tags?: string[] }>
-            }>('/api/resource-library/listings?resource_type=skill&page=1&limit=50')
-            const listing = (listings.data?.items ?? []).find(
-              item => item.resource_type === 'skill' && item.source_id === payload.source_id
-            )
-            return Boolean(listing?.tags?.includes(tag!.id))
-          },
-          { timeout: 20000 }
-        )
-        .toBe(true)
+      const createdListing = (await listingResponse.json()) as {
+        id: number
+        tags?: string[]
+      }
+      expect(createdListing.tags).toContain(tag!.id)
+
+      const storedListing = await fixture.userApi.get<{ tags?: string[] }>(
+        `/api/resource-library/listings/${createdListing.id}`
+      )
+      expect(storedListing.status, JSON.stringify(storedListing.data)).toBe(200)
+      expect(storedListing.data?.tags).toContain(tag!.id)
     } finally {
       await context.close()
       await fixture.cleanup()
