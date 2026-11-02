@@ -76,7 +76,7 @@ export function WeworkSchemeBridge() {
         const app = resolveDshApp(destination.appId)
         if (!app) {
           if (getDshApps().length === 0) {
-            pendingUrls.current.add(url)
+            if (deferInRenderer) pendingUrls.current.add(url)
             return false
           }
           console.warn('[Wework] Rejected an unregistered DSH app deep link')
