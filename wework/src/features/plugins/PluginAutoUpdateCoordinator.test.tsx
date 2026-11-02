@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearPluginDeviceAutoSyncAttempts,
@@ -8,6 +8,7 @@ import {
   PLUGIN_RELEASE_AVAILABLE_EVENT,
   PluginAutoUpdateCoordinator,
 } from './PluginAutoUpdateCoordinator'
+import { usePluginRefreshReconciliation } from '@/components/plugins/hooks/usePluginRefreshReconciliation'
 
 const mocks = vi.hoisted(() => {
   const handlers = new Map<string, Set<(payload?: unknown) => void>>()
@@ -155,6 +156,115 @@ describe('PluginAutoUpdateCoordinator', () => {
         results: [],
       },
     })
+  })
+
+  test('keeps an accepted device sync locked across runtime disconnect and reconnect', async () => {
+    let finishSync!: () => void
+    mocks.syncInstalledPluginToDevice.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finishSync = () =>
+            resolve({
+              deviceId: 'device-1',
+              pendingCount: 0,
+              sync: { success: true, plugins: [{ id: 1, status: 'synced' }], errors: [] },
+            })
+          mocks.httpOptions?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Request cancelled', 'AbortError'))
+          )
+        })
+    )
+    const view = render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
+    const signal = mocks.httpOptions?.signal
+
+    mocks.runtimeConnected = false
+    view.rerender(<PluginAutoUpdateCoordinator />)
+    await act(async () => {})
+    expect(signal?.aborted).toBe(false)
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+
+    mocks.runtimeConnected = true
+    view.rerender(<PluginAutoUpdateCoordinator />)
+    await act(async () => {})
+    expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+
+    await act(async () => finishSync())
+    await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.clearLocalCache).not.toHaveBeenCalled()
+    expect(mocks.notifyLocalPluginSkillsChanged).not.toHaveBeenCalled()
+  })
+
+  test('lets the returned account reconcile while the previous account sync awaits its lost ACK', async () => {
+    mocks.autoUpdateInstalledPlugins.mockResolvedValue({
+      updated: [],
+      updatedCount: 0,
+      remainingCount: 0,
+    })
+    mocks.listMarketplacePlugins.mockResolvedValue({ items: [] }).mockResolvedValueOnce({
+      items: [
+        {
+          installedPluginId: 1,
+          installed: true,
+          installedLocally: false,
+          currentDeviceInstallation: { state: 'pending' },
+        },
+      ],
+    })
+    let finishOldSync!: () => void
+    mocks.syncInstalledPluginsToDevice.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finishOldSync = () =>
+            resolve({
+              deviceId: 'device-1',
+              pendingCount: 0,
+              sync: { success: true, plugins: [], errors: [] },
+            })
+          mocks.httpOptions?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Account changed', 'AbortError'))
+          )
+        })
+    )
+    const collision = new Error('PLUGIN_RUNTIME_METADATA_FAILED')
+    const manualSync = vi.fn(async () => {
+      throw collision
+    })
+    const onError = vi.fn()
+    const initial = {
+      request: 0,
+      accountKey: 'recipient',
+      deviceId: 'device-1',
+      available: true,
+      busy: false,
+      operations: {
+        readStore: vi.fn(async () => []),
+        sync: manualSync,
+        readCloud: vi.fn(async () => []),
+        invalidate: vi.fn(),
+      },
+      onComplete: vi.fn(),
+      onError,
+    }
+    const manual = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+    const view = render(<PluginAutoUpdateCoordinator />)
+    try {
+      await waitFor(() => expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledOnce())
+      expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
+      mocks.token = 'returned-author-token'
+      view.rerender(<PluginAutoUpdateCoordinator />)
+      manual.rerender({ ...initial, request: 1, accountKey: 'author' })
+
+      await waitFor(() => expect(onError).toHaveBeenCalledWith(collision))
+      expect(manualSync).toHaveBeenCalledOnce()
+      expect(mocks.clearLocalCache).not.toHaveBeenCalled()
+      expect(mocks.notifyLocalPluginSkillsChanged).not.toHaveBeenCalled()
+    } finally {
+      manual.unmount()
+      view.unmount()
+      await act(async () => finishOldSync?.())
+    }
   })
 
   test('releases an old account pending sync on account change without publishing stale results', async () => {
