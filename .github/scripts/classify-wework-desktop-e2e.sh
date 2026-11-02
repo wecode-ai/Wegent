@@ -363,9 +363,12 @@ validate_registered_checkpoint_coverage() {
         console.error("Registered desktop checkpoint catalog is empty")
         process.exit(1)
       }
-      const upgradeWorkflow = readFileSync(".github/workflows/wework-upgrade-e2e.yml", "utf8")
-      if (!upgradeWorkflow.includes(`--parallel-segments ${UPGRADE_CHECKPOINT_GROUP}`)) {
-        console.error("The upgrade workflow must invoke its registered checkpoint group")
+      const releaseWorkflow = readFileSync(".github/workflows/wework-app.yml", "utf8")
+      const upgradeVerifier = readFileSync("wework/scripts/verify-release-upgrades.mjs", "utf8")
+      if (!releaseWorkflow.includes("node wework/scripts/verify-release-upgrades.mjs") ||
+          !upgradeVerifier.includes("--parallel-segments") ||
+          !upgradeVerifier.includes("${UPGRADE_CHECKPOINT_GROUP},app-update-full")) {
+        console.error("The release workflow must invoke the registered upgrade checkpoint group")
         process.exit(1)
       }
       const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
