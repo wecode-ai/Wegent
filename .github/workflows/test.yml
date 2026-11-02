@@ -158,9 +158,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Configure backend Rust target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
-
       - name: Set up Python and uv for gateway tests
         uses: ./.github/actions/setup-python-uv-cache
         with:
@@ -169,13 +166,11 @@ jobs:
       - name: Prepare stdlib-only Python environment for gateway tests
         run: uv venv --python 3.11 backend/.venv
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: backend-rs/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
@@ -344,30 +339,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure executor target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: executor/Cargo.toml
           components: rustfmt, clippy
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
-
-      - name: Restore shared executor Cargo sources
-        id: executor-cargo-sources-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
 
       - name: Run executor Rust format check
         working-directory: ./executor
@@ -435,21 +414,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore shared executor Cargo sources
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
+          manifest-path: executor/Cargo.toml
 
       - name: Run local connector auth platform tests
         working-directory: ./executor

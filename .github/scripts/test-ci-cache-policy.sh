@@ -61,6 +61,7 @@ warmup_all_false=$(
   cat <<'EOF'
 docker=false
 executor_rust=false
+backend_rs_rust=false
 node=false
 python=false
 wework_target=false
@@ -114,10 +115,11 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
+backend_rs_lock="${backend_rs_lock/backend_rs_rust=false/backend_rs_rust=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
-assert_warmup_case "Backend Rust OCI resolver" "$backend_rs_lock" \
+assert_warmup_case "Backend Rust OCI resolver" "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
-assert_warmup_case "Backend Rust OCI recipe" "$backend_rs_lock" \
+assert_warmup_case "Backend Rust OCI recipe" "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
@@ -704,6 +706,7 @@ bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
 bash "$script_dir/test-configure-sccache.sh"
+bash "$script_dir/test-rust-cache.sh"
 bash "$script_dir/test-download-actions-artifact.sh"
 
 printf 'CI cache policy tests passed\n'

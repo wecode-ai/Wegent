@@ -36,6 +36,7 @@ on:
       - "frontend/package.json"
       - "frontend/src/**"
       - "knowledge_engine/uv.lock"
+      - ".github/ci/rust-toolchain"
       - ".cargo/**"
       - ".npmrc"
       - "package.json"
@@ -63,6 +64,7 @@ jobs:
     outputs:
       docker: ${{ steps.classify.outputs.docker }}
       executor_rust: ${{ steps.classify.outputs.executor_rust }}
+      backend_rs_rust: ${{ steps.classify.outputs.backend_rs_rust }}
       node: ${{ steps.classify.outputs.node }}
       python: ${{ steps.classify.outputs.python }}
       wework_target: ${{ steps.classify.outputs.wework_target }}
@@ -227,43 +229,50 @@ jobs:
           key: ${{ steps.wegent-cli-pip-cache.outputs.cache-primary-key }}
 
   warm-executor-rust:
-    name: Warm Executor Rust Cache
+    name: Warm Rust Compiler Cache
     needs: changes
-    if: needs.changes.outputs.executor_rust == 'true'
+    if: needs.changes.outputs.executor_rust == 'true' || needs.changes.outputs.backend_rs_rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      CARGO_PROFILE_TEST_DEBUG: 0
-
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 
-      - name: Configure executor target directory
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          components: clippy
-
       - name: Set up executor Rust cache
-        uses: ./.github/actions/setup-executor-rust-cache
+        if: needs.changes.outputs.executor_rust == 'true'
+        uses: ./.github/actions/setup-rust-cache
         with:
+          manifest-path: executor/Cargo.toml
+          components: clippy
           save-cache: "true"
 
       - name: Install executor Rust system dependencies
+        if: needs.changes.outputs.executor_rust == 'true'
         run: .github/scripts/install-executor-rust-system-dependencies.sh
 
-      - name: Compile executor tests
-        working-directory: ./executor
-        run: cargo test --all-features --no-run
+      - name: Compile executor tests and Clippy targets
+        if: needs.changes.outputs.executor_rust == 'true'
+        working-directory: executor
+        run: |
+          cargo test --locked --all-features --no-run
+          cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Compile executor Clippy targets
-        working-directory: ./executor
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Set up Backend Rust cache
+        if: needs.changes.outputs.backend_rs_rust == 'true'
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: backend-rs/Cargo.toml
+          components: clippy
+          save-cache: "true"
+
+      - name: Compile Backend Rust tests and Clippy targets
+        if: needs.changes.outputs.backend_rs_rust == 'true'
+        working-directory: backend-rs
+        run: |
+          cargo test --locked --no-run
+          cargo clippy --locked --all-targets -- -D warnings
 
   warm-wework-windows-electron:
     name: Warm Wework Windows Desktop E2E Build
@@ -532,7 +541,7 @@ jobs:
         id: image
         run: |
           desktop_digest="$(
-            sha256sum docker/wework-e2e/desktop.Dockerfile | cut -d ' ' -f 1
+            cat docker/wework-e2e/desktop.Dockerfile .github/ci/rust-toolchain | sha256sum | cut -d ' ' -f 1
           )"
           echo "desktop-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:desktop-$desktop_digest" \
             >> "$GITHUB_OUTPUT"
@@ -540,8 +549,8 @@ jobs:
       - name: Resolve shared Rust E2E runtimes
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -703,7 +712,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image

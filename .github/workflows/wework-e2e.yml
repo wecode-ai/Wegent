@@ -95,7 +95,7 @@ jobs:
         id: image
         run: |
           browser_digest="$(sha256sum docker/wework-e2e/browser.Dockerfile | cut -d ' ' -f 1)"
-          desktop_digest="$(sha256sum docker/wework-e2e/desktop.Dockerfile | cut -d ' ' -f 1)"
+          desktop_digest="$(cat docker/wework-e2e/desktop.Dockerfile .github/ci/rust-toolchain | sha256sum | cut -d ' ' -f 1)"
           echo "browser-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:browser-$browser_digest" \
             >> "$GITHUB_OUTPUT"
           echo "desktop-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:desktop-$desktop_digest" \
@@ -141,8 +141,8 @@ jobs:
         if: steps.classify.outputs.wework_desktop_e2e == 'true'
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**', '.github/ci/rust-toolchain') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \

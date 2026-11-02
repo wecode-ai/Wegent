@@ -5,6 +5,7 @@ set -euo pipefail
 declare -A changed=(
   [docker]=false
   [executor_rust]=false
+  [backend_rs_rust]=false
   [node]=false
   [python]=false
   [wework_target]=false
@@ -21,7 +22,7 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/actions/* | .github/scripts/lib/apt-packages.sh | \
+    .github/ci/rust-toolchain | .github/actions/* | .github/scripts/lib/apt-packages.sh | \
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
@@ -82,7 +83,16 @@ classify_path() {
       ;;
     wework/e2e/* | wework/test-results/*)
       ;;
-    .cargo/* | .npmrc | backend-rs/* | wework/*)
+    backend-rs/*)
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
+    .cargo/*)
+      changed[executor_rust]=true
+      changed[backend_rs_rust]=true
+      changed[wework_target]=true
+      ;;
+    .npmrc | wework/*)
       changed[wework_target]=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
@@ -117,6 +127,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in docker executor_rust node python wework_target; do
+for key in docker executor_rust backend_rs_rust node python wework_target; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

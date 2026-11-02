@@ -46,11 +46,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
 
+COPY .github/ci/rust-toolchain /tmp/wegent-rust-toolchain
+
 RUN npm install --global "pnpm@${PNPM_VERSION}" \
   && curl --proto '=https' --tlsv1.2 -LsSf \
     "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/usr/local/bin sh \
   && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --profile minimal --default-toolchain stable
+    | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/wegent-rust-toolchain)"
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 

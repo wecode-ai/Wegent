@@ -1967,7 +1967,9 @@ classify_path() {
       wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
-    .github/workflows/wework-e2e.yml | \
+    .github/ci/rust-toolchain | \
+      .github/actions/setup-rust-cache/* | \
+      .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \

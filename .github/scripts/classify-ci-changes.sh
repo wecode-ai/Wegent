@@ -27,7 +27,8 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/workflows/lint.yml | \
+    .github/ci/rust-toolchain | \
+      .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
       .github/workflows/ci-cache-warmup.yml | \
       .github/workflows/publish-base-image.yml | \
