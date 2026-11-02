@@ -49,6 +49,55 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
   })
 
+  test('routes wework links clicked inside an embedded page to the host scheme handler', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-scheme-'))
+    const openScheme = vi.fn()
+    const manager = new EmbeddedBrowserManager(directory, () => {}, openScheme)
+    const contents = Object.assign(new FakeWebContents(), { session: electronMocks.browserSession })
+    manager.attach('browser-link', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'browser-link',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const event = { preventDefault: vi.fn() }
+      contents.emit('will-navigate', event, 'wework://apps/wegent')
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://apps/wegent')
+      expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/')
+    } finally {
+      manager.stop()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('routes wework links opened in a new embedded page', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-scheme-window-'))
+    const openScheme = vi.fn()
+    const manager = new EmbeddedBrowserManager(directory, () => {}, openScheme)
+    const contents = Object.assign(new FakeWebContents(), { session: electronMocks.browserSession })
+    manager.attach('browser-window', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'browser-window',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      const handler = contents.setWindowOpenHandler.mock.calls.at(-1)?.[0]
+      expect(handler({ url: 'wework://smart-apps/42' })).toEqual({ action: 'deny' })
+      expect(openScheme).toHaveBeenCalledExactlyOnceWith('wework://smart-apps/42')
+    } finally {
+      manager.stop()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('applies request headers only to an exact HTTPS origin and path prefix', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

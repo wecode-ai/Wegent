@@ -88,6 +88,7 @@ interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
   onNavigate?: (path: string) => void
+  targetSmartAppId?: number | null
 }
 
 interface PendingInstall {
@@ -248,6 +249,7 @@ export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
   onNavigate = navigateTo,
+  targetSmartAppId = null,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -284,6 +286,8 @@ export function SmartAppsMarketplacePage({
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
+  const [targetInstallItem, setTargetInstallItem] = useState<SmartAppMarketplaceItem | null>(null)
+  const handledTargetSmartAppIdRef = useRef<number | null>(null)
   const refreshRequestRef = useRef(0)
   const activeModeRef = useRef(mode)
 
@@ -365,6 +369,56 @@ export function SmartAppsMarketplacePage({
     onError: setError,
     onRefresh: refresh,
   })
+  useEffect(() => {
+    if (targetSmartAppId) return
+    handledTargetSmartAppIdRef.current = null
+    queueMicrotask(() => setTargetInstallItem(null))
+  }, [targetSmartAppId])
+  useEffect(() => {
+    if (!targetSmartAppId || loading || handledTargetSmartAppIdRef.current === targetSmartAppId)
+      return
+    const installation = activeInstallations.find(
+      candidate => candidate.smartAppId === targetSmartAppId
+    )
+    if (installation) {
+      handledTargetSmartAppIdRef.current = targetSmartAppId
+      queueMicrotask(() => {
+        setTargetInstallItem(null)
+        if (installation.state === 'running') openInstalledApp(installation)
+        else startInstalledApp(installation)
+      })
+      return
+    }
+    const item = items.find(candidate => candidate.id === targetSmartAppId)
+    if (item) {
+      handledTargetSmartAppIdRef.current = targetSmartAppId
+      queueMicrotask(() => {
+        setTargetInstallItem(item)
+        setSelected(item)
+      })
+      return
+    }
+    if (!api) return
+    handledTargetSmartAppIdRef.current = targetSmartAppId
+    queueMicrotask(() => {
+      setTargetInstallItem(null)
+      setError(
+        t(
+          'workbench.smart_apps_deep_link_unavailable',
+          '未找到此智能工作台，可能已下架或你没有访问权限。'
+        )
+      )
+    })
+  }, [
+    activeInstallations,
+    api,
+    items,
+    loading,
+    openInstalledApp,
+    startInstalledApp,
+    t,
+    targetSmartAppId,
+  ])
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
     return activeInstallations.map(installation => {
@@ -1105,6 +1159,27 @@ export function SmartAppsMarketplacePage({
         <p role="alert" className="mt-4 rounded-lg bg-danger/10 p-3 text-sm text-danger">
           {createError ?? error}
         </p>
+      ) : null}
+
+      {targetInstallItem ? (
+        <div
+          role="status"
+          data-testid="smart-app-deep-link-install-prompt"
+          className="mt-4 flex items-start gap-3 rounded-xl border border-border/50 bg-muted/35 p-4"
+        >
+          <Download className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary">
+              {t('workbench.smart_apps_deep_link_install_title', '此智能工作台尚未安装')}
+            </p>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t(
+                'workbench.smart_apps_deep_link_install_description',
+                '安装“{{name}}”后，可像其他已安装工作台一样在独立标签页中运行。'
+              ).replace('{{name}}', targetInstallItem.displayName)}
+            </p>
+          </div>
+        </div>
       ) : null}
 
       {exportNotice ? (

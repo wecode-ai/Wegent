@@ -194,7 +194,10 @@ export class EmbeddedBrowserManager {
 
   constructor(
     dataDirectory: string,
-    private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
+    private readonly onEvent: (event: BrowserHostEvent) => void = () => {},
+    private readonly openWeworkScheme: (url: string) => void = url => {
+      void shell.openExternal(url)
+    }
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -241,8 +244,14 @@ export class EmbeddedBrowserManager {
     }
     this.backgroundPages.set(normalizedId, entry)
     view.webContents.setWindowOpenHandler(({ url }) => {
-      if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) this.openWeworkScheme(url)
+      else if (isBrowserUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
+    })
+    view.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith('wework://')) return
+      event.preventDefault()
+      this.openWeworkScheme(url)
     })
     view.webContents.on(
       'did-fail-load',
@@ -378,7 +387,8 @@ export class EmbeddedBrowserManager {
   requestPopupTab(parentLabel: string, url: string): void {
     const entry = this.entries.get(parentLabel)
     if (!entry || !isBrowserUrl(url)) {
-      if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) this.openWeworkScheme(url)
+      else if (isBrowserUrl(url)) void shell.openExternal(url)
       return
     }
     this.emit('popup', {
@@ -436,7 +446,9 @@ export class EmbeddedBrowserManager {
       this.showContextMenu(entry, params)
     })
     contents.setWindowOpenHandler(({ url }) => {
-      if (isBrowserUrl(url)) {
+      if (url.startsWith('wework://')) {
+        this.openWeworkScheme(url)
+      } else if (isBrowserUrl(url)) {
         this.emit('popup', {
           popupId: randomUUID(),
           parentLabel: entry.label,
@@ -453,6 +465,11 @@ export class EmbeddedBrowserManager {
         void shell.openExternal(url)
       }
       return { action: 'deny' }
+    })
+    contents.on('will-navigate', (event, url) => {
+      if (!url.startsWith('wework://')) return
+      event.preventDefault()
+      this.openWeworkScheme(url)
     })
     const emitPageState = () => this.emitPageState(entry)
     contents.on('did-start-loading', emitPageState)

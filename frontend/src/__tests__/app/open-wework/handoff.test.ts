@@ -25,6 +25,18 @@ describe('parseWeworkHandoff', () => {
     })
   })
 
+  it('accepts a validated encoded Smart app route for the client handoff', () => {
+    expect(parseWeworkHandoff(new URLSearchParams({ url: 'wework://smart-apps/42' }))).toEqual({
+      weworkUrl: 'wework://smart-apps/42',
+    })
+  })
+
+  it('accepts a registered DSH app route without inventing a web fallback', () => {
+    expect(parseWeworkHandoff(new URLSearchParams({ url: 'wework://apps/wegent' }))).toEqual({
+      weworkUrl: 'wework://apps/wegent',
+    })
+  })
+
   it.each([
     '',
     'projectId=0',
@@ -36,6 +48,12 @@ describe('parseWeworkHandoff', () => {
     'projectId=12&itemId=x&commentId=.',
     'projectId=12&itemId=x&redirect=https%3A%2F%2Fevil.test',
     'projectId=12&projectId=13',
+    'url=javascript%3Aalert%281%29',
+    'url=https%3A%2F%2Fevil.test',
+    'url=WEWORK%3A%2F%2Fapps%2Fwegent',
+    'url=wework%3A%2F%2Fsmart-apps%2F0',
+    'url=wework%3A%2F%2Fapps%2Fa%2Fb',
+    'url=wework%3A%2F%2Fapps%2Fwegent&projectId=12',
   ])('rejects invalid or ambiguous destination: %s', query => {
     expect(parseWeworkHandoff(new URLSearchParams(query))).toBeNull()
   })

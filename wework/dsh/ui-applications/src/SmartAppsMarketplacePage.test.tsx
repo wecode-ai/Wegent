@@ -1137,4 +1137,23 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByText('打开工作台文件夹失败。')).toBeInTheDocument()
     expect(revealLocalFile).toHaveBeenCalledWith(importedInstallation.packagePath)
   })
+
+  test('opens targeted app details and explains how to install it from a deep link', async () => {
+    render(<SmartAppsMarketplacePage api={api([item()])} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '此智能工作台尚未安装'
+    )
+    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent('研究工作台')
+    expect(screen.getByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+  })
+
+  test('reports an unavailable target instead of leaving a blank deep link', async () => {
+    render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={99} />)
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+  })
 })

@@ -11,12 +11,16 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 
 const {
   openTab,
+  openHarnessAppTab,
+  listHarnessApps,
   invokeDesktopHost,
   isElectronRuntime,
   getDesktopWindowLabel,
   subscribeDesktopHostEvents,
 } = vi.hoisted(() => ({
   openTab: vi.fn(),
+  openHarnessAppTab: vi.fn(),
+  listHarnessApps: vi.fn(),
   invokeDesktopHost: vi.fn(),
   isElectronRuntime: vi.fn(() => false),
   getDesktopWindowLabel: vi.fn(() => 'main'),
@@ -38,11 +42,18 @@ vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost,
   subscribeDesktopHostEvents,
 }))
+vi.mock('@/api/local/harnessApps', () => ({
+  harnessAppsApi: { list: listHarnessApps },
+}))
+vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
+  openHarnessAppTab,
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()
   isElectronRuntime.mockReturnValue(false)
   getDesktopWindowLabel.mockReturnValue('main')
+  listHarnessApps.mockResolvedValue([])
   workspaceTabs.tabs = []
   workspaceTabs.activeTabId = ''
   workspaceTabs.openTab = openTab
@@ -231,6 +242,61 @@ describe('Wework scheme bridge', () => {
       expect(`${route.pathname}${route.search}`).toBe(contentRoute)
     }
   )
+
+  it('opens a registered DSH app through the workspace tab navigator', async () => {
+    render(
+      <CloudConnectionContext.Provider
+        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+      >
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+
+    act(() => {
+      openWeworkScheme('wework://apps/wegent')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('agent', { contentRoute: '/app/wegent' })
+    )
+  })
+
+  it('opens an installed Smart app returned by its marketplace identity', async () => {
+    const installation = {
+      id: 'research-local',
+      smartAppId: 42,
+      manifest: { displayName: 'Research desk' },
+      webUrl: 'http://127.0.0.1:3000',
+      state: 'running',
+    }
+    listHarnessApps.mockResolvedValue([installation])
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
+    )
+    expect(openTab).not.toHaveBeenCalled()
+  })
+
+  it('routes a missing Smart app to the targeted installation prompt', async () => {
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('auxiliary', {
+        title: '智能工作台',
+        contentRoute: '/sites?app_type=smart_app&smartAppId=42',
+      })
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
 
   it('acknowledges native links only after navigation, including StrictMode remounts', async () => {
     isElectronRuntime.mockReturnValue(true)
