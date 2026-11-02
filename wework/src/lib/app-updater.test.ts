@@ -188,6 +188,69 @@ describe('Wework app updater', () => {
     })
   })
 
+  test('a failed same-channel recheck preserves the offer for a freshly resolved download', async () => {
+    const oldUpdate = { currentVersion: '0.2.6', version: '0.2.7', readyToInstall: false }
+    const refreshed = { ...oldUpdate, version: '0.2.8', readyToInstall: true }
+    desktopHostMocks.invoke.mockResolvedValueOnce(oldUpdate)
+    await checkForWeworkUpdate('stable')
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Catalog offline'))
+    await expect(checkForWeworkUpdate('stable')).rejects.toThrow('Catalog offline')
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready', update: refreshed }
+      }
+    })
+
+    await expect(downloadPendingWeworkUpdate()).resolves.toEqual(refreshed)
+    await installDownloadedWeworkUpdate()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.download', {
+      channel: 'stable',
+    })
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.install', { version: '0.2.8' })
+  })
+
+  test('a failed recheck keeps a prepared update available for host install revalidation', async () => {
+    const update = { currentVersion: '0.2.6', version: '0.2.7', readyToInstall: true }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return update
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 100, totalBytes: 100, phase: 'ready', update }
+      }
+    })
+    await checkForWeworkUpdate('stable')
+    await downloadPendingWeworkUpdate()
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Catalog offline'))
+    await expect(checkForWeworkUpdate('stable')).rejects.toThrow('Catalog offline')
+
+    await installDownloadedWeworkUpdate()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.install', {
+      version: update.version,
+    })
+  })
+
+  test.each(['withdrawn', 'channel-change'] as const)(
+    'clears the prior offer after %s',
+    async reason => {
+      desktopHostMocks.invoke.mockResolvedValueOnce({
+        currentVersion: '0.2.6',
+        version: '0.2.7',
+        readyToInstall: false,
+      })
+      await checkForWeworkUpdate('stable')
+      if (reason === 'withdrawn') {
+        desktopHostMocks.invoke.mockResolvedValueOnce(null)
+        await checkForWeworkUpdate('stable')
+      } else {
+        desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Beta catalog offline'))
+        await expect(checkForWeworkUpdate('beta')).rejects.toThrow('Beta catalog offline')
+      }
+      desktopHostMocks.invoke.mockClear()
+
+      await expect(downloadPendingWeworkUpdate()).rejects.toThrow('No pending Wework update')
+      expect(desktopHostMocks.invoke).not.toHaveBeenCalled()
+    }
+  )
+
   test('stops polling and clears a withdrawn target', async () => {
     desktopHostMocks.invoke.mockImplementation(async capability => {
       if (capability === 'appUpdate.check')

@@ -46,7 +46,7 @@ export async function checkForWeworkUpdate(
     pendingUpdate = { ...update, channel }
     return update
   } catch (error) {
-    pendingUpdate = null
+    if (pendingUpdate?.channel !== channel) pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })
   }
 }
