@@ -9,6 +9,7 @@ const environment = {
 const url = 'blob:http://127.0.0.1:1234/calculator'
 
 function target() {
+  let attached = false
   const frame = {
     url,
     processId: 202,
@@ -16,7 +17,18 @@ function target() {
   }
   const contents = {
     isDestroyed: () => false,
-    sendInputEvent: vi.fn(),
+    debugger: {
+      attach: vi.fn(() => {
+        attached = true
+      }),
+      detach: vi.fn(() => {
+        attached = false
+      }),
+      isAttached: vi.fn(() => attached),
+      sendCommand: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({})),
+      on: vi.fn(),
+      off: vi.fn(),
+    },
     mainFrame: {
       processId: 101,
       executeJavaScript: vi.fn(async (script: string) => window.eval(script)),
@@ -24,6 +36,25 @@ function target() {
     },
   }
   return { contents, frame }
+}
+
+function visibleWheelTarget() {
+  const result = target()
+  document.body.innerHTML = `<iframe data-testid="codex-inline-visualization-frame" src="${url}"></iframe><section id="blank"></section>`
+  const blank = document.querySelector<HTMLElement>('#blank')!
+  vi.spyOn(document.querySelector('iframe')!, 'getBoundingClientRect').mockReturnValue({
+    left: 100,
+    top: 150,
+    right: 600,
+    bottom: 450,
+  } as DOMRect)
+  vi.spyOn(blank, 'getBoundingClientRect').mockReturnValue({
+    left: 10,
+    top: 20,
+    right: 210,
+    bottom: 100,
+  } as DOMRect)
+  return { ...result, blank }
 }
 
 function request(action = 'text', selector = '#result', value?: string) {
@@ -47,6 +78,7 @@ describe('inline visualization verification controls', () => {
     ).rejects.toMatchObject({ code: 'e2e_control_required' })
     expect(contents.mainFrame.executeJavaScript).not.toHaveBeenCalled()
     expect(frame.executeJavaScript).not.toHaveBeenCalled()
+    expect(contents.debugger.attach).not.toHaveBeenCalled()
   })
 
   test('rejects a loaded blob that is not an actual visualization iframe', async () => {
@@ -56,6 +88,7 @@ describe('inline visualization verification controls', () => {
       controlInlineVisualizationFrame(contents, request(), environment)
     ).rejects.toMatchObject({ code: 'e2e_frame_unavailable' })
     expect(frame.executeJavaScript).not.toHaveBeenCalled()
+    expect(contents.debugger.attach).not.toHaveBeenCalled()
   })
 
   test('does not control a nested frame when its direct parent is not the main view', async () => {
@@ -97,6 +130,7 @@ describe('inline visualization verification controls', () => {
       controlInlineVisualizationFrame(contents, params, environment)
     ).rejects.toMatchObject({ code: 'e2e_invalid_target' })
     expect(contents.mainFrame.executeJavaScript).not.toHaveBeenCalled()
+    expect(contents.debugger.attach).not.toHaveBeenCalled()
   })
 
   test('reports an unavailable main view', async () => {
@@ -144,22 +178,7 @@ describe('inline visualization verification controls', () => {
   })
 
   test('reads fixed geometry and sends native wheel input at the visible frame target', async () => {
-    const { contents } = target()
-    document.body.innerHTML = `<iframe data-testid="codex-inline-visualization-frame" src="${url}"></iframe><section id="blank"></section>`
-    const iframe = document.querySelector('iframe')!
-    const blank = document.querySelector<HTMLElement>('#blank')!
-    vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue({
-      left: 100,
-      top: 150,
-      right: 600,
-      bottom: 450,
-    } as DOMRect)
-    vi.spyOn(blank, 'getBoundingClientRect').mockReturnValue({
-      left: 10,
-      top: 20,
-      right: 210,
-      bottom: 100,
-    } as DOMRect)
+    const { contents, blank } = visibleWheelTarget()
     Object.defineProperty(blank, 'scrollHeight', { value: 700 })
     Object.defineProperty(blank, 'clientHeight', { value: 80 })
     blank.scrollTop = 120
@@ -178,7 +197,7 @@ describe('inline visualization verification controls', () => {
         environment
       )
     ).resolves.toMatchObject({
-      backend: 'electron-send-input-event',
+      backend: 'chromium-input-dispatch',
       x: 210,
       y: 210,
       deltaX: 8,
@@ -186,9 +205,9 @@ describe('inline visualization verification controls', () => {
       frameProcessId: 202,
       mainFrameProcessId: 101,
     })
-    expect(contents.sendInputEvent.mock.calls).toEqual([
-      [{ type: 'mouseMove', x: 210, y: 210 }],
-      [{ type: 'mouseWheel', x: 210, y: 210, deltaX: -8, deltaY: 40, canScroll: true }],
+    expect(contents.debugger.sendCommand.mock.calls).toEqual([
+      ['Input.dispatchMouseEvent', { type: 'mouseMoved', x: 210, y: 210 }],
+      ['Input.dispatchMouseEvent', { type: 'mouseWheel', x: 210, y: 210, deltaX: 8, deltaY: -40 }],
     ])
     expect(blank.scrollTop).toBe(120)
   })
@@ -224,13 +243,12 @@ describe('inline visualization verification controls', () => {
       environment
     )
 
-    expect(contents.sendInputEvent).toHaveBeenLastCalledWith({
+    expect(contents.debugger.sendCommand).toHaveBeenLastCalledWith('Input.dispatchMouseEvent', {
       type: 'mouseWheel',
       x: 150,
       y: 225,
       deltaX: 0,
-      deltaY: -80,
-      canScroll: true,
+      deltaY: 80,
     })
   })
 
@@ -260,6 +278,82 @@ describe('inline visualization verification controls', () => {
         environment
       )
     ).rejects.toMatchObject({ code: 'e2e_target_not_visible' })
-    expect(contents.sendInputEvent).not.toHaveBeenCalled()
+    expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+    expect(contents.debugger.attach).not.toHaveBeenCalled()
   })
+
+  test.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects non-finite target geometry before attaching the input protocol (%s)',
+    async left => {
+      const { contents, blank } = visibleWheelTarget()
+      vi.mocked(blank.getBoundingClientRect).mockReturnValue({
+        left,
+        top: 20,
+        right: 210,
+        bottom: 100,
+      } as DOMRect)
+      await expect(
+        controlInlineVisualizationFrame(
+          contents,
+          { ...request('wheel', '#blank'), deltaY: 80 },
+          environment
+        )
+      ).rejects.toMatchObject({ code: 'e2e_invalid_geometry' })
+      expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+      expect(contents.debugger.attach).not.toHaveBeenCalled()
+    }
+  )
+
+  test('awaits each native input acknowledgement before sending or releasing the next step', async () => {
+    const { contents } = visibleWheelTarget()
+    let releaseMove!: () => void
+    let releaseWheel!: () => void
+    contents.debugger.sendCommand
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseMove = () => resolve({})
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseWheel = () => resolve({})
+          })
+      )
+    const result = controlInlineVisualizationFrame(
+      contents,
+      { ...request('wheel', '#blank'), deltaY: 80 },
+      environment
+    )
+    await vi.waitFor(() => expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(1))
+    expect(contents.debugger.detach).not.toHaveBeenCalled()
+    releaseMove()
+    await vi.waitFor(() => expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(2))
+    expect(contents.debugger.detach).not.toHaveBeenCalled()
+    releaseWheel()
+    await expect(result).resolves.toMatchObject({ backend: 'chromium-input-dispatch' })
+    expect(contents.debugger.detach).toHaveBeenCalledOnce()
+  })
+
+  test.each(['mouseMoved', 'mouseWheel'])(
+    'propagates a rejected %s acknowledgement',
+    async type => {
+      const { contents } = visibleWheelTarget()
+      const failure = new Error(`${type} rejected`)
+      contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+        if ((params as { type: string }).type === type) throw failure
+        return {}
+      })
+      await expect(
+        controlInlineVisualizationFrame(
+          contents,
+          { ...request('wheel', '#blank'), deltaY: 80 },
+          environment
+        )
+      ).rejects.toBe(failure)
+      expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(type === 'mouseMoved' ? 1 : 2)
+      expect(contents.debugger.detach).toHaveBeenCalledOnce()
+    }
+  )
 })

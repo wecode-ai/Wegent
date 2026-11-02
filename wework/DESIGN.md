@@ -1078,6 +1078,32 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   mistaken for a layout change and snapped back to the bottom. Custom controls
   that cancel wheel events and internal overscroll containment keep ownership.
 
+  桌面 E2E 通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
+  回执；不能把跨进程 iframe 的输入直接送给主渲染器。主工作台的输入、截图、堆
+  读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
+  外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
+  Desktop E2E dispatches native wheel input through Chromium hit testing and
+  awaits each acknowledgement so out-of-process frames receive the input. Main
+  workbench input, screenshot, heap and persistent media consumers share debugger
+  leases. Only the final lease detaches a connection owned by the workbench;
+  externally attached inspectors retain ownership. Unexpected detachment
+  invalidates old leases so they cannot detach a replacement connection.
+
+  ```mermaid
+  sequenceDiagram
+    participant Test as Desktop E2E
+    participant Lease as Shared debugger leases
+    participant Chromium
+    participant Frame as Opaque-origin iframe
+    Test->>Lease: Acquire input lease
+    Test->>Chromium: Dispatch mouse move and await acknowledgement
+    Test->>Chromium: Dispatch wheel at clipped frame coordinates
+    Chromium->>Frame: Hit test and deliver trusted native input
+    Chromium-->>Test: Acknowledge dispatch
+    Test->>Lease: Release input lease
+    Note over Lease: Detach owned connection after the final consumer releases
+  ```
+
   ```mermaid
   sequenceDiagram
     participant Executor

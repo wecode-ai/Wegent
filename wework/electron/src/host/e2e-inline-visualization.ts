@@ -1,12 +1,14 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { HostCapabilityError } from './capability-router.js'
+import { withDebuggerSession, type DebuggerTarget } from './debugger-session.js'
 
 type VisualizationFrame = Pick<WebFrameMain, 'url' | 'executeJavaScript' | 'processId'>
-type VisualizationContents = Pick<WebContents, 'isDestroyed' | 'sendInputEvent'> & {
-  mainFrame: Pick<WebFrameMain, 'executeJavaScript' | 'processId'> & {
-    frames: readonly VisualizationFrame[]
+type VisualizationContents = Pick<WebContents, 'isDestroyed'> &
+  DebuggerTarget & {
+    mainFrame: Pick<WebFrameMain, 'executeJavaScript' | 'processId'> & {
+      frames: readonly VisualizationFrame[]
+    }
   }
-}
 
 interface VisualizationRect {
   left: number
@@ -168,16 +170,17 @@ async function sendVisualizationWheel(
   }
   const x = Math.floor((left + right) / 2)
   const y = Math.floor((top + bottom) / 2)
-  contents.sendInputEvent({ type: 'mouseMove', x, y })
-  contents.sendInputEvent({
-    type: 'mouseWheel',
-    x,
-    y,
-    deltaX: deltaX === 0 ? 0 : -deltaX,
-    deltaY: deltaY === 0 ? 0 : -deltaY,
-    canScroll: true,
+  await withDebuggerSession(contents, async session => {
+    await session.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await session.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x,
+      y,
+      deltaX,
+      deltaY,
+    })
   })
-  return { backend: 'electron-send-input-event', x, y, deltaX, deltaY }
+  return { backend: 'chromium-input-dispatch', x, y, deltaX, deltaY }
 }
 
 async function waitForVisualizationFrame(
