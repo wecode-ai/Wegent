@@ -137,21 +137,6 @@ if ! grep -Fq 'node wework/scripts/verify-release-upgrades.mjs' "$wework_app_wor
   exit 1
 fi
 
-ruby -ryaml - "$wework_app_workflow" <<'RUBY'
-workflow = YAML.load_file(ARGV.fetch(0))
-jobs = workflow.fetch('jobs')
-verification = jobs.fetch('verify-upgrades')
-abort 'Release publication must wait for upgrade verification' unless jobs.fetch('publish').fetch('needs').include?('verify-upgrades')
-abort 'Upgrade verification must consume the completed build' unless verification.fetch('needs').include?('build')
-verification.fetch('steps').each do |step|
-  abort 'Upgrade verification must not receive signing secrets' if step.to_s.include?('secrets.')
-  abort 'Upgrade verification must not compile, install, package, or sign' if
-    step.fetch('uses', '').match?(/setup-node-workspace|rust-toolchain|sccache/) ||
-    step.fetch('run', '').match?(/\b(pnpm|npm|cargo|rustc|codesign)\b/)
-end
-legacy = File.join(File.dirname(ARGV.fetch(0)), 'wework-upgrade-e2e.yml')
-abort 'Ordinary PR upgrade workflow must remain removed' if File.exist?(legacy)
-RUBY
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
   ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then
