@@ -1372,6 +1372,23 @@ describe('SmartAppsMarketplacePage', () => {
     )
   })
 
+  test('falls back to catalog details when a running target has no web URL', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        smartAppId: 7,
+        modelKey: localHarnessModelOptionKey(harnessModel),
+        state: 'running',
+        webUrl: null,
+      },
+    ])
+    const smartAppsApi = api([item()])
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
   test('retries a deep-link start after the model catalog becomes available', async () => {
     workbenchModels.current = []
     const installation = {

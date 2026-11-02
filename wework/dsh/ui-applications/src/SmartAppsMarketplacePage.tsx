@@ -461,7 +461,7 @@ export function SmartAppsMarketplacePage({
     const installation = activeInstallations.find(
       candidate => candidate.smartAppId === targetSmartAppId
     )
-    if (installation) {
+    if (installation && (installation.state !== 'running' || installation.webUrl)) {
       const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
       if (shouldOpen && (installation.state === 'running' || hasSelectedModel(installation))) {
         handledTargetSmartAppIdRef.current = targetSmartAppId
