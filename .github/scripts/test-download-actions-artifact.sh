@@ -94,8 +94,15 @@ for artifact_spec in executor-e2e-binary:wegent-executor backend-rs-e2e-runtime:
   fi
 
   TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
-    "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/queued-run"
+    "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/queued-run" \
+      2> "$temp_dir/timing"
   cmp "$temp_dir/fixture/$binary" "$destination/queued-run/$binary"
+  grep -Eq 'phase=discovery-wait seconds=[0-9]+ polls=2$' "$temp_dir/timing"
+  grep -Eq 'phase=transfer-unpack seconds=[0-9]+$' "$temp_dir/timing"
+  if grep -Fq "$GITHUB_TOKEN" "$temp_dir/timing"; then
+    echo 'Artifact timing logs must not include credentials' >&2
+    exit 1
+  fi
 
   TEST_CASE=producer-skipped ACTIONS_ARTIFACT_JOB="$TEST_PRODUCER_JOB" \
     "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$destination/eligible-run"

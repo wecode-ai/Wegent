@@ -42,8 +42,11 @@ request() {
 }
 
 deadline=$((SECONDS + wait_seconds))
+discovery_started=$SECONDS
+polls=0
 artifact_id=""
 while [[ -z "$artifact_id" ]]; do
+  polls=$((polls + 1))
   source_run_status=""
   if [[ -n "$source_workflow" ]]; then
     runs_json="$(request \
@@ -119,6 +122,9 @@ if matches:
   sleep 2
 done
 
+printf '[actions-artifact] name=%s run=%s id=%s phase=discovery-wait seconds=%s polls=%s\n' \
+  "$artifact_name" "$run_id" "$artifact_id" "$((SECONDS - discovery_started))" "$polls" >&2
+transfer_started=$SECONDS
 request \
   --output "$archive" \
   "$api_url/repos/$repository/actions/artifacts/$artifact_id/zip"
@@ -131,3 +137,5 @@ import zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     archive.extractall(sys.argv[2])
 ' "$archive" "$destination"
+printf '[actions-artifact] name=%s run=%s id=%s phase=transfer-unpack seconds=%s\n' \
+  "$artifact_name" "$run_id" "$artifact_id" "$((SECONDS - transfer_started))" >&2
