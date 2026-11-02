@@ -742,8 +742,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         else:
             db.refresh(model)
 
-        # Get the shell for response (from user's custom shells or public shells)
-        shell = get_shell_by_name(db, shell_ref_name, user_id)
+        # Get the shell for response using the same namespace written to shellRef.
+        shell = get_shell_by_name(db, shell_ref_name, user_id, shell_ref_namespace)
 
         # Return bot-like structure
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
@@ -1070,8 +1070,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
 
-            # Update shell reference for response
-            shell = get_shell_by_name(db, new_shell_name, user_id)
+            # Update shell reference for response using the namespace we just wrote.
+            shell = get_shell_by_name(
+                db, new_shell_name, user_id, shell_info.get("namespace", "default")
+            )
 
         if "agent_config" in update_data:
             bot_crd = Bot.model_validate(bot.json)
@@ -1686,12 +1688,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost_query = ghost_query.filter(Kind.user_id == owner_id)
         ghost = ghost_query.first()
 
-        # Get shell - try user's custom shells first, then public shells
+        # Get shell - resolve from the namespace stored on the Bot reference.
         shell_ref_name = bot_crd.spec.shellRef.name
-        shell = get_shell_by_name(db, shell_ref_name, owner_id)
+        shell_ref_namespace = bot_crd.spec.shellRef.namespace or "default"
+        shell = get_shell_by_name(db, shell_ref_name, owner_id, shell_ref_namespace)
 
         logger.info(
             f"[DEBUG] _get_bot_components: shellRef.name={shell_ref_name}, "
+            f"shellRef.namespace={shell_ref_namespace}, "
             f"shell found={shell is not None}, "
             f"shell type={type(shell).__name__ if shell else 'None'}"
         )

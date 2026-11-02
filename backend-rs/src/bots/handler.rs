@@ -16,6 +16,8 @@ use crate::state::AppState;
 use crate::teams::group_membership::{ErpContext, effective_roles, user_group_memberships};
 use crate::teams::public_model_access::allowed_public_models;
 use crate::teams::teams_repository::KindRow;
+use crate::v1_resources::repository::OwnedKindRow;
+use crate::v1_resources::shell_resolution;
 
 use super::conversion::{BotItem, RefKey, bot_item, bot_keys, bot_spec, resolve};
 use super::repository::{self as repo, BotRow};
@@ -301,6 +303,18 @@ async fn preload_components(
             shells.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
         }
     }
+    let missing_shell_references: Vec<RefKey> = shell_keys
+        .iter()
+        .filter(|key| !shells.contains_key(*key))
+        .cloned()
+        .collect();
+    resolve_missing_shell_references(
+        &state.mysql,
+        user_id,
+        &missing_shell_references,
+        &mut shells,
+    )
+    .await?;
 
     let mut models: HashMap<RefKey, KindRow> = HashMap::new();
     for row in repo::personal_models(&state.mysql, user_id, &personal_model_keys)
@@ -339,6 +353,42 @@ async fn preload_components(
         shells,
         models,
     })
+}
+
+/// Resolve Shell capability references for keys that have no direct Shell row
+/// in their requested namespace.
+async fn resolve_missing_shell_references<M>(
+    mysql: &M,
+    user_id: i64,
+    missing_keys: &[RefKey],
+    shells: &mut HashMap<RefKey, KindRow>,
+) -> Result<(), FastApiError>
+where
+    M: brz_mysql::Mysql,
+{
+    for (name, namespace) in missing_keys {
+        let Some(row) = shell_resolution::referenced_shell(mysql, name, user_id, namespace)
+            .await
+            .map_err(database_error)?
+        else {
+            continue;
+        };
+        shells.insert(
+            (name.clone(), namespace.clone()),
+            kind_row_from_referenced_shell(row),
+        );
+    }
+    Ok(())
+}
+
+fn kind_row_from_referenced_shell(row: OwnedKindRow) -> KindRow {
+    KindRow {
+        kinds_id: row.id,
+        kinds_user_id: row.user_id,
+        kinds_name: row.name,
+        kinds_namespace: row.namespace,
+        kinds_json: brz_mysql::Json(brz_json::OpaqueJson::from(row.json.0)),
+    }
 }
 
 /// Append a key if not already present, preserving first-seen order (the
@@ -467,6 +517,55 @@ mod tests {
                 ("a".to_string(), "default".to_string()),
                 ("b".to_string(), "default".to_string()),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_shell_references_use_capability_reference_lookup() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let missing = vec![("group-claude".to_string(), "default".to_string())];
+        let mut shells = HashMap::new();
+
+        resolve_missing_shell_references(&mysql, 74, &missing, &mut shells)
+            .await
+            .unwrap();
+
+        let queries = mysql.queries();
+        assert!(queries.iter().any(|query| {
+            query
+                .sql
+                .contains("resource_members.resource_type = 'Shell'")
+        }));
+    }
+
+    #[test]
+    fn referenced_shell_conversion_preserves_source_payload() {
+        let timestamp = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let row = OwnedKindRow {
+            id: 10,
+            user_id: 74,
+            kind: "Shell".to_string(),
+            name: "group-claude".to_string(),
+            namespace: "source-group".to_string(),
+            json: brz_mysql::Json(serde_json::json!({
+                "spec": {"shellType": "ClaudeCode"}
+            })),
+            is_active: 1,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let converted = kind_row_from_referenced_shell(row);
+
+        assert_eq!(converted.kinds_id, 10);
+        assert_eq!(converted.kinds_name, "group-claude");
+        assert_eq!(converted.kinds_namespace, "source-group");
+        assert_eq!(
+            converted.kinds_json.0.to_value()["spec"]["shellType"],
+            "ClaudeCode"
         );
     }
 }

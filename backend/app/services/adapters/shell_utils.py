@@ -425,6 +425,7 @@ def get_shells_by_names_batch(
         return {}
 
     shell_map: Dict[Tuple[str, str], Kind] = {}
+    lookup = ExecutionCapabilityLookup(db, user_id)
 
     # Build OR filter for user shells
     def build_user_shell_or_filters(keys: Set[Tuple[str, str]]):
@@ -478,6 +479,14 @@ def get_shells_by_names_batch(
 
             for shell in public_shells:
                 shell_map[(shell.name, shell.namespace)] = shell
+
+    # Shell references can be visible in a group namespace without a direct
+    # Shell row in that namespace. Resolve those targets by their requested
+    # reference namespace so Bot responses retain the shell type.
+    for name, namespace in shell_keys - set(shell_map):
+        referenced_shell = lookup.referenced("Shell", name, namespace)
+        if referenced_shell:
+            shell_map[(name, namespace)] = referenced_shell
 
     logger.debug(
         f"Batch fetched {len(shell_map)} shells for {len(shell_keys)} keys "
