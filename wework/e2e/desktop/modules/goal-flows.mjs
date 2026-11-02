@@ -346,6 +346,16 @@ async function verifyActiveGoalIdleUnreadLifecycle({
       text: GOAL_IDLE_CONTINUATION_TEXT,
     }
   )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      !snapshot.text.includes('正在开始下一轮') &&
+      !snapshot.text.includes('Starting next turn'),
+    'The continuation status stayed in the startup state after producing output',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   const goalStatusText = await control.command('getText', '[data-testid="goal-status-bar"]')
   assert.doesNotMatch(
     goalStatusText,
