@@ -476,6 +476,15 @@ app.on('web-contents-created', (_event, contents) => {
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      message.startsWith('[process-explorer-snapshot] ')
+    ) {
+      console.info('[process-explorer-renderer]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 1024),
+      })
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),

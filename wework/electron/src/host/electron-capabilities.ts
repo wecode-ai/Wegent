@@ -1437,7 +1437,30 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', async () => {
+    if (process.env.VITE_WEWORK_E2E !== 'true') return services.processExplorer.snapshot()
+    const startedAt = Date.now()
+    console.info('[process-explorer-host]', { stage: 'requested', startedAt })
+    try {
+      const snapshot = await services.processExplorer.snapshot()
+      console.info('[process-explorer-host]', {
+        stage: 'completed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        processCount: snapshot.processes.length,
+        degraded: snapshot.degraded.map(item => item.code),
+      })
+      return snapshot
+    } catch (error) {
+      console.info('[process-explorer-host]', {
+        stage: 'failed',
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    }
+  })
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
