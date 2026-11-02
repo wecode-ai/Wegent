@@ -845,6 +845,18 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(available, locked)).toBe(false)
   })
 
+  test.each([
+    ['manual', 'auto'],
+    ['auto', 'manual'],
+  ] as const)('detects a refreshed update policy changing from %s to %s', (before, after) => {
+    const previous = installedItem('83', 'wegent', 'auto-update')
+    previous.raw.spec.updatePolicy = before
+    const refreshed = structuredClone(previous)
+    refreshed.raw.spec.updatePolicy = after
+
+    expect(sameInstalledPlugins([previous], [refreshed])).toBe(false)
+  })
+
   test('detects installed plugin name and distribution changes via signature', () => {
     const left: InstalledPluginItem[] = [
       {
