@@ -17,6 +17,10 @@ import { writeFile } from 'node:fs/promises'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from './smart-app-marketplace-identity.mjs'
+import {
+  verifyRunningSmartAppInstallRejected,
+  verifyStoppedSmartAppInstallAllowed,
+} from './smart-app-running-install-guard.mjs'
 
 export async function verifyHarnessLifecycle(
   control,
@@ -265,6 +269,11 @@ export async function verifyHarnessLifecycle(
     `${activeWorkspaceContentSelector} [data-testid="harness-app-open-${IMPORTED_INSTALLATION_ID}"]`,
     { timeoutMs: 30_000 }
   )
+  const runningInstallGuard = await verifyRunningSmartAppInstallRejected(control, {
+    installationId: IMPORTED_INSTALLATION_ID,
+    modelKey: await control.command('getValue', importedModelSelector),
+    resultDir,
+  })
   await control.command(
     'click',
     `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${IMPORTED_INSTALLATION_ID}"]`
@@ -281,9 +290,11 @@ export async function verifyHarnessLifecycle(
     'waitFor',
     `[data-testid="harness-app-start-${IMPORTED_INSTALLATION_ID}"]`,
     {
+      enabled: true,
       timeoutMs: 30_000,
     }
   )
+  await verifyStoppedSmartAppInstallAllowed(control, runningInstallGuard)
 
   const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
   await control.command('waitFor', modelSelector, {

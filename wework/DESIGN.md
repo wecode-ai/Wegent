@@ -616,6 +616,27 @@ recipe closely:
   changes keep the grabbed thumb point under that pointer. Disable both row and
   text compensation during the drag; release samples the new reading position.
 
+跟随动画从实际滚动位置开始，持有连续位置计算下一帧；浏览器取整后的显示位置
+不能覆盖未完成的亚像素进度。内容缩短时将连续位置限制到新的实际底部，弹簧收敛后
+精确写入底部。用户输入、导航、暂停或会话切换均清除位置、速度和时钟。
+Streaming follow starts from the actual scroll position and retains a continuous
+position between frames. Browser quantization affects presentation, not the next
+spring step. Content shrink clamps the retained position to the new DOM end;
+settling writes that exact end. Input, navigation, suspension and conversation
+changes clear the position, velocity and clock.
+
+```mermaid
+flowchart LR
+    Start[Start from actual scrollTop] --> Position[Retain continuous position]
+    Position --> Clamp[Clamp to current DOM end]
+    Clamp --> Step[Advance spring toward end]
+    Step --> Position
+    Step --> DOM[Write position; browser may quantize]
+    Step --> Settle[On settle write exact end]
+    Settle --> Reset[Clear position, velocity and clock]
+    Cancel[Input, navigation, suspension or conversation change] --> Reset
+```
+
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
 
@@ -786,6 +807,78 @@ Load unopened dialogs and editors on demand. Refresh failures preserve valid
 same-scope data and show a local error, never an empty-state substitute. Scope
 changes hide old data and reject late responses. Follow the shared
 [implementation contract](../frontend/AGENTS.md#page-data-loading-and-error-isolation).
+
+智能工作台列表由 `useSmartAppCatalog` 按 API 实例、页面模式、查询、来源和标签
+隔离作用域。本机安装列表与云端目录各自持有请求身份、数据、加载和错误状态，
+并行读取并独立发布；任一来源变慢或失败都不能隐藏另一来源的有效卡片。
+同作用域后台刷新保留卡片和模型选择器，只有更新的本机数据才能更新模型值；
+切换作用域时隐藏旧数据，迟到响应不能覆盖当前内容。失败保留该来源的有效数据，
+显示错误和重试入口，不能伪装为成功空列表。本机变更完成后刷新原页面模式的当前查询，
+仅等待本机读取完成即可恢复操作，云端刷新继续在后台运行。
+已确认的本机生命周期事件只使本机旧请求失效并更新本机数据，不能取消云端读取。
+独立展示不代表操作可以使用未知本机状态：本机读取尚未完成、正在刷新或失败时，
+保留现有卡片和模型值，禁用安装、更新、模型绑定和移除等依赖本机事实的操作。
+对话框确认与异步下载完成后重新检查当前作用域和请求身份；就绪后使用当前安装状态，
+详情与安装准备对话框绑定发现作用域；切换时立即隐藏旧对话框，同作用域刷新保留详情。
+运行中的更新仍须用户确认停止。
+原生安装在串行操作内、写文件及注册表前检查实时运行状态，
+防止另一窗口启动工作台后被覆盖。
+
+`useSmartAppCatalog` isolates discovery by API instance, page mode, query, source
+and tag. Local installations and the cloud catalog each own their request
+identity, data, loading and error state. They load concurrently and publish
+independently; a slow or failed source cannot hide valid cards from the other.
+Same-scope refreshes keep cards and model controls mounted, and only newer local
+data can update model values. Scope changes hide previous data and reject late
+responses. Failures preserve the affected source's valid data with an error and
+retry action, never a successful empty result. Completed local mutations refresh
+the current query of their original page mode and await only local discovery;
+cloud revalidation continues in the background. Confirmed local lifecycle events
+invalidate only older local reads and update local data; cloud discovery continues.
+Independent discovery does not make unknown local state safe for mutations.
+Initial, refreshing or failed local reads retain cards and model values but disable
+install, update, model binding and removal. Dialog confirmation and completed
+downloads recheck the current scope and request identity. Ready actions use current
+installation facts. Details and prepared install dialogs belong to their discovery
+scope: switching scopes immediately hides them, while same-scope refreshes retain
+details. A running update still requires stop confirmation. Native
+installation checks live runtime ownership inside its serial operation before
+writing files or the registry, preventing an app started in another window from
+being overwritten.
+
+```mermaid
+flowchart TD
+    Owner[API instance + mode + query + source + tag] --> Local[Read local installations]
+    Owner --> Selection[Details and prepared install dialogs belong to this scope]
+    Owner --> Cloud[Read cloud catalog and tags]
+    Local --> LocalCurrent{Local request ID and scope current?}
+    Cloud --> CloudCurrent{Cloud request ID and scope current?}
+    LocalCurrent -- Yes, success --> LocalData[Publish local cards and model state]
+    CloudCurrent -- Yes, success --> CloudData[Publish cloud catalog]
+    LocalCurrent -- Yes, failure --> LocalError[Keep local data with error and retry]
+    CloudCurrent -- Yes, failure --> CloudError[Keep cloud data with error and retry]
+    LocalCurrent -- No --> Discard[Discard late response]
+    CloudCurrent -- No --> Discard
+    Mutation[Local mutation completes] --> Mode{Original mode still active?}
+    Mode -- Yes --> Owner
+    Mode -- No --> Ignore[Ignore old-mode refresh]
+    Event[Confirmed local lifecycle event] --> Invalidate[Invalidate older local requests only]
+    Invalidate --> Existing{Current scope has local data?}
+    Existing -- Yes --> LocalData
+    Existing -- No --> Local
+    Local --> ReadOnly[Keep cards; disable local mutations while pending]
+    LocalError --> ReadOnly
+    LocalData --> Ready{Current local read succeeded?}
+    Ready -- No --> ReadOnly
+    Ready -- Yes --> Action[Read current installation facts at action time]
+    Action --> Kind{Install or update?}
+    Kind -- No --> Other[Perform selected local operation]
+    Kind -- Yes --> Running{Running update?}
+    Running -- Yes --> Stop[Confirm and stop]
+    Running -- No --> Install[Install]
+    Stop --> Install
+    Install --> Native[Serial native owner rejects live running target before writes]
+```
 
 Every interactive component must account for the applicable states:
 
@@ -1011,6 +1104,28 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   locale rules in both hosts. Explicit transition properties avoid collisions
   with the Web animation plugin.
 
+  Tool detail and group expansion belong to a conversation, canonical turn and
+  stable member block IDs. Transcript reconciliation can change an assistant
+  view's guidance anchor while retaining the same tools; remounting that view
+  must read the existing tool state. Groups use member IDs rather than segment
+  positions. Messages without a canonical turn retain their message scope.
+  Completed-response shell expansion remains local to its assistant view and
+  includes expanded tools belonging to that view.
+
+  ```mermaid
+  sequenceDiagram
+    participant User
+    participant View as Assistant view
+    participant Store as Shared expansion state
+    participant Projection as Canonical turn projection
+    User->>View: Expand tool detail
+    View->>Store: Store conversation + turn + call ID
+    Projection->>View: Reconcile guidance anchor and replace view ID
+    View->>Store: Read the same conversation + turn + call ID
+    Store-->>View: Keep tool detail expanded during final text
+    View->>Store: Collapse only this view's member tools on shell close
+  ```
+
   `ComposerProseMirrorEditor` and its schema, Markdown parser/serializer,
   editing commands, mention/link node views and diagnostics belong to the shared
   composer module. Both hosts use the same tables, lists, selection, undo/redo,
@@ -1034,7 +1149,116 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   response text and processing blocks, guidance segments, interrupted-run timing,
   failure details, retry controls, generated-image galleries and final artifacts.
   Its native adapter supplies image loading/downloading and inline visualization
-  services. `MessageHoverActions` owns copy/edit/fork controls and localized time
+  services. The Executor advertises the inline visualization contract through
+  Codex developer instructions on thread start, resume, and fork; text-only
+  auxiliary threads do not receive it. Generated fragments use unique durable
+  task-owned paths and an absolute `visualize` content reference in the final
+  response. Codex keeps that reference in its normal transcript. Replaying a
+  message reads the original file through the desktop file service and runs it
+  in an opaque-origin `allow-scripts` iframe. The host owns a complete HTML
+  document in standards mode and reports its intrinsic content height to size
+  the frame. Fragments supply scoped styles and local interactions using the
+  documented host theme tokens; they do not depend
+  on a ChatGPT widget bridge. Inline fragments are response content; an explicit
+  export is a separate deliverable. Loading failures remain visible and retryable.
+  The visualization host is transparent and unframed; the generated content owns
+  its cards and borders so the conversation never adds a second enclosing panel.
+  The sandbox contains native scroll chaining at its document root. Wheel input
+  stays native while an internal scroll region can consume it; at a boundary the
+  bridge consumes the internal remainder and forwards only the remaining pixel
+  delta. The host dispatches wheel input through the existing conversation scroll
+  controller before moving its actual viewport, so user scrolling cannot be
+  mistaken for a layout change and snapped back to the bottom. Custom controls
+  that cancel wheel events and internal overscroll containment keep ownership.
+
+  桌面 E2E 先激活操作所属的工作区标签页，等待控件可见，再将目标区域移入视口；
+  后台保留的 DOM 不能作为交互就绪的证明。通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
+  回执；不能把跨进程 iframe 的输入直接送给主渲染器。鼠标移动前后观测同一输入点，
+  仅当其仍命中原 iframe 且位于目标区域内时发送滚轮；遮挡或移出目标直接报错，
+  附前后几何、命中元素及最近可识别祖先信息，不重试。祖先诊断限制层数和标识字段长度，
+  不读取文本。临时根页面被动监听器只记录可信原生事件，
+  在所有退出路径清理，并先于 debugger 使用权释放。回执不代表 DOM 已收到事件；
+  根页面探针只提供即时诊断，实际投递由业务断言确认。内联可视化输入、主工作台
+  截图、堆读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
+  外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
+  Desktop E2E first activates the owning workspace tab, waits for visible
+  controls, and reveals the target region. Retained background DOM does not
+  establish interaction readiness. It dispatches native wheel input through Chromium hit testing and
+  awaits each protocol acknowledgement. Before
+  and after the mouse move, the fixed input point must hit the same owned iframe
+  and remain inside the target region. Occlusion or loss of the target fails with
+  both observations, without retries. Hit diagnostics include the nearest
+  identified ancestor with bounded traversal and identifier field lengths, without text.
+  A temporary passive root listener records
+  only trusted native events and is cleaned up on every exit before releasing
+  the debugger lease. Acknowledgements do not establish DOM delivery, and the
+  root probe is an immediate diagnostic snapshot; business assertions verify
+  actual delivery. Inline
+  visualization input, main workbench screenshots, heap reads and persistent
+  media overrides share debugger leases. Only the final lease detaches a
+  connection owned by the workbench;
+  externally attached inspectors retain ownership. Unexpected detachment
+  invalidates old leases so they cannot detach a replacement connection.
+
+  ```mermaid
+  sequenceDiagram
+    participant Test as Desktop E2E
+    participant Lease as Shared debugger leases
+    participant Chromium
+    participant Frame as Opaque-origin iframe
+    Test->>Test: Activate owning tab, wait for visibility and reveal target
+    Test->>Lease: Acquire input lease
+    Test->>Test: Install root probe; observe fixed point ownership and identified ancestor
+    Test->>Chromium: Dispatch mouse move and await acknowledgement
+    Chromium-->>Test: Acknowledge mouse move
+    Test->>Test: Recheck point ownership and target region; fail if lost
+    Test->>Chromium: Dispatch wheel at clipped frame coordinates
+    Chromium->>Frame: Hit test and deliver trusted native input
+    Chromium-->>Test: Acknowledge dispatch
+    Test->>Test: Read trusted root events; finally remove probe
+    Note over Test,Chromium: Dispatch acknowledgement does not establish DOM delivery
+    Test->>Lease: Release input lease
+    Note over Lease: Detach owned connection after the final consumer releases
+  ```
+
+  ```mermaid
+  sequenceDiagram
+    participant Executor
+    participant Codex as Codex CLI / app-server
+    participant Storage as Task files + Codex transcript
+    participant Markdown as Shared message renderer
+    participant Host as Desktop visualization host
+    Executor->>Codex: Start / resume / fork with visualization instructions
+    Codex->>Storage: Write unique HTML fragment and final absolute reference
+    Storage->>Markdown: Stream or replay unchanged assistant message
+    Markdown->>Host: Parsed visualization reference
+    Host->>Storage: Read complete HTML through desktop file service
+    Storage-->>Host: Fragment or explicit read failure
+    Host->>Host: Compose HTML document in standards mode
+    Host->>Host: Render sandbox, report content size, follow Wework theme
+  ```
+
+  ```mermaid
+  sequenceDiagram
+    participant Wheel as Sandbox wheel input
+    participant Region as Internal scroll regions
+    participant Bridge as Opaque-origin message bridge
+    participant Controller as Shared conversation scroll controller
+    participant Viewport as Actual conversation viewport
+    Wheel->>Region: Plan scroll consumption along event path
+    alt Entire delta stays inside sandbox
+      Region->>Region: Preserve native scrolling or control interaction
+    else Delta reaches conversation
+      Wheel->>Wheel: Cancel native chaining
+      Wheel->>Region: Consume available internal distance
+      Wheel->>Bridge: Post remaining pixel delta with frame token
+      Bridge->>Bridge: Validate source, token and finite deltas
+      Bridge->>Controller: Dispatch wheel to record user intent
+      Bridge->>Viewport: Scroll once after intent is recorded
+    end
+  ```
+
+  `MessageHoverActions` owns copy/edit/fork controls and localized time
   labels. `MessageList` owns the complete message-row composition, visibility,
   virtual measurements, text selection and edit lifecycle. `UserMessage` and
   `UserMessageEditForm` preserve native rich Markdown, image/document attachment
@@ -1787,6 +2011,32 @@ implementation and WCAG conflict.
 - File paths, terminals, permissions, and external applications reflect the
   actual current environment.
 - Keep pane resize and open/close motion stable under window zoom.
+- 进程浏览器关闭时，进行中的 DOM 快照读取必须随原生窗口或渲染器销毁立即结算，
+  返回既有的窗口不存在状态；活窗口的读取错误仍须上抛。执行脚本前注册生命周期
+  监听，并在所有结算路径移除监听，不得以超时、重试或等待渲染器响应代替关闭事件。
+- Process Explorer snapshots must settle when their native window closes or its
+  renderer is destroyed, preserving the existing absent-window result. Register
+  lifecycle listeners before executing renderer code, remove them after every
+  settlement, and propagate failures from a live window.
+
+  ```mermaid
+  sequenceDiagram
+    participant Caller
+    participant Snapshot as Native snapshot collector
+    participant Window as Process Explorer
+    Caller->>Snapshot: Request window snapshot
+    Snapshot->>Window: Register closed and destroyed listeners
+    Snapshot->>Window: executeJavaScript
+    alt Renderer responds while window is live
+      Window-->>Snapshot: DOM snapshot or execution error
+    else Window closes or renderer is destroyed
+      Window-->>Snapshot: closed / destroyed
+      Note over Snapshot: Settle without awaiting the abandoned script
+    end
+    Snapshot->>Window: Remove both lifecycle listeners
+    Snapshot-->>Caller: Snapshot, absent-window result, or live execution error
+  ```
+
 - Verify changes through the isolated real-Electron flow in `AGENTS.md`, never a
   personal Wework window.
 

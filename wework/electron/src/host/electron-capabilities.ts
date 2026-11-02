@@ -7,7 +7,9 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
+import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
 import {
   app,
   BrowserWindow,
@@ -44,6 +46,7 @@ import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
@@ -246,25 +249,6 @@ export interface PluginDevelopmentService {
   start(sourceRoot: string): Promise<unknown>
   stop(): Promise<void>
   validate(sourceRoot: string): Promise<unknown>
-}
-
-export interface ProcessExplorerWindowSnapshot {
-  exists: boolean
-  visible: boolean
-  applicationPid: number
-  url: string
-  windowLabel: string
-  windowWidth: number
-  windowHeight: number
-  alwaysOnTop: boolean
-  menuBarVisible: boolean
-  testIds: string[]
-  text: string
-  layout: {
-    viewportWidth: number
-    tableClientWidth: number
-    tableScrollWidth: number
-  }
 }
 
 export interface ElectronE2EHost {
@@ -817,15 +801,10 @@ export function createElectronCapabilityRouter(
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    const debugSession = contents.debugger
-    const alreadyAttached = debugSession.isAttached()
-    if (!alreadyAttached) debugSession.attach('1.3')
-    try {
+    return withDebuggerSession(contents, async debugSession => {
       await debugSession.sendCommand('HeapProfiler.collectGarbage')
       return await debugSession.sendCommand('Runtime.getHeapUsage')
-    } finally {
-      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
-    }
+    })
   })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
@@ -1022,6 +1001,9 @@ export function createElectronCapabilityRouter(
     mcpDiscoveryFault ??= new McpDiscoveryNetworkFault(contents.session)
     return mcpDiscoveryFault.configure(params.enabled)
   })
+  router.register('e2e.inlineVisualizationFrame', params =>
+    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+  )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
