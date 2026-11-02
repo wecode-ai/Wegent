@@ -16,7 +16,7 @@ import {
   deleteTeam,
   fetchManagedTeamsPage,
 } from '@/features/settings/services/teams'
-import type { Team } from '@/types/api'
+import type { Bot, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
 Element.prototype.scrollIntoView = jest.fn()
@@ -135,14 +135,30 @@ jest.mock('@/features/settings/components/TeamEditDialog', () => ({
     scope,
     groupName,
     onSaved,
+    bots,
+    onClose,
+    setBots,
   }: {
     open?: boolean
     scope?: string
     groupName?: string
     onSaved?: (team: Team) => Promise<void>
+    bots: Bot[]
+    onClose: () => void
+    setBots: (bots: Bot[]) => void
   }) =>
     open ? (
       <div data-testid="team-edit-dialog" data-scope={scope} data-group={groupName ?? ''}>
+        <output data-testid="edit-bot-catalog">{bots.map(bot => bot.name).join(',')}</output>
+        <button data-testid="close-team-edit" onClick={onClose}>
+          Close
+        </button>
+        <button
+          data-testid="update-edit-bot"
+          onClick={() => setBots([{ id: 1, name: 'updated-bot' } as Bot])}
+        >
+          Update Bot
+        </button>
         <button
           data-testid="save-team-edit"
           onClick={() => onSaved?.(makeTeam(42, 'saved-agent', ['chat']))}
@@ -359,6 +375,132 @@ describe('TeamList mode filter', () => {
     })
     ;(fetchBotsList as jest.Mock).mockResolvedValue([])
     mockListMyPublished.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 })
+  })
+
+  it('ignores an old catalog response after closing and reopening the editor', async () => {
+    let resolveOld!: (bots: Bot[]) => void
+    ;(fetchBotsList as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise<Bot[]>(resolve => {
+            resolveOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([{ id: 1, name: 'current-bot' }])
+    const { rerender } = render(
+      <TeamList creationOnly createRequest={{ id: 1, target: { scope: 'personal' } }} />
+    )
+    await waitFor(() => expect(fetchBotsList).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('close-team-edit'))
+    rerender(<TeamList creationOnly createRequest={{ id: 2, target: { scope: 'personal' } }} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('current-bot')
+    )
+    await act(async () => resolveOld([{ id: 1, name: 'obsolete-bot' } as Bot]))
+    expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('current-bot')
+  })
+
+  it.each([
+    { scope: 'personal' as const, groupName: undefined, userId: 2 },
+    { scope: 'group' as const, groupName: 'platform', userId: 1 },
+  ])('ignores an old catalog response after the context changes: %j', async context => {
+    let resolveOld!: (bots: Bot[]) => void
+    ;(fetchBotsList as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise<Bot[]>(resolve => {
+            resolveOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([{ id: 2, name: 'current-bot' }])
+    const request = { id: 1, target: { scope: 'personal' as const } }
+    const { rerender } = render(<TeamList creationOnly createRequest={request} />)
+    await waitFor(() => expect(fetchBotsList).toHaveBeenCalledTimes(1))
+    mockUser = { id: context.userId, user_name: 'other-user', role: 'user' }
+    rerender(
+      <TeamList
+        creationOnly
+        createRequest={request}
+        scope={context.scope}
+        groupName={context.groupName}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('current-bot')
+    )
+    await act(async () => resolveOld([{ id: 1, name: 'obsolete-bot' } as Bot]))
+    expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('current-bot')
+  })
+
+  it('keeps a saved Bot update when an older catalog request finishes', async () => {
+    let resolveOld!: (bots: Bot[]) => void
+    ;(fetchBotsList as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<Bot[]>(resolve => {
+          resolveOld = resolve
+        })
+    )
+    render(<TeamList creationOnly createRequest={{ id: 1, target: { scope: 'personal' } }} />)
+    await waitFor(() => expect(fetchBotsList).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('update-edit-bot'))
+    await act(async () => resolveOld([{ id: 1, name: 'obsolete-bot' } as Bot]))
+    expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('updated-bot')
+  })
+
+  it('does not report a failed catalog request after the editor closes', async () => {
+    let rejectOld!: (cause: Error) => void
+    ;(fetchBotsList as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<Bot[]>((_, reject) => {
+          rejectOld = reject
+        })
+    )
+    render(<TeamList creationOnly createRequest={{ id: 1, target: { scope: 'personal' } }} />)
+    await waitFor(() => expect(fetchBotsList).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('close-team-edit'))
+    await act(async () => rejectOld(new Error('Obsolete catalog request failed')))
+    expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('reports an active catalog request failure', async () => {
+    ;(fetchBotsList as jest.Mock).mockRejectedValueOnce(new Error('Catalog request failed'))
+    render(<TeamList creationOnly createRequest={{ id: 1, target: { scope: 'personal' } }} />)
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'teams.loading',
+      })
+    )
+  })
+
+  it('does not start an obsolete catalog refresh after a save finishes in another session', async () => {
+    let resolveRefresh!: (teams: Team[]) => void
+    const team = makeTeam(42, 'saved-agent', ['chat'])
+    mockTeams.mockResolvedValueOnce([team]).mockImplementationOnce(
+      () =>
+        new Promise<Team[]>(resolve => {
+          resolveRefresh = resolve
+        })
+    )
+    ;(fetchBotsList as jest.Mock)
+      .mockResolvedValueOnce([{ id: 1, name: 'initial-bot' }])
+      .mockResolvedValueOnce([{ id: 1, name: 'current-bot' }])
+      .mockResolvedValueOnce([{ id: 1, name: 'obsolete-bot' }])
+    render(<TeamList compact />)
+    fireEvent.click(await screen.findByTestId('edit-team-button-42'))
+    await waitFor(() =>
+      expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('initial-bot')
+    )
+    fireEvent.click(screen.getByTestId('save-team-edit'))
+    await waitFor(() => expect(mockTeams).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByTestId('close-team-edit'))
+    // The refresh replaces the list with a loading state until its response arrives.
+    await act(async () => resolveRefresh([team]))
+    fireEvent.click(await screen.findByTestId('edit-team-button-42'))
+    await waitFor(() =>
+      expect(screen.getByTestId('edit-bot-catalog')).toHaveTextContent('current-bot')
+    )
+    expect(fetchBotsList).toHaveBeenCalledTimes(2)
   })
 
   it('waits for the user identity before starting the catalog request', async () => {
