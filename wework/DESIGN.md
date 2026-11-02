@@ -1079,13 +1079,14 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   that cancel wheel events and internal overscroll containment keep ownership.
 
   桌面 E2E 通过 Chromium 输入协议命中实际 iframe 后发送原生滚轮，并逐条等待
-  回执；不能把跨进程 iframe 的输入直接送给主渲染器。主工作台的输入、截图、堆
-  读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
+  回执；不能把跨进程 iframe 的输入直接送给主渲染器。内联可视化输入、主工作台
+  截图、堆读取和持续媒体模拟共用 debugger 使用权，最后一个使用者释放时才断开自建连接，
   外部检查器的连接始终由外部持有。意外断开使原有使用权失效，不能误关新连接。
   Desktop E2E dispatches native wheel input through Chromium hit testing and
-  awaits each acknowledgement so out-of-process frames receive the input. Main
-  workbench input, screenshot, heap and persistent media consumers share debugger
-  leases. Only the final lease detaches a connection owned by the workbench;
+  awaits each acknowledgement so out-of-process frames receive the input. Inline
+  visualization input, main workbench screenshots, heap reads and persistent
+  media overrides share debugger leases. Only the final lease detaches a
+  connection owned by the workbench;
   externally attached inspectors retain ownership. Unexpected detachment
   invalidates old leases so they cannot detach a replacement connection.
 
@@ -1097,6 +1098,7 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     participant Frame as Opaque-origin iframe
     Test->>Lease: Acquire input lease
     Test->>Chromium: Dispatch mouse move and await acknowledgement
+    Chromium-->>Test: Acknowledge mouse move
     Test->>Chromium: Dispatch wheel at clipped frame coordinates
     Chromium->>Frame: Hit test and deliver trusted native input
     Chromium-->>Test: Acknowledge dispatch
