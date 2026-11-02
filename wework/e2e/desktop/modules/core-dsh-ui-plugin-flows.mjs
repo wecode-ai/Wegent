@@ -607,6 +607,7 @@ async function createDelayedTelemetrySinkPlugin(resultDir) {
         exports: {
           '.': './index.js',
           './client': './client.js',
+          './package.json': './package.json',
         },
         dsh: {
           bundle: { patch: './cordis.patch.yml' },
