@@ -1,4 +1,8 @@
-import { cloudRunnerModels, resolveRunnerSelection } from '@wegent/collaboration'
+import {
+  cloudRunnerModels,
+  requiresCloudModelCatalog,
+  resolveRunnerSelection,
+} from '@wegent/collaboration'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   mapAutomationExecutionCatalog,
@@ -429,7 +433,6 @@ export function createLocalWorkspaceApi(
     const agents = await projectAgentApi.list(projectId, { forceRefresh: true })
     const groups = await projectCollaborationGroups(projectId)
     const environments = await projectAgentApi.listRunnerEnvironments(projectId)
-    const cloudModels = await projectAgentApi.listModels()
     for (const rule of rules) {
       if (!rule.enabled || rule.targetKind === 'human') continue
       const group =
@@ -446,6 +449,13 @@ export function createLocalWorkspaceApi(
         if (!agent) throw new Error(`Automation agent '${id}' is unavailable`)
         return agent
       })
+      const cloudModels = members.some(
+        agent =>
+          agent.executionPolicy &&
+          requiresCloudModelCatalog(agent.modelPolicy, rule.runnerSelection)
+      )
+        ? await projectAgentApi.listModels()
+        : []
       for (const agent of members) {
         if (!agent.executionPolicy || !agent.modelPolicy) continue
         const selection = () => ({
