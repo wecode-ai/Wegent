@@ -1556,7 +1556,7 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs)
+    wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
       select_target "core:stand-in-profile"
       select_target "core:stand-in-permissions"
       return

@@ -1830,6 +1830,13 @@ impl RuntimeWorkRpcHandler {
             },
             Err(_) => None,
         };
+        self.record_project_router_assessment(
+            request,
+            result
+                .as_ref()
+                .map(|turn| &turn.outcome)
+                .map_err(String::as_str),
+        );
         match result {
             Ok(turn) => {
                 let status = match &turn.outcome {

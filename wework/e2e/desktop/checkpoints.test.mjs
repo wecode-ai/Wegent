@@ -20,6 +20,7 @@ test('the existing CI profile checkpoint includes the original and model catalog
     'coordination-runtime',
     'coordination-arrangements',
     'project-coordinator-publication',
+    'project-coordination',
   ])
 })
 
@@ -33,6 +34,7 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
       'coordination-runtime',
       'coordination-arrangements',
       'project-coordinator-publication',
+      'project-coordination',
       'stand-in-controls',
     ]
   )

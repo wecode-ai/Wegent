@@ -135,6 +135,14 @@ export interface ProjectCoordinationState {
   canEnable: boolean
   canStop: boolean
 }
+export interface ProjectCoordinationProcessing {
+  contextId: string
+  lastCheckAt: string | null
+  nextCheckAt: string | null
+  running: boolean
+  questions: Record<string, { issueId: string; question: string; batchId: string }>
+  error: string | null
+}
 export type StandInProjectSettings = WorkspaceStandInSettings & {
   projectId: string
   projectStore: ProjectStore
@@ -150,6 +158,12 @@ export type StandInTelemetryFact = {
 }[keyof StandInGeneratedEventMap]
 
 export interface StandInExecutorApi {
+  projectProcessing(
+    userId: number,
+    deviceId: string,
+    target: ProjectCoordinatorTarget,
+    check?: boolean
+  ): Promise<ProjectCoordinationProcessing>
   projectCoordination(
     userId: number,
     deviceId: string,
@@ -387,6 +401,14 @@ export function createStandInExecutorApi(
       request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
+    projectProcessing: (userId, deviceId, target, check = false) =>
+      request(
+        check
+          ? 'runtime.project_coordinator.processing.check'
+          : 'runtime.project_coordinator.processing.get',
+        { userId, ...target },
+        deviceId
+      ),
     projectCoordination: (userId, deviceId, target, update) =>
       request(
         update === undefined

@@ -1,5 +1,5 @@
 import { planIntake } from './router.js'
-import { ASSESSMENT_INSTRUCTIONS } from './instructions.js'
+import { ASSESSMENT_INSTRUCTIONS, PROJECT_ASSESSMENT_INSTRUCTIONS } from './instructions.js'
 
 /** The plugin owns routing; all snapshots, decisions and effects remain Executor-owned. */
 export class CoordinationRuntime {
@@ -63,7 +63,13 @@ export class CoordinationRuntime {
   }
 
   async pass() {
-    const { contexts } = await this.executor.request('runtime.coordination.contexts')
+    const { contexts, errors = [] } = await this.executor.request('runtime.coordination.contexts')
+    for (const failure of errors) {
+      this.onError(
+        Object.assign(new Error(failure.message), { code: failure.code }),
+        failure.contextId
+      )
+    }
     for (const context of contexts) {
       if (this.stopped) return
       try {
@@ -96,7 +102,12 @@ export class CoordinationRuntime {
       actions: plan.actions,
       nextWakeAt: plan.nextWakeAt,
       ...(plan.actions.some(action => action.kind === 'assess')
-        ? { assessmentInstructions: ASSESSMENT_INSTRUCTIONS }
+        ? {
+            assessmentInstructions:
+              snapshot.context.kind === 'project'
+                ? PROJECT_ASSESSMENT_INSTRUCTIONS
+                : ASSESSMENT_INSTRUCTIONS,
+          }
         : {}),
     })
   }

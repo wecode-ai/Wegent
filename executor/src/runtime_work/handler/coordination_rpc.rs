@@ -63,7 +63,21 @@ impl RuntimeWorkRpcHandler {
                 })
                 .collect::<Vec<_>>();
             contexts.extend(self.arrangement_contexts(&store)?);
-            return Ok(json!({"contexts":contexts}));
+            let projects = self.project_router_contexts(&store).await;
+            contexts.extend(
+                projects["contexts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            return Ok(json!({"contexts":contexts,"errors":projects["errors"]}));
+        }
+        if payload["contextId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("project:"))
+        {
+            return self.project_router_rpc(&store, method, &payload).await;
         }
         let user = context_user(&payload)?;
         self.coordination_identity(user).await?;

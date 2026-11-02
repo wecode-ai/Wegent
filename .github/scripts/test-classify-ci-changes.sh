@@ -2981,6 +2981,12 @@ for publication_path in \
   "wework/src/features/todo/ProjectCoordinatorConversation.tsx" \
   "wework/src/features/todo/ProjectCoordinatorPublication.tsx" \
   "wework/src/features/todo/ProjectCoordinatorPublication.test.tsx" \
+  "wework/src/features/todo/ProjectCoordinationPanel.tsx" \
+  "wework/src/features/todo/ProjectCoordinationPanel.test.tsx" \
+  "executor/src/runtime_work/handler/project_router.rs" \
+  "executor/src/runtime_work/handler/project_router_assessment.rs" \
+  "executor/src/runtime_work/handler/project_router_tests.rs" \
+  "executor/src/task_runtime/project_router_store.rs" \
   "executor/src/runtime_work/handler/project_coordinator.rs" \
   "executor/src/task_runtime/store/project_coordinator.rs" \
   "executor/src/task_runtime/coordination_store.rs" \

@@ -536,6 +536,11 @@ export function WeworkSharedProject({
             userId={Number(userId)}
             devices={devices ?? []}
             onOpenTask={onOpenRuntimeTask}
+            onOpenIssue={issueId => {
+              setTaskComposer(null)
+              setLocation(current => ({ ...current, projectView: 'board', issueId }))
+              if (focusedItemId) onFocusedItemHandled?.()
+            }}
             onOpenGroupSettings={() => {
               setTaskComposer(null)
               setLocation(current => ({

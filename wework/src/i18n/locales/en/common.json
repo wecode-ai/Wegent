@@ -5347,7 +5347,21 @@
       "publishing": "Publishing…",
       "published": "Published as a comment on “{{issue}}”. Project members can view it under existing permissions.",
       "back_to_chat": "Back to private chat",
-      "no_publish_target": "There are no Issues you can comment on in this project. Return to the project to create or choose an accessible Issue."
+      "no_publish_target": "There are no Issues you can comment on in this project. Return to the project to create or choose an accessible Issue.",
+      "coordination": "Project coordination",
+      "coordination_off": "Not enabled",
+      "coordination_mine": "Handled by me on the selected device",
+      "coordination_owner": "Handled by member {{user}} on device {{device}}",
+      "enable_coordination": "Enable coordination",
+      "stop_coordination": "Stop",
+      "takeover": "Take over",
+      "takeover_title": "Take over project coordination?",
+      "takeover_help": "Member {{user}} currently handles coordination on device {{device}}. Confirm to take over on your selected device. The previous binding will stop dispatching further work. Existing work remains subject to its original permissions and execution lifecycle.",
+      "coordination_help": "Uses only shared project information and preserves group members, models, device permissions and action confirmations. Runs while the hosting device is online and catches up after recovery. Private conversations and memories are never published automatically.",
+      "check_coordination": "Check now",
+      "coordination_running": "Assessing project events. Concrete work continues in its original Issue.",
+      "coordination_waiting": "Waiting for project events. Requests for more information link back to the original Issue.",
+      "answer_in_issue": "Respond in Issue"
     },
     "model_label": "Model",
     "agent_label": "Agent",
@@ -5684,7 +5698,9 @@
       "coordination_recovery_required": "The previous background execution is unconfirmed. Review its original task; it will not be replayed automatically.",
       "coordination_stopped": "The previous background execution failed or was cancelled. Review its task, fix the cause, then choose Check now to reassess unfinished events.",
       "coordinator_failed": "Background coordination failed. Check the handling history and model, then try again.",
-      "leader_not_ai": "This group has a human leader. Choose an AI-led group or update the project leader."
+      "leader_not_ai": "This group has a human leader. Choose an AI-led group or update the project leader.",
+      "stale_context": "Project coordination was stopped, taken over, or its permissions changed. Refresh its status before retrying.",
+      "project_unavailable": "The project or group is no longer accessible. Check its permissions and configuration in the project."
     },
     "processing": {
       "review_execution": "Review execution",

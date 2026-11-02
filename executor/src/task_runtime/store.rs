@@ -25,6 +25,8 @@ mod project_coordination;
 #[path = "project_coordination_commands.rs"]
 mod project_coordination_commands;
 mod project_coordinator;
+#[path = "project_router_store.rs"]
+pub(crate) mod project_router_store;
 mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};

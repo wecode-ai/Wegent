@@ -24,6 +24,24 @@ it('addresses project binding reads and explicit generation updates to the selec
   )
 })
 
+it('addresses project processing status and explicit checks to the chosen binding host', async () => {
+  const request = vi.fn().mockResolvedValue({ running: false, questions: {} })
+  const api = createStandInExecutorApi(request)
+  const target = { projectId: 'project', projectStore: 'cloud' as const, groupId: 'group' }
+  await api.projectProcessing(7, 'selected-device', target)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.processing.get',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+  await api.projectProcessing(7, 'selected-device', target, true)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.processing.check',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+})
+
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),

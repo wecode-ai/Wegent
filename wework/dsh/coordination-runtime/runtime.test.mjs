@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CoordinationRuntime } from './runtime.js'
-import { ASSESSMENT_INSTRUCTIONS } from './instructions.js'
+import { ASSESSMENT_INSTRUCTIONS, PROJECT_ASSESSMENT_INSTRUCTIONS } from './instructions.js'
 
 function fixture(overrides = {}) {
   const calls = []
@@ -61,6 +61,45 @@ test('routing commits the native snapshot identity and structured decision', asy
     })
   } finally {
     runtime.stop()
+  }
+})
+
+test('project assessments use shared-context instructions without changing personal assessments', async () => {
+  const f = fixture()
+  f.contexts[0].kind = 'project'
+  f.contexts[0].id = 'project:binding'
+  try {
+    await f.runtime.start()
+    await f.runtime.running
+    assert.equal(f.errors.length, 0)
+    assert.equal(f.calls.at(-1).params.assessmentInstructions, PROJECT_ASSESSMENT_INSTRUCTIONS)
+    assert.equal(f.calls.at(-1).params.contextId, 'project:binding')
+  } finally {
+    f.runtime.stop()
+  }
+})
+
+test('discovery failures are visible while other authorized contexts still process', async () => {
+  const f = fixture()
+  const request = f.executor.request.bind(f.executor)
+  f.executor.request = async (method, params) => {
+    const result = await request(method, params)
+    if (method === 'runtime.coordination.contexts') {
+      result.errors = [
+        { contextId: 'project:cloud', code: 'source_unavailable', message: 'Offline' },
+      ]
+    }
+    return result
+  }
+  try {
+    await f.runtime.start()
+    await f.runtime.running
+    assert.equal(f.errors.length, 1)
+    assert.equal(f.errors[0].id, 'project:cloud')
+    assert.equal(f.errors[0].error.code, 'source_unavailable')
+    assert.equal(f.calls.at(-1).method, 'runtime.coordination.commit')
+  } finally {
+    f.runtime.stop()
   }
 })
 

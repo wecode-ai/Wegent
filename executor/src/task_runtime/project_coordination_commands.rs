@@ -244,7 +244,7 @@ impl LocalTaskStore {
         }
         let issue = get_item_from(&transaction, text(body, "issueId")?, "task")?
             .filter(|issue| issue.cloud_project_id.as_deref() == Some(&project.id))
-            .ok_or(TaskRuntimeError::TaskNotFound)?;
+            .ok_or(TaskRuntimeError::VersionConflict)?;
         if body["issueVersion"] != issue.version {
             return Err(TaskRuntimeError::VersionConflict);
         }
@@ -256,13 +256,11 @@ impl LocalTaskStore {
             || issue.metadata["collaboration_group"].is_object()
             || issue.status.as_deref() == Some("completed")
         {
-            return Err(invalid(
-                "Preserve this Issue's existing assignment or completed work",
-            ));
+            return Err(TaskRuntimeError::VersionConflict);
         }
         let busy: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE loop_item_id=?1 AND status IN ('pending_approval','waiting_runtime','queued','claimed','running','cancel_requested'))",[&issue.id],|row|row.get(0))?;
         if busy {
-            return Err(invalid("This Issue already has active work"));
+            return Err(TaskRuntimeError::VersionConflict);
         }
         assign_on(&transaction, &project, &group, &issue, actor, &digest)?;
         let id = dispatch_collaboration_group_assignment(

@@ -99,6 +99,7 @@ const mocks = vi.hoisted(() => {
   const localServices = {
     standInApi: {
       projectCoordination: vi.fn(),
+      projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
@@ -191,6 +192,7 @@ const mocks = vi.hoisted(() => {
   const cloudServices = {
     standInApi: {
       projectCoordination: vi.fn(),
+      projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
@@ -515,6 +517,7 @@ describe('stand-in save routing', () => {
       const cloud = mocks.cloudServices.standInApi
       for (const api of [local, cloud]) {
         api.projectCoordination.mockClear()
+        api.projectProcessing.mockClear()
         api.personalSave.mockClear()
         api.save.mockClear()
         api.memories.mockClear()
@@ -558,6 +561,13 @@ describe('stand-in save routing', () => {
         [7, deviceId, target, update],
       ])
       expect(other.projectCoordination).not.toHaveBeenCalled()
+      await services.standInApi!.projectProcessing(7, deviceId, target)
+      await services.standInApi!.projectProcessing(7, deviceId, target, true)
+      expect(selected.projectProcessing.mock.calls).toEqual([
+        [7, deviceId, target, undefined],
+        [7, deviceId, target, true],
+      ])
+      expect(other.projectProcessing).not.toHaveBeenCalled()
       const memory = { content: 'Prefer concise replies', scope: { kind: 'personal' as const } }
       await services.standInApi!.memories(7, deviceId)
       await services.standInApi!.saveMemory(7, deviceId, memory)

@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 
-fn fixture() -> (
+pub(in crate::runtime_work::handler) fn fixture() -> (
     tempfile::TempDir,
     RuntimeWorkRpcHandler,
     LocalTaskStore,

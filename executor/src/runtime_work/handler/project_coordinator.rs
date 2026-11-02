@@ -239,6 +239,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &ExecutionRequest,
     ) -> Result<(), String> {
+        self.validate_project_router_assessment(request).await?;
         if let Some(origin) = request
             .extra
             .get("origin")

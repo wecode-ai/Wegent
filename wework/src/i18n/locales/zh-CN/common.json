@@ -5342,7 +5342,21 @@
       "publishing": "发布中…",
       "published": "已发布至「{{issue}}」的评论。项目成员按原有权限查看。",
       "back_to_chat": "返回私人对话",
-      "no_publish_target": "当前项目中没有你可以评论的 Issue。请返回项目创建或选择可访问的 Issue。"
+      "no_publish_target": "当前项目中没有你可以评论的 Issue。请返回项目创建或选择可访问的 Issue。",
+      "coordination": "项目自动统筹",
+      "coordination_off": "尚未启用",
+      "coordination_mine": "由我在所选设备上处理",
+      "coordination_owner": "由成员 {{user}} 在设备 {{device}} 上处理",
+      "enable_coordination": "启用自动统筹",
+      "stop_coordination": "停止",
+      "takeover": "接管",
+      "takeover_title": "接管项目自动统筹？",
+      "takeover_help": "当前由成员 {{user}} 在设备 {{device}} 上处理。确认后由你在所选设备上接管，原绑定停止后续派发。已开始的工作仍按原有权限和执行状态处理。",
+      "coordination_help": "只处理项目共享信息，沿用小组成员、模型、设备权限和操作确认。承载设备在线时运行，恢复在线后补处理；私人对话和记忆不会自动公开。",
+      "check_coordination": "现在查看",
+      "coordination_running": "正在集中判断项目事件，具体工作仍在原 Issue 中执行。",
+      "coordination_waiting": "等待新的项目事件，需要你补充的信息会关联回原 Issue。",
+      "answer_in_issue": "到 Issue 补充信息"
     },
     "model_label": "模型",
     "agent_label": "智能体",
@@ -5679,7 +5693,9 @@
       "coordination_recovery_required": "上次后台处理的执行结果尚未确认。请查看原执行记录；确认前不会自动重发。",
       "coordination_stopped": "上次后台处理已失败或取消。请查看执行记录，修复原因后点击「立即检查」重新处理未完成事件。",
       "coordinator_failed": "后台统筹失败。请检查处理记录和模型配置后重试。",
-      "leader_not_ai": "该协作小组由人类负责人管理，请选择 AI 负责人或在项目中调整负责人。"
+      "leader_not_ai": "该协作小组由人类负责人管理，请选择 AI 负责人或在项目中调整负责人。",
+      "stale_context": "项目自动统筹已停止、被接管或权限已变化。请刷新状态后重试。",
+      "project_unavailable": "项目或协作小组已不可访问，请返回项目检查权限和配置。"
     },
     "processing": {
       "review_execution": "查看执行记录",

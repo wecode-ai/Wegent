@@ -32,12 +32,18 @@ function fixture(groups: unknown[] = []) {
     api: { projects: { listCollaborationGroups }, issues: { list: vi.fn().mockResolvedValue([]) } },
     project: { id: 'project-a', name: '项目 A', project_store: 'local' },
     services: {
-      standInApi: { projectConversation },
+      standInApi: {
+        projectConversation,
+        projectCoordination: vi
+          .fn()
+          .mockResolvedValue({ binding: null, canEnable: true, canStop: false }),
+      },
       getLocalRuntimeSidebarIdentity: vi.fn().mockResolvedValue({ deviceId: 'mac' }),
     },
     userId: 7,
     devices: [],
     onOpenGroupSettings,
+    onOpenIssue: vi.fn(),
   } as unknown as ComponentProps<typeof ProjectCoordinatorConversation>
   return { props, listCollaborationGroups, projectConversation, onOpenGroupSettings }
 }

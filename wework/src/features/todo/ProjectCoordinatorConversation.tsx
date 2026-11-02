@@ -16,6 +16,7 @@ import { localRuntimeAttachments } from '@/lib/runtime-attachments'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
+import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 export function ProjectCoordinatorConversation({
@@ -26,6 +27,7 @@ export function ProjectCoordinatorConversation({
   devices,
   onOpenTask,
   onOpenGroupSettings,
+  onOpenIssue,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
@@ -34,6 +36,7 @@ export function ProjectCoordinatorConversation({
   devices: DeviceInfo[]
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   onOpenGroupSettings(): void
+  onOpenIssue(issueId: string): void
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -245,6 +248,21 @@ export function ProjectCoordinatorConversation({
                         />
                       )}
                     </div>
+                    {group?.leader.kind === 'agent' && runtime && deviceId && (
+                      <ProjectCoordinationPanel
+                        key={`coordination:${userId}:${storage}:${project.id}:${group.id}:${deviceId}`}
+                        api={runtime}
+                        userId={userId}
+                        deviceId={deviceId}
+                        projectId={project.id}
+                        projectStore={storage}
+                        groupId={group.id}
+                        onOpenIssue={issueId => {
+                          closeConversation()
+                          onOpenIssue(issueId)
+                        }}
+                      />
+                    )}
                     {error ? (
                       <div role="alert" className="p-5 text-sm text-error">
                         <p>{error}</p>

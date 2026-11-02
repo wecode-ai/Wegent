@@ -4,7 +4,7 @@ use super::*;
 
 #[cfg(test)]
 #[path = "project_coordination_commands_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn project_coordination_command(

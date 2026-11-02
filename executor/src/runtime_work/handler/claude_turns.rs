@@ -361,7 +361,16 @@ impl RuntimeWorkRpcHandler {
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
 
-            let outcome = match handler.validate_project_coordinator_request(&request).await {
+            let authorization = if request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin["type"] == "project_assessment")
+            {
+                Err("Read-only project assessments require the Codex text-only runtime".into())
+            } else {
+                handler.validate_project_coordinator_request(&request).await
+            };
+            let outcome = match authorization {
                 Err(message) => ExecutionOutcome::Failed { message },
                 Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {

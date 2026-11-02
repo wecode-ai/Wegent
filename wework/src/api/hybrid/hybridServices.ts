@@ -1719,6 +1719,14 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async projectProcessing(userId, deviceId, target, check) {
+        return (await standInApiForDevice(deviceId)).projectProcessing(
+          userId,
+          deviceId,
+          target,
+          check
+        )
+      },
       async projectCoordination(userId, deviceId, target, update) {
         return (await standInApiForDevice(deviceId)).projectCoordination(
           userId,

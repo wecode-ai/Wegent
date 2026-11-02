@@ -148,6 +148,7 @@ mod project_coordination_commands;
 mod project_coordination_execution;
 mod project_coordinator;
 mod project_preparation;
+mod project_router;
 mod queries;
 mod robot_queue_rpc;
 mod runner_catalog;
