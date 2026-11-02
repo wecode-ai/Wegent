@@ -118,8 +118,8 @@ export async function verifySmartAppMarketplaceIdentity({
   )
   assert.equal(
     reusedSnapshot.testIds.filter(id => id.startsWith('workspace-tab-select-')).length,
-    tabsBeforeDeepLink.length + 1,
-    'Repeated Smart app deep link navigation duplicated the app workspace tab'
+    openedSnapshot.testIds.filter(id => id.startsWith('workspace-tab-select-')).length,
+    'Repeated Smart app deep link navigation opened another workspace tab'
   )
   await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
   await control.command(
