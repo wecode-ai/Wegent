@@ -41,14 +41,18 @@ use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
 use super::seam::BodyStream;
-use super::sse_sync::{SseFrames, drain_terminal_stream};
+use super::sse_sync::{SseFrames, drain_terminal_stream, stream_request, stream_transport_error};
 use super::streaming::framing_events;
 
 /// `session_manager._get_cancel_key` (`chat:cancel:{subtask_id}`).
 const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
 /// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// `httpx`'s 300-second streaming request timeout.
+/// `httpx`'s 300-second streaming per-read timeout.
+///
+/// This is an inactivity window, not a total request deadline. A streaming
+/// response may legitimately run longer than this as long as chunks keep
+/// arriving.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 /// The OpenAI SDK appends `/responses` to its `.../v1` base URL.
 const RESPONSES_PATH: &str = "/v1/responses";
@@ -250,7 +254,8 @@ impl Bridge {
                         .await;
                 }
                 Step::Chunk(Err(error)) => {
-                    self.fail(error.to_string()).await;
+                    self.fail(stream_transport_error(&error, STREAM_TIMEOUT))
+                        .await;
                 }
             }
         }
@@ -276,19 +281,11 @@ impl Bridge {
         // source's poller has already used that slot for the reads above.
         self.poll.tick().await;
         self.registered = true;
-        let request = self
+        let request = stream_request(&self.http, &self.url, &self.body, &self.request_id)
+            .map_err(|_| "Connection error.".to_string())?;
+        let response = self
             .http
-            .post(&self.url)
-            .map_err(|_| "Connection error.".to_string())?
-            .header("content-type", "application/json")
-            .header("accept", dispatch::OPENAI_ACCEPT)
-            .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-            .header("X-Request-ID", self.request_id.as_str());
-        // Same Source client identity as every other model-gateway call.
-        let response = dispatch::apply_openai_client_headers(request)
-            .json(&self.body)
-            .timeout(STREAM_TIMEOUT)
-            .send()
+            .execute(request)
             .await
             .map_err(|_| "Connection error.".to_string())?;
         if !response.status().is_success() {

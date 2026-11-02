@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -38,13 +39,17 @@ from app.models.task import TaskResource
 from app.models.user import User
 
 
-@pytest.fixture
-def test_client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """Exercise the retained Python reference without changing production routes."""
-    app = test_client.app
-    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
-    app.add_api_route("/api/v1/responses", create_response, methods=["POST"])
-    return test_client
+def test_create_response_is_registered_in_application(test_client: TestClient) -> None:
+    routes = [
+        route
+        for route in test_client.app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/api/v1/responses"
+        and "POST" in route.methods
+    ]
+
+    assert len(routes) == 1
+    assert routes[0].endpoint is create_response
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,11 @@
 import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
 
+// These checkpoints retain standalone selection but execute inside an existing
+// Cloud checkpoint in CI, sharing its service and Runtime lifecycle.
+export const DESKTOP_CHECKPOINT_CI_HOSTS = new Map([
+  ['responses-api-gateway', 'plugin-account-auth-dws'],
+])
+
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
   'project-space-tool-discovery',
@@ -13,6 +19,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
+  'responses-api-gateway',
   'task-model-deletion',
   'cloud-model-presets',
   'cloud-space-mention',
@@ -25,6 +32,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',

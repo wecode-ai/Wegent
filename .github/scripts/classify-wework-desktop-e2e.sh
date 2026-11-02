@@ -27,6 +27,8 @@ core_segments=(
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
+  collaboration-templates
+  collaboration-template-lifecycle
   collaboration-local-agent-dispatch
   stand-in
   stand-in-identities
@@ -252,7 +254,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence
+  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
@@ -352,6 +354,7 @@ validate_registered_checkpoint_coverage() {
       import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
+        DESKTOP_CHECKPOINT_CI_HOSTS,
         DESKTOP_CHECKPOINT_GROUPS,
         expandDesktopCheckpoints,
       } from "./wework/e2e/desktop/checkpoints.mjs"
@@ -360,14 +363,18 @@ validate_registered_checkpoint_coverage() {
         console.error("Registered desktop checkpoint catalog is empty")
         process.exit(1)
       }
-      const upgradeWorkflow = readFileSync(".github/workflows/wework-upgrade-e2e.yml", "utf8")
-      if (!upgradeWorkflow.includes(`--parallel-segments ${UPGRADE_CHECKPOINT_GROUP}`)) {
-        console.error("The upgrade workflow must invoke its registered checkpoint group")
+      const releaseWorkflow = readFileSync(".github/workflows/wework-app.yml", "utf8")
+      const upgradeVerifier = readFileSync("wework/scripts/verify-release-upgrades.mjs", "utf8")
+      if (!releaseWorkflow.includes("node wework/scripts/verify-release-upgrades.mjs") ||
+          !upgradeVerifier.includes("--parallel-segments") ||
+          !upgradeVerifier.includes("${UPGRADE_CHECKPOINT_GROUP},app-update-full")) {
+        console.error("The release workflow must invoke the registered upgrade checkpoint group")
         process.exit(1)
       }
       const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
       for (const checkpoint of registered) {
-        if (!covered.has(checkpoint)) {
+        const host = DESKTOP_CHECKPOINT_CI_HOSTS.get(checkpoint) ?? checkpoint
+        if (!covered.has(host)) {
           console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)
           process.exit(1)
         }
@@ -795,6 +802,12 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs)
+      # The registered Responses checkpoint runs inside this existing Cloud lifecycle.
+      select_target "cloud:plugin-account-auth-dws"
       return
       ;;
 
@@ -1886,6 +1899,18 @@ classify_path() {
       select_target "core:collaboration-deliveries"
       select_target "core:collaboration-delivery-editing"
       ;;
+    wework/e2e/desktop/scenarios/collaboration-template-lifecycle.scenario.mjs | \
+    wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
+      packages/collaboration/src/templates/* | \
+      backend-rs/src/collaboration_templates/* | \
+      backend/init_data/04-collaboration-templates.yaml | \
+      shared/data/collaboration-templates.json)
+      select_target "core:collaboration-templates"
+      select_target "core:collaboration-template-lifecycle"
+      if [[ "$path" == packages/collaboration/src/templates/* ]]; then
+        select_target "core:collaboration-group-onboarding"
+      fi
+      ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \
       packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
@@ -1934,6 +1959,13 @@ classify_path() {
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
+      ;;
+    backend/app/api/endpoints/openapi_responses.py | \
+      backend/app/api/endpoints/wework_api.py | \
+      backend/app/services/wework_api/* | \
+      backend/tests/api/test_openapi_responses.py | \
+      backend/tests/api/test_wework_api.py)
+      select_target "cloud:plugin-account-auth-dws"
       ;;
     backend/app/api/endpoints/adapter/attachments.py | \
       backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \

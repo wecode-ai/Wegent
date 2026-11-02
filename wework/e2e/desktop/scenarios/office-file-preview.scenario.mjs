@@ -59,9 +59,26 @@ async function assertLastContentVisible(control, scroller, content, timeoutMs) {
   )
 }
 
+async function waitForPresentationLayout(control, slideCount, timeoutMs) {
+  // The first slide is progressive output; the final scroll range needs every slot and a resize.
+  await control.command('waitFor', '.pptx-render-surface [data-render-state="ready"]')
+  const lastSlot = `.pptx-render-surface .flyfish-pptx-slide-slot[data-slide-number="${slideCount}"]`
+  await control.command('waitFor', lastSlot)
+  await waitForValue(
+    async () => ({
+      range: (await metrics(control, '.pptx-render-surface .flyfish-pptx-scale-box'))[0],
+      last: (await metrics(control, lastSlot))[0],
+    }),
+    ({ range, last }) => range?.height > 0 && last?.height > 0 && last.bottom <= range.bottom,
+    'The presentation scroll range must include the final parsed slide before scrolling',
+    timeoutMs
+  )
+}
+
 async function verifyPresentation(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'slides.pptx')
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
+  await waitForPresentationLayout(control, 8, timeoutMs)
   assert.equal((await metrics(control, VIEWER))[0].scrollTop, 0)
   await control.command('nativePress', VIEWER, { key: 'PageDown' })
   await waitForValue(
@@ -169,6 +186,7 @@ async function createTask(control, name, timeoutMs) {
 async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'long-slides.pptx')
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await waitForPresentationLayout(control, 32, timeoutMs)
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
   await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
@@ -179,6 +197,7 @@ async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, time
   assert.notEqual(otherTaskId, originalTaskId)
   await control.command('click', `[data-testid="runtime-local-task-row-${originalTaskId}"]`)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await waitForPresentationLayout(control, 32, timeoutMs)
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
   const slides = await metrics(control, '.pptx-render-surface .slide')

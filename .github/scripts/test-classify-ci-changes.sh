@@ -130,11 +130,13 @@ assert_checkpoint_runtime_failure_rejected() {
 
 assert_checkpoint_runtime_failure_rejected
 
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-full' \
-  "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-full\n' >&2
+if ! grep -Fq 'node wework/scripts/verify-release-upgrades.mjs' "$wework_app_workflow" ||
+  ! grep -Fq '${UPGRADE_CHECKPOINT_GROUP},app-update-full' \
+    "$repo_root/wework/scripts/verify-release-upgrades.mjs"; then
+  printf 'The formal release verifier must invoke app-update-full with the upgrade group\n' >&2
   exit 1
 fi
+
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
   ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then
@@ -648,6 +650,24 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/api/hybrid/cloudModelCatalog.ts" \
   "wework/e2e/desktop/modules/cloud-model-recovery.mjs" \
   "wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs"
+
+for responses_gateway_path in \
+  wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs \
+  backend/app/api/endpoints/openapi_responses.py \
+  backend/app/api/endpoints/wework_api.py \
+  backend/app/services/wework_api/service.py \
+  backend/tests/api/test_openapi_responses.py \
+  backend/tests/api/test_wework_api.py; do
+  assert_desktop_case "Responses creation reuses the existing account-auth Cloud lifecycle: $responses_gateway_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$responses_gateway_path"
+done
 
 assert_desktop_case "deleted task model recovery runs in the cloud shard" \
   'wework_desktop_e2e=true
@@ -1464,7 +1484,7 @@ full_desktop_expected="${full_desktop_expected/native-window-startup,/native-win
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
 full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
+full_desktop_expected="${full_desktop_expected/runtime-input-answer-persistence/runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle}"
 
 for path in \
   executor/src/agents/codex.rs \
@@ -1750,6 +1770,14 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
+
+assert_desktop_case "template components retain group onboarding coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "packages/collaboration/src/templates/TemplateCreateSection.tsx"
 
 assert_desktop_case "collaboration human round scenario selects its core shard" \
   'wework_desktop_e2e=true

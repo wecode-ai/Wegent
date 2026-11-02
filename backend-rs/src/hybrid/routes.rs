@@ -224,6 +224,19 @@ mod tests {
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
     }
 
+    #[test]
+    fn responses_creation_uses_python_without_changing_siblings() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+
+        assert!(!table.matches(&Method::POST, "/api/v1/responses"));
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/"));
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/resp_123/cancel"));
+        assert!(table.matches(&Method::GET, "/api/v1/responses/resp_123"));
+        assert!(table.matches(&Method::DELETE, "/api/v1/responses/resp_123"));
+        assert!(table.matches(&Method::POST, "/api/internal/callback"));
+    }
+
     /// The doubled-prefix skills download cutover must keep its Rust handler
     /// registered while every other method stays on the Python fallback.
     #[test]

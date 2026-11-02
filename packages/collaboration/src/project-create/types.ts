@@ -25,10 +25,11 @@ export interface ProjectCreateTarget {
 }
 
 export interface ProjectCreateResourceSelection {
+  template?: import("../templates/types").CollaborationTemplate;
   memberUserIds: number[];
   agentResourceIds: string[];
   executionEnvironmentDeviceIds: number[];
-  collaborationGroupDraft: ProjectCreateCollaborationGroupDraft | null;
+  collaborationGroupDrafts: ProjectCreateCollaborationGroupDraft[];
 }
 
 export interface ProjectCreateCollaborationGroupDraft {
@@ -250,6 +251,8 @@ export interface ProjectCreateLabels {
   create: string;
   creating: string;
   unavailableLocation: string;
+  partialConfiguration: string;
+  openCreated: string;
   repositoryRequired: string;
   repositoryInvalid: string;
   githubRepositoryInvalid: string;
@@ -258,6 +261,7 @@ export interface ProjectCreateLabels {
 }
 
 export interface ProjectCreateDialogProps {
+  initialTemplate?: import("../templates/types").CollaborationTemplate | null;
   targets: ProjectCreateTarget[];
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;

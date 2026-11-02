@@ -30,6 +30,38 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test('accepts versioned turn updates after history arrives before the native starting snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('native-startup-history-race')
+    const initial = task('1', 'starting', null)
+    delete initial.executionState
+    store.syncRuntimeTask(address, initial)
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.syncTranscript(address, {
+      taskId: address.taskId,
+      messages: [],
+      turns: [{ id: 'turn-1', status: 'streaming', items: [] }],
+      running: true,
+    })
+    expect(store.getTask(address)?.turn.id).toBe('turn-1')
+
+    store.syncRuntimeTask(address, task('2', 'starting', null))
+    const running = {
+      ...task('3', 'running', 'turn-1'),
+      runtimeHandle: { lastTurnId: 'turn-1' },
+    }
+    store.syncRuntimeTask(address, running)
+    expect(store.getTask(address)?.turn.id).toBe('turn-1')
+    store.stopRequested(address)
+    store.syncRuntimeTask(address, {
+      ...task('4', 'idle', null, 'turn-1'),
+      runtimeHandle: { lastTurnId: 'turn-1' },
+    })
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+    store.syncRuntimeTask(address, running)
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+  })
+
   test('keeps queued Goal recovery owned without inventing a running model turn', () => {
     const store = new RuntimeTaskLifecycleStore('native-goal-recovery-admission')
     store.syncRuntimeTask(address, {

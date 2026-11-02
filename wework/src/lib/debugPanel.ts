@@ -1,3 +1,9 @@
+import {
+  clearRuntimePaneTransitions,
+  getRuntimePaneTransitions,
+  recordRuntimePaneTransition,
+  summarizeRuntimeDisplayItems,
+} from './runtimePaneDiagnostics'
 import { getIdleTaskSchedulerDiagnostics } from '@/features/idle-tasks/idleTaskScheduler'
 import type { RuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import type {
@@ -65,6 +71,7 @@ export interface WorkbenchDebugSnapshot {
   pane: RuntimePaneDebugSnapshot | null
   logs: DebugLogEntry[]
   logLimit: number
+  paneTransitions?: ReturnType<typeof getRuntimePaneTransitions>
 }
 
 export interface RuntimePaneDebugSnapshot {
@@ -209,6 +216,7 @@ interface MessageSummaryItem {
   runtimeStatus: WorkbenchMessage['runtimeStatus'] | null
   runtimeMessageIndex: number | null
   contentLength: number
+  displayItems?: ReturnType<typeof summarizeRuntimeDisplayItems>
   blockCount: number
   hasFileChanges: boolean
   referenceCount: number
@@ -358,10 +366,12 @@ export function updateRuntimePaneDebugSnapshot(
     currentRuntimeTask: sanitizeRuntimeTaskAddress(snapshot.currentRuntimeTask),
     updatedAt: new Date().toISOString(),
   }
+  recordRuntimePaneTransition(paneSnapshot)
 }
 
 export function clearWorkbenchDebugLogs() {
   debugLogs.splice(0, debugLogs.length)
+  clearRuntimePaneTransitions()
 }
 
 export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
@@ -372,6 +382,7 @@ export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
     pane: paneSnapshot,
     logs: [...debugLogs],
     logLimit: DEBUG_LOG_LIMIT,
+    paneTransitions: getRuntimePaneTransitions(),
   }
 }
 
@@ -609,6 +620,7 @@ function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem
     runtimeMessageIndex:
       typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : null,
     contentLength: message.content.length,
+    displayItems: summarizeRuntimeDisplayItems(message),
     blockCount: message.blocks?.length ?? 0,
     hasFileChanges: Boolean(message.fileChanges),
     referenceCount: message.references?.length ?? 0,
