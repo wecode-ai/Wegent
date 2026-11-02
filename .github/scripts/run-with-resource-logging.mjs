@@ -38,12 +38,11 @@ let sampledDiskGrowth = false
 function diskUsage(depth) {
   const paths = [
     'wework/test-results/desktop-e2e',
+    '/tmp',
     '.ci-artifacts',
     'backend/.venv',
     '/root/.cache',
     '/root/go',
-    '/__t',
-    '/tmp',
   ].filter(existsSync)
   let output
   let incomplete
