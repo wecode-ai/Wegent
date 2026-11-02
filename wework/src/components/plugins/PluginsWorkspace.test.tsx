@@ -44,6 +44,9 @@ import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as pluginUninstall from './pluginUninstall'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
+import * as pluginDetailView from './PluginDetailView'
+import * as navigation from '@/lib/navigation'
+import { mergeMarketplaceCatalog } from './marketplaceCatalogMerge'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
 import * as marketplaceWorkspaceHelpers from './workspace/marketplaceWorkspaceHelpers'
 import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
@@ -1364,6 +1367,10 @@ function mockSystemSkillsFetch(
   )
 
   return {
+    setMarketplaceInstallation: (installed: boolean, state: typeof marketplaceDeviceState) => {
+      cloudMarketplacePluginInstalled = installed
+      marketplaceDeviceState = state
+    },
     publishMarketplaceUpdate: () => {
       marketplaceLatestReleaseId += 1
       marketplaceUpdateAvailable = true
@@ -9866,6 +9873,118 @@ describe('PluginsWorkspace', () => {
       historyBack.mockRestore()
     }
   })
+
+  test.each([false, true])(
+    'blocks uninstalling examples and stale callbacks, then restores use (local=%s)',
+    async local => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: local,
+        marketplaceDeviceState: 'installed',
+        localVersionEvidence: local ? '1.0.0' : undefined,
+        marketplaceVisibility: 'workspace',
+        marketplaceSourceProvider: 'wegent',
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const originalDetail = pluginDetailView.PluginDetailView
+      let detailProps!: Parameters<typeof originalDetail>[0]
+      const detailSpy = vi.spyOn(pluginDetailView, 'PluginDetailView').mockImplementation(props => {
+        detailProps = props
+        return originalDetail(props)
+      })
+      const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+      const installationPosts = () =>
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).includes('/plugins/marketplace/101/install') && init?.method === 'POST'
+          )
+      const publishInstallation = async (
+        installed: boolean,
+        state: 'installed' | 'uninstalling'
+      ) => {
+        marketplace.setMarketplaceInstallation(installed, state)
+        const [catalog, inventory] = await Promise.all([
+          fetch('/api/plugins/marketplace?device_id=current-device').then(response =>
+            response.json()
+          ),
+          fetch('/api/plugins/installed?device_id=current-device').then(response =>
+            response.json()
+          ),
+        ])
+        const cached = getPluginMarketplaceCache('/api|cloud-token')!
+        act(() =>
+          setPluginMarketplaceCache({
+            ...cached,
+            marketplaceItems: mergeMarketplaceCatalog(catalog.items, [], inventory.items),
+            installedPlugins: inventory.items,
+            fetchedAt: Date.now(),
+          })
+        )
+      }
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        await waitFor(() => expect(screen.getByTestId('plugin-prompt-0')).not.toBeDisabled())
+        const stalePrompt = detailProps.onPromptSelect!
+        const staleToggle = detailProps.onToggle
+        if (!local) {
+          const originalEnsure = localExecutorMocks.ensureAvailable.getMockImplementation()!
+          let finishPreflight!: () => void
+          let preflightHeld = false
+          const gate = new Promise<void>(resolve => {
+            finishPreflight = resolve
+          })
+          localExecutorMocks.ensureAvailable.mockImplementation(async options => {
+            if (options?.refresh) {
+              preflightHeld = true
+              await gate
+            }
+            return originalEnsure(options)
+          })
+          act(() => stalePrompt('Review this change'))
+          await waitFor(() => expect(preflightHeld).toBe(true))
+          await publishInstallation(true, 'uninstalling')
+          await act(async () => finishPreflight())
+        } else {
+          await publishInstallation(true, 'uninstalling')
+        }
+        await waitFor(() => expect(screen.getByTestId('plugin-detail-toggle-101')).toBeDisabled())
+        const example = screen.getByTestId('plugin-prompt-0')
+        expect(example).toBeDisabled()
+        sessionStorage.removeItem('wework:pending-plugin-trial')
+        navigate.mockClear()
+        await userEvent.click(example)
+        await act(async () => {
+          detailProps.onPromptSelect!('Review this change')
+          detailProps.onToggle()
+          stalePrompt('Review this change')
+          staleToggle()
+        })
+        expect(installationPosts()).toHaveLength(0)
+        expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+        expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+        expect(navigate).not.toHaveBeenCalled()
+        expect(marketplace.getSyncDeviceCalls()).toBe(0)
+        await publishInstallation(local, 'installed')
+        await waitFor(() => expect(screen.getByTestId('plugin-prompt-0')).not.toBeDisabled())
+        await userEvent.click(screen.getByTestId('plugin-prompt-0'))
+        if (!local) {
+          await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+          await waitFor(() => expect(installationPosts()).toHaveLength(1))
+        }
+        await waitFor(() =>
+          expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
+        )
+        expect(navigate).toHaveBeenCalledWith('/')
+        expect(installationPosts()).toHaveLength(local ? 0 : 1)
+      } finally {
+        detailSpy.mockRestore()
+        navigate.mockRestore()
+      }
+    }
+  )
 
   test('keeps server-reported uninstalling consistent between the row and detail', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

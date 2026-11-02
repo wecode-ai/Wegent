@@ -119,11 +119,14 @@ export async function createDesktopScenario({
 
   async function preflightTimeout(control) {
     const item = await fixture('preflight-timeout')
+    const startIndex = apiProxy.requests.length
     apiProxy.rule = request =>
       request.method === 'GET' && request.path === '/api/plugins/installed' && request.unscoped
         ? 'hold-request'
         : null
     const started = await uninstallInUi(control, item)
+    await control.command('click', testId(`plugin-marketplace-row-${item.pluginId}`))
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:disabled`)
     // This deliberately held read must settle at the account-preflight deadline.
     await control.command('waitFor', testId('plugin-operation-notice'), {
       text: '暂时无法确认当前账号的插件安装状态',
@@ -131,6 +134,21 @@ export async function createDesktopScenario({
     })
     const elapsedMs = Date.now() - started
     assert.ok(elapsedMs < 15_000, `Account preflight kept loading for ${elapsedMs}ms`)
+    await control.command('waitFor', `button${testId('plugin-prompt-0')}:not(:disabled)`, {
+      enabled: true,
+    })
+    assert.equal(
+      apiProxy.requests
+        .slice(startIndex)
+        .filter(
+          request =>
+            request.method === 'POST' &&
+            request.path === `/api/plugins/marketplace/${item.pluginId}/install`
+        ).length,
+      0,
+      'Uninstalling detail initiated another installation'
+    )
+    await control.command('click', testId('plugin-detail-back-button'))
     assert.equal(deletes(item).length, 0, 'Unconfirmed account preflight issued a DELETE')
     assert.ok(await accountPlugin(cloud, item.slug), 'Preflight failure removed membership')
     await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
@@ -142,7 +160,12 @@ export async function createDesktopScenario({
     await assertInstallButton(control, item)
     assert.equal(deletes(item).length, 1, 'Explicit retry must issue exactly one DELETE')
     await assertSurfaces(control, item, false)
-    evidence.push({ case: 'account-preflight-timeout-and-explicit-retry', elapsedMs })
+    evidence.push({
+      case: 'account-preflight-timeout-and-explicit-retry',
+      elapsedMs,
+      examplesBlockedDuringUninstall: true,
+      examplesRestoredAfterFailure: true,
+    })
   }
 
   async function unknownResult(control) {
