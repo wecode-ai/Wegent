@@ -20,7 +20,7 @@ export function usePluginRefreshReconciliation(options: {
   })
   const handled = useRef(0)
   const mounted = useRef(true)
-  const [active, setActive] = useState(false)
+  const [active, setActive] = useState<{ accountKey: string; deviceId: string } | null>(null)
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -29,15 +29,23 @@ export function usePluginRefreshReconciliation(options: {
   }, [])
   useEffect(() => {
     const options = latest.current
-    if (!options.request || handled.current === options.request || options.busy) return
+    if (!options.request || handled.current === options.request) return
+    const owner = { accountKey: options.accountKey, deviceId: options.deviceId }
+    const clearActive = () => {
+      if (mounted.current) setActive(current => (current === owner ? null : current))
+    }
+    setActive(owner)
+    if (options.busy) return clearActive
     if (!options.available || !options.deviceId) {
       handled.current = options.request
       options.onError(new Error('Current device is offline; plugin state was not changed'))
+      clearActive()
       return
     }
     const { accountKey, deviceId, request } = options
     let timer: ReturnType<typeof setTimeout> | undefined
     let cancelled = false
+    let acquired = false
     const deadline = Date.now() + 30_000
     const isCurrent = () =>
       mounted.current &&
@@ -50,13 +58,14 @@ export function usePluginRefreshReconciliation(options: {
         if (Date.now() >= deadline) {
           handled.current = request
           latest.current.onError(new Error('Plugin synchronization is busy; refresh again'))
+          clearActive()
           return
         }
         timer = setTimeout(start, 250)
         return
       }
       handled.current = request
-      setActive(true)
+      acquired = true
       const current = latest.current
       void reconcilePluginRefresh({ ...current.operations, isCurrent })
         .then(() => {
@@ -67,14 +76,17 @@ export function usePluginRefreshReconciliation(options: {
         })
         .finally(() => {
           release()
-          if (mounted.current) setActive(false)
+          clearActive()
         })
     }
     start()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      if (!acquired) clearActive()
     }
   }, [options.request, options.accountKey, options.deviceId, options.available, options.busy])
-  return active
+  return Boolean(
+    active && active.accountKey === options.accountKey && active.deviceId === options.deviceId
+  )
 }

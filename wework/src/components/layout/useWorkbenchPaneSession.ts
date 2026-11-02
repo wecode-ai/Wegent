@@ -81,7 +81,6 @@ import type {
   RuntimeGoal,
   RuntimeGoalCreateInput,
   RuntimePlanEventPayload,
-  RuntimeGoalContinuationPayload,
   RuntimeName,
   RuntimeAdditionalContext,
   RuntimeRollbackRequest,
@@ -422,9 +421,6 @@ export function useWorkbenchPaneSession({
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
   const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
-  const [goalContinuation, setGoalContinuation] = useState<RuntimeGoalContinuationPayload | null>(
-    null
-  )
   const [taskPlan, setTaskPlan] = useState<RuntimePlanEventPayload | null>(null)
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
@@ -634,7 +630,6 @@ export function useWorkbenchPaneSession({
       }
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
-      setGoalContinuation(metadata.goalContinuation)
       setThreadGoal(metadata.goal)
     }
     syncConversationState()
@@ -672,7 +667,6 @@ export function useWorkbenchPaneSession({
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       setThreadGoal(null)
-      setGoalContinuation(null)
       return
     }
 
@@ -2681,9 +2675,6 @@ export function useWorkbenchPaneSession({
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
-
-      optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
-      void refreshWorkLists()
     } finally {
       if (accepted !== true) restoreQueue?.()
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
@@ -2698,7 +2689,6 @@ export function useWorkbenchPaneSession({
     currentRuntimeTask,
     goal?.status,
     queueController,
-    refreshWorkLists,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])
@@ -2729,9 +2719,7 @@ export function useWorkbenchPaneSession({
   const cancelGuidanceMessage = useCallback(() => undefined, [])
   const goalProjectionInput = {
     goal,
-    continuation: goalContinuation,
-    taskRunning: paneStatus.taskExecution.running,
-    messages,
+    execution: taskLifecycle?.task?.executionState,
     activeAssistantMessage,
   }
   const goalContinuing = projectRuntimeGoalContinuing(goalProjectionInput)

@@ -19,6 +19,7 @@ import {
 } from '@/lib/runtime-environment'
 import {
   normalizeCloudBackendUrl,
+  normalizeStoredCloudConnection,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
@@ -37,6 +38,7 @@ import { decodeDesktopControlImage } from './desktop-control-image'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { hasInFlightPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
@@ -80,6 +82,8 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   getDesktopE2ERuntimeConfig,
   loadDesktopE2ERuntimeConfig,
+  setDesktopE2ECloudSessionToken,
+  DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
   type DesktopE2ERuntimeConfig,
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
@@ -105,6 +109,7 @@ import {
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
@@ -114,6 +119,24 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
+  return Object.fromEntries(
+    Object.entries(sourceReads ?? {}).flatMap(([source, read]) =>
+      read
+        ? [
+            [
+              source,
+              {
+                status: read.status,
+                pluginKeys: read.items?.map(plugin => plugin.spec.source.pluginKey) ?? [],
+              },
+            ],
+          ]
+        : []
+    )
+  )
+}
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
@@ -530,11 +553,18 @@ function resolveDesktopE2EModelServerUrl(
 }
 
 async function seedDesktopE2ECloudConnection(
-  runtimeConfig: DesktopE2ERuntimeConfig
-): Promise<void> {
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  restoreNativeProfile = false
+) {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
-  if (!backendUrl) return
-  const config = normalizeCloudBackendUrl(backendUrl)
+  if (!backendUrl) return null
+  const nativeProfile = restoreNativeProfile
+    ? normalizeStoredCloudConnection((await getAppPreferences()).cloudConnection)
+    : null
+  const config = normalizeCloudBackendUrl(
+    nativeProfile?.backendUrl ?? backendUrl,
+    nativeProfile?.socketBaseUrlOverride ?? nativeProfile?.socketBaseUrl
+  )
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -542,12 +572,19 @@ async function seedDesktopE2ECloudConnection(
   })
   if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
   const user = await response.json()
-  saveStoredCloudConnection({
+  const connection = {
     ...config,
-    webUrl: config.backendUrl,
+    ...(nativeProfile?.socketBaseUrlOverride
+      ? { socketBaseUrlOverride: nativeProfile.socketBaseUrlOverride }
+      : {}),
+    webUrl: nativeProfile?.webUrl ?? config.backendUrl,
     user,
     connectedAt: new Date().toISOString(),
-  })
+  }
+  // The provider restores this runtime home's native preferences after bootstrap.
+  await updateAppPreferences({ cloudConnection: connection })
+  saveStoredCloudConnection(connection)
+  return connection
 }
 
 export async function seedDesktopE2ERuntime(): Promise<void> {
@@ -557,7 +594,7 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   if (modelServerUrl) {
     seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig)
+  await seedDesktopE2ECloudConnection(runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
@@ -1078,13 +1115,31 @@ function hoverDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-function leaveDesktopControlElement(selector: string): string {
+function focusDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const previousTarget = document.activeElement
+  element.focus()
+  // Background Electron windows update activeElement without emitting focusin.
+  // Deliver the same renderer focus transition without activating the OS window.
+  if (previousTarget !== element && !document.hasFocus()) {
+    element.dispatchEvent(
+      new FocusEvent('focusin', { bubbles: true, composed: true, relatedTarget: previousTarget })
+    )
+  }
+  return element.textContent?.trim() ?? ''
+}
+
+function leaveDesktopControlElement(selector: string, targetSelector?: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   const options = desktopControlEventOptions(element)
   for (const type of ['pointerout', 'pointerleave', 'mouseout', 'mouseleave']) {
     dispatchDesktopControlPointerEvent(element, type, options)
   }
+  // Keep a pointer handoff within one renderer turn. Control transport gaps
+  // can otherwise exceed the production hover dismissal delay.
+  if (targetSelector) hoverDesktopControlElement(targetSelector)
   return element.textContent?.trim() ?? ''
 }
 
@@ -1151,7 +1206,20 @@ async function pressNativeDesktopControlKey(
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
-  if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  if (document.activeElement !== element) {
+    throw new Error(
+      `Keyboard target could not receive focus: ${JSON.stringify({
+        selector,
+        className: element.className,
+        connected: element.isConnected,
+        tabIndex: element.tabIndex,
+        overflowY: getComputedStyle(element).overflowY,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        activeTagName: document.activeElement?.tagName,
+      })}`
+    )
+  }
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
   const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
@@ -2410,6 +2478,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await flushDesktopLocalStoragePersistence()
       return JSON.stringify(config)
     }
+    case 'setCloudSessionToken': {
+      setDesktopE2ECloudSessionToken(command.value ?? '')
+      const connection = await seedDesktopE2ECloudConnection(getDesktopE2ERuntimeConfig())
+      if (!connection) throw new Error('Cloud session switching requires a backend URL')
+      window.dispatchEvent(new Event(DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT))
+      return ''
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -2525,6 +2600,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
               contentTruncated: activeAssistantMessage.contentTruncated === true,
               displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              displayItems: activeAssistantMessage.runtimeDisplayItems?.map(item => ({
+                id: item.id,
+                type: item.type,
+                contentChars: item.type === 'assistant_text' ? item.content.length : 0,
+              })),
               maxNarrativeBlockChars: Math.max(
                 0,
                 ...narrativeBlocks.map(block => block.content.length)
@@ -3232,8 +3312,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
+      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3250,6 +3332,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             nextHopProtocol: timing.nextHopProtocol,
           }
         }),
+        ...(command.value
+          ? {
+              pluginDeviceSyncInFlight: hasInFlightPluginDeviceSync(command.value),
+              systemPressure: await invokeDesktopHost('maintenance.getSystemPressure'),
+            }
+          : {}),
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
@@ -3265,15 +3353,60 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getImageLoadState':
+      return JSON.stringify(
+        findDesktopControlElements(command.selector).map(element => {
+          if (!(element instanceof HTMLImageElement)) {
+            throw new Error('Image diagnostics require an image selector')
+          }
+          return {
+            complete: element.complete,
+            naturalWidth: element.naturalWidth,
+            naturalHeight: element.naturalHeight,
+            sourceProtocol: new URL(element.currentSrc || element.src, window.location.href)
+              .protocol,
+          }
+        })
+      )
+    case 'getPluginImageRequestTimings': {
+      const path = command.value
+      if (
+        !path ||
+        path.length > 32768 ||
+        !(path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\'))
+      ) {
+        throw new Error('Plugin image timing diagnostics require an absolute image path')
+      }
+      performance.setResourceTimingBufferSize(10_000)
+      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      return JSON.stringify(
+        completed
+          .filter(resource => {
+            const url = new URL(resource.name, window.location.href)
+            return (
+              url.origin === window.location.origin &&
+              url.pathname === '/wework/executor/v1/plugin-image' &&
+              url.searchParams.get('path') === path
+            )
+          })
+          .map(resource => ({
+            initiatorType: resource.initiatorType,
+            responseStatus:
+              (resource as PerformanceResourceTiming & { responseStatus?: number })
+                .responseStatus ?? null,
+            startedAt: performance.timeOrigin + resource.startTime,
+            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
+          }))
+      )
+    }
     case 'getComposerPluginInventoryDiagnostics': {
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
-      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
-      const installed =
-        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
-        peekLocalCodexPluginsReadState()
+      const { peekLocalInstalledPluginInventory } = await import('@/api/local/codexPlugins')
+      const installed = peekLocalInstalledPluginInventory()
       return JSON.stringify({
         sharedInventory: getPluginInventoryDiagnostics(),
+        installedSourceReads: pluginSourceReadDiagnostics(installed?.sourceReads),
         composerApps: getComposerApps().map(app => ({
           id: app.id,
           isAccessible: app.isAccessible,
@@ -3282,7 +3415,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           pluginKey: app.pluginKey ?? null,
           source: app.source,
         })),
-        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+        installedPlugins: (installed?.items ?? []).map(plugin => ({
           enabled: plugin.spec.enabled,
           installState: plugin.spec.installState,
           marketplace: plugin.spec.source.marketplace,
@@ -3300,6 +3433,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         refresh: true,
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
+    case 'readLocalPluginDiskInventory': {
+      const { readLocalInstalledInventoryFromDisk } = await import('@/api/local/codexPlugins')
+      const read = await readLocalInstalledInventoryFromDisk()
+      return JSON.stringify({
+        deviceId: read.deviceId,
+        partial: Boolean(read.partial),
+        sourceReads: pluginSourceReadDiagnostics(read.sourceReads),
+      })
     }
     case 'getPluginSyncDiagnostics': {
       const deviceId = command.value?.trim()
@@ -3458,8 +3600,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'focus':
+      return focusDesktopControlElement(command.selector)
     case 'pointerLeave':
-      return leaveDesktopControlElement(command.selector)
+      return leaveDesktopControlElement(command.selector, command.target)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
     case 'pointerClick':

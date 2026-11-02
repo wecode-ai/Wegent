@@ -325,7 +325,7 @@ pub(crate) fn registered_codex_cache(
     Some(expected)
 }
 
-fn resolve_local_plugin_root(
+pub(super) fn resolve_local_plugin_root(
     marketplace_path: &Path,
     marketplace_root: &Path,
     plugin_name: &str,
@@ -426,7 +426,7 @@ fn plugin_sources_from_marketplace_manifest(
     candidates
 }
 
-fn marketplace_root_from_path(path: &Path) -> PathBuf {
+pub(super) fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
         .is_some_and(|name| name == "marketplace.json")
@@ -467,7 +467,7 @@ fn marketplace_root_from_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn local_plugin_manifest_path(plugin_root: &Path) -> Result<PathBuf, String> {
+pub(super) fn local_plugin_manifest_path(plugin_root: &Path) -> Result<PathBuf, String> {
     let canonical_root = plugin_root
         .canonicalize()
         .map_err(|error| format!("Failed to resolve local plugin directory: {error}"))?;
@@ -699,22 +699,40 @@ fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn read_json_file(path: &Path, max_bytes: u64) -> Result<Value, String> {
+pub(super) fn read_json_file(path: &Path, max_bytes: u64) -> Result<Value, String> {
     reject_symbolic_link(path, "JSON file")?;
     let metadata = fs::metadata(path)
         .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
-    if metadata.len() > max_bytes {
+    if !metadata.is_file() || metadata.len() > max_bytes {
         return Err(format!(
             "JSON file exceeds {} bytes: {}",
             max_bytes,
             path.display()
         ));
     }
-    let mut file = fs::File::open(path)
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
         .map_err(|error| format!("Failed to open {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect JSON file: {error}"))?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err("JSON file is not a regular bounded file".into());
+    }
     let mut content = String::new();
-    file.read_to_string(&mut content)
+    file.take(max_bytes.saturating_add(1))
+        .read_to_string(&mut content)
         .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    if content.len() as u64 > max_bytes {
+        return Err("JSON file exceeds its size limit".into());
+    }
     serde_json::from_str(&content)
         .map_err(|error| format!("Invalid JSON {}: {error}", path.display()))
 }

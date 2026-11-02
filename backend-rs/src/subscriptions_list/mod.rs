@@ -598,6 +598,13 @@ mod tests {
     }
 
     #[test]
+    fn no_expiration_is_not_expired() {
+        let item = convert_to_subscription_in_db(&kind_row(subscription_json()), &HashMap::new());
+        assert!(item.expires_at.is_none());
+        assert!(!item.is_expired);
+    }
+
+    #[test]
     fn aware_expires_at_keeps_non_utc_offset() {
         let mut json = subscription_json();
         json["_internal"]["expires_at"] = json!("2026-10-30T11:53:00+05:30");

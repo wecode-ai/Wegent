@@ -56,6 +56,8 @@ export function synchronizeRuntimeConversation(
     conversationKey,
     writer.threadId,
     generation,
+    address.projectSession?.projectId ?? null,
+    address.projectSession?.issueId ?? null,
     options.limit ?? null,
     options.refresh ?? false,
     options.beforeCursor ?? null,

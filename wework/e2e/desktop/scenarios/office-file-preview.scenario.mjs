@@ -37,14 +37,13 @@ async function metrics(control, selector) {
 }
 
 async function openFromTree(control, filename) {
-  const tree = '[data-testid="workspace-file-tree-pierre"]'
-  const item = `button[data-type="item"][aria-label="${filename}"]`
   const toggle = '[data-testid="workspace-file-toggle-tree-button"]'
+  const item = `button[data-type="item"][aria-label="${filename}"]`
   // The panel can be reused across task switches, so a single "is the tree
   // visible?" reading races the mount/transition. Re-read the state and toggle
   // again instead of assuming one click opened it.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (Number(await control.command('getElementCount', tree, { visible: true })) === 0) {
+    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
       await control.command('click', toggle)
       await new Promise(resolve => setTimeout(resolve, 200))
     }
@@ -96,6 +95,14 @@ async function verifyDocument(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'document.docx')
   await control.command('waitFor', '.docx-wrapper', { text: 'WORD PARAGRAPH 180' })
   const scroller = `${VIEWER} .file-render`
+  // Progressive text appears before the renderer installs its scrolling layout.
+  await control.command('waitFor', `${scroller}.docx-fit-viewer`)
+  await waitForValue(
+    () => metrics(control, scroller),
+    ([viewport]) => viewport?.clientHeight > 0 && viewport.scrollHeight > viewport.clientHeight,
+    'The Word layout must establish a scrollable viewport before keyboard input',
+    timeoutMs
+  )
   await control.command('nativePress', scroller, { key: 'PageDown' })
   await waitForValue(
     () => metrics(control, scroller),

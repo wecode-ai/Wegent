@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   assertAsyncHistoryUnloaded,
@@ -51,7 +52,15 @@ export async function verifyLegacySearch(control, timeoutMs) {
   await control.command('waitFor', '[data-testid="assistant-message-content"]', {
     text: `Legacy search answer ${LEGACY_TURN_COUNT - 1}`,
   })
-  const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  const original = (
+    await waitForWorkbenchDebugState(
+      control,
+      ({ pane }) =>
+        pane?.transcript?.loading === false && pane.transcript.loadingMoreBefore === false,
+      'The live transcript did not finish loading before the search baseline',
+      timeoutMs
+    )
+  ).pane
   await assertAsyncHistoryUnloaded(control)
   assert.doesNotMatch(
     await control.command('getText', '[data-testid="assistant-message-content"]'),

@@ -92,6 +92,10 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    let app_startup = env::var_os("WEGENT_APP_IPC_ENDPOINT").is_some();
+    if app_startup {
+        eprintln!("executor startup: process entered");
+    }
     if env::args().nth(1).as_deref() == Some("--workbench-project-state") {
         if let Err(error) = wegent_executor::runtime_work::run_project_state_query() {
             eprintln!("{error}");
@@ -207,15 +211,24 @@ fn main() {
     if !args.help && !args.version {
         install_app_sidecar_lifecycle_watchdog();
     }
+    if app_startup {
+        eprintln!("executor startup: loading shell environment");
+    }
     let shell_environment = if should_hydrate_shell_environment(&args) {
         Some(wegent_executor::process_environment::hydrate_process_environment())
     } else {
         None
     };
+    if app_startup {
+        eprintln!("executor startup: shell environment loaded");
+    }
     // Loopback backend sockets must bypass system HTTP proxies. Set this before
     // Tokio starts: POSIX environment mutation can race with TLS and DNS readers.
     env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     let runtime_instance = runtime();
+    if app_startup {
+        eprintln!("executor startup: async runtime initialized");
+    }
     let outcome = runtime_instance.block_on(wegent_executor::app::run_with_shell_environment(
         args,
         shell_environment,

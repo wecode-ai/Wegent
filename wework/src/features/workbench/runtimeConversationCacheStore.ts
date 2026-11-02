@@ -8,7 +8,6 @@ import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
   RuntimeGoal,
-  RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
@@ -32,7 +31,6 @@ interface Subscription {
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
-  goalContinuation: RuntimeGoalContinuationPayload | null
   taskPlan: RuntimePlanEventPayload | null
   subagentStatuses: RuntimeSubagentStatus[]
 }
@@ -237,7 +235,6 @@ function mergeMetadata(
         : previousGoalIsNewer
           ? previous.goal
           : current.goal,
-    goalContinuation: current.goalContinuation ?? previous.goalContinuation,
     taskPlan: current.taskPlan ?? previous.taskPlan,
     subagentStatuses: [...statuses.values()]
       .sort((left, right) => (right.updatedAtMs ?? 0) - (left.updatedAtMs ?? 0))
@@ -311,7 +308,12 @@ function reconcileAcceptedQueuedMessages(key: string, turns: RuntimeConversation
     message =>
       message.status !== 'sending' ||
       message.deliveryMode !== 'message' ||
-      !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+      !turns.some(
+        turn =>
+          turn.id !== null &&
+          turn.status !== 'pending' &&
+          turnContainsClientUserMessage(turn, message.id)
+      )
   )
   if (remaining.length === queuedMessages.length) return
   cacheRuntimeConversationQueuedMessagesByKey(key, remaining)

@@ -2037,6 +2037,15 @@ class LoopItemExecutionService:
                 else {}
             )
             bound_turn_id = metadata.get("runtime_turn_id")
+            logger.info(
+                "[LoopItemExecution] Delayed completion candidate execution=%s "
+                "activity=%s bound_turn=%s requested_turn=%s request_turn=%s",
+                execution.id,
+                activity.message_id,
+                bound_turn_id,
+                turn_id,
+                execution_runtime_turn_id(execution),
+            )
             if isinstance(bound_turn_id, str) and bound_turn_id:
                 if bound_turn_id == turn_id:
                     return activity
@@ -2592,6 +2601,15 @@ class LoopItemExecutionService:
         if commit:
             db.refresh(execution)
             self._push_activity_after_commit(db, activity)
+        logger.info(
+            "[LoopItemExecution] Terminal outcome execution=%s status=%s "
+            "event_seq=%s reconciled=%s content_length=%s",
+            execution.id,
+            execution.status,
+            event_seq,
+            reconciled,
+            len(content or ""),
+        )
         return execution
 
     def publish_terminal_projection(
@@ -2774,7 +2792,7 @@ class LoopItemExecutionService:
                 error=error,
             )
             metadata = dict(activity.metadata_json or {})
-            if reconciled and isinstance(metadata.get("runtime_turn_id"), str):
+            if reconciled:
                 # Outcome-only observations must retain eligibility for the
                 # matching final event to supply text after this transaction.
                 metadata.setdefault("runtime_completed_at", completed_at.isoformat())
@@ -3167,6 +3185,15 @@ class LoopItemExecutionService:
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
+
+        # Thread metadata, Goal and lifecycle notifications can retain the
+        # previous request's turn identity while a continuation starts. Per-turn
+        # response events establish the execution binding and renew its lease.
+        if (
+            event_name.startswith(("runtime.goal.", "thread/"))
+            or event_name == "runtime.turn.updated"
+        ):
+            return None
 
         row = self.execution_for_runtime(
             db,

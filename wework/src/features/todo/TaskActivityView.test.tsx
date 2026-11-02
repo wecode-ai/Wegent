@@ -963,6 +963,49 @@ describe('TaskActivityView', () => {
     expect(screen.queryByText('机器人已接收')).not.toBeInTheDocument()
   })
 
+  it('refreshes persisted Issue badges after a plain local comment', async () => {
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const task = { id: 'WEG-1', title: 'Inspect changes', status: 'inbox', version: 1 }
+    const updated = {
+      ...task,
+      version: 2,
+      badges: [
+        {
+          id: 'merge-request',
+          label: '!7',
+          url: 'https://gitlab.example.test/a/-/merge_requests/7',
+        },
+      ],
+    }
+    getLoopItem.mockResolvedValue(updated)
+    const onTaskUpdated = vi.fn()
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', project_store: 'local' } as never}
+        task={task as never}
+        onTaskUpdated={onTaskUpdated}
+      />
+    )
+    await userEvent.type(
+      screen.getByTestId('cloud-task-activity-composer'),
+      'Review the merge request'
+    )
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    await waitFor(() => expect(onTaskUpdated).toHaveBeenCalledWith(updated))
+  })
+
   it('sends a structured project member mention from the parent comment composer', async () => {
     const user = userEvent.setup()
     const client = {

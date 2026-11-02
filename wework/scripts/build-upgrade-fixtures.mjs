@@ -1,20 +1,24 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
-import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
+import {
+  UPGRADE_SUITE_VERSION,
+  UPGRADE_FIXTURE_UPDATE_BASE_URL,
+} from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = resolve(
   process.env.WEWORK_UPGRADE_FIXTURE_OUTPUT || join(root, 'test-results', 'upgrade-fixtures')
 )
 const metadata = JSON.parse(await readFile(join(root, 'electron', 'package.json'), 'utf8'))
-const sourceVersion = metadata.version
-const targetVersion = sourceVersion.includes('-beta.')
-  ? sourceVersion.replace(/-beta\.(\d+)$/, (_, n) => `-beta.${Number(n) + 1}`)
-  : sourceVersion.replace(/\.(\d+)$/, (_, n) => `.${Number(n) + 1}`)
+const sourceVersion = '0.6.4-beta.1'
+const targetVersion = metadata.version.includes('-beta.')
+  ? metadata.version.replace(/-beta\.(\d+)$/, (_, n) => `-beta.${Number(n) + 1}`)
+  : metadata.version.replace(/\.(\d+)$/, (_, n) => `.${Number(n) + 1}`)
 const platform =
   process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
 const packageDirectory = join(output, 'packaged', `WeWork-${process.platform}-${process.arch}`)
@@ -23,6 +27,7 @@ const buildApplication =
 await mkdir(output, { recursive: true })
 await rm(join(output, 'pair.json'), { force: true })
 const builds = []
+const fixtureApplicationId = `io.wecode.wework.upgrade-fixture.${randomUUID()}`
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 await run(process.execPath, ['scripts/build-ai-verify-electron.mjs', '--prepare-only'], root)
 // Use one prepared dependency set, then independently package each version from source.
@@ -35,6 +40,8 @@ for (const [version, dataSchema] of [
     WEWORK_UPGRADE_FIXTURE_VERSION: version,
     WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA: String(dataSchema),
     WEWORK_UPGRADE_FIXTURE_OUTPUT: output,
+    WEWORK_UPGRADE_FIXTURE_APP_ID: fixtureApplicationId,
+    WEWORK_UPGRADE_FIXTURE_LEGACY_BOOTSTRAP: version === sourceVersion ? '1' : '0',
   })
   const destination = join(output, version, platform === 'macos' ? 'WeWork.app' : 'application')
   await rm(destination, { recursive: true, force: true })
@@ -68,6 +75,8 @@ const fixture = {
   schemaVersion: 1,
   kind: 'regression',
   suiteVersion: UPGRADE_SUITE_VERSION,
+  fixtureApplicationId,
+  fixtureUpdateBaseUrl: UPGRADE_FIXTURE_UPDATE_BASE_URL,
   from: builds[0],
   to: builds[1],
 }

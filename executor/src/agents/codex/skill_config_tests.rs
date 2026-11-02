@@ -101,10 +101,11 @@ async fn pid(client: &CodexAppServerClient) -> u32 {
 #[tokio::test]
 async fn skill_write_and_reload_preserve_the_process_and_capability_revision() {
     let fixture = Fixture::new();
+    // Pin capability publication across both startup and the reload under test.
+    let activation = crate::services::capability_activation::activate().await;
     let client = fixture.client("updated");
     client.ensure_started().await.unwrap();
     let original_pid = pid(&client).await;
-    let activation = crate::services::capability_activation::activate().await;
     let revision = crate::services::capability_activation::revision();
 
     let response = client

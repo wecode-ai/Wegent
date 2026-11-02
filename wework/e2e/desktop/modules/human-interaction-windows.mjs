@@ -75,4 +75,5 @@ export async function verifyHumanInteractionAcrossWindows({
   })
   await captureScreenshot(detached, '06c-second-window-observes-accepted-reply.png')
   control.activateWindow('main')
+  await main.command('focusMainWindow', 'body')
 }

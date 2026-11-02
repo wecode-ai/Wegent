@@ -35,8 +35,10 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'board-transcript-followup': './scenarios/board-transcript-followup.scenario.mjs',
   'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
   'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
+  'local-artifact-declaration': './scenarios/local-artifact-declaration.scenario.mjs',
   'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'project-space-tool-discovery': './scenarios/project-space-tool-discovery.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
@@ -48,6 +50,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
+  'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
@@ -127,6 +130,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   ),
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
+  'startup-network-change': './scenarios/startup-network-change.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'window-background-policy': './scenarios/window-background-policy.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
@@ -212,8 +216,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
+  'local-artifact-declaration',
   'mcp-apps',
   'project-space-tool-discovery',
   'notification-tab-navigation',
@@ -232,6 +238,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'streaming-conversation-switching',
   'streaming-subagents',
 
+  'native-lifecycle',
   'goal-state-sync',
   'model-settings',
   'codex-native-catalog',
@@ -349,6 +356,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
+  'startup-network-change',
   'native-window-chrome',
   'window-background-policy',
   'renderer-storage',
@@ -488,7 +496,7 @@ function checkpointScenarioEnv(env, checkpoint) {
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
     nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
     if (
-      ['app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
+      ['app-upgrade', 'app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
       env.WEWORK_E2E_UPGRADE_THIN_PAIR
     ) {
       nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR
