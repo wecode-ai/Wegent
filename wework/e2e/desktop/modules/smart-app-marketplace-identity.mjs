@@ -124,6 +124,11 @@ export async function verifySmartAppMarketplaceIdentity({
   await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
   await control.command(
     'waitFor',
+    `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
+    { timeoutMs: uiTimeoutMs }
+  )
+  await control.command(
+    'waitFor',
     `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
     { timeoutMs: uiTimeoutMs }
   )
