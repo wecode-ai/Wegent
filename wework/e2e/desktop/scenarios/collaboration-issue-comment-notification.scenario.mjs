@@ -493,6 +493,14 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      // Board cards stay mounted under the drawer until its exit animation commits.
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="collaboration-issue-detail"]`,
+        {
+          visible: false,
+        }
+      )
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
@@ -504,6 +512,13 @@ export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutM
         false
       )
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="collaboration-issue-detail"]`,
+        {
+          visible: false,
+        }
+      )
       await control.command('waitFor', unreadDot, { visible: false })
 
       const message = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-${Date.now()}`)
