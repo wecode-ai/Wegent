@@ -350,10 +350,7 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
       }),
     })
 
-  await openFixture()
-  await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openConversationExportDialog(control, openFixture)
   await control.command('waitFor', '[data-testid="conversation-export-content-attachments"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -394,10 +391,7 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
-  await openFixture()
-  await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openConversationExportDialog(control, openFixture)
   await control.command('click', '[data-testid="conversation-export-format-html"]')
   await control.command('click', '[data-testid="conversation-export-content-attachments"]')
   await control.command('clickWhenEnabled', '[data-testid="conversation-export-confirm"]', {
@@ -430,6 +424,23 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     content,
     'The HTML export changed the outside-workspace attachment content'
   )
+}
+
+async function openConversationExportDialog(control, openFixture) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await openFixture()
+    try {
+      await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
+        timeoutMs: Math.max(1, Math.min(1_000, deadline - Date.now())),
+      })
+      return
+    } catch {
+      // The overlay contribution has not imported its module yet; reopen once
+      // the lazily loaded dialog attaches its window event listener.
+    }
+  }
+  assert.fail('The conversation export dialog did not open')
 }
 
 function readStoredZipEntries(archive) {
