@@ -269,7 +269,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 "notification_webhooks": [
                     {
                         "type": "custom",
-                        "url": f"{self.stub_url}/webhook",
+                        "url": f"{self.stub_url}/webhook/{suffix}",
                         "enabled": True,
                     }
                 ],
@@ -419,7 +419,11 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         while time.monotonic() < deadline:
             requests = list(_DingTalkStub.requests)
             execution["requests"] = requests
-            hooks = [entry for entry in requests if entry["path"] == "/webhook"]
+            hooks = [
+                entry
+                for entry in requests
+                if entry["path"] == f"/webhook/{self.suffix}"
+            ]
             if hooks:
                 return hooks
             time.sleep(0.1)
