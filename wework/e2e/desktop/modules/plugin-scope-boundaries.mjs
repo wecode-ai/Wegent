@@ -119,6 +119,19 @@ export async function verifyPluginScopeBoundaries({
   }
 
   async function backToCatalog() {
+    // Restarts preserve the previous sidebar state and can leave this desktop
+    // checkpoint with off-canvas navigation. Restore the desktop layout before
+    // locating the plugin catalog instead of clicking hidden controls.
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 900, height: 800 }),
+    })
+    const expandSidebar = testId('expand-sidebar-button')
+    if (Number(await control.command('getElementCount', expandSidebar)) > 0) {
+      await control.command('click', expandSidebar)
+      await control.command('waitFor', testId('collapse-sidebar-button'), {
+        visible: true,
+      })
+    }
     await control.command('waitFor', testId('plugins-button'), {
       visible: true,
       enabled: true,
@@ -136,12 +149,6 @@ export async function verifyPluginScopeBoundaries({
 
   async function refreshCatalog() {
     await backToCatalog()
-    // This desktop checkpoint can inherit a narrow window after a real app
-    // restart. Establish the product's desktop breakpoint before using the
-    // desktop-only refresh control instead of clicking a hidden element.
-    await control.command('setMainWindowSize', 'body', {
-      value: JSON.stringify({ width: 900, height: 800 }),
-    })
     await control.command('waitFor', testId('plugins-refresh-button'), {
       visible: true,
       enabled: true,
