@@ -2780,7 +2780,8 @@ if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
   exit 1
 fi
 if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_INSTALLER_E2E:"* ]] ||
-  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 1 ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_INSTALLER_E2E\" != \"true\"" <<<"$wework_summary_job")" -ne 1 ]]; then
   printf 'Wework E2E summary must check the Windows installer only when explicitly scheduled\n' >&2
   exit 1
 fi
