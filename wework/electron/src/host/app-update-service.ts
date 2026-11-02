@@ -575,7 +575,7 @@ function matchesRelease(left: UpgradeRelease | null, right: UpgradeRelease): boo
     left.bytes === right.bytes &&
     left.dataSchema === right.dataSchema &&
     left.readableDataSchemas.length === right.readableDataSchemas.length &&
-    left.readableDataSchemas.every(schema => right.readableDataSchemas.includes(schema))
+    left.readableDataSchemas.every((schema, index) => right.readableDataSchemas[index] === schema)
   )
 }
 

@@ -29,13 +29,14 @@ function publishNextTarget(catalog: UpgradeCatalog) {
   return target
 }
 
-async function readyFixture() {
+async function readyFixture(readableDataSchemas = [1]) {
   const context = await fixture()
   const { service, options, catalog, store } = context
   const profile = currentCoreProfile(options.dataDirectory)
   await mkdir(profile, { recursive: true })
   await writeFile(join(profile, 'package.json'), '{}')
   const target = catalog.releases[1]
+  target.readableDataSchemas = readableDataSchemas
   target.sha256 = createHash('sha256').update('damaged').digest('hex')
   catalog.edges[0].toSha256 = target.sha256
   vi.spyOn(physicalRelease, 'extractPhysicalRelease').mockImplementation(async (_archive, host) => {
@@ -473,6 +474,15 @@ test('installation revalidation rejects changed source identity before shutdown'
   await expect(install()).rejects.toThrow('revoked or changed')
 
   expect(shutdown).not.toHaveBeenCalled()
+})
+
+test('duplicate readable schemas cannot hide a changed package compatibility declaration', async () => {
+  const { service, catalog } = await readyFixture([1, 1])
+  catalog.releases[1].readableDataSchemas = [1, 2]
+
+  await service.check('stable')
+
+  expect(() => service.createInstallAction('1.1.0')).toThrow('not ready')
 })
 
 test('locks the selected target throughout installation and shutdown', async () => {
