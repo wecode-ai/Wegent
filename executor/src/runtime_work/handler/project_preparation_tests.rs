@@ -285,7 +285,18 @@ fn project_preparation_runs_for_restored_and_force_started_turns() {
             })
             .await
             .unwrap();
+            // Failure is projected before the queue writer finishes settlement.
+            let _settled =
+                tokio::time::timeout(Duration::from_secs(5), handler.turn_queue_operation.lock())
+                    .await
+                    .unwrap();
             let link = handler.local_task_link("pending").unwrap();
+            assert!(handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .active_task_ids
+                .is_empty());
             assert_eq!(
                 fs::read_to_string(path.join("attempted")).unwrap(),
                 "attempted"
