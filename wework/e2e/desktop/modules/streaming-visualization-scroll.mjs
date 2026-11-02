@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchLocalRuntimeJson } from './runtime-request.mjs'
+import { createVisualizationFixtureWriteCommand } from './visualization-fixture-command.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   COMPOSER_SELECTOR,
@@ -50,7 +51,6 @@ const HTML = `<section id="scroll-fixture">
   }, { passive: false })
 </script>`
 
-const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 const pause = duration => new Promise(resolve => setTimeout(resolve, duration))
 const surroundingText = position =>
   Array.from(
@@ -241,7 +241,7 @@ export function createVisualizationScrollChecks({ workspacePath, uiTimeoutMs }) 
         const tool = selectShellTool(
           body,
           workspacePath,
-          `set -e\nmkdir -p ${quote(directory)} && cat > ${quote(file)} <<'WEWORK_SCROLL_HTML'\n${HTML}\nWEWORK_SCROLL_HTML\nprintf '${WRITTEN}\\n'`,
+          createVisualizationFixtureWriteCommand({ file, html: `${HTML}\n`, marker: WRITTEN }),
           10_000
         )
         stage = 'awaiting-tool-output'

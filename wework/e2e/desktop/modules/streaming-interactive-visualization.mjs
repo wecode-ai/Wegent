@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchLocalRuntimeJson } from './runtime-request.mjs'
+import { createVisualizationFixtureWriteCommand } from './visualization-fixture-command.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   COMPOSER_SELECTOR,
@@ -49,8 +50,6 @@ const HTML = `<section>
   }
   calculate()
 </script>`
-
-const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`
 
 export function createInteractiveVisualizationChecks({ workspacePath, uiTimeoutMs }) {
   const directory = join(workspacePath, 'outputs', 'visualizations', 'interactive-e2e')
@@ -112,7 +111,11 @@ export function createInteractiveVisualizationChecks({ workspacePath, uiTimeoutM
         const tool = selectShellTool(
           body,
           workspacePath,
-          `set -e\nmkdir -p ${shellQuote(directory)} && cat > ${shellQuote(file)} <<'WEWORK_VISUALIZATION_HTML'\n${HTML}\nWEWORK_VISUALIZATION_HTML\nprintf '${FILE_WRITTEN}\\n'`,
+          createVisualizationFixtureWriteCommand({
+            file,
+            html: `${HTML}\n`,
+            marker: FILE_WRITTEN,
+          }),
           10_000
         )
         stage = 'awaiting-tool-output'
