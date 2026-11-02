@@ -86,6 +86,10 @@ import {
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
 import { TaskCommentComposer } from './TaskCommentComposer'
+import {
+  useNotificationCommentReply,
+  useNotificationCommentDispatch,
+} from '@/features/notifications/useNotificationCommentReply'
 import { useIssueExecutionCancellation } from '@wegent/collaboration/issue-detail/useIssueExecutionCancellation'
 import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
@@ -683,6 +687,20 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
+  const notificationReply = useNotificationCommentReply({
+    projectId: project.id,
+    issueId: task.id,
+    store: project.project_store,
+    cards: commentCards,
+    target: replyTarget,
+    selectTarget: setReplyTarget,
+  })
+  const notificationComposer = notificationReply?.composing ? notificationReply : null
+  const coordinateCommentDispatch = useNotificationCommentDispatch({
+    projectId: project.id,
+    issueId: task.id,
+    store: project.project_store,
+  })
   const activityEntries = useMemo(
     () =>
       issueActivityTimeline({
@@ -848,6 +866,15 @@ export function TaskActivityView({
     card: TaskReplyCard,
     reply: TaskCardQueuedReply
   ): Promise<TaskCardDispatchResult> {
+    return coordinateCommentDispatch(card.root.messageId, reply, () =>
+      sendCardReplyNow(card, reply)
+    )
+  }
+
+  async function sendCardReplyNow(
+    card: TaskReplyCard,
+    reply: TaskCardQueuedReply
+  ): Promise<TaskCardDispatchResult> {
     if (!client)
       return { ok: false, persisted: false, error: t('workbench.project_chat_send_failed') }
     setSending(true)
@@ -916,10 +943,11 @@ export function TaskActivityView({
     card: TaskReplyCard,
     text: string,
     mentions: ProjectChatMention[],
-    attachments: Attachment[]
+    attachments: Attachment[],
+    interactionId?: string
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
-    return replyQueue.enqueue(card.root.messageId, text, attachments, mentions)
+    return replyQueue.enqueue(card.root.messageId, text, attachments, mentions, interactionId)
   }
 
   async function sendNewComment(text: string, mentions: ProjectChatMention[]): Promise<boolean> {
@@ -1021,7 +1049,13 @@ export function TaskActivityView({
       setError(t('workbench.task_activity_attachment_uploading'))
       return false
     }
-    const result = await sendCardReply(replyTarget, text, mentions, attachmentSelection.attachments)
+    const result = await sendCardReply(
+      replyTarget,
+      text,
+      mentions,
+      attachmentSelection.attachments,
+      notificationComposer?.id
+    )
     if (!result.ok) {
       setError(result.error ?? t('workbench.project_chat_send_failed'))
       return false
@@ -1180,12 +1214,19 @@ export function TaskActivityView({
                     : null
                 }
                 key={task.id}
-                value={newCommentDraft}
-                onChange={setNewCommentDraft}
+                value={notificationComposer?.draft ?? newCommentDraft}
+                onChange={value => {
+                  setNewCommentDraft(value)
+                  notificationComposer?.setDraft(value)
+                }}
                 onSubmit={submitTimelineComment}
-                disabled={!client}
-                sending={sending}
-                error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                disabled={!client || notificationComposer?.disabled === true}
+                sending={sending || notificationComposer?.busy === true}
+                error={
+                  notificationComposer?.error ??
+                  error ??
+                  (!client ? t('workbench.project_chat_cloud_required') : null)
+                }
                 mentionCandidates={mentionCandidates}
                 translate={activityTranslate}
                 controls={commentProjectChat}

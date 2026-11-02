@@ -1,3 +1,4 @@
+import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import {
   createPluginTrialGuide,
   type PluginTrialGuide,
@@ -114,6 +115,7 @@ interface TemporaryChatPanelProps {
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  coordinateUserInput?: boolean
 }
 
 export function TemporaryChatPanel({
@@ -145,6 +147,7 @@ export function TemporaryChatPanel({
   onRestoreConversation,
   initialScrollPosition = 'restore',
   onOpenRuntimeTask,
+  coordinateUserInput = false,
   active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
@@ -170,6 +173,7 @@ export function TemporaryChatPanel({
     scopeKey: instanceId,
   })
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
   const catalogDeviceId = resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
@@ -809,9 +813,10 @@ export function TemporaryChatPanel({
   const submitRequestUserInput = useCallback(
     async (response: RequestUserInputResponse): Promise<boolean> => {
       if (!address) return false
-      const appendUserMessage = isAsyncRequestUserInputPayload(
-        findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
-      )
+      const payload = findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
+      const hosted = await requestUserInputHost?.submit(response, payload)
+      if (hosted !== undefined) return hosted
+      const appendUserMessage = isAsyncRequestUserInputPayload(payload)
       // A non-blocking Codex question carries no runtime request to answer, so it
       // is answered by the next user message: Codex steers the running turn while
       // the model is still working and starts a new turn once it has stopped.
@@ -842,6 +847,7 @@ export function TemporaryChatPanel({
       selectedModelFields,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
+      requestUserInputHost,
     ]
   )
 
@@ -886,7 +892,13 @@ export function TemporaryChatPanel({
               <RequestUserInputCard
                 key={requestUserInputPayloadKey(pendingRequest)}
                 payload={pendingRequest}
+                disabled={requestUserInputHost?.isSubmitting(pendingRequest)}
+                error={requestUserInputHost?.getError(pendingRequest)}
                 messages={messages}
+                draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
+                onDraftAnswersChange={answers =>
+                  requestUserInputHost?.setDraft(pendingRequest, answers)
+                }
                 onSubmit={submitRequestUserInput}
                 onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
               />

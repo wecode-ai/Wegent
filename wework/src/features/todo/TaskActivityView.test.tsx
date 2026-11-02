@@ -15,6 +15,16 @@ import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import { NotificationEntityContext } from '@/features/notifications/NotificationEntityContext'
+import {
+  RuntimeInteractionsContext,
+  type RuntimeInteractionsValue,
+} from '@/features/notifications/RuntimeInteractionsContext'
+import {
+  interactionTask,
+  interactionQuestion,
+} from '@/features/notifications/runtimeInteractions.fixtures'
+import type { RuntimeInteraction } from '@/features/notifications/runtimeInteractions'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -230,6 +240,99 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('keeps a notification unaccepted until the real queued comment send succeeds', async () => {
+    const user = userEvent.setup()
+    const root = { ...userMessage, rootMessageId: null }
+    let failSend!: (error: Error) => void
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [root], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(
+        () =>
+          new Promise<ProjectChatMessage>((_resolve, reject) => {
+            failSend = reject
+          })
+      ),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    let accepted = false
+    const item: RuntimeInteraction = {
+      id: 'notice',
+      requestKey: 'question',
+      task: interactionTask,
+      payload: interactionQuestion,
+      question: 'Continue?',
+      createdAt: 0,
+      answered: false,
+      project: {
+        projectId: '11',
+        issueId: 'WEG-1',
+        store: 'backend',
+        rootCommentId: root.messageId,
+      },
+    }
+    const setDraft = vi.fn()
+    const respond = vi.fn(async (_item, _text, options) => {
+      accepted = await options.send()
+      return accepted
+    })
+    const interactions = {
+      history: [],
+      pending: [item],
+      drafts: { notice: 'Saved answer' },
+      errors: {},
+      busy: new Set(),
+      respond,
+      setDraft,
+    } as unknown as RuntimeInteractionsValue
+    render(
+      <RuntimeInteractionsContext.Provider value={interactions}>
+        <NotificationEntityContext.Provider
+          value={{
+            id: 'notice',
+            projectId: '11',
+            issueId: 'WEG-1',
+            store: 'backend',
+            rootCommentId: root.messageId,
+          }}
+        >
+          <TaskActivityView
+            client={client}
+            currentUserId={1}
+            project={{ id: '11', name: 'Wework', project_store: 'backend' } as never}
+            task={{ id: 'WEG-1', title: 'Review', status: 'inbox', version: 1 } as never}
+            linear
+            issueTimeline
+          />
+        </NotificationEntityContext.Provider>
+      </RuntimeInteractionsContext.Provider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-task-activity-composer')).toHaveValue('Saved answer')
+    )
+    await user.click(
+      within(screen.getByTestId('task-comment-form')).getByTestId('send-message-button')
+    )
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(respond).toHaveBeenCalledOnce()
+    expect(accepted).toBe(false)
+    expect(setDraft).not.toHaveBeenCalledWith('notice', '')
+    await act(async () => failSend(new Error('Comment persistence failed')))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`cloud-task-activity-card-queue-${root.messageId}`)
+      ).toHaveTextContent('Comment persistence failed')
+    )
+    expect(accepted).toBe(false)
+    expect(interactions.drafts.notice).toBe('Saved answer')
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({ replyToMessageId: root.messageId, text: 'Saved answer' })
+    )
+  })
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = vi.fn()
     paneExecution.running = false

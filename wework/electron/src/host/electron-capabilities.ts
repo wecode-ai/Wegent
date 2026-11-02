@@ -746,6 +746,7 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.focusMainWindow', async () => {
     await e2eHost.focusMainWindow()
+    app.focus({ steal: true })
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()

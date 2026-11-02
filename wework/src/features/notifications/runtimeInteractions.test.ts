@@ -37,7 +37,6 @@ describe('runtime human interactions', () => {
     expect(item.question).toBe(
       i18n.t('chat:request_user_input.approval_command', { detail: 'git status' })
     )
-    expect(item.context).toBe('git status')
     expect(item.question).not.toBe('command')
     expect(canReplyToInteraction(item)).toBe(false)
   })

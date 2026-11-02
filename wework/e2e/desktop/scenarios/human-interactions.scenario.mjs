@@ -33,6 +33,8 @@ const PROMPT = 'HUMAN_INTERACTIONS_REVIEW'
 const QUESTION = '旧客户是否继续保留原来的订单校验规则？'
 const ANSWER = '保留旧规则，新客户使用新规则。'
 const COMPLETION = '已收到你的判断，继续完成 review。'
+const CONTEXT =
+  '已检查现有订单校验实现：旧规则保留客户自定义阈值，新规则改用统一阈值。直接切换会改变存量客户的校验结果。当前尚未修改代码，需要先明确兼容性要求。'
 
 export function createDesktopScenario({
   checkpoint,
@@ -47,13 +49,14 @@ export function createDesktopScenario({
   let environment
   let issueFixture
   let issueDiagnostics
+  let focusDiagnostics
   let toolRequested = false
   const callId = 'human-interactions-business-question'
   const responseId = 'human-interactions-review'
   return {
     requiresCloudEnvironment: true,
     diagnostics() {
-      return { checkpoint, issueDiagnostics }
+      return { checkpoint, issueDiagnostics, focusDiagnostics }
     },
     async prepareCloud(value) {
       cloud = value
@@ -83,7 +86,7 @@ export function createDesktopScenario({
           createSse([
             responseCreated(responseId),
             assistantMessage(
-              answered ? COMPLETION : '已有实现可以继续检查；兼容性策略等待你的判断。'
+              answered ? COMPLETION : `${CONTEXT}\n\n已有实现可以继续检查；兼容性策略等待你的判断。`
             ),
             responseCompleted(responseId),
           ])
@@ -212,7 +215,8 @@ export function createDesktopScenario({
             held.response.end(
               createSse([
                 responseCreated(responseId),
-                ...functionCall(callId, held.tool.name, held.tool.arguments),
+                assistantMessage(CONTEXT),
+                ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
                 responseCompleted(responseId),
               ])
             ),
@@ -221,10 +225,15 @@ export function createDesktopScenario({
       }
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await captureScreenshot(control, '01-working-in-another-tab.png')
+      await control.command('focusMainWindow', 'body')
+      const focus = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+      assert.equal(focus.mainFocused, true, 'In-app reminders require real main-window focus')
+      focusDiagnostics = { beforeQuestion: focus }
       held.response.end(
         createSse([
           responseCreated(responseId),
-          ...functionCall(callId, held.tool.name, held.tool.arguments),
+          assistantMessage(CONTEXT),
+          ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
           responseCompleted(responseId),
         ])
       )
@@ -237,10 +246,18 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('focusMainWindow', 'body')
-      await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
-        text: QUESTION,
-        timeoutMs: modelResponseTimeoutMs,
-      })
+      try {
+        await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+          text: QUESTION,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+      } catch (error) {
+        focusDiagnostics = {
+          ...focusDiagnostics,
+          afterFailure: JSON.parse(await control.command('getWindowFocusSnapshot', 'body')),
+        }
+        throw error
+      }
       assert.equal(
         Number(
           await control.command(
@@ -266,11 +283,15 @@ export function createDesktopScenario({
       await captureScreenshot(control, '04-single-notification-entry.png')
       await control.command('click', '[data-testid="wework-notifications-pending"]')
       const page = `${ACTIVE} [data-testid="runtime-interactions-page"]`
+      const input = issueFixture
+        ? `${page} [data-testid="cloud-task-activity-composer"]`
+        : `${page} [data-testid="request-user-input-custom-question_1"]`
+      const submit = issueFixture
+        ? `${page} [data-testid="task-comment-form"] [data-testid="send-message-button"]`
+        : `${page} [data-testid="request-user-input-submit-button"]`
       await control.command('waitFor', page, { text: QUESTION })
-      assert.equal(
-        await control.command('getValue', `${page} [data-testid="interaction-reply-input"]`),
-        ANSWER
-      )
+      await control.command('waitFor', page, { text: CONTEXT })
+      assert.equal(await control.command('getValue', input), ANSWER)
       assert.equal(
         Number(
           await control.command('getElementCount', `${ACTIVE} [data-testid="desktop-sidebar"]`)
@@ -278,17 +299,55 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, '05-pending-tab-with-shared-draft.png')
+      const [originalAction] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${page} [data-testid="interaction-open-original"]`
+        )
+      )
+      assert.ok(
+        originalAction.top >= 0,
+        'The entity must scroll inside its pane without hiding the inbox header'
+      )
+      const previousSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 900, height: 700 }),
+        })
+      )
+      try {
+        await control.command('waitFor', `${page} [data-testid="interactions-back-to-list"]`, {
+          visible: true,
+        })
+        await captureScreenshot(control, '05a-entity-medium.png')
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 480, height: 760 }),
+        })
+        const [entity] = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            `${page} [data-testid="interaction-entity-container"]`
+          )
+        )
+        assert.ok(
+          entity.scrollWidth <= entity.clientWidth + 1,
+          'The original entity must fit its narrow container'
+        )
+        await captureScreenshot(control, '05b-entity-narrow.png')
+        await control.command('click', `${page} [data-testid="interactions-back-to-list"]`)
+        await control.command('waitFor', `${page} [data-testid="interaction-list-item"]`, {
+          text: QUESTION,
+          visible: true,
+        })
+        await captureScreenshot(control, '05c-narrow-inbox-list.png')
+        await control.command('click', `${page} [data-testid="interaction-list-item"]`)
+        assert.equal(await control.command('getValue', input), ANSWER)
+      } finally {
+        await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
+      }
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
-      await control.command(
-        'waitFor',
-        `${page} [data-testid="interaction-reply-input"]:not(:disabled)`,
-        { visible: true }
-      )
-      assert.equal(
-        await control.command('getValue', `${page} [data-testid="interaction-reply-input"]`),
-        ANSWER
-      )
+      await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
+      assert.equal(await control.command('getValue', input), ANSWER)
       await captureScreenshot(control, '06-draft-survives-reload.png')
       if (checkpoint === 'human-interactions') {
         await verifyHumanInteractionAcrossWindows({
@@ -299,7 +358,7 @@ export function createDesktopScenario({
           captureScreenshot,
         })
       } else {
-        await control.command('click', `${page} [data-testid="interaction-reply-send"]`)
+        await control.command('click', submit)
       }
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
         text: '0',

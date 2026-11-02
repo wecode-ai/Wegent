@@ -59,7 +59,6 @@ export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
         requestKey: row.requestKey,
         task,
         question: row.question,
-        context: '',
         createdAt: row.createdAt,
         payload: { kind: 'request_user_input' },
         answered: false,

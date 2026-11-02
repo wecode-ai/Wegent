@@ -20,6 +20,8 @@ interface WorkItemContextPanelProps {
   deviceNamesById?: Readonly<Record<string, string>>
   onOpenBoard: () => void
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
+  focusedCommentId?: string
+  focusedCommentRequestKey?: string
 }
 
 export function WorkItemContextPanel({
@@ -33,6 +35,8 @@ export function WorkItemContextPanel({
   deviceNamesById,
   onOpenBoard,
   onOpenTask,
+  focusedCommentId,
+  focusedCommentRequestKey,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -66,6 +70,8 @@ export function WorkItemContextPanel({
         <TodoEditor
           getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
           mode="edit"
+          focusedCommentId={focusedCommentId}
+          focusedCommentRequestKey={focusedCommentRequestKey}
           presentation="workspace-panel"
           workspacePanelFill
           showPanelControls={false}

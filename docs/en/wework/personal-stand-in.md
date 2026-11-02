@@ -36,9 +36,9 @@ Operation approvals appear in **Needs your input** and link to the original conv
 
 ## Shared human decisions
 
-Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab with the question, supporting context, and original conversation. Work lists and notification entries no longer contain independent reply forms.
+Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab to view and handle the original task or Issue in its own interface. Work lists and notification entries no longer contain independent reply forms.
 
-The question is the main heading, with its source and original-conversation link above it. Supporting context is expanded initially and can be collapsed. Answers share the same reading column; choices are stacked vertically with available option descriptions. Selecting a choice replies immediately. Expanding the custom answer focuses the input, which supports multiple lines.
+Needs your input hosts the original entity: tasks show their existing conversation, while Issues show their existing interface focused on the owning comment. Context, questions, forms, approvals, and authorization use the original interface and handlers. The inbox does not extract or summarize conversation content or create another reply form.
 
 Background delivery follows the notification channel settings. Eligible simple asynchronous questions support text replies through system notifications. Manage channels in the title-bar bell's settings; the account area no longer has a separate global IM notification menu. System delivery also depends on operating-system permissions and notification settings.
 

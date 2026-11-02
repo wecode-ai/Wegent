@@ -5,7 +5,7 @@ import {
   type RuntimeInteractionsValue,
 } from './RuntimeInteractionsContext'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
-import { interactionQuestion, interactionTask } from './runtimeInteractions.fixtures'
+import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -23,7 +23,6 @@ const approval: RuntimeInteraction = {
   requestKey: 'request:41',
   task: interactionTask,
   question: 'Allow this command? git status',
-  context: 'git status',
   createdAt: 0,
   payload: {
     kind: 'request_user_input',
@@ -70,61 +69,37 @@ function view(
   return value.registerView
 }
 
-it('routes native approvals to their original context without suggesting an ordinary reply', () => {
+vi.mock('./NotificationEntitySurface', () => ({
+  NotificationEntitySurface: ({ url }: { url: string }) => (
+    <div data-testid="test-original-entity">{url}</div>
+  ),
+}))
+
+it('hosts the original entity instead of building a separate approval or reply form', () => {
   view()
-  expect(screen.getByTestId('interaction-open-original-action')).toBeInTheDocument()
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://tasks/device/review'
+  )
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
-  expect(screen.queryByText('interactions.resume_hint')).not.toBeInTheDocument()
-})
-
-it('shows available decision context initially and lets the user collapse it', () => {
-  view()
-  expect(screen.getByTestId('interaction-evidence-content')).toHaveTextContent('git status')
-  expect(screen.getByTestId('interaction-evidence')).toHaveAttribute('aria-expanded', 'true')
-  fireEvent.click(screen.getByTestId('interaction-evidence'))
-  expect(screen.queryByTestId('interaction-evidence-content')).not.toBeInTheDocument()
-  expect(screen.getByTestId('interaction-evidence')).toHaveAttribute('aria-expanded', 'false')
-})
-
-it('does not offer an empty evidence disclosure or repeat the question as evidence', () => {
-  view(undefined, {}, { pending: [{ ...approval, context: approval.question }] })
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
 })
 
-it('shows option consequences beside the answer and sends its value without taking focus', () => {
-  const respond = vi.fn()
-  const request: RuntimeInteraction = {
-    ...approval,
-    id: 'business-choice',
-    payload: {
-      ...interactionQuestion,
-      questions: [
+it('hosts an Issue destination including its owning comment', () => {
+  view(
+    undefined,
+    {},
+    {
+      pending: [
         {
-          ...interactionQuestion.questions![0],
-          options: [
-            {
-              label: 'Keep existing customer behavior',
-              description:
-                'Existing customers retain their configuration; new customers use the new rule.',
-              value: 'keep',
-            },
-          ],
+          ...approval,
+          project: { projectId: '12', issueId: 'ISSUE-1', rootCommentId: 'root', store: 'local' },
         },
       ],
-    },
-  }
-  view(undefined, {}, { pending: [request], respond })
-  const answer = screen.getByRole('button', {
-    name: 'Keep existing customer behavior',
-  })
-  expect(answer).toHaveAccessibleDescription(
-    'Existing customers retain their configuration; new customers use the new rule.'
+    }
   )
-  expect(answer).not.toHaveFocus()
-  fireEvent.click(answer)
-  expect(respond).toHaveBeenCalledExactlyOnceWith(request, 'keep')
-  fireEvent.click(screen.getByTestId('interaction-other-answer'))
-  expect(screen.getByRole('textbox', { name: 'interactions.reply' })).toHaveFocus()
+  expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
+    'wework://boards/local/12/issues/ISSUE-1/comments/root'
+  )
 })
 
 it('only registers a narrow-screen request as viewed after opening it and restores list focus', () => {
@@ -134,7 +109,7 @@ it('only registers a narrow-screen request as viewed after opening it and restor
   const row = screen.getByTestId('interaction-list-item')
   fireEvent.click(row)
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
-  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
   fireEvent.click(screen.getByTestId('interactions-back-to-list'))
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), null)
   expect(row).toHaveFocus()
@@ -150,7 +125,7 @@ it('restores narrow-screen list heading focus when the handled request no longer
   )
   const { rerender } = render(page(value))
   fireEvent.click(screen.getByTestId('interaction-list-item'))
-  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
   rerender(page({ ...value, pending: [] }))
   fireEvent.click(screen.getByTestId('interactions-back-to-list'))
   expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
@@ -167,44 +142,10 @@ it('focuses a narrow-screen deep-linked question when its pending data arrives l
     </RuntimeInteractionsContext.Provider>
   )
   const { rerender } = render(page(null))
-  expect(screen.queryByRole('heading', { name: approval.question })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: approval.task.task.title })).not.toBeInTheDocument()
   rerender(page(value))
-  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
   expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
-})
-
-it('keeps a multiline page draft and submits Enter without submitting IME or Shift+Enter', () => {
-  const respond = vi.fn()
-  const request = {
-    ...approval,
-    id: 'question',
-    question: 'Keep existing customer behavior?',
-    context: 'Existing customers depend on the current rule.',
-    payload: {
-      ...interactionQuestion,
-      questions: [{ ...interactionQuestion.questions![0], options: [] }],
-    },
-  }
-  view(
-    undefined,
-    {},
-    {
-      pending: [request],
-      drafts: { question: 'Keep the old rule.\nUse the new rule for new customers.' },
-      respond,
-    }
-  )
-  const input = screen.getByRole('textbox', { name: 'interactions.reply' })
-  expect(input).toHaveValue('Keep the old rule.\nUse the new rule for new customers.')
-  expect(input).not.toHaveFocus()
-  fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
-  fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-  expect(respond).not.toHaveBeenCalled()
-  fireEvent.keyDown(input, { key: 'Enter' })
-  expect(respond).toHaveBeenCalledExactlyOnceWith(
-    request,
-    'Keep the old rule.\nUse the new rule for new customers.'
-  )
 })
 
 it('shows an expired exact destination without selecting or suppressing an unrelated request', () => {

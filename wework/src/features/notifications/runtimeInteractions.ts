@@ -21,7 +21,6 @@ export interface RuntimeInteraction {
   task: RuntimeTaskReminderItem
   payload: RequestUserInputPayload
   question: string
-  context: string
   createdAt: number
   answered: boolean
   running?: boolean
@@ -35,7 +34,10 @@ export interface RuntimeInteraction {
   }
 }
 
-export function interactionId(task: RuntimeTaskReminderItem, requestKey: string): string {
+export function interactionId(
+  task: Pick<RuntimeTaskReminderItem, 'address'>,
+  requestKey: string
+): string {
   return JSON.stringify([task.address.deviceId, task.address.taskId, requestKey])
 }
 
@@ -180,9 +182,6 @@ export async function readRuntimeInteractions(
               detail: approval.detail || i18n.t('chat:request_user_input.approval_no_detail'),
             })
           : question || payload.message || payload.reason || task.task.title,
-        context: approval
-          ? approval.detail || ''
-          : payload.reason || message.content.trim().slice(0, 1200),
         createdAt: new Date(message.createdAt ?? task.task.createdAt ?? 0).getTime() || 0,
         answered,
         running,
