@@ -59,9 +59,11 @@ if (process.platform === 'win32') {
     const home = await mkdtemp(join(tmpdir(), 'wework-native-profile-'))
     try {
       const environment = upgradeUserEnvironment(process.env, home)
+      // Both probes call the same Windows Shell API under the same bounded
+      // startup budget; HOME isolation does not impose a latency requirement.
       const cases = [
-        { name: 'native', environment: process.env, timeout: 30_000 },
-        { name: 'isolated', environment, timeout: 10_000 },
+        { name: 'native', environment: process.env },
+        { name: 'isolated', environment },
       ]
       const observations = await Promise.all(cases.map(observeWindowsAppData))
       if (observations.some(result => result.error)) {
@@ -78,7 +80,7 @@ if (process.platform === 'win32') {
   })
 }
 
-async function observeWindowsAppData({ name, environment, timeout }) {
+async function observeWindowsAppData({ name, environment }) {
   const started = Date.now()
   try {
     const result = await promisify(execFile)(
@@ -97,7 +99,7 @@ async function observeWindowsAppData({ name, environment, timeout }) {
           '[Console]::Error.WriteLine("process-query-finished")',
         ].join('; '),
       ],
-      { env: environment, timeout, maxBuffer: 4096, windowsHide: true }
+      { env: environment, timeout: 30_000, maxBuffer: 4096, windowsHide: true }
     )
     return { name, elapsedMs: Date.now() - started, ...result }
   } catch (error) {

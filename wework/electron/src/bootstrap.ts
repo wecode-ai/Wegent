@@ -8,6 +8,7 @@ import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
+import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
 
 const pendingUrls: string[] = []
 const captureUrl = (event: Electron.Event, url: string): void => {
@@ -62,10 +63,22 @@ async function routeRelease(): Promise<boolean> {
     throw new Error('Release root does not match the application data directory')
   }
   const store = new ReleaseStore(root)
+  const active = await store.active()
   const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
   delete process.env.WEWORK_RELEASE_SUPERVISED
   const bridge = await optionalText(join(root, 'bridge'))
-  if (!supervisedId && bridge && resolve(bridge) !== resolve(process.execPath)) {
+  // The installed entry owns restoring physical Contents even when activation
+  // failed or rollback selected an older payload. A delivered recovery bridge
+  // may not contain a native installer capable of restoring that application.
+  const installedMacosEntry =
+    active?.macosInstallation && resolve(active.executable) === resolve(process.execPath)
+  if (
+    !supervisedId &&
+    bridge &&
+    resolve(bridge) !== resolve(process.execPath) &&
+    !installedMacosEntry
+  ) {
+    if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
     if (!existsSync(bridge)) throw new Error('The healthy Wework recovery executable is missing')
     const bridgeUserData = await releaseBridgeUserData(store, bridge, dataDirectory)
     // An old installed entry only forwards. Recovery must use the latest healthy
@@ -88,9 +101,14 @@ async function routeRelease(): Promise<boolean> {
       .catch(failStartup)
     return false
   }
-  const active = await store.active()
   if (!active) return true
   const supervised = supervisedId === active.id
+  if (supervised) {
+    if (metadata.version !== active.version)
+      throw new Error('The installed host does not match the selected release version')
+    await store.repairMacosActivationSource(active)
+    await enterInstalledMacosRelease(store, active, process.resourcesPath)
+  }
   // Only the independent launcher grants a child this one-use handoff.
   if (supervised && resolve(active.executable) === resolve(process.execPath)) {
     process.env.WEWORK_HARNESS_RUNTIME_ROOT = active.runtimeRoot
@@ -131,6 +149,7 @@ async function routeRelease(): Promise<boolean> {
   }
   // Electron emits ready only after its ESM entry finishes evaluating. Awaiting
   // readiness through the entry's top-level await deadlocks the stable bridge.
+  if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
   void app
     .whenReady()
     .then(() => launchSelectedRelease(store, dataDirectory, root))
@@ -200,15 +219,24 @@ async function launchSelectedRelease(
   }
   const active = await store.active()
   if (!active) throw new Error('Active release is missing')
+  if (process.platform === 'darwin' && active.macosInstallation) {
+    const selectedUserData = await releaseBridgeUserData(store, active.executable, dataDirectory)
+    if (!selectedUserData) throw new Error('The selected release does not own its launch data')
+    process.env.WEWORK_USER_DATA_DIR = selectedUserData
+    process.env.WEWORK_RELEASE_ROOT = root
+  }
   const bridge = (await optionalText(join(root, 'bridge'))) || process.execPath
-  const launcher = join(
-    dirname(bridge),
-    process.platform === 'darwin'
-      ? '../Resources/wework-launcher'
-      : process.platform === 'win32'
-        ? 'resources/wework-launcher.exe'
-        : 'resources/wework-launcher'
-  )
+  const launcher =
+    process.platform === 'darwin' && active.macosInstallation
+      ? join(process.resourcesPath, 'wework-launcher')
+      : join(
+          dirname(bridge),
+          process.platform === 'darwin'
+            ? '../Resources/wework-launcher'
+            : process.platform === 'win32'
+              ? 'resources/wework-launcher.exe'
+              : 'resources/wework-launcher'
+        )
   if (!existsSync(launcher)) throw new Error('Independent Wework launcher is missing')
   // Electron's relaunch helper waits for the stable entry to exit and release native locks.
   app.relaunch({ execPath: resolve(launcher), args: [root, bridge, ...forwardedArguments()] })
