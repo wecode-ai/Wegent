@@ -23,3 +23,19 @@ test('initializes the paused child before any application code runs', async () =
     child.kill()
   }
 })
+
+test('reports a child that exits before the inspector is available', async () => {
+  const child = spawn(process.execPath, ['--eval', 'process.exit(17)'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const exited = once(child, 'exit')
+  try {
+    await assert.rejects(
+      inspectBeforeStart(child, 'globalThis.testSetup = true'),
+      /The isolated app exited before its inspector started/
+    )
+    assert.deepEqual(await exited, [17, null])
+  } finally {
+    child.kill()
+  }
+})

@@ -1502,6 +1502,8 @@ async function main() {
         detached: process.platform !== 'win32',
       })
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
+      // Observe early failure now; the await below still propagates it after log setup.
+      scenarioStartup?.catch(() => undefined)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {

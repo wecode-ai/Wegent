@@ -47,6 +47,8 @@ export async function createDesktopScenario(options) {
       await client.command('getDesktopRuntimeDiagnostics', 'body')
     )
     await verify(client)
+    // The delivered updater registers installed-* during ordinary updates too;
+    // these ownership assertions also apply to rollback and failure recovery.
     const slots = join(data, 'releases/slots')
     const installed = (await readdir(slots)).filter(id => id.startsWith('installed-'))
     assert.equal(installed.length, 1)
