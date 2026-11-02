@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
@@ -69,22 +71,17 @@ async function historicalComponent(release, component, directory) {
   const asset = `WeworkComponent_${component}_${sha256}_${platform}_${process.arch}.tar.gz`
   await mkdir(directory, { recursive: true })
   const archive = join(directory, asset)
-  await execute(
-    'gh',
-    [
-      'release',
-      'download',
-      `wework-v${release.version}`,
-      '--repo',
-      repository,
-      '--pattern',
-      asset,
-      '--dir',
-      directory,
-      '--skip-existing',
-    ],
-    { timeout: 120_000 }
-  )
+  try {
+    await access(archive)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    const response = await fetch(
+      `https://github.com/${repository}/releases/download/wework-v${release.version}/${asset}`,
+      { signal: AbortSignal.timeout(120_000) }
+    )
+    assert.ok(response.ok, `Historical plugin component download failed: HTTP ${response.status}`)
+    await pipeline(response.body, createWriteStream(archive, { flags: 'wx' }))
+  }
   assert.equal(await hashReleaseAsset(archive), sha256, 'Historical component bytes changed')
   const installed = join(directory, 'installed')
   await mkdir(installed, { recursive: true })

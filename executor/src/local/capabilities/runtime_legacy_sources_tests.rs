@@ -272,6 +272,58 @@ async fn legacy_sources_support_relative_links_copies_and_relocated_store_paths(
     }
 }
 
+#[test]
+fn legacy_directory_copy_checks_later_records_without_hiding_filesystem_errors() {
+    for change in ["none", "identity", "symlink", "parent-file"] {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, market, old) = legacy_install(temp.path());
+        let source = Path::new(old["store_path"].as_str().unwrap());
+        let source_before = tree_fingerprint(source).unwrap();
+        remove_existing_path(&market).unwrap();
+        copy_dir_atomic(source, &market).unwrap();
+        match change {
+            "identity" => write_json(
+                &market.join(CODEX_PLUGIN_MANIFEST_PATH),
+                &json!({"name":"other","version":"1.0"}),
+            )
+            .unwrap(),
+            "symlink" => std::os::unix::fs::symlink(source, market.join("external")).unwrap(),
+            "parent-file" => {
+                remove_existing_path(&market.join(".codex-plugin")).unwrap();
+                fs::write(market.join(".codex-plugin"), "preserve this file").unwrap();
+            }
+            _ => (),
+        }
+        let mut active = old.clone();
+        active["version"] = json!("2.0");
+        active["store_path"] = json!(temp
+            .path()
+            .join("executor/capabilities/store/plugins/41-wegent-demo-2.0"));
+        active["previous"] = old.clone();
+        let spec = checked_spec("demo@wegent", &active).unwrap();
+        let mut manifest = store.manifest.load().unwrap();
+        manifest["plugins"]["demo@wegent"] = active.clone();
+        let result = store.owns_legacy_marketplace_source(&spec, &market, &active, &manifest);
+        match change {
+            "none" => assert!(result.unwrap()),
+            "identity" => assert!(!result.unwrap()),
+            "symlink" => assert!(matches!(
+                result,
+                Err(CapabilitySyncError::InvalidPayload(_))
+            )),
+            "parent-file" => {
+                assert!(matches!(result, Err(CapabilitySyncError::Io(_))));
+                assert_eq!(
+                    fs::read_to_string(market.join(".codex-plugin")).unwrap(),
+                    "preserve this file"
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(tree_fingerprint(source).unwrap(), source_before);
+    }
+}
+
 #[tokio::test]
 async fn failed_legacy_publication_rolls_back_and_can_recover_without_mutating_the_source() {
     let temp = tempfile::tempdir().unwrap();
@@ -393,6 +445,8 @@ async fn old_manifest_serialization_can_migrate_without_authorizing_changed_cont
     for (change, shared) in [
         "format-only",
         "manifest-value",
+        "primary-version",
+        "secondary-version",
         "skill-content",
         "cache-content",
     ]
@@ -408,6 +462,10 @@ async fn old_manifest_serialization_can_migrate_without_authorizing_changed_cont
         let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for (path, text) in [
             (CODEX_PLUGIN_MANIFEST_PATH, native),
+            (
+                CLAUDE_PLUGIN_MANIFEST_PATH,
+                r#"{"name":"demo","version":"2.0","description":"old serializer","skills":"./skills/"}"#,
+            ),
             ("skills/demo/SKILL.md", "original skill"),
         ] {
             archive
@@ -417,7 +475,7 @@ async fn old_manifest_serialization_can_migrate_without_authorizing_changed_cont
         }
         let archive = archive.finish().unwrap().into_inner();
         extract_plugin_zip(&archive, &source).unwrap();
-        // 0.5.0 serializes generated Claude manifests with lexicographically sorted keys.
+        // 0.5.0 serializes Claude manifests with lexicographically sorted keys.
         let mut generated: Value =
             serde_json::from_slice(&fs::read(source.join(CLAUDE_PLUGIN_MANIFEST_PATH)).unwrap())
                 .unwrap();
@@ -446,6 +504,20 @@ async fn old_manifest_serialization_can_migrate_without_authorizing_changed_cont
                 .unwrap();
         }
         match change {
+            "primary-version" => {
+                let mut primary: Value = serde_json::from_slice(
+                    &fs::read(source.join(CODEX_PLUGIN_MANIFEST_PATH)).unwrap(),
+                )
+                .unwrap();
+                primary["version"] = json!("9.0");
+                write_json(&source.join(CODEX_PLUGIN_MANIFEST_PATH), &primary).unwrap();
+                copy_dir_atomic(&source, &runtime).unwrap();
+            }
+            "secondary-version" => {
+                generated["version"] = json!("9.0");
+                write_json(&source.join(CLAUDE_PLUGIN_MANIFEST_PATH), &generated).unwrap();
+                copy_dir_atomic(&source, &runtime).unwrap();
+            }
             "manifest-value" => {
                 generated["description"] = json!("unrelated metadata");
                 write_json(&source.join(CLAUDE_PLUGIN_MANIFEST_PATH), &generated).unwrap();

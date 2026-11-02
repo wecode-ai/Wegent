@@ -883,7 +883,7 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Prepare real GitHub CLI for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth') || contains(matrix.segments, 'plugin-legacy-upgrade')
+        if: contains(matrix.segments, 'plugin-account-auth')
         run: |
           source .github/scripts/lib/apt-packages.sh
           mapfile -t missing < <(find_missing_apt_packages gh)
@@ -903,7 +903,6 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
-          GH_TOKEN: ${{ github.token }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork

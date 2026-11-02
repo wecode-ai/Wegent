@@ -14,10 +14,9 @@ impl GlobalCapabilityStore {
         package: &Path,
     ) -> Result<bool, CapabilitySyncError> {
         self.ensure_state_path(runtime, false)?;
-        Ok(same_fingerprints(
-            normalized_legacy_tree(runtime, spec)?,
-            &normalized_legacy_tree(package, spec)?,
-        ))
+        Ok(normalized_legacy_tree(runtime, spec)?
+            .zip(normalized_legacy_tree(package, spec)?)
+            .is_some_and(|(runtime, package)| same_fingerprints(runtime, &package)))
     }
 
     pub(super) fn owns_legacy_marketplace_source(
@@ -97,15 +96,16 @@ impl GlobalCapabilityStore {
             return Ok(false);
         };
         self.ensure_runtime_path(runtime, false)?;
+        let Some(runtime) = normalized_legacy_tree(runtime, spec)? else {
+            return Ok(false);
+        };
         if let Some(package) = spec
             .checksum
             .as_deref()
             .and_then(|hash| self.verified_plugin_package(hash).ok())
         {
-            return Ok(same_fingerprints(
-                normalized_legacy_tree(runtime, spec)?,
-                &normalized_legacy_tree(&package.path, spec)?,
-            ));
+            return Ok(normalized_legacy_tree(&package.path, spec)?
+                .is_some_and(|package| same_fingerprints(runtime, &package)));
         }
         let moved = self
             .manifest
@@ -119,10 +119,9 @@ impl GlobalCapabilityStore {
                 continue;
             }
             safe_managed_path(source.parent().unwrap().parent().unwrap(), &source, false)?;
-            if same_fingerprints(
-                normalized_legacy_tree(runtime, spec)?,
-                &normalized_legacy_tree(&source, spec)?,
-            ) {
+            if normalized_legacy_tree(&source, spec)?
+                .is_some_and(|source| same_fingerprints(runtime.clone(), &source))
+            {
                 return Ok(true);
             }
         }
@@ -171,13 +170,13 @@ impl GlobalCapabilityStore {
         if !source_path.is_dir() {
             return Ok(false);
         }
-        let source = normalized_legacy_tree(source_path, &historical)?;
+        let Some(source) = normalized_legacy_tree(source_path, &historical)? else {
+            return Ok(false);
+        };
         if let Some(hash) = historical.checksum.as_deref() {
             if let Ok(package) = self.verified_plugin_package(hash) {
-                return Ok(same_fingerprints(
-                    source,
-                    &normalized_legacy_tree(&package.path, &historical)?,
-                ));
+                return Ok(normalized_legacy_tree(&package.path, &historical)?
+                    .is_some_and(|package| same_fingerprints(source, &package)));
             }
         }
         // Old private installations have no archive receipt. Their independently
@@ -202,10 +201,9 @@ impl GlobalCapabilityStore {
                 continue;
             }
             self.ensure_runtime_path(&runtime, false)?;
-            if same_fingerprints(
-                source.clone(),
-                &normalized_legacy_tree(&runtime, &historical)?,
-            ) {
+            if normalized_legacy_tree(&runtime, &historical)?
+                .is_some_and(|runtime| same_fingerprints(source.clone(), &runtime))
+            {
                 return Ok(true);
             }
         }
@@ -273,22 +271,27 @@ fn resolve_link(path: &Path) -> Result<PathBuf, CapabilitySyncError> {
 fn normalized_legacy_tree(
     path: &Path,
     spec: &PluginSyncSpec,
-) -> Result<BTreeMap<PathBuf, String>, CapabilitySyncError> {
+) -> Result<Option<BTreeMap<PathBuf, String>>, CapabilitySyncError> {
     tree_fingerprint(path)?;
-    validate_package_identity(path, spec)?;
-    for name in [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH] {
-        if path.join(name).is_file() {
-            let value: Value = serde_json::from_slice(&fs::read(path.join(name))?)?;
-            if spec.version != "latest"
-                && value
-                    .get("version")
-                    .and_then(Value::as_str)
-                    .is_some_and(|version| version != spec.version)
-            {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Legacy plugin version does not match its record",
-                ));
-            }
+    match validate_package_identity(path, spec) {
+        Ok(()) => (),
+        Err(CapabilitySyncError::InvalidPayload(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    // Match the catalog parser's primary manifest; both manifests are still
+    // authenticated against the independent source below.
+    if let Some(name) = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH]
+        .into_iter()
+        .find(|name| path.join(name).is_file())
+    {
+        let value: Value = serde_json::from_slice(&fs::read(path.join(name))?)?;
+        if spec.version != "latest"
+            && value
+                .get("version")
+                .and_then(Value::as_str)
+                .is_some_and(|version| version != spec.version)
+        {
+            return Ok(None);
         }
     }
     let staging = tempfile::tempdir()?;
@@ -303,7 +306,7 @@ fn normalized_legacy_tree(
         sort_manifest_objects(&mut value);
         write_json(&template.join(name), &value)?;
     }
-    tree_fingerprint(&template)
+    Ok(Some(tree_fingerprint(&template)?))
 }
 
 fn sort_manifest_objects(value: &mut Value) {
