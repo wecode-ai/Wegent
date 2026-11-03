@@ -265,12 +265,15 @@ export function createDesktopScenario({
         const dueAt = Date.now() + 1000
         const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
         try {
+          database.exec('PRAGMA busy_timeout = 10000')
+          database.exec('BEGIN IMMEDIATE')
           const changed = database
             .prepare(
               "UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending'"
             )
             .run(new Date(dueAt - 5 * 60000).toISOString(), USER)
           assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+          database.exec('COMMIT')
         } finally {
           database.close()
         }
