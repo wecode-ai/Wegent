@@ -6,6 +6,7 @@ import {
   isLocalHttpUrl,
   openExternalUrl,
 } from './external-links'
+import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
 const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn())
@@ -92,6 +93,20 @@ describe('external link helpers', () => {
     expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', {
       url: 'https://example.com/docs',
     })
+  })
+
+  test('routes Wework links into the shared in-app scheme navigator', async () => {
+    const opened = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
+    try {
+      await expect(openExternalUrl('wework://apps/wegent')).resolves.toBe(true)
+      expect(opened).toHaveBeenCalledOnce()
+      expect((opened.mock.calls[0][0] as CustomEvent<string>).detail).toBe('wework://apps/wegent')
+      expect(desktopHostMock).not.toHaveBeenCalled()
+      expect(openWindowMock).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, opened)
+    }
   })
 
   test.each([
