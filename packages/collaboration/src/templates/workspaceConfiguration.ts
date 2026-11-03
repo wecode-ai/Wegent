@@ -22,7 +22,7 @@ export async function applyWorkspaceTemplate(
   host: ProjectAgentConfigurationHost | undefined,
   partialMessage: string,
   onGroupCreated: (group: CollaborationGroup) => void,
-  unsupportedPolicyMessage = 'This workspace cannot preserve the template Agent approval policy. Apply it directly to a project instead.',
+  unsupportedPolicyMessage = 'Cloud workspaces cannot preserve the template execution settings. Apply it directly to a project instead.',
   locale: 'zh-CN' | 'en' = 'en'
 ): Promise<CollaborationGroup[]> {
   const owner = api.workspaces!
@@ -31,7 +31,10 @@ export async function applyWorkspaceTemplate(
     workspace.location === 'cloud' &&
     document.spec.resources.collaboration.agents?.some(
       agent =>
-        referenced.has(templateAgentId(agent.key)) && agent.executionMode === 'manual_approval'
+        referenced.has(templateAgentId(agent.key)) &&
+        (agent.executionMode === 'manual_approval' ||
+          agent.workspacePolicy !== undefined ||
+          agent.maxConcurrentExecutions !== undefined)
     )
   )
     throw new TemplateConfigurationError(unsupportedPolicyMessage)

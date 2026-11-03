@@ -61,8 +61,14 @@ it('creates cloud resources in the destination namespace and binds them before t
   )
 })
 
-it('uses the local workspace storage owner instead of creating cloud resources', async () => {
-  const { document, drafts, api, host } = fixture()
+it('uses the local workspace storage owner and preserves explicit execution settings', async () => {
+  const { document: source, drafts, api, host } = fixture()
+  const document = structuredClone(source)
+  Object.assign(document.spec.resources.collaboration.agents![0], {
+    executionMode: 'manual_approval',
+    workspacePolicy: 'git_worktree',
+    maxConcurrentExecutions: 3,
+  })
   let id = 0
   api.workspaces!.createTemplateAgent = vi.fn(async (_space, agent) => ({
     id: `local-${++id}`,
@@ -78,6 +84,15 @@ it('uses the local workspace storage owner instead of creating cloud resources',
     vi.fn()
   )
   expect(api.workspaces!.createTemplateAgent).toHaveBeenCalledTimes(6)
+  expect(api.workspaces!.createTemplateAgent).toHaveBeenCalledWith(
+    'local',
+    expect.objectContaining({
+      executionMode: 'manual_approval',
+      workspacePolicy: 'git_worktree',
+      maxConcurrentExecutions: 3,
+    }),
+    expect.any(Object)
+  )
   expect(host.createTemplateAgent).not.toHaveBeenCalled()
 })
 
@@ -118,10 +133,16 @@ it('reports each persisted group before a later failure so closing can refresh t
   expect(persisted).toHaveBeenCalledTimes(1)
 })
 
-it('rejects unsupported cloud approval policies before creating any resource', async () => {
+it.each([
+  { executionMode: 'manual_approval' },
+  { workspacePolicy: 'project' },
+  { workspacePolicy: 'git_worktree' },
+  { maxConcurrentExecutions: 1 },
+  { maxConcurrentExecutions: 3 },
+])('rejects unsupported cloud execution settings before creating any resource: %j', async policy => {
   const { document: source, drafts, api, host } = fixture()
   const document = structuredClone(source)
-  document.spec.resources.collaboration.agents![5].executionMode = 'manual_approval'
+  Object.assign(document.spec.resources.collaboration.agents![5], policy)
   await expect(
     applyWorkspaceTemplate(
       api,
@@ -131,8 +152,33 @@ it('rejects unsupported cloud approval policies before creating any resource', a
       host,
       'partial',
       vi.fn(),
-      'Approval policy cannot be preserved'
+      'Execution settings cannot be preserved'
     )
-  ).rejects.toThrow('Approval policy cannot be preserved')
+  ).rejects.toThrow('Execution settings cannot be preserved')
+  expect(host.resolveTemplateAgentRouting).not.toHaveBeenCalled()
   expect(host.createTemplateAgent).not.toHaveBeenCalled()
+  expect(api.workspaces!.addAgent).not.toHaveBeenCalled()
+  expect(api.workspaces!.createCollaborationGroup).not.toHaveBeenCalled()
+})
+
+it('ignores unsupported settings on definitions that are not being imported', async () => {
+  const { document: source, drafts, api, host } = fixture()
+  const document = structuredClone(source)
+  document.spec.resources.collaboration.agents!.push({
+    ...document.spec.resources.collaboration.agents![0],
+    key: 'unused',
+    executionMode: 'manual_approval',
+    workspacePolicy: 'git_worktree',
+    maxConcurrentExecutions: 3,
+  })
+  await applyWorkspaceTemplate(
+    api,
+    { id: 'space', location: 'cloud', namespace: 'default' },
+    document,
+    drafts,
+    host,
+    'partial',
+    vi.fn()
+  )
+  expect(host.createTemplateAgent).toHaveBeenCalledTimes(6)
 })

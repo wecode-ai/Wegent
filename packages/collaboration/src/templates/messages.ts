@@ -73,7 +73,7 @@ export const templateMessages = {
     destinationEnvironmentRequired: '当前设备尚未授权给此项目，请先在项目的执行环境设置中添加。',
     unsupportedAgent: '此智能体的运行时或多机器人配置无法完整保存为模板，请先调整智能体配置。',
     unavailableAgent: '无法读取小组中的智能体配置，请检查智能体是否可用及访问权限。',
-    unsupportedPolicy: '当前空间无法保留模板的执行前人工确认设置，请在项目中直接应用此模板。',
+    unsupportedPolicy: '云端空间无法保留模板中的执行策略，请在项目中直接应用此模板。',
     autoCreate: '自动创建',
     customizeMembers: '调整成员（可选）',
     choose: '选择成员或智能体',
@@ -166,7 +166,7 @@ export const templateMessages = {
     unavailableAgent:
       'Cannot read a group Agent definition. Check its availability and your access.',
     unsupportedPolicy:
-      'This workspace cannot preserve the template Agent approval policy. Apply it directly to a project instead.',
+      'Cloud workspaces cannot preserve the template execution settings. Apply it directly to a project instead.',
     autoCreate: 'Created automatically',
     customizeMembers: 'Customize members (optional)',
     bindingsTitle: 'Confirm collaboration setup',
