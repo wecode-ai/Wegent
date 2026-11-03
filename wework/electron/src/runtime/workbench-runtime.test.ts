@@ -93,7 +93,10 @@ describe('WorkbenchRuntimeManager', () => {
       tabId: 'smart-app:owner-capture',
       url: 'http://127.0.0.1:4301',
       command: '/runtime/dsh',
-      environment: { WEWORK_ELECTRON_HOST_TOKEN: 'core-token' },
+      environment: {
+        WEWORK_ELECTRON_HOST_TOKEN: 'core-token',
+        WEWORK_DSH_BROWSER_AUTH: '1',
+      },
       hostPipe: hostPipe as never,
       hostPrincipal: '@wegent/dsh-workbench',
     })
@@ -105,5 +108,21 @@ describe('WorkbenchRuntimeManager', () => {
         WEWORK_ELECTRON_HOST_PRINCIPAL: '@wegent/dsh-workbench',
       },
     })
+  })
+
+  test('rejects an explicit privileged pipe for an unauthenticated legacy runtime', async () => {
+    const factory = vi.fn()
+    const manager = new WorkbenchRuntimeManager(factory)
+    await expect(
+      manager.open({
+        tabId: 'legacy',
+        url: 'http://127.0.0.1:4301',
+        command: '/runtime/dsh',
+        hostPipe: { environment: () => ({}) } as never,
+        hostPrincipal: '@wegent/dsh-workbench',
+      })
+    ).rejects.toThrow('Workbench Host pipe requires browser authentication')
+    expect(factory).not.toHaveBeenCalled()
+    expect(manager.list()).toEqual([])
   })
 })

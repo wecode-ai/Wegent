@@ -115,7 +115,11 @@ export async function prepareWorkbenchDshLaunch(
 ): Promise<WorkbenchDshLaunch> {
   const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
-  if (options.includeElectronHostBridge !== false && runtime.version !== WORKBENCH_DSH_VERSION) {
+  // Legacy apps retain their declared runtime, but cannot expose a privileged
+  // bridge without the runtime's authenticated browser session.
+  const includeElectronHostBridge =
+    options.includeElectronHostBridge ?? runtime.version === WORKBENCH_DSH_VERSION
+  if (includeElectronHostBridge && runtime.version !== WORKBENCH_DSH_VERSION) {
     throw new Error(`The trusted Electron host bridge requires DSH ${WORKBENCH_DSH_VERSION}`)
   }
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
@@ -156,7 +160,7 @@ export async function prepareWorkbenchDshLaunch(
       run
     )
   }
-  if (options.includeElectronHostBridge !== false) {
+  if (includeElectronHostBridge) {
     // The workbench is an isolated harness profile. Without the electron-host
     // plugin its DSH client has no route to the scoped host pipe, so calling
     // /wework/electron-host/v1/invoke hits a plain page and every capability

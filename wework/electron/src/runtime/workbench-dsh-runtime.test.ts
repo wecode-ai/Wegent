@@ -50,10 +50,20 @@ describe('workbench DSH runtime', () => {
       join(fixture.runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
       JSON.stringify({ version: '0.1.0-rc.8' })
     )
-    await expect(prepareWorkbenchDshLaunch(options)).rejects.toThrow(
-      'trusted Electron host bridge requires DSH'
-    )
+    await expect(
+      prepareWorkbenchDshLaunch({ ...options, includeElectronHostBridge: true })
+    ).rejects.toThrow('trusted Electron host bridge requires DSH')
     expect(options.run).not.toHaveBeenCalled()
+    const launch = await prepareWorkbenchDshLaunch(options)
+    expect(launch.version).toBe('0.1.0-rc.8')
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBeUndefined()
+    expect(
+      options.run.mock.calls.some(([, args]) =>
+        args.some(
+          arg => arg.includes('wework-electron-host') || arg.includes('wework-browser-auth')
+        )
+      )
+    ).toBe(false)
     await fixture.root.remove()
   })
   test('selects client modules for both current and legacy app requirements', () => {
