@@ -1,3 +1,12 @@
+// These checkpoints materialize packaged runtimes or repeatedly reload the full
+// renderer. Run them alone so Chromium's network service stays stable on the
+// four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
+export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'background-terminals',
+  'release-package-startup',
+  'collaboration-issue-task-discovery',
+])
+
 export async function runWithCheckpointResources({
   checkpoints,
   workerCount,

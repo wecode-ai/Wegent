@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
+import { RESOURCE_EXCLUSIVE_CHECKPOINTS } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 import {
   balanceLinuxCoreMatrix,
   orderLinuxCheckpoints,
@@ -150,13 +151,63 @@ test('changes to Linux scheduling or MinIO setup select the existing desktop sui
 
 function completionSeconds(checkpoints, seconds) {
   const workers = Array(measurements.workers).fill(0)
+  let exclusiveSeconds = 0
   for (const checkpoint of checkpoints) {
     assert.ok(seconds[checkpoint] > 0, checkpoint)
+    if (RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint)) {
+      exclusiveSeconds += seconds[checkpoint]
+      continue
+    }
     const index = workers.indexOf(Math.min(...workers))
     workers[index] += seconds[checkpoint]
   }
-  return Math.max(...workers)
+  return exclusiveSeconds + Math.max(...workers)
 }
+
+test('balancing includes exclusive startup checkpoints before the four-worker queue', () => {
+  const seconds = {
+    'background-terminals': 60,
+    'release-package-startup': 100,
+    'collaboration-issue-task-discovery': 80,
+    'application-menu': 80,
+    'automation-lifecycle': 20,
+    'embedded-browser': 60,
+    'task-board-association': 100,
+    'task-status-sync': 80,
+    'temporary-chat': 80,
+    'workspace-tabs': 100,
+    'window-lifecycle': 20,
+    'permission-modes': 20,
+    'running-conversation-history': 60,
+  }
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: Object.keys(seconds).slice(0, 11).join(',') },
+      { id: 'core-2', segments: 'permission-modes' },
+      { id: 'core-6', segments: 'running-conversation-history' },
+    ],
+  }
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+  const peak = Math.max(
+    ...balanced.include
+      .filter((entry) => entry.id !== 'core-6')
+      .map((entry) =>
+        completionSeconds(
+          orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+          seconds,
+        ),
+      ),
+  )
+  assert.equal(peak, 240)
+  assert.deepEqual(
+    balanced.include.map((entry) => entry.id),
+    matrix.include.map((entry) => entry.id),
+  )
+  assert.deepEqual(
+    balanced.include.flatMap((entry) => entry.segments.split(',')).sort(),
+    Object.keys(seconds).sort(),
+  )
+})
 
 test('balancing distributes the four-worker tail across existing Core runners', () => {
   const matrix = {

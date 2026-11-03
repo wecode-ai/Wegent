@@ -5,6 +5,7 @@ import {
   DESKTOP_CHECKPOINTS,
   expandDesktopCheckpoints,
 } from '../../wework/e2e/desktop/checkpoints.mjs'
+import { RESOURCE_EXCLUSIVE_CHECKPOINTS } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 
 const measurements = JSON.parse(
   readFileSync(
@@ -46,19 +47,27 @@ export function balanceLinuxCoreMatrix(
     checkpoints: [],
     workers: Array(measurements.workers).fill(0),
   }))
-  // Match the runner's longest-first, four-worker scheduling. Summed durations
-  // overestimate concurrent work and can leave a fifth long checkpoint as a tail.
+  // Exclusive checkpoints precede the worker queue and occupy the whole runner.
+  // Add their duration to every worker, retaining the same runtime isolation.
   for (const checkpoint of ordered) {
+    const exclusive = RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint)
+    const load = (assignment) =>
+      exclusive
+        ? Math.max(...assignment.workers)
+        : Math.min(...assignment.workers)
     assignments.sort(
       (a, b) =>
-        Math.min(...a.workers) - Math.min(...b.workers) ||
+        load(a) - load(b) ||
         a.workers.reduce((sum, value) => sum + value, 0) -
           b.workers.reduce((sum, value) => sum + value, 0) ||
         a.entry.id.localeCompare(b.entry.id),
     )
     const target = assignments[0]
     const worker = target.workers.indexOf(Math.min(...target.workers))
-    target.workers[worker] += seconds[checkpoint] ?? 180
+    const duration = seconds[checkpoint] ?? 180
+    if (exclusive)
+      target.workers = target.workers.map((value) => value + duration)
+    else target.workers[worker] += duration
     target.checkpoints.push(checkpoint)
   }
   for (const { entry, checkpoints: selected } of assignments) {
