@@ -342,6 +342,16 @@ class LocalDeviceCommandService:
 local_device_command_service = LocalDeviceCommandService()
 
 
+def is_builtin_branch_query(
+    command_key: str, configured_commands: Mapping[str, Any]
+) -> bool:
+    """Identify built-in branch queries while preserving explicit overrides."""
+    return (
+        command_key in {"git_branch", "git_branch_list"}
+        and command_key not in configured_commands
+    )
+
+
 async def execute_configured_device_command(
     *,
     db: Any,
@@ -383,10 +393,8 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not configured"
         )
 
-    # Preserve explicit overrides, even when their text equals the default.
-    uses_builtin_branch_query = (
-        command_key in {"git_branch", "git_branch_list"}
-        and command_key not in configured_commands
+    uses_builtin_branch_query = is_builtin_branch_query(
+        command_key, configured_commands
     )
     dispatch_device_id = await _resolve_dispatch_device_id(
         user_id=user_id,

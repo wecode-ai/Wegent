@@ -16,11 +16,16 @@ from app.services.device.command_registry import DEFAULT_LOCAL_DEVICE_COMMANDS
 
 
 @pytest.fixture(params=["local", "cloud", "remote"])
+def branch_device_type(request: pytest.FixtureRequest) -> str:
+    return request.param
+
+
+@pytest.fixture
 def branch_socket(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+    branch_device_type: str, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncMock:
-    spec: dict[str, Any] = {"deviceType": request.param}
-    if request.param == "cloud":
+    spec: dict[str, Any] = {"deviceType": branch_device_type}
+    if branch_device_type == "cloud":
         spec["cloudConfig"] = {"deviceId": "runtime-cloud"}
     monkeypatch.setattr(
         command_service.device_service,
@@ -79,6 +84,59 @@ async def test_branch_identity_preserves_configured_overrides(
     assert payload["argv"] == shlex.split(command)
     assert payload["cwd"] == "/workspace/repo"
     assert branch_socket.await_args.kwargs["namespace"] == "/local-executor"
+    if override == "default":
+        assert payload["command_key"] == command_key
+    else:
+        assert "command_key" not in payload
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command_key", ["git_branch", "git_branch_list"])
+@pytest.mark.parametrize(
+    "override", ["default", "same_string", "same_object", "custom"]
+)
+async def test_runtime_relay_preserves_builtin_branch_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    branch_socket: AsyncMock,
+    branch_device_type: str,
+    command_key: str,
+    override: str,
+) -> None:
+    from app.api.ws import wework_runtime_namespace as relay
+
+    default_command = DEFAULT_LOCAL_DEVICE_COMMANDS[command_key].command
+    command = "git --version" if override == "custom" else default_command
+    configured = {}
+    if override != "default":
+        configured[command_key] = (
+            {"command": command} if override == "same_object" else command
+        )
+    monkeypatch.setattr(relay.settings, "LOCAL_DEVICE_COMMANDS", configured)
+    monkeypatch.setattr(
+        relay.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                runtime_device_id="branch-device", device_type=branch_device_type
+            )
+        ),
+    )
+
+    result = await relay.relay_ipc_request(
+        user_id=7,
+        device_id="logical-device",
+        method="device.execute_command",
+        params={"command_key": command_key, "cwd": "/workspace/repo"},
+        timeout_seconds=30,
+    )
+
+    branch_socket.assert_awaited_once()
+    event, payload = branch_socket.await_args.args
+    assert event == "device:execute_command"
+    assert payload["command"] == command
+    assert payload["argv"] == shlex.split(command)
+    assert payload["cwd"] == "/workspace/repo"
     if override == "default":
         assert payload["command_key"] == command_key
     else:
