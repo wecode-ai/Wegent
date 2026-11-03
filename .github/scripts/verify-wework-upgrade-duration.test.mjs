@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { verifyUpgradeDuration } from "./verify-wework-upgrade-duration.mjs";
+import {
+  readUpgradeExecutionJobs,
+  verifyUpgradeDuration,
+} from "./verify-wework-upgrade-duration.mjs";
 
 const origin = Date.parse("2026-11-03T10:00:00Z");
 const iso = (offset) => new Date(origin + offset).toISOString();
@@ -51,6 +54,45 @@ function fixture() {
     ],
   };
 }
+
+test("waits for GitHub to publish a newly active runner's steps without inventing execution time", async () => {
+  const value = fixture();
+  let reads = 0;
+  let elapsed = 0;
+  const jobs = await readUpgradeExecutionJobs(
+    () => {
+      reads++;
+      return value.jobs.map((job, index) =>
+        index === 2 && reads === 1 ? { ...job, steps: [] } : job,
+      );
+    },
+    {
+      now: () => elapsed,
+      wait: async (ms) => {
+        elapsed += ms;
+      },
+    },
+  );
+  assert.equal(reads, 2);
+  assert.equal(verifyUpgradeDuration({ ...value, jobs }).elapsedMs, 210_000);
+});
+
+test("unpublished active steps remain a bounded hard failure", async () => {
+  const value = fixture();
+  value.jobs[2].steps = [];
+  let elapsed = 0;
+  await assert.rejects(
+    readUpgradeExecutionJobs(() => value.jobs, {
+      now: () => elapsed,
+      wait: async (ms) => {
+        elapsed += ms;
+      },
+    }),
+    /GitHub did not publish execution steps/,
+  );
+  assert.equal(elapsed, 10_000);
+  assert.throws(() => verifyUpgradeDuration(value), /Missing execution steps/);
+});
 
 test("counts resolver and complete execution of the slowest shard while excluding runner queues", () => {
   const value = fixture();

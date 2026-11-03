@@ -597,6 +597,7 @@ jobs:
           ref: ${{ needs.prepare-upgrade-inputs.outputs.verification_sha }}
           sparse-checkout: |
             .github/scripts
+            packages
             wework
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

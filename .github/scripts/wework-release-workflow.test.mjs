@@ -20,18 +20,49 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
-function sparseCheckout(t, checkout) {
+function sparseCheckout(t, checkout, trackedOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repository = new URL("../../", import.meta.url);
-  for (const selection of checkout["sparse-checkout"].trim().split("\n")) {
-    const path = selection.replace(/^\//, "").replace(/\/$/, "");
+  const selections = checkout["sparse-checkout"]
+    .trim()
+    .split("\n")
+    .map((selection) => selection.replace(/^\//, "").replace(/\/$/, ""));
+  const paths = trackedOnly
+    ? execFileSync("git", ["ls-files", "-z", "--", ...selections], {
+        cwd: repository,
+        encoding: "utf8",
+      })
+        .split("\0")
+        .filter(Boolean)
+    : selections;
+  for (const path of paths) {
     const destination = join(root, path);
     mkdirSync(dirname(destination), { recursive: true });
     cpSync(new URL(path, repository), destination, { recursive: true });
   }
   return root;
 }
+
+test("source sparse checkout imports the actual desktop entry graph and release scenario", (t) => {
+  const checkout = jobs["verify-upgrades"].steps.find(
+    (step) => step.uses === "actions/checkout@v4",
+  ).with;
+  const root = sparseCheckout(t, checkout, true);
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    await import('./wework/e2e/desktop/modules/task-flow-main.mjs');
+    await import('./wework/e2e/desktop/scenarios/retained-upgrade-baseline.scenario.mjs');
+    await import('./wework/scripts/lib/packaged-runtime-preparation.mjs');
+  `,
+    ],
+    { cwd: root, stdio: "pipe" },
+  );
+});
 
 test("input resolution pins its source once and its sparse checkout contains all imports", (t) => {
   const steps = jobs["prepare-upgrade-inputs"].steps;

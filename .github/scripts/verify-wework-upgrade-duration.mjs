@@ -1,9 +1,43 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 const LIMIT_MS = 600_000;
 const MAX_PARALLEL = 8;
+
+/** GitHub can mark a runner active before publishing its first step. */
+export async function readUpgradeExecutionJobs(
+  readJobs,
+  { now = Date.now, wait = delay } = {},
+) {
+  const started = now();
+  let waiting = false;
+  for (;;) {
+    const jobs = await readJobs();
+    const missing = jobs.filter(
+      (job) =>
+        job.name.startsWith("Verify release upgrades (") &&
+        job.status === "in_progress" &&
+        !job.steps?.some((step) => step.started_at),
+    );
+    if (!missing.length) return jobs;
+    assert.ok(
+      now() - started < 10_000,
+      `GitHub did not publish execution steps: ${missing.map((job) => job.name).join(", ")}`,
+    );
+    if (!waiting) {
+      console.log(
+        JSON.stringify({
+          event: "upgrade-execution-steps-pending",
+          jobs: missing.map((job) => job.name),
+        }),
+      );
+      waiting = true;
+    }
+    await wait(250);
+  }
+}
 
 function timestamp(value) {
   const result = Date.parse(value);
@@ -148,8 +182,10 @@ if (
   const base = `repos/${repository}/actions/runs/${runId}`;
   const result = verifyUpgradeDuration({
     run: api(base),
-    jobs: api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
-      (page) => page.jobs,
+    jobs: await readUpgradeExecutionJobs(() =>
+      api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
+        (page) => page.jobs,
+      ),
     ),
     matrix: JSON.parse(process.env.VERIFICATION_MATRIX),
     producerRunId: process.env.UPGRADE_PRODUCER_RUN_ID,
