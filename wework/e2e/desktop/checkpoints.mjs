@@ -6,6 +6,16 @@ export const DESKTOP_CHECKPOINT_CI_HOSTS = new Map([
   ['responses-api-gateway', 'plugin-account-auth-dws'],
 ])
 
+// These checkpoints require idle host capacity, materialize packaged runtimes,
+// or repeatedly reload the full renderer. Isolate them from competing work on
+// the four-vCPU desktop E2E runners.
+export const DESKTOP_RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'background-terminals',
+  'release-package-startup',
+  'collaboration-issue-task-discovery',
+  'plugin-uninstall-lost-response',
+])
+
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
   'project-space-tool-discovery',

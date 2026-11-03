@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { test } from 'vitest'
 
 import { runWithCheckpointResources } from '../e2e/desktop/checkpoint-scheduler.mjs'
+import { DESKTOP_RESOURCE_EXCLUSIVE_CHECKPOINTS } from '../e2e/desktop/checkpoints.mjs'
 import {
   UPGRADE_PACKAGE_CHECKPOINTS,
   rejectFailedReleaseCheckpoint,
@@ -62,31 +63,34 @@ test('ordinary checkpoint failures retain the full diagnostic collection policy'
   assert.deepEqual(completed, ['ordinary-a', 'ordinary-b'])
 })
 
-test('terminal native input runs alone before ordinary checkpoints regain parallelism', async () => {
-  const started = []
-  const release = new Map()
-  const checkpoints = ['ordinary-a', 'background-terminals', 'ordinary-b', 'ordinary-c']
-  const pending = runWithCheckpointResources({
-    checkpoints,
-    workerCount: 3,
-    resourceFor: () => [],
-    exclusiveFor: checkpoint => checkpoint === 'background-terminals',
-    run: checkpoint =>
-      new Promise(resolve => {
-        started.push(checkpoint)
-        release.set(checkpoint, resolve)
-      }),
-  })
+test.each(['background-terminals', 'plugin-uninstall-lost-response'])(
+  '%s runs alone before ordinary checkpoints regain parallelism',
+  async exclusiveCheckpoint => {
+    const started = []
+    const release = new Map()
+    const checkpoints = ['ordinary-a', exclusiveCheckpoint, 'ordinary-b', 'ordinary-c']
+    const pending = runWithCheckpointResources({
+      checkpoints,
+      workerCount: 3,
+      resourceFor: () => [],
+      exclusiveFor: checkpoint => DESKTOP_RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
+      run: checkpoint =>
+        new Promise(resolve => {
+          started.push(checkpoint)
+          release.set(checkpoint, resolve)
+        }),
+    })
 
-  await tick()
-  assert.deepEqual(started, ['background-terminals'])
-  release.get('background-terminals')()
-  await tick()
-  assert.deepEqual(started, ['background-terminals', 'ordinary-a', 'ordinary-b', 'ordinary-c'])
-  for (const resolve of release.values()) resolve()
-  await pending
-  assert.equal(new Set(started).size, checkpoints.length)
-})
+    await tick()
+    assert.deepEqual(started, [exclusiveCheckpoint])
+    release.get(exclusiveCheckpoint)()
+    await tick()
+    assert.deepEqual(started, [exclusiveCheckpoint, 'ordinary-a', 'ordinary-b', 'ordinary-c'])
+    for (const resolve of release.values()) resolve()
+    await pending
+    assert.equal(new Set(started).size, checkpoints.length)
+  }
+)
 
 test('multiple exclusive checkpoints never overlap with each other or shared resources', async () => {
   const active = new Set()

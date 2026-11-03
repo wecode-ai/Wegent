@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import {
   DESKTOP_CHECKPOINTS,
   DESKTOP_CHECKPOINT_GROUPS,
+  DESKTOP_RESOURCE_EXCLUSIVE_CHECKPOINTS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
@@ -416,14 +417,6 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-archive-restore',
 ])
 const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
-// These checkpoints materialize packaged runtimes or repeatedly reload the full
-// renderer. Run them alone so Chromium's network service stays stable on the
-// four-vCPU desktop E2E runners.
-const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
-  'release-package-startup',
-  'collaboration-issue-task-discovery',
-])
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
 )
@@ -861,7 +854,7 @@ async function runParallelCheckpoints(checkpoints) {
       workerCount,
       resourceFor: checkpoint =>
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
-      exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
+      exclusiveFor: checkpoint => DESKTOP_RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
