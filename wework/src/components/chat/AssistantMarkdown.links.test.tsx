@@ -31,6 +31,27 @@ test('renders backslash Windows drive-letter markdown links as file links', () =
   expect(screen.queryByText(/\[blocked\]/)).not.toBeInTheDocument()
 })
 
+test.each(['default', 'document', 'user'] as const)(
+  'opens a slash-prefixed Windows SQL link with its line range in %s Markdown',
+  variant => {
+    const onOpenFile = vi.fn()
+    render(
+      <AssistantMarkdown
+        content="[整体分层 SQL](/D:/wenyu-ai/vault/07-研究课题/研读与验证/整体分层.sql:12-20)"
+        variant={variant}
+        onOpenFile={onOpenFile}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenFile).toHaveBeenCalledExactlyOnceWith(
+      'D:/wenyu-ai/vault/07-研究课题/研读与验证/整体分层.sql',
+      { lineStart: 12, lineEnd: 20 }
+    )
+  }
+)
+
 test('opens external markdown links without navigating the current page', () => {
   const openExternalUrl = vi.fn().mockResolvedValue(true)
   const originalLocation = window.location.href
@@ -112,6 +133,7 @@ test.each([
   ['file:///tmp/plot.png', '/tmp/plot.png'],
   ['C:/projects/plot.png', 'C:/projects/plot.png'],
   ['C:\\projects\\plot.png', 'C:\\projects\\plot.png'],
+  ['/D:/研究课题/plot%20one.png', 'D:/研究课题/plot one.png'],
 ])('reads local image %s without rewriting its URL', async (src, expectedPath) => {
   const readLocalFile = vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
   vi.stubGlobal(
