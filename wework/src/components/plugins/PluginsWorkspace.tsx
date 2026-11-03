@@ -3027,10 +3027,7 @@ export function PluginsWorkspace({
     plugin: InstalledPlugin,
     isCurrent: () => boolean
   ) => {
-    const listedConnectors = item.components.connectors ?? []
-    const installedConnectors = plugin.spec.components.connectors ?? []
-    const connectors = listedConnectors.length > 0 ? listedConnectors : installedConnectors
-    const required = connectors.filter(
+    const required = (plugin.spec.components.connectors ?? []).filter(
       connector => requiresInstallConnectorAuth(connector) && isLocalConnector(connector)
     )
     if (required.length === 0) return
