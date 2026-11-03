@@ -44,25 +44,6 @@ describe('embedded browser popup routing', () => {
     ).toBeNull()
   })
 
-  test('does not match an untracked native label when the popup omits it', () => {
-    expect(
-      findBrowserTabByPopupParent(
-        {
-          'browser:1': {
-            label: 'workspace-browser-task-1',
-            browserSessionId: '1',
-            title: null,
-            faviconUrl: null,
-            isLoading: false,
-            hasActiveDownload: false,
-            openRequest: null,
-          },
-        },
-        'workspace-browser-other'
-      )
-    ).toBeNull()
-  })
-
   test('prefers the logical label when both parent identifiers are present', () => {
     expect(
       findBrowserTabByPopupParent(

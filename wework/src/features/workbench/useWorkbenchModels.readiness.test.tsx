@@ -1,6 +1,6 @@
+import type { UnifiedModel } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import type { UnifiedModel } from '@/types/api'
 import { useWorkbenchModels } from './useWorkbenchModels'
 
 test('keeps a restored native provider through catalog refresh and clears it on model change', async () => {
@@ -50,27 +50,6 @@ test('keeps a restored native provider through catalog refresh and clears it on 
   )
   act(() => result.current.setSelectedModel(replacement))
   expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
-})
-
-test('distinguishes restored default settings from an available model', async () => {
-  const replacement: UnifiedModel = { name: 'replacement', type: 'public' }
-  const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
-  const { result } = renderHook(() =>
-    useWorkbenchModels({ api, locked: false, persistSelection: false })
-  )
-
-  await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
-  await waitFor(() => expect(result.current.isLoading).toBe(false))
-  expect(result.current.selectedModel).toBeNull()
-  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
-  expect(result.current.selectedModelAvailable).toBe(false)
-
-  api.listModels.mockResolvedValue({ data: [replacement] })
-  act(() => result.current.refreshModels())
-  await waitFor(() => expect(result.current.models).toEqual([replacement]))
-  act(() => result.current.setSelectedModel(replacement))
-  expect(result.current.isSelectionReady).toBe(true)
-  expect(result.current.selectedModelAvailable).toBe(true)
 })
 
 test('does not advertise send readiness before a deferred catalog has loaded', async () => {

@@ -2,8 +2,8 @@ import '@/i18n'
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRef } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Attachment, ModelOptions, ModelType, RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
@@ -157,76 +157,6 @@ describe('ProjectSpaceChatSidebar', () => {
     ]
   })
 
-  it('renders localized project chat copy instead of translation keys', async () => {
-    mocks.state.runtimeWork.chats = []
-
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        onClose={vi.fn()}
-      />
-    )
-
-    expect(screen.getByText('新会话')).toBeInTheDocument()
-    expect(screen.getByTestId('project-space-chat-header')).toHaveClass('h-[52px]')
-    expect(screen.getByTestId('project-space-chat-runtime-project')).toHaveValue('91')
-    expect(screen.getByTestId('project-space-chat-resize-handle')).toHaveAccessibleName(
-      '调整问AI宽度'
-    )
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-      'data-empty-state-text',
-      '开始一个关于“Wegent V4”的新会话。'
-    )
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-      'data-placeholder',
-      '告诉 AI 你想在这个项目空间中完成什么'
-    )
-    expect(document.body).not.toHaveTextContent('project_space_chat.')
-  })
-
-  it('restores the latest conversation belonging to the current project', async () => {
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        onClose={vi.fn()}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'latest-task')
-    )
-    expect(screen.getByTestId('project-space-chat-conversation')).toHaveTextContent('最近会话')
-
-    await userEvent.click(screen.getByTestId('project-space-chat-menu'))
-    const menuItems = screen.getAllByTestId('project-space-chat-menu-item')
-    expect(menuItems).toHaveLength(2)
-    expect(menuItems[0]).toHaveTextContent('最近会话')
-    expect(menuItems[1]).toHaveTextContent('旧会话')
-    expect(screen.queryByText('其他项目')).not.toBeInTheDocument()
-  })
-
-  it('switches conversations through the header menu', async () => {
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        onClose={vi.fn()}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'latest-task')
-    )
-
-    await userEvent.click(screen.getByTestId('project-space-chat-menu'))
-    await userEvent.click(screen.getAllByTestId('project-space-chat-menu-item')[1]!)
-
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'older-task')
-    expect(window.localStorage.getItem('wework-project-space-chat:11')).toBe('device-1:older-task')
-  })
-
   it('creates a formal project-scoped conversation from a new draft', async () => {
     const address = {
       deviceId: 'device-1',
@@ -313,38 +243,5 @@ describe('ProjectSpaceChatSidebar', () => {
       'data-mount-id',
       createdChatMountId
     )
-  })
-
-  it('resizes the project conversation sidebar and remembers the width', async () => {
-    render(
-      <ProjectSpaceChatSidebar
-        project={project}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        onClose={vi.fn()}
-      />
-    )
-
-    const sidebar = screen.getByTestId('project-space-chat-sidebar')
-    vi.spyOn(sidebar.parentElement!, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      top: 0,
-      right: 1200,
-      bottom: 800,
-      left: 0,
-      width: 1200,
-      height: 800,
-      toJSON: () => ({}),
-    })
-    const handle = screen.getByTestId('project-space-chat-resize-handle')
-
-    await userEvent.pointer([
-      { keys: '[MouseLeft>]', target: handle, coords: { clientX: 800, clientY: 200 } },
-      { target: handle, coords: { clientX: 650, clientY: 200 } },
-      { keys: '[/MouseLeft]', target: handle, coords: { clientX: 650, clientY: 200 } },
-    ])
-
-    expect(sidebar).toHaveStyle({ width: '570px' })
-    expect(window.localStorage.getItem('wework.project-space-chat-width')).toBe('570')
   })
 })

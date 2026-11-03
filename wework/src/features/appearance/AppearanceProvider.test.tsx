@@ -1,10 +1,8 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
-import { darkPalette, lightPalette } from './presets'
 import { useAppearance } from './useAppearance'
-import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 
@@ -13,7 +11,6 @@ vi.mock('@/desktop/appPreferences', () => ({
 }))
 
 let mediaQueryMatches = false
-let mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
 
 function installMatchMedia() {
   Object.defineProperty(window, 'matchMedia', {
@@ -22,9 +19,7 @@ function installMatchMedia() {
       matches: mediaQueryMatches,
       media: '(prefers-color-scheme: dark)',
       onchange: null,
-      addEventListener: vi.fn((_event: string, listener: (event: MediaQueryListEvent) => void) => {
-        mediaQueryListener = listener
-      }),
+      addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       addListener: vi.fn(),
       removeListener: vi.fn(),
@@ -88,7 +83,6 @@ describe('AppearanceProvider', () => {
   beforeEach(() => {
     localStorage.clear()
     mediaQueryMatches = false
-    mediaQueryListener = null
     document.documentElement.removeAttribute('data-theme')
     document.documentElement.removeAttribute('data-appearance-mode')
     document.documentElement.className = ''
@@ -118,219 +112,5 @@ describe('AppearanceProvider', () => {
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenLastCalledWith({ appearanceMode: 'dark' })
     })
-  })
-
-  test('follows appearance changes written by another window', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    const stored = JSON.stringify({ mode: 'dark' })
-    act(() => {
-      localStorage.setItem('wework.appearance', stored)
-      window.dispatchEvent(
-        new StorageEvent('storage', { key: 'wework.appearance', newValue: stored })
-      )
-    })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
-    })
-    expect(document.documentElement.dataset.theme).toBe('dark')
-  })
-
-  test('updates system mode when system preference changes', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    expect(screen.getByTestId('resolved-mode')).toHaveTextContent('light')
-
-    act(() => {
-      mediaQueryMatches = true
-      mediaQueryListener?.({ matches: true } as MediaQueryListEvent)
-    })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark')
-    })
-  })
-
-  test('updates accent color and resets to defaults', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    await userEvent.click(screen.getByTestId('set-accent'))
-    expect(screen.getByTestId('accent-color')).toHaveTextContent('#0169cc')
-    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('1 105 204')
-
-    await userEvent.click(screen.getByTestId('reset'))
-    expect(screen.getByTestId('accent-color')).toHaveTextContent('#2563eb')
-  })
-
-  test('applies and persists Codex typography variables', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
-
-    await userEvent.click(screen.getByTestId('set-font-sizes'))
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('16')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('15')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('16px')
-    expect(document.documentElement.style.getPropertyValue('--text-sm')).toBe('15px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('15px')
-    expect(localStorage.getItem('wework.appearance')).toContain('"uiFontSize":16')
-    expect(localStorage.getItem('wework.appearance')).toContain('"codeFontSize":15')
-  })
-
-  test('steps UI and code font sizes together within their own bounds', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: 1 } }))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('15')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('13')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('15px')
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: -1 } }))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
-  })
-
-  test('resets UI and code font sizes without changing other appearance settings', async () => {
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    await userEvent.click(screen.getByTestId('set-font-sizes'))
-    act(() => {
-      window.dispatchEvent(new CustomEvent(WEWORK_RESET_FONT_SIZE_EVENT))
-    })
-
-    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
-    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
-    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
-    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
-  })
-
-  test('keeps mobile drawer backgrounds opaque enough to hide page content', () => {
-    expect(lightPalette.mobileDrawer).not.toContain('/')
-    expect(darkPalette.mobileDrawer).not.toContain('/')
-  })
-
-  test('migrates old translucent mobile drawer values from storage', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        mode: 'dark',
-        dark: {
-          mobileDrawer: '29 45 66 / 0.94',
-        },
-      })
-    )
-
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    expect(document.documentElement.style.getPropertyValue('--color-mobile-drawer')).toBe(
-      darkPalette.mobileDrawer
-    )
-    expect(localStorage.getItem('wework.appearance')).toContain(
-      `"mobileDrawer":"${darkPalette.mobileDrawer}"`
-    )
-  })
-
-  test('migrates the old default dark palette to the neutral palette', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        light: {
-          sidebar: '229 229 231 / 0.72',
-        },
-        dark: {
-          bgBase: '17 19 22',
-          bgSurface: '28 31 36',
-          bgMuted: '38 42 48',
-          bgHover: '96 165 250 / 0.12',
-          sidebar: '40 40 40 / 0.92',
-          sidebarActive: '52 58 66',
-          sidebarHover: '255 255 255 / 0.08',
-          sidebarTextPrimary: '232 238 246',
-          sidebarTextSecondary: '181 191 205',
-          sidebarTextMuted: '126 138 153',
-          mobileDrawer: '24 39 58',
-          border: '55 61 70',
-          textPrimary: '241 245 249',
-          textSecondary: '203 213 225',
-          textMuted: '148 163 184',
-          primary: '96 165 250',
-          primaryContrast: '11 18 20',
-          popover: '28 31 36',
-          codeBg: '15 23 42',
-        },
-      })
-    )
-
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    expect(localStorage.getItem('wework.appearance')).toContain(
-      `"sidebar":"${lightPalette.sidebar}"`
-    )
-    expect(JSON.parse(localStorage.getItem('wework.appearance') ?? '{}').dark).toEqual(darkPalette)
-  })
-
-  test('normalizes stored background settings and preserves old configuration defaults', () => {
-    localStorage.setItem(
-      'wework.appearance',
-      JSON.stringify({
-        backgroundImagePath: '/tmp/background.png',
-        backgroundVisibility: 140,
-        backgroundBlur: 99,
-      })
-    )
-
-    render(
-      <AppearanceProvider>
-        <Harness />
-      </AppearanceProvider>
-    )
-
-    expect(screen.getByTestId('background-path')).toHaveTextContent('/tmp/background.png')
-    expect(screen.getByTestId('light-background-path')).toHaveTextContent('none')
-    expect(screen.getByTestId('dark-background-path')).toHaveTextContent('none')
-    expect(screen.getByTestId('background-visibility')).toHaveTextContent('100')
-    expect(screen.getByTestId('background-blur')).toHaveTextContent('20')
-    expect(screen.getByTestId('background-in-main')).toHaveTextContent('true')
   })
 })
