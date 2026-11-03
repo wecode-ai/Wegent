@@ -46,6 +46,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',
+  'stand-in-alternate-source',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',

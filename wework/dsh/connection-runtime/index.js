@@ -8,6 +8,7 @@ import {
   ConnectionRegistry,
   ConnectionError,
   parseConnections,
+  dependencySources,
 } from '@wegent/dsh-plugin-runtime/connections'
 import { ConnectionDependencies } from '@wegent/dsh-plugin-runtime/connection-dependencies'
 
@@ -53,13 +54,15 @@ export async function apply(ctx) {
         url: `http://127.0.0.1:${port}${BASE_PATH}`,
         token,
         dependencyReferences: [...registry.entries.values()].flatMap(entry =>
-          entry.provider.uses.map(alias => ({
-            providerId: entry.id,
-            alias,
-            ...entry.definition.dependencies[alias].source,
-            readTools: entry.provider.mcpReadTools?.[alias] ?? [],
-            cliReadTools: entry.provider.cliReadTools?.[alias] ?? null,
-          }))
+          entry.provider.uses.flatMap(alias =>
+            dependencySources(entry.definition.dependencies[alias]).map(source => ({
+              providerId: entry.id,
+              alias,
+              ...source,
+              readTools: entry.provider.mcpReadTools?.[alias] ?? [],
+              cliReadTools: entry.provider.cliReadTools?.[alias] ?? null,
+            }))
+          )
         ),
       })
   }

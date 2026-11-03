@@ -659,6 +659,17 @@ jobs:
           pnpm --filter @wegent/process-explorer typecheck
           pnpm --filter @wegent/process-explorer test
 
+      - name: Run Wework DSH Node tests
+        if: matrix.shard == 1
+        working-directory: ./wework
+        run: |
+          mapfile -d '' -t tests < <(find dsh -name '*.test.mjs' -print0)
+          if ((${#tests[@]} == 0)); then
+            echo 'No DSH tests found' >&2
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
         run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs
