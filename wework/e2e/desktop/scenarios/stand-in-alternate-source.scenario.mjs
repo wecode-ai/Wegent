@@ -31,6 +31,7 @@ export function createDesktopScenario(options) {
         pluginId: 'source@preferred-fixture',
       }
       await writeFile(manifestPath, JSON.stringify(manifest))
+      await writeFile(join(resultDir, 'connection-adapter/package.json'), JSON.stringify(manifest))
     },
     async verify(control) {
       await waitForBundledMarketplaceRegistration(codexHome)
@@ -43,6 +44,10 @@ export function createDesktopScenario(options) {
       const catalog = await rpc(control, 'runtime.connections.catalog', {})
       const provider = catalog.items.find(item => item.id === providerId)
       assert.equal(provider.availability.status, 'ready')
+      assert.deepEqual(provider.dependencies[0].source, {
+        marketplaceId: 'preferred-fixture',
+        pluginId: 'source@preferred-fixture',
+      })
       assert.equal(provider.dependencies[0].resolved.pluginId, 'source@connection-fixture')
       // Installing dependencies again must reuse this installed alternate source.
       await rpc(control, 'runtime.connections.dependencies.install', {
