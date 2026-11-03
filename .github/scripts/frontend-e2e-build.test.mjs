@@ -22,6 +22,7 @@ import {
   describeBuild,
   verifyBuild,
   attestBuild,
+  frontendBuildEnvironment,
 } from './frontend-e2e-build.mjs'
 import {
   artifactType,
@@ -149,6 +150,52 @@ test('tracked file modes and symlink target bytes participate in the key', (t) =
   const linked = frontendBuild(root, 'example', context).sourceKey
   put(root, 'source.txt', 'second')
   assert.notEqual(frontendBuild(root, 'example', context).sourceKey, linked)
+})
+
+test('effective locale and optional dotenv inputs invalidate reuse without exposing private configuration', (t) => {
+  const root = fixture(t)
+  const environment = frontendBuildEnvironment({
+    NEXT_PUBLIC_API_URL: '/api',
+    PRIVATE_SERVER_TOKEN: 'private-test-value',
+  })
+  assert.equal(environment.I18N_LNG, 'en')
+  assert.equal(Object.hasOwn(environment, 'PRIVATE_SERVER_TOKEN'), false)
+  const metadata = frontendBuild(root, 'example', { ...context, environment })
+  const translated = frontendBuildEnvironment({
+    NEXT_PUBLIC_API_URL: '/api',
+    I18N_LNG: 'zh-CN',
+  })
+  assert.notEqual(
+    frontendBuild(root, 'example', { ...context, environment: translated })
+      .sourceKey,
+    metadata.sourceKey,
+  )
+  for (const name of [
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env.production.local',
+  ]) {
+    put(
+      root,
+      `frontend/${name}`,
+      'PRIVATE_SERVER_TOKEN=private-test-value\nNEXT_PUBLIC_API_URL=/api-other',
+    )
+    const changed = frontendBuild(root, 'example', { ...context, environment })
+    assert.notEqual(changed.sourceKey, metadata.sourceKey, name)
+    put(root, archiveName, 'compressed frontend')
+    describeBuild(root, changed, origin, 'build-id')
+    assert(
+      !readFileSync(join(root, manifestName), 'utf8').includes(
+        'private-test-value',
+      ),
+    )
+    rmSync(join(root, `frontend/${name}`))
+    assert.equal(
+      frontendBuild(root, 'example', { ...context, environment }).sourceKey,
+      metadata.sourceKey,
+    )
+  }
 })
 
 test('cache attestation preserves original build identity and rejects stale current-run handoff', (t) => {

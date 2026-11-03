@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  existsSync,
   lstatSync,
   readFileSync,
   readdirSync,
@@ -39,7 +40,7 @@ function fontFiles(root, relative = 'frontend/public/fonts') {
   }
 }
 
-export function buildContext(root = repositoryRoot, env = process.env) {
+export function frontendBuildEnvironment(env) {
   const environment = Object.fromEntries(
     Object.keys(env)
       .filter(
@@ -50,6 +51,15 @@ export function buildContext(root = repositoryRoot, env = process.env) {
       .sort()
       .map((name) => [name, env[name]]),
   )
+  return {
+    ...environment,
+    NODE_ENV: env.NODE_ENV || 'production',
+    NEXT_TELEMETRY_DISABLED: '1',
+    I18N_LNG: env.I18N_LNG || 'en',
+  }
+}
+
+export function buildContext(root = repositoryRoot, env = process.env) {
   return {
     profile: 'e2e-standalone-v1',
     platform: `${process.platform}-${process.arch}`,
@@ -66,11 +76,7 @@ export function buildContext(root = repositoryRoot, env = process.env) {
         'utf8',
       ),
     ).version,
-    environment: {
-      ...environment,
-      NODE_ENV: env.NODE_ENV || 'production',
-      NEXT_TELEMETRY_DISABLED: '1',
-    },
+    environment: frontendBuildEnvironment(env),
   }
 }
 
@@ -103,7 +109,22 @@ export function frontendBuild(root, owner, context) {
         !/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) &&
         !/(^|\/)(README[^/]*|AGENTS\.md)$/.test(path),
     )
-  const inputs = [...new Set([...tracked, ...fontFiles(root), ...recipeFiles])]
+  const environmentFiles = [
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env.production.local',
+  ]
+    .map((name) => `frontend/${name}`)
+    .filter((name) => existsSync(join(root, name)))
+  const inputs = [
+    ...new Set([
+      ...tracked,
+      ...fontFiles(root),
+      ...environmentFiles,
+      ...recipeFiles,
+    ]),
+  ]
     .sort()
     .map((name) => {
       const path = join(root, name)
