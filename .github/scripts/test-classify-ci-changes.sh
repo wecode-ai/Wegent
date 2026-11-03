@@ -924,6 +924,7 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs" \
   "wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs" \
+  "wework/e2e/desktop/fixtures/historical-plugin-revision.py" \
   "wework/scripts/plugin-runtime-path-fixture.test.mjs"
 
 assert_desktop_case "conversation auth changes select managed login regression" \
