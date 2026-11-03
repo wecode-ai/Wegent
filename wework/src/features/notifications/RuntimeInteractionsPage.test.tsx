@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
   RuntimeInteractionsContext,
@@ -295,3 +296,14 @@ it.each(['task', 'issue'])(
     expect(screen.getByTestId('test-original-entity')).toBeVisible()
   }
 )
+
+it('lets keyboard users enter the scrollable original question before opening the entity', async () => {
+  const question = 'Original decision and relevant choices. '.repeat(30)
+  view(approval.id, {}, { pending: [{ ...approval, question }] })
+  screen.getByTestId('interaction-list-item').focus()
+  await userEvent.tab()
+  expect(screen.getByTestId('interaction-question-heading')).toHaveFocus()
+  expect(screen.getByTestId('interaction-question-heading').textContent).toBe(question)
+  await userEvent.tab()
+  expect(screen.getByTestId('interaction-open-original')).toHaveFocus()
+})

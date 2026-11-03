@@ -204,9 +204,9 @@ export function RuntimeInteractionsPage({
               <div className="min-w-0 flex-1">
                 <h2
                   ref={heading}
-                  tabIndex={-1}
+                  tabIndex={0}
                   data-testid="interaction-question-heading"
-                  className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-base font-medium outline-none"
+                  className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
                 >
                   {row.question}
                 </h2>
