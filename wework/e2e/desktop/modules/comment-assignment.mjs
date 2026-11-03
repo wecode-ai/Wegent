@@ -21,8 +21,16 @@ export async function verifyCommentAssignment(control, { request, project, owner
   const body = `[$@${member.user_name}](wework-member://${member.id}) [$@${owner.user_name}](wework-member://${owner.id}) 请接手审核`
   await control.command('fill', editor, { value: body })
   await control.command('waitFor', `${selector}[data-value="${member.id}"]`)
-  await control.command('waitFor', send, { text: '发送并转派' })
+  await control.command('waitFor', send, { text: '发送' })
   await control.command('clickWhenEnabled', send)
+  await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+    text: '请接手审核',
+  })
+  const mentioned = await request(`/api/v1/loop-items/${issue.id}`)
+  assert.equal(mentioned.assignee_user_id, issue.assignee_user_id)
+  await control.command('waitFor', `${selector}[data-value="${member.id}"]`)
+  await control.command('click', selector)
+  await control.command('clickWhenEnabled', '[data-testid="task-comment-form-assignee-confirm"]')
   await control.command('waitFor', scoped('[data-testid="cloud-task-assignment-event-1"]'), {
     text: member.user_name,
   })
@@ -36,8 +44,7 @@ export async function verifyCommentAssignment(control, { request, project, owner
   // An empty comment can transfer ownership without creating another discussion.
   await control.command('click', selector)
   await control.command('click', `[data-testid="task-comment-form-assignee-option-${owner.id}"]`)
-  await control.command('waitFor', send, { text: '转派' })
-  await control.command('clickWhenEnabled', send)
+  await control.command('clickWhenEnabled', '[data-testid="task-comment-form-assignee-confirm"]')
   await control.command('waitFor', scoped('[data-testid="cloud-task-assignment-event-2"]'), {
     text: owner.user_name,
   })

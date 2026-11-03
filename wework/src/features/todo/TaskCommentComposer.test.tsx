@@ -51,7 +51,7 @@ function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {
 }
 
 describe('TaskCommentComposer', () => {
-  it('places the first mentioned assignee next to Send and allows assignment without text', async () => {
+  it('sends mentions without assigning and keeps the suggestion for explicit confirmation', async () => {
     const user = userEvent.setup()
     const assign = vi.fn().mockResolvedValue(undefined)
     const assignment = {
@@ -69,15 +69,20 @@ describe('TaskCommentComposer', () => {
     const send = screen.getByTestId('send-message-button')
     expect(select).toHaveAttribute('data-value', '1')
     expect(select.nextElementSibling).toBe(send)
-    expect(send).toHaveTextContent('发送并转派')
+    expect(send).toHaveTextContent('发送消息')
+    await user.click(send)
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalled())
+    expect(assign).not.toHaveBeenCalled()
+    rerender(<TaskCommentComposer {...props} value="" />)
+    expect(send).toBeDisabled()
+    expect(select).toHaveAttribute('data-value', '1')
     await user.click(select)
     await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
-    rerender(<TaskCommentComposer {...props} value="" />)
-    expect(send).toHaveTextContent('转派')
-    expect(send).toBeEnabled()
-    await user.click(send)
+    expect(assign).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('2'))
-    expect(props.onSubmit).not.toHaveBeenCalled()
+    expect(props.onSubmit).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
   })
 
   it.each([
@@ -93,7 +98,9 @@ describe('TaskCommentComposer', () => {
     await user.click(picker)
     await user.click(screen.getByTestId('task-comment-form-assignee-option-' + value))
     expect(picker).toHaveTextContent(label)
-    await user.click(screen.getByTestId('send-message-button'))
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    expect(assign).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
     await waitFor(() => expect(assign).toHaveBeenCalledWith(value))
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
@@ -101,6 +108,31 @@ describe('TaskCommentComposer', () => {
   it('hides assignment when the host does not grant permission', () => {
     setup()
     expect(screen.queryByTestId('task-comment-form-assignee')).not.toBeInTheDocument()
+  })
+
+  it('shows a failed confirmation inside the picker and retries without sending the draft', async () => {
+    const user = userEvent.setup()
+    const assign = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Version conflict'))
+      .mockResolvedValue(undefined)
+    const { props, input } = setup({
+      assignment: { options: [{ value: '2', label: 'User 2' }], assign },
+    })
+    await user.click(screen.getByTestId('task-comment-form-assignee'))
+    await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
+    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Version conflict')
+    expect(screen.getByTestId('task-comment-form-assignee-menu')).toContainElement(
+      screen.getByRole('alert')
+    )
+    expect(input).toHaveValue('Review this')
+    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
+    )
+    expect(props.onSubmit).not.toHaveBeenCalled()
+    expect(assign).toHaveBeenCalledTimes(2)
   })
 
   it('keeps execution settings collapsed without replacing the draft when toggled', async () => {

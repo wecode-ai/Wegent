@@ -129,10 +129,11 @@ describe("Web adapter for the desktop main composer", () => {
     expect(option).not.toBeNull();
     await act(async () => option.click());
     expect(selector.textContent).toContain(name);
+    expect(assign).not.toHaveBeenCalled();
     await act(async () =>
-      container
+      document
         .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]',
+          '[data-testid="collaboration-issue-comment-form-assignee-confirm"]',
         )!
         .click(),
     );

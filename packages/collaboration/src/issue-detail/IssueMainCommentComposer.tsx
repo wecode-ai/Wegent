@@ -83,13 +83,11 @@ export function IssueMainCommentComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   const transfer = useCommentAssignment(value, assignment, onSubmit);
   const blocked = disabled || sending || transfer.busy;
-  const canSend =
-    !blocked && !uploading && Boolean(value.trim() || transfer.target);
-  const sendLabel = transfer.target
-    ? translate(value.trim() ? "todo.send_and_assign" : "todo.assign_only")
-    : labels.send;
+  const inlineError = error || (!assignmentOpen ? transfer.error : null);
+  const canSend = !blocked && !uploading && Boolean(value.trim());
   const submit = (draft: string) => {
     if (canSend) void transfer.submit(draft);
   };
@@ -99,7 +97,7 @@ export function IssueMainCommentComposer({
       data-testid={testIds.form}
       canSend={canSend}
       onSubmit={() => submit(value)}
-      sendLabel={sendLabel}
+      sendLabel={labels.send}
       showSendLabel={Boolean(assignment)}
       sendTestId={testIds.send}
       before={attachments}
@@ -171,18 +169,31 @@ export function IssueMainCommentComposer({
               accessibleLabel={translate("todo.comment_assign_to")}
               value={transfer.target}
               onChange={transfer.setTarget}
+              open={assignmentOpen}
+              onOpenChange={setAssignmentOpen}
+              closeOnSelect={false}
               disabled={blocked}
               searchPlaceholder={translate("todo.search_assignee")}
               emptyLabel={translate("todo.no_matching_assignee")}
               className="task-detail-comment-assignee"
               triggerContent={
                 <>
-                  <span>{translate("todo.comment_assign_to")}</span>
-                  <span className="truncate">
-                    {transfer.options.find(
-                      (option) => option.value === transfer.target,
-                    )?.label ?? translate("todo.keep_assignee")}
+                  <span>
+                    {translate(
+                      transfer.target
+                        ? "todo.comment_assign_to"
+                        : "todo.assign_only",
+                    )}
                   </span>
+                  {transfer.target ? (
+                    <span className="truncate">
+                      {
+                        transfer.options.find(
+                          (option) => option.value === transfer.target,
+                        )?.label
+                      }
+                    </span>
+                  ) : null}
                   <ChevronDown className="h-4 w-4 shrink-0" />
                 </>
               }
@@ -190,6 +201,29 @@ export function IssueMainCommentComposer({
                 { value: "", label: translate("todo.keep_assignee") },
                 ...transfer.options,
               ]}
+              footer={
+                <>
+                  <button
+                    type="button"
+                    data-testid={`${testIds.form}-assignee-confirm`}
+                    disabled={!transfer.target || blocked || uploading}
+                    onClick={async () => {
+                      if (await transfer.confirm()) setAssignmentOpen(false);
+                    }}
+                    className="flex min-h-9 w-full items-center justify-center rounded-lg bg-text-primary px-3 py-2 text-sm text-background disabled:opacity-50"
+                  >
+                    {translate("todo.confirm_assignment")}
+                  </button>
+                  {transfer.error ? (
+                    <p
+                      role="alert"
+                      className="task-detail-comment-inline-error px-2"
+                    >
+                      {transfer.error}
+                    </p>
+                  ) : null}
+                </>
+              }
             />
           ) : null}
         </>
@@ -201,9 +235,9 @@ export function IssueMainCommentComposer({
               {settings}
             </div>
           ) : null}
-          {error || transfer.error ? (
+          {inlineError ? (
             <p role="alert" className="task-detail-comment-inline-error">
-              {transfer.error || error}
+              {inlineError}
             </p>
           ) : null}
         </>

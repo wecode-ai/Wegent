@@ -30,17 +30,20 @@ neither host may duplicate shared business views.
 The comment assignment menu shares the Issue property candidates and persistence
 flow: members, project bots, workspace Agents, Wegent Agents, and collaboration
 groups. Member eligibility and Viewer restrictions still apply. Keeping the
-current assignee does not change ownership. Empty comments can transfer ownership;
-nonempty comments are saved before assignment. Assignment failures retain the
-selection, and retrying after the draft clears does not duplicate the comment.
+current assignee does not change ownership. Mentions only suggest a target;
+sending a comment preserves ownership and keeps the suggestion. The existing
+search popover stages a target and requires its footer confirmation before
+persisting assignment. Sending always posts only the comment. Confirmation never
+posts an unsent draft or an empty comment; failures retain the selection and draft.
 
 Focused component tests cover target selection, saving with the latest Issue
 version, permissions, and send failure recovery. The existing
 `collaboration-shared-core` checkpoint adds real Electron coverage using its
 project and bot fixtures plus an isolated Issue and human-led group. It assigns
 the bot, group, and member through the comment menu, verifies real persisted
-fields and mutual exclusion after each transfer, checks that no empty comments
-were created, and removes the added Issue and group before returning to the
+fields and mutual exclusion after each transfer, checks that sending a mention
+or selecting a candidate never assigns automatically, and completes and archives
+the added Issue before removing its group and returning to the
 original Issue. Use the checkpoint environment and command below; only model
 services are simulated.
 
