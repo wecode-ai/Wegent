@@ -5447,7 +5447,10 @@ fn cdp_browser_mcp_config_overrides(
             ]),
             toml_value(auth_env_name)
         ),
-        format!("{key}.tool_timeout_sec=60"),
+        format!(
+            "{key}.tool_timeout_sec={}",
+            crate::browser_mcp::BROWSER_TOOL_TIMEOUT_SECONDS
+        ),
         format!(
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")

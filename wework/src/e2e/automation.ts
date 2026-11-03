@@ -88,6 +88,7 @@ import {
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { waitForDesktopHostEventDelivery } from './desktop-host-event-delivery'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
 import { RUNTIME_WORK_CHANGED_EVENT } from '@/desktop/runtimeWorkSync'
@@ -1987,7 +1988,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
     case 'getWindowBackgroundPolicy':
-      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.getWindowBackgroundPolicy', {
+          browserLabel: command.value || undefined,
+        })
+      )
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''
@@ -2092,6 +2097,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'waitForDesktopHostEvents':
+      return waitForDesktopHostEventDelivery(command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS)
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {

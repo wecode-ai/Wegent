@@ -835,11 +835,14 @@ export function createElectronCapabilityRouter(
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
-  router.register('e2e.getWindowBackgroundPolicy', () => {
+  router.register('e2e.getWindowBackgroundPolicy', params => {
     const target = requiredWindow(window)
+    const browserLabel = optionalStringParam(params, 'browserLabel')
     return {
       platform: process.platform,
-      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundThrottling: browserLabel
+        ? browser.backgroundThrottling(browserLabel)
+        : target.webContents.getBackgroundThrottling(),
       backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
         BACKGROUND_TIMER_THROTTLING_SWITCH
       ),
