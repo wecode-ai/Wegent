@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi, type MockInstance } from 'vitest'
 import { RuntimeSupervisor, terminateProcessTree } from './runtime-supervisor.js'
+import { temporaryDirectory } from './test-helpers.js'
 
 vi.mock('node:fs/promises', { spy: true })
 
@@ -212,6 +213,35 @@ describe('RuntimeSupervisor', () => {
     )
     await expect(supervisor.start()).rejects.toThrow('exited during startup')
     expect(probeSignal?.aborted).toBe(true)
+  })
+
+  test('persists the startup probe failure and redacts credentials before cleanup', async () => {
+    const directory = await temporaryDirectory('wework-startup-failure-')
+    const path = join(directory.path, 'runtime.log')
+    const supervisor = track(
+      new RuntimeSupervisor({
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        name: 'failed-readiness',
+        maxCrashes: 0,
+        log: { path },
+        probe: async () => {
+          throw new Error('HTTP readiness failed: HTTP 503 token=private-test-token')
+        },
+      })
+    )
+    try {
+      await expect(supervisor.start()).rejects.toThrow('HTTP readiness failed: HTTP 503')
+      await supervisor.stop()
+      const log = await readFile(path, 'utf8')
+      expect(log).toContain('[supervisor] startup failed: Error: HTTP readiness failed: HTTP 503')
+      expect(log).toContain('token=[REDACTED]')
+      expect(log).not.toContain('private-test-token')
+      expect(supervisor.pid()).toBeNull()
+    } finally {
+      await supervisor.stop()
+      await directory.remove()
+    }
   })
 
   test('rejects startup when the executable cannot be spawned', async () => {

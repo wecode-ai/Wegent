@@ -241,6 +241,59 @@ describe('DSH runtime readiness', () => {
     ).rejects.toThrow('DSH startup timed out')
   })
 
+  test('reports the last HTTP status and endpoint without exposing its query', async () => {
+    const endpoint = 'http://127.0.0.1:12345/pending'
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const pending = new DshRuntime({ url: `${endpoint}?token=private-test-token` })
+        .start(100)
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      const failure = await pending
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${endpoint}?token=private-test-token`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toBe(`DSH startup timed out: ${endpoint} (HTTP 503)`)
+      expect((failure as Error).message).not.toContain('private-test-token')
+      expect((failure as Error).cause).toEqual(new Error('DSH startup timed out'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test.each([
+    {
+      name: 'listening URL announcement',
+      url: 'http://127.0.0.1:0/',
+      script: 'setInterval(() => {}, 1000)',
+      env: { ...process.env },
+    },
+    {
+      name: 'browser authentication',
+      url: 'http://127.0.0.1:12345/',
+      script: 'setInterval(() => {}, 1000)',
+      env: { ...process.env, WEWORK_DSH_BROWSER_AUTH: '1' },
+    },
+  ])('identifies a timeout in $name', async ({ name, url, script, env }) => {
+    const runtime = new DshRuntime({
+      url,
+      command: process.execPath,
+      args: ['-e', script],
+      env,
+      startTimeoutMs: 100,
+    })
+    try {
+      await expect(runtime.start()).rejects.toThrow(`DSH ${name} failed: dsh-web startup timed out`)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   test('requires every configured Core DSH endpoint', async () => {
     const ready = new Set(['/host', '/executor'])
     const server = createServer((request, response) => {

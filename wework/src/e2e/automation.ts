@@ -2486,6 +2486,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'invokeDshPluginBackend': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        params?: Record<string, unknown>
+        plugin?: string
+      }
+      if (!input.plugin || !input.method) {
+        throw new Error('invokeDshPluginBackend requires plugin and method')
+      }
+      const host = window.__WEWORK_DSH_EXTENSIONS__
+      if (!host?.backend) throw new Error('The DSH plugin backend transport is unavailable')
+      const result = await host.backend
+        .scope(input.plugin)
+        .request(input.method, input.params ?? {})
+      return JSON.stringify(result ?? null)
+    }
     case 'storeLocalProxyUrl': {
       const config = saveLocalProxyUrl(command.value?.trim() ?? '')
       await flushDesktopLocalStoragePersistence()

@@ -8,6 +8,7 @@ export const HOST_CAPABILITIES = [
   'mcpApps.saveFile',
   'e2e.mcpAppFrame',
   'e2e.mcpAppDiscoveryFault',
+  'e2e.inlineVisualizationFrame',
   'app.getVersion',
   'app.quit',
   'app.relaunch',

@@ -362,6 +362,7 @@ export function resolveStandardCloudBoardDrop<
   groupBy,
   items,
   sourceColumnKey,
+  targetParentId,
 }: {
   activeItemId: string;
   beforeItemId: string | null;
@@ -371,6 +372,7 @@ export function resolveStandardCloudBoardDrop<
   groupBy: ProjectBoardGroupBy;
   items: T[];
   sourceColumnKey: string;
+  targetParentId?: string | null;
 }): StandardCloudBoardDrop | null {
   const sourceColumn = columns.find((column) => column.key === sourceColumnKey);
   const column = columns.find((column) => column.key === columnDropKey);
@@ -379,6 +381,7 @@ export function resolveStandardCloudBoardDrop<
     !sourceColumn ||
     !column ||
     !item ||
+    (targetParentId !== undefined && item.parent_id !== targetParentId) ||
     !matchesStandardCloudBoardColumn(item, sourceColumn, groupBy, extensions)
   )
     return null;
@@ -859,12 +862,14 @@ export function useStandardCloudBoardController<
       columnDropKey,
       sourceColumnKey,
       groupBy,
+      targetParentId,
     }: {
       activeItemId: string | null;
       beforeItemId: string | null;
       columnDropKey: string | null;
       sourceColumnKey: string | undefined;
       groupBy: ProjectBoardGroupBy | undefined;
+      targetParentId?: string | null;
     }) => {
       if (!activeItemId || !sourceColumnKey || groupBy !== boardState.groupBy)
         return;
@@ -877,6 +882,7 @@ export function useStandardCloudBoardController<
         groupBy: boardState.groupBy,
         items,
         sourceColumnKey,
+        targetParentId,
       });
       if (drop)
         moveItem(
@@ -890,10 +896,14 @@ export function useStandardCloudBoardController<
   );
 
   const getColumnItems = useCallback(
-    (column: ProjectBoardColumn, state: ProjectBoardStatePort) =>
+    (
+      column: ProjectBoardColumn,
+      state: ProjectBoardStatePort,
+      parentId = currentParentId,
+    ) =>
       filterStandardCloudBoardItems({
         column,
-        currentParentId,
+        currentParentId: parentId,
         extensions,
         items: view
           ? items.filter((item) => matchesBoardView(item, view))

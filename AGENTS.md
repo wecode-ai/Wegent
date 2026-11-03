@@ -126,6 +126,8 @@ Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may 
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
 DingTalk group chats and message delivery do not require real external E2E tests. Cover these behaviors with protocol-level integration tests and test doubles; do not require production or test-tenant group IDs, staff IDs, robot credentials, or real message delivery for this coverage.
 
+DingTalk document testing exception: CI may simulate external OAuth, MCP, and file downloads for document import and refresh without real accounts. Keep Wegent internals real except model services, and reuse existing suites and CI jobs. Reports and PR descriptions must label these as protocol integration tests and state that real DingTalk compatibility remains unverified.
+
 ```bash
 cd backend && uv run pytest
 cd executor && uv run pytest

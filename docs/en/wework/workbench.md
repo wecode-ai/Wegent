@@ -8,7 +8,7 @@ sidebar_position: 5
 
 macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
 
-The menu contains only unambiguous, genuinely useful items: Application (About, Settings, Services, Hide, Quit), Edit (undo, redo, cut, copy, paste, select all), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search tasks, toggle sidebar/side panel/terminal, toggle full screen, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools).
+The menu contains only unambiguous, genuinely useful items: Application (About, Settings, Services, Hide, Quit; About opens the in-app About page), Edit (undo, redo, cut, copy, paste, select all), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search tasks, toggle sidebar/side panel/terminal, toggle full screen, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools; report an issue opens the in-app feedback form).
 
 Menu items follow the current workbench state: when an action is not available on the current surface — for example there is no closable tab, or the active surface is not a task workspace — the item is hidden instead of remaining as a clickable entry that does nothing. Menu actions reuse the controls that already exist in the interface; they never introduce a second navigation path.
 

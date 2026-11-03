@@ -166,6 +166,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
   'stand-in-cli': './scenarios/stand-in-cli.scenario.mjs',
   'stand-in-plugin-bridge': './scenarios/stand-in-plugin-bridge.scenario.mjs',
+  'stand-in-alternate-source': './scenarios/stand-in-alternate-source.scenario.mjs',
   'stand-in-assignment-notifications': './scenarios/stand-in-assignment-suite.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
@@ -201,6 +202,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -218,6 +220,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
   'board-transcript-followup',
@@ -310,6 +313,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',
+  'stand-in-alternate-source',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',
