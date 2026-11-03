@@ -1,16 +1,63 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+import { runInNewContext } from 'node:vm'
+import { routeUpgradeRequests, upgradeTransportScript } from './upgrade-request-route.mjs'
 import { verifyUpgradeStartup } from './upgrade-startup-probe.mjs'
 
 const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+
+test('installs transport before whenReady consumers when the ready event follows resolution', async () => {
+  const app = new EventEmitter()
+  const ready = Promise.withResolvers()
+  let installed = false
+  let listener
+  app.isReady = () => false
+  app.whenReady = () => ready.promise
+  app.commandLine = { removeSwitch() {} }
+  app.relaunch = () => {}
+  const session = {
+    defaultSession: {
+      webRequest: {
+        onBeforeRequest(_filter, callback) {
+          installed = true
+          listener = callback
+        },
+      },
+    },
+  }
+  const process = {
+    argv: ['electron', '--inspect-brk=127.0.0.1:0', 'app'],
+    execArgv: [],
+    execPath: '/electron',
+    getBuiltinModule: () => ({ createRequire: () => () => ({ app, session }) }),
+  }
+  runInNewContext(upgradeTransportScript('http://127.0.0.1:8000', process.argv[1]), {
+    process,
+    console,
+  })
+  const request = app.whenReady().then(() => {
+    assert.equal(installed, true, 'The first ready-promise consumer must see its transport')
+    let redirect
+    listener(
+      {
+        url: 'https://github.com/wecode-ai/Wegent/releases/download/wework-updater/manifest.json',
+      },
+      result => (redirect = result.redirectURL)
+    )
+    assert.equal(redirect, 'http://127.0.0.1:8000/manifest.json')
+  })
+  // Electron resolves its ready promise before notifying ready-event observers.
+  ready.resolve()
+  await request
+  app.emit('ready')
+})
 
 // Observe the first native startup without introducing a diagnostic heartbeat.
 test(

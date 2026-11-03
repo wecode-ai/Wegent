@@ -20,9 +20,11 @@ export async function routeUpgradeRequests(child, origin, logPath) {
       console.error('[desktop-e2e-inspector] Cannot retain transport diagnostics:', error.code)
     }
   }
-  await inspectBeforeStart(
-    child,
-    `(() => {
+  await inspectBeforeStart(child, upgradeTransportScript(origin, pauseArgument), log)
+}
+
+export function upgradeTransportScript(origin, pauseArgument) {
+  return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
     const {app, session} = require('electron')
     const pauseArgument = ${JSON.stringify(pauseArgument)}
@@ -53,8 +55,8 @@ export async function routeUpgradeRequests(child, origin, logPath) {
         ${JSON.stringify(origin + '/')} + request.url.slice(${publishedBase.length})})
     )
     if (app.isReady()) install()
-    else app.once('ready', install)
-  })()`,
-    log
-  )
+    // Join the same promise before application code registers its first fetch.
+    // Electron can resolve it before notifying ready-event observers.
+    else app.whenReady().then(install)
+  })()`
 }
