@@ -99,6 +99,18 @@ test.each([
     'C:\\plugins\\github\\.agents\\plugins\\marketplace.json',
     'C:/plugins/github/.agents/plugins/marketplace.json',
   ],
+  [
+    '/tmp/github-marketplace/.claude-plugin/marketplace.json',
+    '/tmp/github-marketplace/.claude-plugin/marketplace.json',
+  ],
+  [
+    '/tmp/github-marketplace/.agents/plugins/api_marketplace.json',
+    '/tmp/github-marketplace/.agents/plugins/api_marketplace.json',
+  ],
+  [
+    'C:\\plugins\\github\\.agents\\plugins\\api_marketplace.json',
+    'C:/plugins/github/.agents/plugins/api_marketplace.json',
+  ],
 ])(
   'marketplace detail reads the supplied local source %s without a catalog cache',
   async (source, manifest) => {
