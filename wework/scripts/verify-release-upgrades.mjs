@@ -10,6 +10,7 @@ import {
 } from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
+  releaseUpgradeChannels,
   releaseUpgradePlan,
   upgradeSource,
   verifiedUpgradeEdge,
@@ -78,11 +79,7 @@ try {
     upgradeSource(published, release.version).sha256 !== release.sha256
   )
     throw new Error('A published release package is immutable across channels')
-  for (const targetChannel of sourceAssets
-    ? [channel]
-    : channel === 'stable'
-      ? ['stable', 'beta']
-      : ['beta'])
+  for (const targetChannel of releaseUpgradeChannels(channel, sourceVersion))
     await verifyChannel(catalogs, targetChannel)
 } finally {
   await rm(temporary, { recursive: true, force: true })
