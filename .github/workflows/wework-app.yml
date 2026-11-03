@@ -84,7 +84,7 @@ jobs:
       - name: Verify extraction boundaries on Windows
         run: |
           pnpm --dir wework/electron exec vitest run src/runtime/physical-release-files.test.ts src/runtime/immutable-directory.test.ts src/runtime/bundled-runtime-materializer.test.ts src/runtime/bundled-component-archive.test.ts src/runtime/legacy-prepared-source.test.ts src/runtime/release-layout-recovery.test.ts
-          pnpm --dir wework/electron exec node --test ../scripts/retained-source-ownership.test.mjs
+          pnpm --dir wework/electron exec node --test ../scripts/retained-source-ownership.test.mjs ../scripts/bundled-runtime-cache.test.mjs
       - name: Measure the delivered runtime archive
         env:
           GH_TOKEN: ${{ github.token }}

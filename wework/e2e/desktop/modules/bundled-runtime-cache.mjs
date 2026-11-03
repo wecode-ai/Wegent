@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
+
+const descriptorKey = runtime =>
+  JSON.stringify(
+    Object.fromEntries(Object.entries(runtime).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  )
 
 /** Different host releases can deliver exactly the same immutable runtime set. */
 async function bundledRuntimes(resourcesRoot) {
@@ -12,11 +17,7 @@ async function bundledRuntimes(resourcesRoot) {
   )
   return catalog.runtimes
     .filter(runtime => ['core', 'workbench'].includes(runtime.role))
-    .map(runtime =>
-      JSON.stringify(
-        Object.fromEntries(Object.entries(runtime).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      )
-    )
+    .map(descriptorKey)
     .sort()
     .map(runtime => JSON.parse(runtime))
 }
@@ -27,7 +28,7 @@ export async function bundledRuntimeCacheKey(resourcesRoot) {
 }
 
 /** Install immutable, delivered runtime bytes before preparing mutable source state. */
-export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot) {
+export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot, { reuseRoot } = {}) {
   const resourceRoot = join(resourcesRoot, 'harness-runtime')
   const runtimes = await bundledRuntimes(resourcesRoot)
   assert.deepEqual(new Set(runtimes.map(runtime => runtime.role)), new Set(['core', 'workbench']))
@@ -39,8 +40,17 @@ export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot) {
   await mkdir(runtimeRoot, { recursive: true })
   if (!ready)
     assert.equal((await readdir(runtimeRoot)).length, 0, 'A previous runtime installation failed')
+  const reusable = reuseRoot
+    ? JSON.parse(await readFile(join(reuseRoot, 'runtimes.json'), 'utf8')).runtimes
+    : []
+  assert.ok(Array.isArray(reusable), 'The reusable runtime catalog is invalid')
   const extracted = new Map()
   for (const runtime of runtimes) {
+    if (!ready && reuseRoot)
+      assert.ok(
+        reusable.some(candidate => descriptorKey(candidate) === descriptorKey(runtime)),
+        'The reusable runtime differs from the delivered source'
+      )
     assert.match(runtime.sourceFingerprint, /^[0-9a-f]{64}$/)
     assert.match(runtime.archiveSha256, /^[0-9a-f]{64}$/)
     assert.ok(Number.isSafeInteger(runtime.archiveBytes) && runtime.archiveBytes > 0)
@@ -54,8 +64,14 @@ export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot) {
       assert.equal((await stat(archive)).size, runtime.archiveBytes)
       assert.equal(await hashReleaseAsset(archive), runtime.archiveSha256)
       if (!ready) {
-        await mkdir(destination)
-        await extractRuntimeArchive(archive, destination)
+        if (reuseRoot) {
+          const content = await realpath(join(reuseRoot, runtime.sourceFingerprint))
+          await assertRuntimeIdentity(content, runtime)
+          await symlink(content, destination, process.platform === 'win32' ? 'junction' : 'dir')
+        } else {
+          await mkdir(destination)
+          await extractRuntimeArchive(archive, destination)
+        }
       }
       extracted.set(runtime.sourceFingerprint, runtime.archiveSha256)
     }

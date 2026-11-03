@@ -129,6 +129,11 @@ removing the temporary host and private catalog. Source catalogs never gain futu
 target roles. Real UI upgrades still download, extract, and verify the delivered
 target bytes. Preparation, cleanup, and aggregation all count toward the complete
 execution budget.
+When complete runtime descriptors match, the source verifies its own archive
+before reusing the prepared target programs and writes only its delivered roles
+to its private catalog. Removing the target's private catalog preserves those
+program links. A selected source's failed checkpoint process must fail its job,
+rather than merely record the failure and exit successfully.
 
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded

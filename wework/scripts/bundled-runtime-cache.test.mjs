@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -123,6 +123,62 @@ test('reuses immutable files across checkpoints while keeping catalogs and clean
     runtimes
   )
 })
+
+test('reuses exact target programs after temporary catalog cleanup without adding target-only roles', async t => {
+  const { root, resources, cache, runtimes } = await fixture(t)
+  await prepareBundledRuntimeCache(resources, cache)
+  const temporary = join(root, 'target-private-catalog')
+  await linkBundledRuntimeCache(cache, temporary)
+  await writeFile(
+    join(temporary, 'runtimes.json'),
+    JSON.stringify({
+      runtimes: [
+        ...runtimes,
+        { ...runtimes[1], dshVersion: '0.5.0', sourceFingerprint: 'b'.repeat(64) },
+      ],
+    })
+  )
+  const source = join(root, 'source-catalog')
+  await prepareBundledRuntimeCache(resources, source, { reuseRoot: temporary })
+  await rm(temporary, { recursive: true, force: true })
+  assert.equal(
+    await realpath(join(source, runtimes[0].sourceFingerprint)),
+    await realpath(join(cache, runtimes[0].sourceFingerprint))
+  )
+  assert.equal(
+    await readFile(join(source, runtimes[0].sourceFingerprint, 'module.js'), 'utf8'),
+    'export const value = 42\n'
+  )
+  assert.deepEqual(
+    JSON.parse(await readFile(join(source, 'runtimes.json'), 'utf8')).runtimes,
+    runtimes
+  )
+})
+
+test('reusing target programs still rejects a corrupt source archive', async t => {
+  const { root, resources, cache, archive } = await fixture(t)
+  await prepareBundledRuntimeCache(resources, cache)
+  const bytes = await readFile(archive)
+  bytes[bytes.length - 1] ^= 1
+  await writeFile(archive, bytes)
+  await assert.rejects(
+    prepareBundledRuntimeCache(resources, join(root, 'source-catalog'), { reuseRoot: cache })
+  )
+})
+
+for (const mismatch of ['archiveSha256', 'role']) {
+  test(`rejects a reusable target with a different ${mismatch}`, async t => {
+    const { root, resources, cache, runtimes } = await fixture(t)
+    await prepareBundledRuntimeCache(resources, cache)
+    const changed = runtimes.map(runtime => ({ ...runtime }))
+    changed[1][mismatch] = mismatch === 'role' ? 'unknown' : 'b'.repeat(64)
+    await writeFile(join(cache, 'runtimes.json'), JSON.stringify({ runtimes: changed }))
+    await assert.rejects(
+      prepareBundledRuntimeCache(resources, join(root, 'source-catalog'), { reuseRoot: cache }),
+      /reusable runtime differs/
+    )
+  })
+}
 
 test('a warmed cache does not bypass verification of the delivered archive', async t => {
   const { resources, cache, archive } = await fixture(t)

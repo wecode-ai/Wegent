@@ -4,24 +4,11 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { readPrebuiltDesktopRelease } from './published-desktop-release.mjs'
 import { upgradeUserEnvironment } from '../../e2e/desktop/modules/upgrade-user-environment.mjs'
 
 /** Prepare immutable programs with the delivered target while source inputs load. */
-export async function preparePackagedRuntimeCache({
-  assetsDirectory,
-  release,
-  directory,
-  immutableRoot,
-}) {
+export async function preparePackagedRuntimeCache({ target, directory, immutableRoot }) {
   const started = performance.now()
-  const target = await readPrebuiltDesktopRelease({
-    directory: assetsDirectory,
-    version: release.version,
-    platform: release.platform,
-    arch: release.arch,
-    installation: join(directory, 'target'),
-  })
   const module = pathToFileURL(
     join(target.resources, 'app.asar/dist/runtime/bundled-runtime-materializer.js')
   ).href
@@ -63,4 +50,5 @@ for (const runtime of runtimes.filter(item => ['core', 'workbench'].includes(ite
       elapsedMs: Math.round(performance.now() - started),
     })
   )
+  return catalog
 }

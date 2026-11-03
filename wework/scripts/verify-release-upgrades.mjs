@@ -27,6 +27,7 @@ import {
   UPGRADE_CHECKPOINT_GROUP,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   UPGRADE_SUITE_VERSION,
+  rejectFailedReleaseCheckpoint,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -232,17 +233,22 @@ async function downloadSource(source, targetChannel) {
   }
 }
 
-async function prepareSourceInputs(source, targetChannel, previous) {
+async function downloadSourceInputs(source, targetChannel, previous) {
   const from = await downloadSource(source, targetChannel)
   // Only the broken legacy selector can leave a newer, unstarted activation
   // while continuing to run A. Modern selectors correctly start that package.
   if (previous && source.version !== previous.version && usesLegacyReleaseLayout(source.version))
     from.installedSource = await downloadSource(previous, targetChannel)
-  // Finish shared immutable installation before workers read it. All mutable
-  // catalogs, profiles and release slots still belong to individual checkpoints.
-  for (const installed of [from, from.installedSource].filter(Boolean))
-    await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache)
   return from
+}
+
+async function prepareSourcePrograms(from, target, targetPrograms) {
+  const targetKey = await bundledRuntimeCacheKey(target.resources)
+  for (const installed of [from, from.installedSource].filter(Boolean)) {
+    const matches = (await bundledRuntimeCacheKey(installed.resources)) === targetKey
+    const reuseRoot = matches ? await targetPrograms : undefined
+    await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache, { reuseRoot })
+  }
 }
 
 async function verifySource(source, targetChannel, previous) {
@@ -254,15 +260,29 @@ async function verifySource(source, targetChannel, previous) {
     prefix: 'wework-upgrade-inputs-',
     builds: [
       directory =>
-        preparePackagedRuntimeCache({
-          assetsDirectory: assets,
-          release,
-          directory,
-          immutableRoot: immutableRuntimeCache,
+        readPrebuiltDesktopRelease({
+          directory: assets,
+          version: release.version,
+          platform,
+          arch,
+          installation: join(directory, 'target'),
         }),
-      () => prepareSourceInputs(source, targetChannel, previous),
+      () => downloadSourceInputs(source, targetChannel, previous),
     ],
-    consume: ([, prepared]) => prepared,
+    consume: async ([target, prepared], directory) => {
+      const targetPrograms = preparePackagedRuntimeCache({
+        target,
+        directory,
+        immutableRoot: immutableRuntimeCache,
+      })
+      const results = await Promise.allSettled([
+        targetPrograms,
+        prepareSourcePrograms(prepared, target, targetPrograms),
+      ])
+      const failed = results.find(result => result.status === 'rejected')
+      if (failed) throw failed.reason
+      return prepared
+    },
   })
   const directory = dirname(from.path)
   const pairPath = join(directory, 'pair.json')
@@ -281,7 +301,7 @@ async function verifySource(source, targetChannel, previous) {
       to: { ...release, path: join(assets, release.name) },
     })
   )
-  const passed = await run({
+  await run({
     WEWORK_E2E_APP_BIN: from.executable,
     WEWORK_E2E_EXECUTOR_BIN: from.executor,
     WEWORK_E2E_UPGRADE_PAIR: pairPath,
@@ -290,7 +310,6 @@ async function verifySource(source, targetChannel, previous) {
     WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
     WEWORK_E2E_RESULT_ROOT: join(diagnostics, targetChannel, source.version),
   })
-  if (!passed) return null
   if (diagnosticCheckpoint) return true
   const evidenceBytes = await readFile(evidenceFile)
   const edge = verifiedUpgradeEdge({
@@ -339,7 +358,14 @@ async function run(environment) {
     child.once('error', reject)
     child.once('exit', (code, signal) => {
       if (signal) reject(new Error(`Upgrade verification interrupted by ${signal}`))
-      else accept(code === 0)
+      else {
+        try {
+          rejectFailedReleaseCheckpoint(diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP, { code })
+          accept(true)
+        } catch (error) {
+          reject(error)
+        }
+      }
     })
   })
 }
