@@ -325,6 +325,43 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(1)
   })
 
+  test('reuses a restored pending-route tab before repurposing the canonical tab', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'pending-interactions',
+        tabs: [
+          {
+            id: 'pending-interactions',
+            kind: 'auxiliary',
+            title: '站点',
+            contentRoute: '/sites',
+            fixed: false,
+          },
+          {
+            id: 'restored-inbox',
+            kind: 'auxiliary',
+            title: '待你处理',
+            contentRoute: '/pending-interactions?interaction=review',
+            fixed: false,
+          },
+        ],
+      })
+    )
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/sites')
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(screen.getByTestId('workspace-tab-select-restored-inbox')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      '站点'
+    )
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
   test('hides pending interactions when auxiliary tabs are unavailable', async () => {
     const user = userEvent.setup()
     renderStrip('', ['task'])

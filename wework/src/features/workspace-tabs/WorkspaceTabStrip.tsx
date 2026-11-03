@@ -18,9 +18,9 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   INTERACTIONS_PATH,
-  INTERACTIONS_TAB_ID,
   useRuntimeInteractions,
 } from '@/features/notifications/RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from '@/features/notifications/runtimeInteractionsNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import {
@@ -585,17 +585,10 @@ export function WorkspaceTabStrip({
                   role="menuitem"
                   data-testid="workspace-tab-add-pending-interactions"
                   onClick={() => {
-                    const destination = {
-                      title: t('interactions.title', '待你处理'),
-                      contentRoute: INTERACTIONS_PATH,
-                    }
-                    const existing = tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
-                    if (existing) selectTab(existing.id, destination)
-                    else
-                      openTab('auxiliary', {
-                        id: INTERACTIONS_TAB_ID,
-                        ...destination,
-                      })
+                    openRuntimeInteractionsTab(
+                      { tabs, selectTab, openTab },
+                      t('interactions.title', '待你处理')
+                    )
                     setAddMenuPosition(null)
                   }}
                   className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"

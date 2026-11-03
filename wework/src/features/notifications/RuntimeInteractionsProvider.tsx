@@ -27,11 +27,11 @@ import {
 } from './runtimeInteractions'
 import {
   INTERACTIONS_PATH,
-  INTERACTIONS_TAB_ID,
   RuntimeInteractionsContext,
   type InteractionHistory,
   type RuntimeInteractionsValue,
 } from './RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from './runtimeInteractionsNavigation'
 import { createStandInRecordStore } from './standInNotificationStorage'
 import {
   readActiveNotificationPreferences,
@@ -519,14 +519,7 @@ function RuntimeInteractionsState({
   const open = useCallback(
     (id?: string) => {
       const contentRoute = `${INTERACTIONS_PATH}${id ? `?${new URLSearchParams({ interaction: id })}` : ''}`
-      const existing = tabs.tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
-      if (existing) tabs.selectTab(existing.id, { contentRoute })
-      else
-        tabs.openTab('auxiliary', {
-          id: INTERACTIONS_TAB_ID,
-          title: t('interactions.title'),
-          contentRoute,
-        })
+      openRuntimeInteractionsTab(tabs, t('interactions.title'), contentRoute)
       setNoticeIds(current => (id ? current.filter(value => value !== id) : []))
     },
     [tabs, t]
