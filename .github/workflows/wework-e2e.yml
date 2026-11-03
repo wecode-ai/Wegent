@@ -757,7 +757,9 @@ jobs:
             $env:WEWORK_E2E_EXECUTOR_BIN,
             $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
-            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-core-plugins.tar.gz"),
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-app-static.tar.gz"),
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins.tar.gz")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
               Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |

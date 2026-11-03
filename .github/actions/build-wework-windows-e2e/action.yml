@@ -93,7 +93,9 @@ runs:
         test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
         test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
         test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
-        test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+        test -s wework/electron/release/WeWork-win32-x64/resources/wework-core-plugins.tar.gz
+        test -s wework/electron/release/WeWork-win32-x64/resources/wework-app-static.tar.gz
+        test -s wework/electron/release/WeWork-win32-x64/resources/bundled-plugins.tar.gz
         test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
         test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
         test -f wework/electron/release/WeWork-win32-x64/resources/components.json

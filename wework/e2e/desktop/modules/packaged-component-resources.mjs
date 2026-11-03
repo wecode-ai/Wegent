@@ -22,10 +22,10 @@ export async function packagedComponentRoots({ appBinary, resourcesRoot, compone
     `
 import { materializeBundledComponentArchive } from ${JSON.stringify(module)}
 import { join } from 'node:path'
-const roots = await Promise.all(${JSON.stringify(archived)}.map(async ([id, component]) => [
+const roots = await Promise.all(${JSON.stringify(archived)}.map(async ([id, component], index) => [
   id,
   await materializeBundledComponentArchive(
-    ${JSON.stringify(resourcesRoot)}, join(${JSON.stringify(resultDir)}, 'package-components', id), component.archive, component.sha256
+    ${JSON.stringify(resourcesRoot)}, join(${JSON.stringify(resultDir)}, 'package-components', String(index)), component.archive, component.sha256
   )
 ]))
 console.log(JSON.stringify(Object.fromEntries(roots)))

@@ -325,7 +325,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
     )
-    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('corePluginsRoot: componentRoots.weworkCorePlugins')
+    expect(source).toContain('await packagedComponentRoots(')
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })

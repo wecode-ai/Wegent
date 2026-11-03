@@ -289,3 +289,19 @@ test("source runners consume one frozen plan and complete aggregation gates publ
   );
   assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
 });
+
+test("lightweight host updates reject both loose component trees and sealed archives", () => {
+  const step = jobs.build.steps.find(
+    (step) => step.name === "Verify componentized macOS update package",
+  );
+  const pattern = new RegExp(step.run.match(/grep -Eq '([^']+)'/)[1]);
+  for (const entry of [
+    "WeWork.app/Contents/Resources/bin/wegent-executor",
+    "WeWork.app/Contents/Resources/wework-core-plugins/wework-app/package.json",
+    "WeWork.app/Contents/Resources/wework-core-plugins.tar.gz",
+    "WeWork.app/Contents/Resources/wework-app-static.tar.gz",
+    "WeWork.app/Contents/Resources/bundled-plugins.tar.gz",
+  ])
+    assert.match(entry, pattern);
+  assert.doesNotMatch("WeWork.app/Contents/Resources/icons/icon.png", pattern);
+});
