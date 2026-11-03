@@ -215,6 +215,7 @@ export class ElectronTrayManager<
   private state: TrayMenuState = EMPTY_STATE
   private nativeStatus: TrayNativeStatus | null = null
   private appliedTooltip: string | null = null
+  private tooltipAppliedAt = Number.NEGATIVE_INFINITY
   private menuTemplate: TrayMenuTemplateItem[] = []
   private menuActions = new Map<string, TrayAction>()
 
@@ -291,12 +292,16 @@ export class ElectronTrayManager<
     this.rebuildMenu(state)
     tray.setContextMenu(this.dependencies.buildMenu(this.menuTemplate))
     const tooltip = state.usageTooltip?.trim() || this.defaultTooltip
-    // Menu-only refreshes must not repeat the synchronous Windows shell call.
-    if (tooltip !== this.appliedTooltip) {
+    // Explorer recreates the icon without its tooltip after a taskbar restart.
+    // Reapply through existing status refreshes, at most once a minute when unchanged.
+    const tooltipExpired =
+      this.platform === 'win32' && performance.now() - this.tooltipAppliedAt >= 60_000
+    if (tooltip !== this.appliedTooltip || tooltipExpired) {
       const startedAt = performance.now()
       tray.setToolTip(tooltip)
       this.appliedTooltip = tooltip
-      const elapsedMs = Math.round(performance.now() - startedAt)
+      this.tooltipAppliedAt = performance.now()
+      const elapsedMs = Math.round(this.tooltipAppliedAt - startedAt)
       if (elapsedMs >= 1000) console.warn('[tray] Native tooltip update was slow', { elapsedMs })
     }
     if (this.platform === 'darwin' && tray.setTitle) {

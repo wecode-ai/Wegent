@@ -336,6 +336,37 @@ describe('ElectronTrayManager', () => {
     expect(tray.setToolTip).toHaveBeenLastCalledWith('WeWork')
   })
 
+  test('restores an unchanged Windows tooltip through bounded periodic refreshes', () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
+    try {
+      const { manager, tray } = setup('win32')
+      manager.create()
+      clock.mockReturnValue(59_999)
+      manager.setNativeStatus({
+        usageTitle: null,
+        usageTooltip: null,
+        runningCount: 0,
+        showRunningStatus: true,
+      })
+      expect(tray.setToolTip).toHaveBeenCalledExactlyOnceWith('WeWork')
+
+      clock.mockReturnValue(60_000)
+      manager.setNativeStatus({
+        usageTitle: null,
+        usageTooltip: null,
+        runningCount: 0,
+        showRunningStatus: true,
+      })
+      expect(tray.setToolTip).toHaveBeenCalledTimes(2)
+      expect(tray.setToolTip).toHaveBeenLastCalledWith('WeWork')
+      clock.mockReturnValue(60_001)
+      manager.setState(state({ usageTooltip: null }))
+      expect(tray.setToolTip).toHaveBeenCalledTimes(2)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   test('returns a serializable snapshot without native menus or click functions', () => {
     const { manager } = setup()
     manager.setState(
