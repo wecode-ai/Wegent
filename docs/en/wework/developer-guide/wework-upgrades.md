@@ -217,7 +217,7 @@ Upload immutable target assets and evidence before promoting rolling manifests. 
 
 Beta may import a Stable source only after verifying a new edge under Beta, without copying Stable's edges. Bind evidence to the channel and require an immutable package hash across channels. Stable catalogs reject Beta nodes and Beta minimum versions. Rollback restores the previous healthy local release rather than selecting an older release from the published catalog.
 
-After fixing a test driver, reuse unexpired signed artifacts from a run whose four platform builds all succeeded:
+After fixing a test driver, a non-publishing replay can reuse unexpired signed artifacts from a run whose macOS arm64 and Windows x64 builds both succeeded. A failed macOS x64 or Linux build does not block verification of these two platforms. Each verified platform still requires exactly one successful producer and valid provenance, version, artifact digest, and package hashes. Ordinary dry runs and publication still require all four producers to succeed:
 
 ```bash
 gh workflow run wework-app.yml --ref <test-driver-branch> -f verification_run_id=<original-build-run-id> -f publish_release=false

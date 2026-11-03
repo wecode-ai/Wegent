@@ -50,6 +50,62 @@ test("reuses successful producers even when an earlier test driver failed", () =
   });
 });
 
+test("non-publishing replay only requires the producers whose packages it verifies", () => {
+  const value = fixture();
+  value.run.conclusion = "failure";
+  for (const job of value.jobs) {
+    if (["Build macOS x64", "Build Linux x64"].includes(job.name))
+      job.conclusion = "failure";
+  }
+  assert.equal(
+    resolveUpgradeInputs(value.environment, value.execute).version,
+    "0.6.4-beta.4",
+  );
+});
+
+for (const platform of ["macOS arm64", "Windows x64"]) {
+  test(`replay still requires exactly one successful ${platform} producer`, () => {
+    for (const failure of [
+      "failure",
+      "cancelled",
+      "pending",
+      "missing",
+      "duplicate",
+    ]) {
+      const value = fixture();
+      const job = value.jobs.find((item) => item.name === `Build ${platform}`);
+      if (failure === "missing") value.jobs.splice(value.jobs.indexOf(job), 1);
+      else if (failure === "duplicate") value.jobs.push({ ...job });
+      else job.conclusion = failure === "pending" ? null : failure;
+      assert.throws(
+        () => resolveUpgradeInputs(value.environment, value.execute),
+        new RegExp(`Source producer did not succeed: ${platform}`),
+      );
+    }
+  });
+}
+
+test("normal dry runs and publication still require all four producers", () => {
+  for (const platform of [
+    "macOS arm64",
+    "macOS x64",
+    "Windows x64",
+    "Linux x64",
+  ]) {
+    for (const publish of ["false", "true"]) {
+      const value = fixture();
+      value.environment.REPLAY = "false";
+      value.environment.PUBLISH_RELEASE = publish;
+      value.jobs.find((job) => job.name === `Build ${platform}`).conclusion =
+        "failure";
+      assert.throws(
+        () => resolveUpgradeInputs(value.environment, value.execute),
+        new RegExp(`Source producer did not succeed: ${platform}`),
+      );
+    }
+  }
+});
+
 test("selects a matching immutable published target only for a replay", () => {
   const value = fixture();
   value.environment.PUBLISHED_RELEASE_TAG = "wework-v0.6.4-beta.4";

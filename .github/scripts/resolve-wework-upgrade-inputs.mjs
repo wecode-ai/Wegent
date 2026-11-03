@@ -51,12 +51,11 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const jobs = api(`${base}/jobs?filter=latest&per_page=100`, true).flatMap(
     (page) => page.jobs,
   );
-  for (const platform of [
-    "macOS arm64",
-    "macOS x64",
-    "Windows x64",
-    "Linux x64",
-  ]) {
+  // Replays cannot publish and consume only these two platforms' immutable inputs.
+  // Ordinary dry runs and releases retain the complete producer gate.
+  const platforms = ["macOS arm64", "Windows x64"];
+  if (environment.REPLAY !== "true") platforms.push("macOS x64", "Linux x64");
+  for (const platform of platforms) {
     const matches = jobs.filter((job) => job.name === `Build ${platform}`);
     if (matches.length !== 1 || matches[0].conclusion !== "success")
       throw new Error(`Source producer did not succeed: ${platform}`);
