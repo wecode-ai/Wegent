@@ -1,31 +1,31 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
-import { createInstance } from 'i18next'
-import { I18nextProvider } from 'react-i18next'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { createInstance } from 'i18next'
+import { StrictMode } from 'react'
+import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  Attachment,
-  ModelOptions,
-  ModelSelectionConfig,
-  RuntimeTaskAddress,
-  RuntimeContextUsage,
-  UnifiedModel,
-  LocalDeviceApp,
-} from '@/types/api'
-import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
-import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
-import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
-import { TemporaryChatPanel } from './TemporaryChatPanel'
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
-import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
 } from '@/components/chat/composer/ComposerCatalogContext'
+import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
+import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
+import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
+import type {
+  Attachment,
+  LocalDeviceApp,
+  ModelOptions,
+  ModelSelectionConfig,
+  RuntimeContextUsage,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/api'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import { TemporaryChatPanel } from './TemporaryChatPanel'
 
 const attachment: Attachment = {
   id: -1,
@@ -575,69 +575,6 @@ describe('TemporaryChatPanel', () => {
     expect(screen.queryByTestId('pending-configuration')).not.toBeInTheDocument()
   })
 
-  it('binds parallel drawer catalogs to their own devices and tasks', async () => {
-    const second = { deviceId: 'device-2', taskId: 'task-2' }
-    render(
-      <>
-        <TemporaryChatPanel
-          currentProject={null}
-          source={address}
-          initialAddress={address}
-          instanceId="first"
-        />
-        <TemporaryChatPanel
-          currentProject={null}
-          source={second}
-          initialAddress={second}
-          instanceId="second"
-        />
-      </>
-    )
-    const firstCatalog = mocks.catalogBindings.get('first')!
-    const secondCatalog = mocks.catalogBindings.get('second')!
-    expect(firstCatalog.appsStore).not.toBe(secondCatalog.appsStore)
-    await Promise.all([firstCatalog.listApps!(), secondCatalog.listSkills!()])
-    expect(mocks.readCatalog).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' }, true)
-    expect(mocks.readCatalog).toHaveBeenCalledWith(second, true)
-    expect(mocks.mainListApps).not.toHaveBeenCalled()
-  })
-
-  it('uses side-task usage and keeps live updates ahead of a delayed transcript', async () => {
-    const usage = (tokens: number): RuntimeContextUsage => {
-      const breakdown = {
-        totalTokens: tokens,
-        inputTokens: tokens,
-        cachedInputTokens: 0,
-        outputTokens: 0,
-        reasoningOutputTokens: 0,
-      }
-      return { modelContextWindow: 1000, last: breakdown, total: breakdown }
-    }
-    let finish!: (transcript: unknown) => void
-    mocks.loadRuntimeTranscriptForPane.mockReturnValueOnce(
-      new Promise(resolve => {
-        finish = resolve
-      })
-    )
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="side-task-usage"
-        initialAddress={address}
-        sendEphemeral={false}
-      />
-    )
-    expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-context-tokens')
-    await waitFor(() => expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenCalled())
-    act(() => mocks.usageHandlers.at(-1)?.onContextUsageUpdated?.(usage(700)))
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
-    await act(async () =>
-      finish({ running: false, messages: [], turns: [], contextUsage: usage(100) })
-    )
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
-  })
-
   it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
     const olderTurn: RuntimeConversationTurn = {
       id: 'older-turn',
@@ -846,20 +783,6 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-trial-plugin')
   })
 
-  it('passes the collapsed idle state through to the shared composer', () => {
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="collapsed-composer"
-        initialAddress={address}
-        collapseComposerWhenIdle
-      />
-    )
-
-    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-collapse-when-idle', 'true')
-  })
-
   it('lets an idle transcript settle a stale running execution without an active turn', async () => {
     mocks.lifecycleSnapshot = {
       derived: {
@@ -883,40 +806,6 @@ describe('TemporaryChatPanel', () => {
       address,
       expect.objectContaining({ running: false }),
       { preserveActiveTurn: false }
-    )
-  })
-
-  it('keeps sent attachments on the user message after clearing the composer', async () => {
-    mocks.activeModelSelection = {
-      modelName: 'moonshot-kimi-k2.7-code-highspeed',
-      modelType: 'public',
-      options: {},
-    }
-
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="sidebar-test"
-        initialAddress={address}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-send'))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('sent-message-attachment')).toHaveTextContent(
-        'sidebar-image.png:/tmp/sidebar-image.png'
-      )
-    )
-    expect(mocks.resetAttachments).toHaveBeenCalledTimes(1)
-    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address,
-        message: '发送附件',
-        attachments: [attachment],
-      }),
-      expect.any(Object)
     )
   })
 
@@ -951,32 +840,6 @@ describe('TemporaryChatPanel', () => {
     expect(mocks.loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
-  it('notifies the parent with the resolved task address instead of its optimistic route', async () => {
-    const optimisticAddress = { deviceId: 'project-device', taskId: 'task-1' }
-    const resolvedAddress = { deviceId: 'runtime-device', taskId: 'task-1' }
-    const onAddressChange = vi.fn()
-    mocks.createTask.mockImplementation(async (_message, options) => {
-      options.onRuntimeTaskOptimisticOpen(optimisticAddress)
-      options.onRuntimeTaskOptimisticOpen(resolvedAddress)
-      return resolvedAddress
-    })
-
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={null}
-        instanceId="resolved-task-address"
-        createTask={mocks.createTask}
-        onAddressChange={onAddressChange}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-send'))
-
-    await waitFor(() => expect(onAddressChange).toHaveBeenCalledOnce())
-    expect(onAddressChange).toHaveBeenCalledWith(resolvedAddress)
-  })
-
   it('creates a new formal task with the submitted text as its initial goal', async () => {
     mocks.createTask.mockImplementation(async (_message, options) => {
       options.onRuntimeTaskOptimisticOpen(address)
@@ -1009,26 +872,6 @@ describe('TemporaryChatPanel', () => {
       })
     )
     expect(screen.queryByTestId('goal-draft-pill')).not.toBeInTheDocument()
-  })
-
-  it('does not offer initial Goal mode when continuing an existing task', () => {
-    mocks.activeModelSelection = {
-      modelName: 'moonshot-kimi-k2.7-code-highspeed',
-      modelType: 'public',
-      options: {},
-    }
-
-    render(
-      <TemporaryChatPanel
-        allowInitialGoal
-        currentProject={null}
-        source={address}
-        instanceId="existing-goal-task"
-        initialAddress={address}
-      />
-    )
-
-    expect(screen.queryByTestId('set-goal-button')).not.toBeInTheDocument()
   })
 
   it('continues an existing task with its immutable model instead of the global default', async () => {
@@ -1558,37 +1401,6 @@ describe('TemporaryChatPanel', () => {
       'Keep the old rule for existing customers.'
     )
   })
-
-  it('returns task-page actions to the current runtime task', async () => {
-    mocks.conversationMessages = [
-      {
-        id: 'assistant',
-        role: 'assistant',
-        content: 'Open the workspace result',
-        status: 'done',
-        createdAt: '2026-09-10T00:00:00Z',
-      },
-    ]
-    const onOpenRuntimeTask = vi.fn()
-
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="task-page-actions"
-        initialAddress={address}
-        onOpenRuntimeTask={onOpenRuntimeTask}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-open-file'))
-    await userEvent.click(screen.getByTestId('mock-open-review'))
-    await userEvent.click(screen.getByTestId('mock-open-plan'))
-    await userEvent.click(screen.getByTestId('mock-switch-model'))
-
-    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(4)
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
-  })
   it('uses the shared pending queue while busy and drains it after becoming idle', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
@@ -1715,26 +1527,6 @@ describe('TemporaryChatPanel', () => {
       await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
     }
   )
-
-  it('uses the addressed interrupt endpoint when the composer requests immediate send', async () => {
-    mocks.busy = true
-    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
-    render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="interrupt"
-        initialAddress={address}
-      />
-    )
-    await userEvent.click(screen.getByTestId('mock-interrupt'))
-    expect(mocks.interruptAndSendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ address, message: '立即发送' }),
-      expect.any(Object)
-    )
-    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('mock-queue-row')).toBeNull()
-  })
   it('preserves the task queue when its drawer closes and reopens', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

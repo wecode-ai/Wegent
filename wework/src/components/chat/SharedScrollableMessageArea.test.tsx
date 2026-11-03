@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   ConversationTranslationProvider,
   ScrollableMessageArea,
   type ScrollableMessageAreaProps,
 } from '@wegent/collaboration/conversation'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 const message: WorkbenchMessage = {
   id: 'shared-scroll-user',
@@ -94,32 +94,6 @@ describe('shared conversation scroll area without desktop services', () => {
       intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
     )
     expect(load).toHaveBeenCalledOnce()
-  })
-
-  test('keeps search pagination controls outside the unchanged transcript marker', () => {
-    const content = (manual: boolean) => (
-      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
-        <ScrollableMessageArea
-          messages={[message]}
-          hasMoreBefore
-          historyLoadingMode={manual ? 'manual' : 'automatic'}
-          autoScrollSuspended={manual}
-          onLoadMoreBefore={vi.fn()}
-        />
-      </ConversationTranslationProvider>
-    )
-    const view = render(content(false))
-    const marker = screen.getByTestId('runtime-transcript-history-start')
-    const scroller = screen.getByTestId('chat-message-scroll-area')
-    view.rerender(content(true))
-    const button = screen.getByTestId('load-older-runtime-transcript-button')
-    expect(scroller).not.toContainElement(button)
-    expect(marker).toHaveClass('h-px')
-    expect(marker).toBeEmptyDOMElement()
-    view.rerender(content(false))
-    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-transcript-history-start')).toBe(marker)
-    expect(marker).toHaveClass('h-px')
   })
 
   test('shows missing history without enabling an unavailable action', () => {

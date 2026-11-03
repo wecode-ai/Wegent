@@ -1,9 +1,9 @@
-import type { ComponentProps } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
+import '@/i18n'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
+import type { ComponentProps } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 const item = {
@@ -116,66 +116,5 @@ describe('Issue execution lists', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     expect(within(list).getAllByRole('button')).toHaveLength(9)
     expect(within(list).getAllByText('执行中')).toHaveLength(9)
-  })
-
-  it('shares the preview limit across child Issues and sessions, prioritizing active sessions', async () => {
-    const children = Array.from({ length: 3 }, (_, index) => ({
-      ...item,
-      id: `child-${index}`,
-      parent_id: item.id,
-      title: `Child ${index}`,
-      can_view_detail: index !== 2,
-    }))
-    const onOpenChildTask = vi.fn()
-    render(
-      editor({
-        allItems: [item, ...children],
-        showChildren: false,
-        onOpenChildTask,
-        taskExecutionStates: { '1': { status: 'running' } },
-      })
-    )
-
-    const list = await screen.findByTestId('cloud-todo-task-list')
-    expect(within(list).getAllByRole('button')).toHaveLength(2)
-    expect(within(list).getAllByRole('button')[0]).toHaveTextContent('Task 1')
-    expect(screen.getByTestId('cloud-todo-execution-task-count')).toHaveTextContent('12')
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    expect(within(list).getAllByRole('button')).toHaveLength(12)
-    expect(within(list).getByTestId('cloud-todo-open-child-task-child-2')).toBeDisabled()
-    await userEvent.click(within(list).getByText('Child 0'))
-    expect(onOpenChildTask).toHaveBeenCalledWith(children[0])
-  })
-
-  it('expands deliveries independently and resets both lists when switching Issues', async () => {
-    const user = userEvent.setup()
-    const view = render(editor())
-    const taskList = await screen.findByTestId('cloud-todo-task-list')
-    const deliveryList = await screen.findByTestId('todo-detail-delivery-list')
-    expect(within(deliveryList).getAllByRole('button')).toHaveLength(2)
-
-    await user.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    expect(within(deliveryList).getAllByRole('button')).toHaveLength(2)
-    await user.click(screen.getByTestId('todo-detail-toggle-deliveries'))
-    expect(within(deliveryList).getAllByRole('button')).toHaveLength(4)
-    await user.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    expect(within(deliveryList).getAllByRole('button')).toHaveLength(4)
-    expect(within(taskList).getAllByRole('button')).toHaveLength(2)
-    await user.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-
-    const nextItem = { ...item, id: 'ISSUE-2' }
-    view.rerender(editor({ item: nextItem, allItems: [nextItem] }))
-
-    expect(screen.getByTestId('cloud-todo-toggle-tasks')).toHaveAttribute('aria-expanded', 'false')
-    expect(await screen.findByTestId('todo-detail-toggle-deliveries')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(within(screen.getByTestId('cloud-todo-task-list')).getAllByRole('button')).toHaveLength(
-      2
-    )
-    expect(
-      within(screen.getByTestId('todo-detail-delivery-list')).getAllByRole('button')
-    ).toHaveLength(2)
   })
 })

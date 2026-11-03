@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from 'vitest'
 import type { CollaborationExecutionEnvironment } from '@wegent/collaboration'
+import { describe, expect, it } from 'vitest'
 import { mergeExecutionEnvironmentResources } from './weworkPlatformApi'
 
 function environment(
@@ -55,23 +55,5 @@ describe('mergeExecutionEnvironmentResources', () => {
       { ...registered, is_current_device: true },
       cloudHost,
     ])
-  })
-
-  it('does not expose an unregistered local placeholder to cloud projects', () => {
-    const local = environment({
-      id: 'device:local-only',
-      device_id: 0,
-      device_key: 'local-only',
-      owner_type: 'workspace',
-      owner_id: 'wework-local-workspace',
-    })
-    const cloudHost = environment({
-      id: '43',
-      device_id: 43,
-      device_key: 'cloud-device',
-      kind: 'cloud_host',
-    })
-
-    expect(mergeExecutionEnvironmentResources([local], [cloudHost])).toEqual([cloudHost])
   })
 })

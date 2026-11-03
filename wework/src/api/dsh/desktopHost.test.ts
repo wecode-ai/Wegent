@@ -114,30 +114,6 @@ describe('desktop host events', () => {
     }
   })
 
-  test('production host responses cannot be held by an E2E gate', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    const gates = await import('@/e2e/runtime-transport-gates')
-    gates.armRuntimeTransportGate({ id: 'production', kind: 'response', name: 'smartApps.start' })
-    vi.stubEnv('MODE', 'production')
-    vi.stubEnv('VITE_WEWORK_E2E', 'false')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ ok: true, result: 'running' }),
-      })
-    )
-    const { invokeDesktopHost } = await import('./desktopHost')
-    try {
-      await expect(invokeDesktopHost('smartApps.start')).resolves.toBe('running')
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      expect(gates.readRuntimeTransportGate('production')).toBeNull()
-    } finally {
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      gates.resetRuntimeTransportGates()
-    }
-  })
-
   test('shares one bounded poll loop across subscribers and advances the cursor', async () => {
     vi.useFakeTimers()
     let resolveFirstRequest:

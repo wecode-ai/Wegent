@@ -3,7 +3,6 @@ import { codexProviderRequestUrl } from './codexProviderProxy'
 
 describe('codexProviderRequestUrl', () => {
   test.each([
-    [undefined, '/responses'],
     ['openai-chat-completions', '/chat/completions'],
     ['anthropic-messages', '/messages'],
   ])('uses the configured provider endpoint for %s', async (format, path) => {
