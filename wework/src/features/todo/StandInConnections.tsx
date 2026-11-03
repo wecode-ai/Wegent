@@ -4,7 +4,7 @@ import type { StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
-import { StandInHandlingSelect } from './StandInHandlingSelect'
+import { StandInImmediateSwitch } from './StandInImmediateSwitch'
 import { findStandInProject } from './standInProjects'
 
 export function StandInConnections({
@@ -141,7 +141,7 @@ export function StandInConnections({
                     </span>
                   </label>
                   {roleIncludesProject(role, ref(project)) && (
-                    <StandInHandlingSelect
+                    <StandInImmediateSwitch
                       policy={standInPolicy(role, ref(project))}
                       disabled={disabled}
                       label={t('standIn.workspace.handling_for', { name: project.name })}

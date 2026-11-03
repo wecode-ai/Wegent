@@ -45,7 +45,10 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type {
+  ProcessExplorerClient,
+  ProcessSnapshotOptions,
+} from '../vendor/process-explorer/contract.js'
 import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
@@ -132,9 +135,7 @@ function assertE2EEnabled(control: string): void {
 }
 
 /** Host-side process explorer the capability router exposes to the renderer. */
-export interface ProcessExplorerHostService {
-  snapshot: () => Promise<ProcessSnapshot>
-}
+export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -834,11 +835,14 @@ export function createElectronCapabilityRouter(
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
-  router.register('e2e.getWindowBackgroundPolicy', () => {
+  router.register('e2e.getWindowBackgroundPolicy', params => {
     const target = requiredWindow(window)
+    const browserLabel = optionalStringParam(params, 'browserLabel')
     return {
       platform: process.platform,
-      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundThrottling: browserLabel
+        ? browser.backgroundThrottling(browserLabel)
+        : target.webContents.getBackgroundThrottling(),
       backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
         BACKGROUND_TIMER_THROTTLING_SWITCH
       ),
@@ -1396,17 +1400,19 @@ export function registerAppUpdateCapabilities(
   // A download outlives any single host request, and every host request is
   // bounded by a fixed timeout. Start the download and let callers follow
   // appUpdate.downloadProgress until it reports a terminal phase.
-  router.register('appUpdate.download', () => {
+  router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download()
+      .download(updateChannelParam(params))
       .catch(() => undefined)
     return null
   })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
-  router.register('appUpdate.install', (_params, context) => {
-    context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  router.register('appUpdate.install', (params, context) => {
+    context.deferUntilResponseSent(
+      requiredAppUpdates(appUpdates).createInstallAction(stringParam(params, 'version'))
+    )
   })
   router.register(
     'appUpdate.previousRelease',
@@ -1460,7 +1466,11 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', (options: ProcessSnapshotOptions = {}) =>
+    services.processExplorer.snapshot({
+      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
+    })
+  )
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )

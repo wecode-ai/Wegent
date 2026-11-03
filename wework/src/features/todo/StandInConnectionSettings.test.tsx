@@ -87,3 +87,13 @@ it('does not apply a previous device catalog after changing the selected device'
   await act(async () => finish({ items: [provider('@test/old/inbox', '旧设备邮箱')] }))
   expect(screen.queryByText('旧设备邮箱')).not.toBeInTheDocument()
 })
+
+it('offers the built-in calendar once rather than adding a second calendar connection', async () => {
+  const user = userEvent.setup()
+  render(<StandInConnectionSettings {...props} scheduling={{ userId: 7, roleId: '@primary' }} />)
+  expect(screen.getAllByText('日历')).toHaveLength(1)
+  expect(screen.queryByTestId('stand-in-connections-empty')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-add-connection'))
+  expect(screen.getAllByText('日历')).toHaveLength(1)
+  expect(screen.queryByTestId('stand-in-add-time-connection')).not.toBeInTheDocument()
+})

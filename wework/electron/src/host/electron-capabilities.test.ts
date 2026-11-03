@@ -857,7 +857,11 @@ describe('registerAppUpdateCapabilities', () => {
       }),
     } as unknown as HostCapabilityRouter
     const appUpdates = {
-      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      check: vi.fn(async () => ({
+        currentVersion: '0.2.6',
+        readyToInstall: false,
+        version: '0.2.7',
+      })),
       download: vi.fn(async () => undefined),
       downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
       createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
@@ -875,22 +879,28 @@ describe('registerAppUpdateCapabilities', () => {
       handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
     ).resolves.toEqual({
       currentVersion: '0.2.6',
+      readyToInstall: false,
       version: '0.2.7',
     })
-    await handlers.get('appUpdate.download')?.({}, context)
+    await handlers.get('appUpdate.download')?.({ channel: 'stable' }, context)
     expect(await handlers.get('appUpdate.downloadProgress')?.({}, context)).toEqual({
       downloadedBytes: 25,
       totalBytes: 100,
     })
-    await handlers.get('appUpdate.install')?.({}, context)
+    await handlers.get('appUpdate.install')?.({ version: '0.2.7' }, context)
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
+    expect(appUpdates.download).toHaveBeenCalledWith('stable')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
+    expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')
     expect(installCompletions).toHaveLength(1)
     await installCompletions[0]()
     expect(() => handlers.get('appUpdate.check')?.({ channel: 'nightly' }, context)).toThrow(
+      'channel is invalid'
+    )
+    expect(() => handlers.get('appUpdate.download')?.({ channel: 'nightly' }, context)).toThrow(
       'channel is invalid'
     )
   })
@@ -907,7 +917,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(() =>
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toThrow('App updates are unavailable')
@@ -928,7 +938,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toBeNull()

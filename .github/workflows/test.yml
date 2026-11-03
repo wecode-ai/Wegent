@@ -221,6 +221,13 @@ jobs:
           cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
 
+      - name: Verify project coordination binding ownership and revocation with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib project_coordination::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-coordination-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:
@@ -683,6 +690,7 @@ jobs:
         env:
           TZ: Asia/Shanghai
         run: |
+          WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
             --coverage \
             --passWithNoTests \
@@ -691,6 +699,7 @@ jobs:
 
           electron_pid=
           if [[ "${{ matrix.shard }}" == "1" ]]; then
+            WEWORK_TEST_REPORT_FILE=../../.ci-artifacts/wework-tests/electron.xml \
             pnpm --dir wework/electron test &
             electron_pid=$!
           fi
@@ -701,6 +710,14 @@ jobs:
             wait "$electron_pid" || status=$?
           fi
           exit "$status"
+
+      - name: Upload Wework test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-test-evidence-${{ matrix.shard }}
+          path: .ci-artifacts/wework-tests/
+          retention-days: 7
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

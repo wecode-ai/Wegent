@@ -26,7 +26,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         user_id=7,
         json={
             "metadata": {"labels": {"source": "chat_shell", "taskType": "knowledge"}},
-            "spec": {},
+            "spec": {"title": "Persisted task title"},
         },
         project_id=None,
         client_origin="frontend",
@@ -81,6 +81,9 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         == "knowledge_web"
     )
     assert result.skill_identity_token == "skill-jwt"
+    assert result.task_title == "Persisted task title"
+    assert result.team_id == team.id
+    assert result.team_name == team.name
     assert result.team_owner == {}
     assert result.user_id == 7
     assert result.executor_name == "executor-1"

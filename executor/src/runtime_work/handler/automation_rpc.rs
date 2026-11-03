@@ -35,6 +35,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn update_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation = automation_from_payload(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{}", automation.id));
+        let _guard = gate.lock().await;
         let automation = self
             .automation_store
             .update(automation)
@@ -45,6 +47,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn delete_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation_id = automation_id(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{automation_id}"));
+        let _guard = gate.lock().await;
         let deleted = self
             .automation_store
             .delete(&automation_id)
@@ -57,6 +61,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn toggle_automation(&self, payload: Value) -> Result<Value, AppIpcError> {
         let automation_id = automation_id(&payload)?;
+        let gate = self.task_send_gate(&format!("automation-operation:{automation_id}"));
+        let _guard = gate.lock().await;
         let enabled = bool_field(&payload, "enabled")
             .ok_or_else(|| AppIpcError::new("bad_request", "enabled is required"))?;
         let automation = self
@@ -75,7 +81,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(automation_store_error)?;
         let run_id = run.id.clone();
         if run.status == AutomationRunStatus::Pending {
-            self.execute_automation(automation, run).await;
+            self.handoff_automation(automation, run).await;
         }
         let updated = self
             .automation_store
@@ -115,18 +121,39 @@ impl RuntimeWorkRpcHandler {
                 for (automation, run) in due {
                     let run_handler = handler.clone();
                     tokio::spawn(async move {
-                        run_handler.execute_automation(automation, run).await;
+                        run_handler.handoff_automation(automation, run).await;
                     });
                 }
             }
         });
     }
 
-    async fn execute_automation(
+    async fn handoff_automation(
         &self,
         automation: Automation,
         run: crate::runtime_work::automations::AutomationRun,
     ) {
+        if automation.task_request["standInOwner"].is_object() {
+            if run.coordination.is_none() {
+                let _ = self.automation_store.mark_needs_attention(
+                    &run.id,
+                    "The arrangement has no valid execution identity".into(),
+                );
+            }
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
+        self.execute_unowned_automation(automation, run).await;
+    }
+
+    async fn execute_unowned_automation(
+        &self,
+        automation: Automation,
+        run: crate::runtime_work::automations::AutomationRun,
+    ) {
+        let operation_gate =
+            self.task_send_gate(&format!("automation-operation:{}", automation.id));
+        let _operation_guard = operation_gate.lock().await;
         let mut payload = match automation.conversation_mode {
             ConversationMode::Independent => automation.task_payload.clone(),
             ConversationMode::ContinueThread => automation
@@ -150,6 +177,7 @@ impl RuntimeWorkRpcHandler {
         };
         set_payload_string(&mut payload, "message", &automation.prompt);
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
+        let _ = self.automation_store.mark_running(&run.id, task_id.clone());
 
         let result = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await,
@@ -208,7 +236,7 @@ impl RuntimeWorkRpcHandler {
         }));
     }
 
-    fn emit_automation_runs_changed(&self, automation_id: &str, run_id: &str) {
+    pub(super) fn emit_automation_runs_changed(&self, automation_id: &str, run_id: &str) {
         let Some(sender) = &self.event_tx else {
             return;
         };
@@ -258,7 +286,7 @@ fn set_payload_string(payload: &mut Value, key: &str, value: &str) {
     }
 }
 
-fn add_automation_context(
+pub(super) fn add_automation_context(
     payload: &mut Value,
     automation_id: &str,
     run_id: &str,

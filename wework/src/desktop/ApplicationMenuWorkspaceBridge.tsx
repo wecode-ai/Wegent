@@ -66,7 +66,20 @@ export function ApplicationMenuWorkspaceBridge({ pathname }: { pathname: string 
             current.openTab(kind)
           }
         } else if (typeof action === 'string' && action in APPLICATION_MENU_WORK_ROUTES) {
-          navigateTo(APPLICATION_MENU_WORK_ROUTES[action])
+          let route = APPLICATION_MENU_WORK_ROUTES[action]
+          if (
+            action === APPLICATION_MENU_ACTIONS.openAutomations &&
+            currentPathname === '/stand-in'
+          ) {
+            const query = new URLSearchParams('view=scheduled')
+            const currentQuery = new URLSearchParams(window.location.search)
+            for (const key of ['profileId', 'deviceId']) {
+              const value = currentQuery.get(key)
+              if (value) query.set(key, value)
+            }
+            route = `/stand-in?${query.toString()}`
+          }
+          navigateTo(route)
         }
       }),
     []

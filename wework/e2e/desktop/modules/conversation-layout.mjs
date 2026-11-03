@@ -1,6 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
+import {
+  verifyComposerFadeAfterSubmit,
+  verifyComposerFadeBeforeSubmit,
+} from './composer-scroll-fade.mjs'
+import { verifyComposerMarkdownDraftAcknowledgement } from './composer-markdown-draft.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
@@ -70,16 +75,17 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(
-    control,
-    composerSelector,
-    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
-  )
+  const followUpPrompt = `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  // Prime scrolling while preserving the existing follow-up submission path.
+  await verifyComposerFadeBeforeSubmit(control, composerSelector, followUpPrompt)
+  await sendPrompt(control, composerSelector, followUpPrompt)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyComposerFadeAfterSubmit(control, composerSelector)
+  await verifyComposerMarkdownDraftAcknowledgement(control, composerSelector)
   await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
   await verifyConversationPanelLayout(control)
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
