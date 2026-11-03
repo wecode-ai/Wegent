@@ -14,6 +14,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
@@ -152,6 +153,12 @@ export function createDesktopScenario(options) {
       )
       await captureScreenshot(control, '02-pending-links-to-native-approval.png')
       await control.command('click', '[data-testid="interaction-open-original"]')
+      await waitForSnapshot(
+        control,
+        snapshot => new URL(snapshot.location).searchParams.get('taskId') === taskId,
+        'Opening the original approval must navigate to its exact task',
+        uiTimeoutMs
+      )
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
       const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
       assert.equal(destination.searchParams.get('taskId'), taskId)

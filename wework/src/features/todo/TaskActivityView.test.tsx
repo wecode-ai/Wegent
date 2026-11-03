@@ -241,6 +241,9 @@ const agentMessage: ProjectChatMessage = {
 
 describe('TaskActivityView', () => {
   it('opens a notification at its own AI message without focusing the reply composer', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, 100, 800, 100)
+    )
     const onFocusedMessage = vi.fn()
     const address = { deviceId: 'device-1', taskId: 'own-execution' }
     const response = {
@@ -5410,6 +5413,9 @@ describe('TaskActivityView', () => {
   })
 
   it('flashes the comment a notification opened', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, 100, 800, 100)
+    )
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const client = {

@@ -578,14 +578,30 @@ export function TaskActivityView({
       )
     : undefined
   const onFocusedMessage = notificationEntity?.onFocusedMessage
+  const notificationRequestId = notificationEntity?.id
+  const notificationSourceIds = JSON.stringify(notificationEntity?.sourceMessageIds ?? [])
   useEffect(() => {
+    if (ownsNotification) {
+      console.debug('[Wework] Notification comment location resolved', {
+        requestId: notificationRequestId,
+        sourceMessageIds: notificationSourceIds,
+        commentId: notificationCommentId,
+      })
+    }
     if (ownsNotification && notificationCommentId) onFocusedMessage?.(notificationCommentId)
-  }, [notificationCommentId, onFocusedMessage, ownsNotification])
+  }, [
+    notificationCommentId,
+    notificationRequestId,
+    notificationSourceIds,
+    onFocusedMessage,
+    ownsNotification,
+  ])
   const flashedCommentId = useFocusedComment(
     listRef,
     threadMessages,
     notificationCommentId !== undefined ? notificationCommentId : focusedCommentId,
-    ownsNotification ? (notificationEntity?.id ?? null) : focusedCommentRequestKey
+    ownsNotification ? (notificationEntity?.id ?? null) : focusedCommentRequestKey,
+    !loading && Boolean(activityLoaded) && !activityHistory.loading
   )
 
   useEffect(() => {
