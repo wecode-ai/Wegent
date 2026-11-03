@@ -432,9 +432,25 @@ export async function createDesktopScenario(options) {
         'The download request blocked until preparation completed'
       )
       assert.notEqual(accepted.phase, 'failed', 'The download failed to start')
-      const observedProgress = await waitForUpdatePreparation(async () =>
-        JSON.parse(await control.command('getAppUpdateProgress', 'body'))
-      )
+      let preparationPhase = 'accepted'
+      let phaseStarted = performance.now()
+      const observedProgress = await waitForUpdatePreparation(async () => {
+        const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+        if (progress.phase !== preparationPhase) {
+          const now = performance.now()
+          console.log(
+            `[upgrade-e2e] ${JSON.stringify({
+              phase: preparationPhase,
+              nextPhase: progress.phase,
+              elapsedMs: Math.round(now - phaseStarted),
+              downloadedBytes: progress.downloadedBytes,
+            })}`
+          )
+          preparationPhase = progress.phase
+          phaseStarted = now
+        }
+        return progress
+      })
       const transfers = requests.filter(request => request.path === `/${pair.to.name}`)
       assert.equal(transfers.length, 1, 'The updater must download the complete host exactly once')
       assert.equal(transfers[0].range, null, 'The host update must use one full request')

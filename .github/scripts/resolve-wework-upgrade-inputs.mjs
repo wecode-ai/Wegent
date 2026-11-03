@@ -2,6 +2,26 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { UPGRADE_PACKAGE_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
+import { releaseVerificationChannels } from "../../wework/scripts/lib/upgrade-evidence.mjs";
+
+export function upgradeVerificationMatrix(channel) {
+  return {
+    include: releaseVerificationChannels(channel).flatMap((selected) => [
+      {
+        runner: "macos-15",
+        platform: "macos",
+        arch: "arm64",
+        channel: selected,
+      },
+      {
+        runner: "windows-latest",
+        platform: "windows",
+        arch: "x64",
+        channel: selected,
+      },
+    ]),
+  };
+}
 
 export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const publishedReleaseTag = environment.PUBLISHED_RELEASE_TAG || "";
@@ -98,6 +118,9 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     run_id: runId,
     version,
     channel: version.includes("-beta.") ? "beta" : "stable",
+    verification_matrix: JSON.stringify(
+      upgradeVerificationMatrix(version.includes("-beta.") ? "beta" : "stable"),
+    ),
     release_tag: `wework-v${version}`,
     verification_sha: verificationSha,
     diagnostic_checkpoint: diagnosticCheckpoint,

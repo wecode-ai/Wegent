@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveUpgradeInputs } from "./resolve-wework-upgrade-inputs.mjs";
+import {
+  resolveUpgradeInputs,
+  upgradeVerificationMatrix,
+} from "./resolve-wework-upgrade-inputs.mjs";
 
 function fixture() {
   const environment = {
@@ -47,7 +50,31 @@ test("reuses successful producers even when an earlier test driver failed", () =
     verification_sha: "a".repeat(40),
     diagnostic_checkpoint: "",
     published_release_tag: "",
+    verification_matrix: JSON.stringify(upgradeVerificationMatrix("beta")),
   });
+});
+
+test("stable verification partitions both channels while beta verification cannot add stable jobs", () => {
+  const pairs = (channel) =>
+    upgradeVerificationMatrix(channel).include.map((item) => [
+      item.platform,
+      item.arch,
+      item.channel,
+    ]);
+  assert.deepEqual(pairs("stable"), [
+    ["macos", "arm64", "stable"],
+    ["windows", "x64", "stable"],
+    ["macos", "arm64", "beta"],
+    ["windows", "x64", "beta"],
+  ]);
+  assert.deepEqual(pairs("beta"), [
+    ["macos", "arm64", "beta"],
+    ["windows", "x64", "beta"],
+  ]);
+  assert.throws(
+    () => upgradeVerificationMatrix("nightly"),
+    /Invalid release channel/,
+  );
 });
 
 test("non-publishing replay only requires the producers whose packages it verifies", () => {

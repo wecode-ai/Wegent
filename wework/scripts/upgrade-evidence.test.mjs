@@ -12,6 +12,7 @@ import {
   verifiedUpgradeEdge,
   mergeUpgradePolicy,
   releaseUpgradePlan,
+  releaseVerificationChannels,
   verifyReleaseUpgradePlan,
   upgradeSource,
 } from './lib/upgrade-evidence.mjs'
@@ -38,6 +39,16 @@ function publishedCatalog(channel, versions) {
 }
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
+
+test('channel shards preserve target publication boundaries', () => {
+  assert.deepEqual(releaseVerificationChannels('stable'), ['stable', 'beta'])
+  assert.deepEqual(releaseVerificationChannels('stable', 'stable'), ['stable'])
+  assert.deepEqual(releaseVerificationChannels('stable', 'beta'), ['beta'])
+  assert.deepEqual(releaseVerificationChannels('beta'), ['beta'])
+  assert.throws(() => releaseVerificationChannels('beta', 'stable'), /outside/)
+  assert.throws(() => releaseVerificationChannels('stable', 'nightly'), /outside/)
+  assert.throws(() => releaseVerificationChannels('nightly'), /Invalid/)
+})
 
 test('release sources are automatic even when only the Beta catalog has history', () => {
   const beta = publishedCatalog('beta', ['0.5.13-beta.8'])

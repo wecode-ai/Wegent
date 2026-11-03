@@ -63,6 +63,7 @@ test("release creation waits for every candidate build and validation", () => {
   assert.deepEqual(jobs.publish.needs, [
     "prepare-release",
     "build",
+    "prepare-upgrade-inputs",
     "verify-upgrades",
   ]);
   assert.doesNotMatch(jobs.publish.if, /always\(\)/);
@@ -72,6 +73,7 @@ test("release creation waits for every candidate build and validation", () => {
     "Download release builds",
     "Reuse verified arm64 upgrade paths for macOS x64",
     "Generate desktop update manifests",
+    "Verify completed upgrade duration before publication",
   ])
     assert.ok(names.indexOf(name) >= 0 && names.indexOf(name) < create, name);
   assert.ok(create < names.indexOf("Upload formal release assets"));
@@ -122,16 +124,23 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     (step) => step.name === "Reuse verified arm64 upgrade paths for macOS x64",
   );
   assert.match(reuse.run, /mirror-macos-upgrade-policy.mjs/);
-  assert.deepEqual(
-    jobs["verify-upgrades"].strategy.matrix.include.map((item) => [
-      item.platform,
-      item.arch,
-    ]),
-    [
-      ["macos", "arm64"],
-      ["windows", "x64"],
-    ],
+  assert.equal(
+    jobs["verify-upgrades"].strategy.matrix,
+    "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
+  assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 4);
+  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 10);
+  assert.equal(jobs.build["timeout-minutes"], 90);
+  const step = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(step.env.WEWORK_UPGRADE_VERIFY_CHANNEL, "${{ matrix.channel }}");
+  const upload = jobs["verify-upgrades"].steps.find(
+    (step) => step.name === "Upload verified release upgrade evidence",
+  );
+  assert.match(upload.with.name, /matrix.channel/);
 });
 
 test("upgrade verification only consumes release artifacts and has no signing credentials", () => {

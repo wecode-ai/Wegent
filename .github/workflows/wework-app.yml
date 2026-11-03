@@ -61,6 +61,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - name: Reject publication
@@ -79,6 +80,7 @@ jobs:
       - name: Measure the delivered runtime archive
         env:
           GH_TOKEN: ${{ github.token }}
+          WEWORK_RUNTIME_PROFILE_RUN_ID: ${{ inputs.verification_run_id }}
         run: node wework/scripts/profile-runtime-extraction.mjs
 
   prepare-release:
@@ -497,6 +499,7 @@ jobs:
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
       diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
       published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
+      verification_matrix: ${{ steps.inputs.outputs.verification_matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve completed release build artifacts
@@ -513,27 +516,21 @@ jobs:
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
   verify-upgrades:
-    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }})
+    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }}/${{ matrix.channel }})
     permissions:
       contents: read
       actions: read
     needs: prepare-upgrade-inputs
     if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            platform: macos
-            arch: arm64
-          - runner: windows-latest
-            platform: windows
-            arch: x64
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -541,6 +538,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
+      - name: Check remaining upgrade verification budget
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
+          UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs
       - name: Download prebuilt signed release inputs
         uses: actions/download-artifact@v6
         with:
@@ -559,6 +563,7 @@ jobs:
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
           WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
+          WEWORK_UPGRADE_VERIFY_CHANNEL: ${{ matrix.channel }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
@@ -570,7 +575,7 @@ jobs:
         if: always() && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
-          name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/summary.json
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/*.log
@@ -589,16 +594,25 @@ jobs:
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
-          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
+          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}
           path: ${{ runner.temp }}/upgrade-input/wework-release-assets/**/upgrade-*.json
           if-no-files-found: error
           compression-level: 0
+
+      - name: Enforce complete upgrade verification time budget
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
+          UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs
 
   publish:
     name: Publish release and update channels
     needs:
       - prepare-release
       - build
+      - prepare-upgrade-inputs
       - verify-upgrades
     runs-on: ubuntu-latest
     if: ${{ !inputs.build_only && needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none' }}
@@ -617,6 +631,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Verify completed upgrade duration before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
+          UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs --completed
 
       - name: Resolve previous Wework release
         id: previous-release

@@ -9,6 +9,7 @@ import {
 } from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
+  releaseVerificationChannels,
   releaseUpgradePlan,
   upgradeSource,
   verifiedUpgradeEdge,
@@ -27,7 +28,11 @@ if (!assetsDirectory || !platform || !arch || !channel || !repository || !releas
   throw new Error('Expected assets, platform, architecture, channel, repository, and release tag')
 if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
-if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
+const releaseChannels = releaseVerificationChannels(
+  channel,
+  process.env.WEWORK_UPGRADE_VERIFY_CHANNEL || ''
+)
+const verificationStarted = performance.now()
 const publishedTarget = process.env.WEWORK_UPGRADE_PUBLISHED_TARGET_TAG || ''
 if (publishedTarget && publishedTarget !== releaseTag)
   throw new Error('The published target must match the selected release tag')
@@ -69,10 +74,18 @@ try {
     upgradeSource(published, release.version).sha256 !== release.sha256
   )
     throw new Error('A published release package is immutable across channels')
-  for (const targetChannel of channel === 'stable' ? ['stable', 'beta'] : ['beta'])
-    await verifyChannel(catalogs, targetChannel)
+  for (const targetChannel of releaseChannels) await verifyChannel(catalogs, targetChannel)
 } finally {
   await rm(temporary, { recursive: true, force: true })
+  console.log(
+    `[upgrade-verification] ${JSON.stringify({
+      event: 'finished',
+      platform,
+      arch,
+      channels: releaseChannels,
+      elapsedMs: Math.round(performance.now() - verificationStarted),
+    })}`
+  )
 }
 
 async function verifyChannel(catalogs, targetChannel) {
