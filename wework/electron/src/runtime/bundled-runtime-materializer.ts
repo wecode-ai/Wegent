@@ -6,6 +6,7 @@ import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import { resolveRuntimeArchive } from './runtime-archive.js'
 import { extractPhysicalRelease } from './physical-release-files.js'
+import { serializePathOperation } from './path-operation-queue.js'
 
 export interface RuntimeDescriptor {
   dshVersion: string
@@ -83,17 +84,18 @@ export async function materializeBundledRuntimes(
   return cacheRoot
 }
 
-async function writeRuntimeCatalog(
-  cacheRoot: string,
-  runtimes: RuntimeDescriptor[]
-): Promise<void> {
-  const temporary = join(cacheRoot, `.runtimes-${randomUUID()}.json`)
-  try {
-    await writeFile(temporary, `${JSON.stringify({ runtimes }, null, 2)}\n`, { mode: 0o600 })
-    await rename(temporary, join(cacheRoot, 'runtimes.json'))
-  } finally {
-    await rm(temporary, { force: true })
-  }
+function writeRuntimeCatalog(cacheRoot: string, runtimes: RuntimeDescriptor[]): Promise<void> {
+  const catalog = join(cacheRoot, 'runtimes.json')
+  // Windows cannot replace the same destination with overlapping renames.
+  return serializePathOperation(catalog, async () => {
+    const temporary = join(cacheRoot, `.runtimes-${randomUUID()}.json`)
+    try {
+      await writeFile(temporary, `${JSON.stringify({ runtimes }, null, 2)}\n`, { mode: 0o600 })
+      await rename(temporary, catalog)
+    } finally {
+      await rm(temporary, { force: true })
+    }
+  })
 }
 
 async function materializeRuntime(
