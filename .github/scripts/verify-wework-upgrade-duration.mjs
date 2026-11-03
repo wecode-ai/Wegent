@@ -10,6 +10,25 @@ function timestamp(value) {
   return result;
 }
 
+function executionDuration(job, now) {
+  if (["queued", "waiting", "pending"].includes(job.status)) return 0;
+  assert.ok(["in_progress", "completed"].includes(job.status));
+  // Queued jobs may already expose started_at. Runner setup is the first
+  // recorded execution step, so waiting for a runner cannot inflate this span.
+  const steps = job.steps?.filter((step) => step.started_at);
+  assert.ok(steps?.length, `Missing execution steps: ${job.name}`);
+  const startedAt = Math.min(
+    ...steps.map((step) => timestamp(step.started_at)),
+  );
+  const finishedAt =
+    job.status === "completed" ? timestamp(job.completed_at) : now;
+  assert.ok(
+    finishedAt >= startedAt,
+    "Upgrade verification timestamps are reversed",
+  );
+  return finishedAt - startedAt;
+}
+
 export function verifyUpgradeDuration({
   run,
   jobs,
@@ -22,6 +41,7 @@ export function verifyUpgradeDuration({
     (job) => job.name === "Resolve immutable upgrade inputs",
   );
   assert.equal(resolver.length, 1);
+  assert.equal(resolver[0].status, "completed");
   assert.equal(resolver[0].conclusion, "success");
   const selected = matrix.include.map((item) => {
     assert.ok(["stable", "beta"].includes(item.channel));
@@ -44,7 +64,6 @@ export function verifyUpgradeDuration({
   });
   assert.ok(selected.length >= 2 && selected.length <= 4);
   assert.equal(new Set(selected.map((job) => job.name)).size, selected.length);
-  let startedAt = timestamp(run.created_at);
   if (String(producerRunId) === String(run.id)) {
     const builds = jobs.filter(
       (job) => job.name.startsWith("Build ") && job.conclusion === "success",
@@ -54,20 +73,23 @@ export function verifyUpgradeDuration({
       4,
       "A release requires all four completed producer builds",
     );
-    startedAt = Math.max(...builds.map((job) => timestamp(job.completed_at)));
   }
-  const finishedAt = completed
-    ? Math.max(...selected.map((job) => timestamp(job.completed_at)))
-    : now;
-  const elapsedMs = finishedAt - startedAt;
-  assert.ok(elapsedMs >= 0, "Upgrade verification timestamps are reversed");
+  const resolverMs = executionDuration(resolver[0], now);
+  // The maintained matrix has at most four jobs and max-parallel is four.
+  // Count its complete execution critical path, independently of runner queues.
+  const matrixMs = Math.max(
+    ...selected.map((job) => executionDuration(job, now)),
+  );
+  const elapsedMs = resolverMs + matrixMs;
   const reserveMs = completed ? 0 : 15_000;
   assert.ok(
     elapsedMs + reserveMs < LIMIT_MS,
     `Complete upgrade verification exceeded its 10-minute budget: elapsedMs=${elapsedMs}, reserveMs=${reserveMs}`,
   );
   return {
-    startedAt: new Date(startedAt).toISOString(),
+    timing: "execution-without-runner-queues",
+    resolverMs,
+    matrixMs,
     elapsedMs,
     limitMs: LIMIT_MS,
     reserveMs,
