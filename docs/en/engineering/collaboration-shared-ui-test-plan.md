@@ -25,6 +25,35 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Multiple comment assignment target types
+
+The comment assignment menu shares the Issue property candidates and persistence
+flow: members, project bots, workspace Agents, Wegent Agents, and collaboration
+groups. Member eligibility and Viewer restrictions still apply. Keeping the
+current assignee does not change ownership. Mentions suggest a target without
+filling the selector. A compact hint beside the attachment control offers a check
+action to fill the selector and a dismiss action. Clicking a blue mention chip
+switches or reopens its suggestion. Manual A remains selected after mentioning B
+until B is accepted. Selection and acceptance never call assignment APIs.
+With a selected target, Send and assign saves the comment before assignment;
+an empty draft offers Assign without creating a comment. With no selected target,
+sending only posts the comment and preserves an unaccepted suggestion. Dismissed
+suggestions do not return after sending. Assignment failures retain the target
+for retry without reposting a successfully saved and cleared comment.
+
+Focused component tests cover target selection, saving with the latest Issue
+version, permissions, and send failure recovery. The existing
+`collaboration-shared-core` checkpoint adds real Electron coverage using its
+project and bot fixtures plus an isolated Issue and human-led group. It assigns
+the bot, group, and member through the comment menu, verifies real persisted
+fields and mutual exclusion after each transfer. The existing
+`collaboration-issue-assignment-activity` checkpoint verifies mention selection,
+dismissal and reopening, acceptance without persistence, and final submission.
+The test completes and archives
+the added Issue before removing its group and returning to the
+original Issue. Use the checkpoint environment and command below; only model
+services are simulated.
+
 ### Long-history follow-ups and background execution
 
 `follow-up-task-switch` runs isolated Electron with the real Executor and Codex, replacing only model responses.
