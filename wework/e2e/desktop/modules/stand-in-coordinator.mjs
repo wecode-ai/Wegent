@@ -1,3 +1,4 @@
+import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -80,12 +81,22 @@ export function createStandInCoordinatorVerification({
       })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
         '0'
       )
+      await control.command('click', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
+      await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('click', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-draft-error"]', {
@@ -123,6 +134,7 @@ export function createStandInCoordinatorVerification({
       const schedule = schedules.items.find(row => row.name === SCHEDULE)
       assert.deepEqual(schedule.taskRequest.standInOwner, { userId: USER, roleId: '@primary' })
       assert.equal(schedule.taskPayload.executionRequest, undefined)
+      await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: `${SCHEDULE}（已调整）`,
       })
@@ -132,6 +144,7 @@ export function createStandInCoordinatorVerification({
         (await rpc('runtime.automations.list', {})).items.find(row => row.id === schedule.id).name,
         `${SCHEDULE}（已调整）`
       )
+      await control.command('click', `[data-testid="automation-open-${schedule.id}"]`)
       await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
       await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
         text: '已暂停',
@@ -168,6 +181,7 @@ export function createStandInCoordinatorVerification({
         value: `${preferences}\n保留这份说明草稿`,
       })
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('fill', '[data-testid="automation-name-input"]', {
@@ -200,6 +214,7 @@ export function createStandInCoordinatorVerification({
       await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('click', '[data-testid="stand-in-connections-open"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')

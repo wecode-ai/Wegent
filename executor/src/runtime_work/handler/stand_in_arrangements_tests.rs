@@ -243,3 +243,73 @@ async fn changed_owner_or_target_cannot_redirect_a_claimed_run() {
     );
     assert!(handler.store.list_task_summaries(true).is_empty());
 }
+
+#[tokio::test]
+async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_policy() {
+    for immediate in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let handler = handler(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        settings["primary"] = json!({"enabled":true,"prompt":"","preferences":"","calendar":{"policy":{"automatic":true,"askBeforeAct":true,"immediate":immediate}}});
+        store.save_personal_stand_in(7, "device", settings).unwrap();
+        let mut entry = automation();
+        entry.task_request["standInCalendar"] = json!({});
+        handler.automation_store.create(entry).unwrap();
+        let run = handler
+            .automation_store
+            .due(chrono::Utc::now())
+            .unwrap()
+            .pop()
+            .unwrap()
+            .1;
+        assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
+        handler.arrangement_contexts(&store).unwrap();
+        let events = store.stand_in_events(7).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["kind"], "calendar");
+        assert_eq!(events[0]["message"]["text"], "Review progress");
+        assert_eq!(events[0]["runId"], run.id);
+        assert!(handler.local_task_links(true).is_empty());
+        let contexts = handler
+            .coordination_rpc("runtime.coordination.contexts", json!({}))
+            .await
+            .unwrap();
+        let context = contexts["contexts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|context| context["id"] == "personal:7")
+            .unwrap();
+        let snapshot = handler
+            .coordination_rpc(
+                "runtime.coordination.snapshot",
+                json!({"contextId":"personal:7","revision":context["revision"]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot["events"][0]["processingMode"],
+            if immediate { "immediate" } else { "silent" }
+        );
+        assert_eq!(
+            snapshot["events"][0]["dispatch"],
+            if immediate {
+                json!({"roleId":"@primary"})
+            } else {
+                Value::Null
+            }
+        );
+        let mut changed = handler.automation_store.get("once").unwrap();
+        changed.prompt = "Updated event".into();
+        handler.automation_store.update(changed).unwrap();
+        let role = json!({"id":"@primary","userId":7});
+        assert_eq!(
+            handler
+                .calendar_intake_run(&role, &events[0])
+                .unwrap_err()
+                .code,
+            "source_removed"
+        );
+    }
+}

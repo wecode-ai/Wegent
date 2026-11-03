@@ -34,6 +34,14 @@ impl RuntimeWorkRpcHandler {
             .iter()
             .filter(|run| active(run))
         {
+            if let Some(automation) = self.automation_store.get(&run.automation_id) {
+                if automation.task_request["standInCalendar"].is_object()
+                    && run.status == AutomationRunStatus::Pending
+                {
+                    self.queue_calendar_run(store, &automation, run)?;
+                    continue;
+                }
+            }
             let user = run
                 .coordination
                 .as_ref()
@@ -108,6 +116,16 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(active)
         {
+            if self
+                .automation_store
+                .get(&run.automation_id)
+                .is_some_and(|a| a.task_request["standInCalendar"].is_object())
+            {
+                if run.status == AutomationRunStatus::Running {
+                    self.reconcile_arrangement(&run).await?;
+                }
+                continue;
+            }
             let owner = run
                 .coordination
                 .as_ref()
@@ -168,7 +186,10 @@ impl RuntimeWorkRpcHandler {
         Ok(receipt)
     }
 
-    fn current_arrangement(&self, run: &AutomationRun) -> Result<Automation, AppIpcError> {
+    pub(super) fn current_arrangement(
+        &self,
+        run: &AutomationRun,
+    ) -> Result<Automation, AppIpcError> {
         let binding = run
             .coordination
             .as_ref()
@@ -320,7 +341,7 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn dispatch_arrangement(
+    pub(super) async fn dispatch_arrangement(
         &self,
         run: &AutomationRun,
         settings: &Value,

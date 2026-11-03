@@ -51,7 +51,6 @@ export function StandInOverviewPage({
   )
   const [chatting, setChatting] = useState(false)
   const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
-  const [calendarOpen, setCalendarOpen] = useState(initialWorkView === 'scheduled')
   const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
     initialWorkView === 'scheduled'
       ? props.initialProfileId && props.initialProfileId !== '@primary'
@@ -160,9 +159,6 @@ export function StandInOverviewPage({
     roleId ? 'role' : 'primary',
     active && profile !== 'role' && profile !== 'create'
   )
-  const title = role
-    ? standInRoleName(role, roles.indexOf(role), t('standIn.personal.default_role'))
-    : t('standIn.title')
   const merged = new Map(
     (workbench?.runtimeTaskReminders.items ?? []).map(item => {
       const origin = standInOrigin(item)
@@ -192,7 +188,6 @@ export function StandInOverviewPage({
       )
   )
   const conversation = roleId ? chatting : !chatting
-  const enabled = role ? role.enabled : state.draft?.primary?.enabled !== false
   const chooseRole = (id?: string) =>
     leavePanel(() => {
       setCalendarRequest(0)
@@ -205,88 +200,77 @@ export function StandInOverviewPage({
       className="relative flex h-full min-h-0 min-w-0 text-base text-text-primary"
       data-testid="stand-in-overview"
     >
-      <nav
-        aria-label={t('standIn.workspace.navigation')}
-        className="flex w-36 shrink-0 flex-col border-r border-border bg-muted/30 p-2 md:w-44"
-        data-testid="stand-in-overview-status"
-      >
-        <button
-          type="button"
-          data-testid="stand-in-primary-open"
-          aria-current={!roleId ? 'page' : undefined}
-          onClick={() => chooseRole()}
-          className={`flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm ${!roleId ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
-        >
-          <StandInIcon
-            enabled={state.draft?.primary?.enabled !== false}
-            className="h-5 w-5 shrink-0"
-          />
-          {t('standIn.title')}
-        </button>
-        <p className="px-2 pb-2 pt-6 text-xs text-text-muted">{t('standIn.workspace.roles')}</p>
-        {roles.map((value, index) => {
-          const projects = props.projects.filter(project =>
-            roleIncludesProject(value, {
-              id: project.id,
-              store: project.project_store === 'local' ? 'local' : 'cloud',
-            })
-          )
-          return (
-            <button
-              key={value.id}
-              type="button"
-              data-testid={`stand-in-overview-role-${value.id}`}
-              aria-current={roleId === value.id ? 'page' : undefined}
-              onClick={() => chooseRole(value.id)}
-              className={`min-h-9 rounded-md px-2 py-2 text-left text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
-            >
-              <span className="flex items-center gap-2">
-                <StandInIcon enabled={value.enabled} className="h-4 w-4 shrink-0" />
-                <span className="truncate">
-                  {standInRoleName(value, index, t('standIn.personal.default_role'))}
-                </span>
-              </span>
-              <span className="sr-only">
-                {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
-                {t('standIn.personal.connected_selected', { count: projects.length })}
-              </span>
-              <span
-                className="mt-1 block truncate pl-6 text-xs text-text-muted"
-                title={[
-                  ...projects.map(project => project.name),
-                  ...(value.connections ?? []).map(source => source.name),
-                ].join(' · ')}
-              >
-                {[
-                  ...projects.map(project => project.name),
-                  ...(value.connections ?? []).map(source => source.name),
-                ].join(' · ') ||
-                  t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
-              </span>
-            </button>
-          )
-        })}
-        <button
-          type="button"
-          data-testid="stand-in-create-role"
-          onClick={() => {
-            setCalendarRequest(0)
-            setProfile('create')
-          }}
-          className="mt-2 inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm text-text-secondary hover:bg-muted"
-        >
-          <Plus className="h-4 w-4" />
-          {t('standIn.workspace.create_role')}
-        </button>
-      </nav>
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="heading-md truncate">{title}</h1>
-            <p className="mt-1 text-xs text-text-muted">
-              {t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
-            </p>
-          </div>
+        <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
+          <nav
+            className="min-w-0 flex-1 overflow-x-auto"
+            aria-label={t('standIn.workspace.switch_role')}
+            data-testid="stand-in-role-selector"
+          >
+            <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+              <button
+                type="button"
+                data-testid="stand-in-primary-open"
+                aria-current={!roleId ? 'page' : undefined}
+                onClick={() => chooseRole()}
+                className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${!roleId ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+              >
+                <StandInIcon
+                  enabled={state.draft?.primary?.enabled !== false}
+                  className="h-4 w-4"
+                />
+                {t('standIn.title')}
+              </button>
+              {roles.map((value, index) => {
+                const projects = props.projects.filter(project =>
+                  roleIncludesProject(value, {
+                    id: project.id,
+                    store: project.project_store === 'local' ? 'local' : 'cloud',
+                  })
+                )
+                const scope = [
+                  ...projects.map(project => project.name),
+                  ...(value.connections ?? []).map(source => source.name),
+                ].join(' · ')
+                return (
+                  <button
+                    key={value.id}
+                    type="button"
+                    data-testid={`stand-in-overview-role-${value.id}`}
+                    aria-current={roleId === value.id ? 'page' : undefined}
+                    title={
+                      scope ||
+                      t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+                    }
+                    onClick={() => chooseRole(value.id)}
+                    className={`inline-flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm ${roleId === value.id ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                  >
+                    <StandInIcon enabled={value.enabled} className="h-4 w-4" />
+                    <span className="max-w-40 truncate">
+                      {standInRoleName(value, index, t('standIn.personal.default_role'))}
+                    </span>
+                    <span className="sr-only">{scope}</span>
+                    <span className="sr-only">
+                      {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
+                      {t('standIn.personal.connected_selected', { count: projects.length })}
+                    </span>
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                data-testid="stand-in-create-role"
+                onClick={() => {
+                  setCalendarRequest(0)
+                  setProfile('create')
+                }}
+                className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted"
+              >
+                <Plus className="h-4 w-4" />
+                {t('standIn.workspace.create_role')}
+              </button>
+            </div>
+          </nav>
           {
             <button
               type="button"
@@ -503,7 +487,7 @@ export function StandInOverviewPage({
                       : 'standIn.workspace.role_profile'
                 )}
                 data-testid="stand-in-profile-panel"
-                className={`absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg ${calendarOpen ? 'md:max-w-5xl' : 'md:max-w-lg'}`}
+                className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
               >
                 {profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
@@ -523,7 +507,6 @@ export function StandInOverviewPage({
                     ref={panelRef}
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
-                    onCalendarViewChange={setCalendarOpen}
                     settings={state.draft}
                     saving={state.saving || state.loading}
                     services={props.services}
@@ -540,6 +523,7 @@ export function StandInOverviewPage({
                       }
                     }}
                     error={state.error}
+                    onReload={state.reload}
                     api={api}
                     localDeviceId={state.currentDeviceId}
                     projects={props.projects}
@@ -548,7 +532,6 @@ export function StandInOverviewPage({
                   <StandInSettingsPage
                     key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
-                    onCalendarViewChange={setCalendarOpen}
                     {...props}
                     ref={panelRef}
                     initialProfileId={roleId}

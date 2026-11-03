@@ -2510,11 +2510,25 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
-  test('shows Automations when experimental features are disabled', () => {
+  test('gates My stand-in behind the experimental features preference', async () => {
+    const onOpenStandIn = vi.fn()
+    experimentalFeatures.enabled = false
+    const view = renderSidebar({ onOpenStandIn })
+    expect(screen.queryByTestId('personal-stand-in-button')).not.toBeInTheDocument()
+    view.unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar({ onOpenStandIn })
+    await userEvent.click(screen.getByTestId('personal-stand-in-button'))
+    expect(onOpenStandIn).toHaveBeenCalledTimes(1)
+  })
+
+  test('opens independent schedules from the sidebar when experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
     renderSidebar()
 
     expect(screen.getByTestId('automation-button')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('automation-button'))
+    expect(window.location.pathname).toBe('/automations')
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

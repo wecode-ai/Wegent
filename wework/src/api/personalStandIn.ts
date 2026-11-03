@@ -17,6 +17,7 @@ export interface StandInSourceConnection {
   profile: string
   name: string
   kind: string
+  scope?: 'all'
   policy: StandInHandlingPolicy
 }
 
@@ -30,6 +31,7 @@ export interface StandInIdentity extends Partial<
   enabled: boolean
   prompt: string
   preferences: string
+  calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
 }
@@ -39,6 +41,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   name: string
   agentResourceId?: number | null
   agentProject?: StandInProjectRef
+  calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration: {
     enabled: boolean
@@ -94,7 +97,7 @@ export function newStandInRole(deviceId: string, id: string = crypto.randomUUID(
       projects: [],
       excludedProjects: [],
       tags: [],
-      policy: { automatic: true, askBeforeAct: true },
+      policy: { automatic: true, askBeforeAct: true, immediate: true },
     },
   }
 }

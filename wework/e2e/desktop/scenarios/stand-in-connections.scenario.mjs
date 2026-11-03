@@ -1,3 +1,4 @@
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -71,7 +72,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
-        await control.command('click', '[data-testid="stand-in-add-connection"]')
+        await openConnectionTypePicker(control)
         await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')

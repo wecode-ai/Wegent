@@ -1,3 +1,4 @@
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -164,7 +165,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, '07-role-conversation.png', ROOT)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
-      await control.command('click', '[data-testid="stand-in-add-connection"]')
+      await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
       await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')

@@ -3391,6 +3391,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
+  test('does not open a direct stand-in route while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+    const original = window.location.href
+    try {
+      window.history.replaceState({}, '', '/stand-in?profileId=default')
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(screen.queryByTestId('personal-stand-in-workspace')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('stand-in-overview')).not.toBeInTheDocument()
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
+  })
+
   test('shows only the local runtime selector in the task composer', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 

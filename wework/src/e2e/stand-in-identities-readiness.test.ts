@@ -64,13 +64,16 @@ test('waits for role settings to load before opening source connections', async 
       waitingStarted()
       await loading
     }
-    if (selector === '[data-testid="stand-in-add-connection"]') throw reachedConnections
+    if (selector === '[data-testid="stand-in-connection-type-picker"]') throw reachedConnections
   })
   const verified = expect(scenario.verify({ command })).rejects.toBe(reachedConnections)
 
   await waiting
-  expect(command).not.toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  expect(command).not.toHaveBeenCalledWith(
+    'waitFor',
+    '[data-testid="stand-in-connection-type-picker"]'
+  )
   settingsLoaded()
   await verified
-  expect(command).toHaveBeenCalledWith('click', '[data-testid="stand-in-add-connection"]')
+  expect(command).toHaveBeenCalledWith('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 })

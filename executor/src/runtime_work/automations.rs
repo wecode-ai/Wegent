@@ -300,7 +300,7 @@ impl AutomationStore {
                     )
             });
             let missed = scheduled_for + Duration::minutes(1) < now;
-            let status = if active
+            let status = if (active && !automation.task_request["standInCalendar"].is_object())
                 || (missed
                     && !automation.task_request["standInOwner"].is_object()
                     && !matches!(automation.schedule, AutomationSchedule::OneTime { .. }))
@@ -619,6 +619,20 @@ fn standard_day_of_week_name(value: &str) -> Option<&str> {
 }
 
 fn validate_automation(automation: &Automation) -> Result<(), String> {
+    if let Some(calendar) = automation.task_request.get("standInCalendar") {
+        let owner = &automation.task_request["standInOwner"];
+        if !calendar.is_object()
+            || !owner["userId"].as_i64().is_some_and(|id| id >= 0)
+            || !owner["roleId"].as_str().is_some_and(|id| !id.is_empty())
+            || !matches!(automation.conversation_mode, ConversationMode::Independent)
+            || automation.continuation_payload.is_some()
+            || ["initialGoal", "modelId", "modelOptions", "workspacePath"]
+                .iter()
+                .any(|key| automation.task_request.get(*key).is_some())
+        {
+            return Err("calendar entries require an owner and processing policy, without execution overrides".into());
+        }
+    }
     if automation.name.trim().is_empty() {
         return Err("automation name is required".to_owned());
     }
@@ -728,6 +742,22 @@ mod tests {
         ConversationMode, IntervalUnit, NotificationPolicy,
     };
     use serde_json::json;
+
+    #[test]
+    fn recurring_calendar_intake_keeps_new_occurrences_while_earlier_events_are_pending() {
+        let root = tempdir().unwrap();
+        let store = AutomationStore::new(root.path().join("automations.json"));
+        let calendar: Automation = serde_json::from_value(json!({"id":"calendar","version":0,"name":"Review","prompt":"Review","schedule":{"type":"interval","value":1,"unit":"hours"},"taskRequest":{"standInOwner":{"userId":7,"roleId":"@primary"},"standInCalendar":{}},"taskPayload":{"runtime":"codex"}})).unwrap();
+        store.create(calendar).unwrap();
+        let first_at = store.get("calendar").unwrap().next_run_at.unwrap();
+        let first = store.due(first_at).unwrap().pop().unwrap().1;
+        assert_eq!(first.status, AutomationRunStatus::Pending);
+        let second_at = store.get("calendar").unwrap().next_run_at.unwrap();
+        let second = store.due(second_at).unwrap().pop().unwrap().1;
+        assert_eq!(second.status, AutomationRunStatus::Pending);
+        assert_ne!(first.id, second.id);
+        assert_eq!(store.list_runs(Some("calendar")).len(), 2);
+    }
 
     #[test]
     fn owned_recurring_arrangements_catch_up_once_and_keep_active_runs_when_pruning() {

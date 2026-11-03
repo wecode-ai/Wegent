@@ -206,21 +206,38 @@ impl RuntimeWorkRpcHandler {
                 json!(LocalTaskStore::coordination_event_version(raw)),
             );
             let roles = stand_in_identities(settings);
-            let immediate = event["kind"] == "assignment"
-                || roles.iter().any(|role| {
-                    event["roleIds"]
-                        .as_array()
-                        .is_some_and(|ids| ids.contains(&role["id"]))
-                        && stand_in_connection(role, &event["source"]).is_some_and(|connection| {
+            let immediate = roles.iter().any(|role| {
+                event["roleIds"]
+                    .as_array()
+                    .is_some_and(|ids| ids.contains(&role["id"]))
+                    && (if event["kind"] == "calendar" {
+                        role["calendar"]["policy"]["immediate"]
+                            .as_bool()
+                            .unwrap_or(role["id"] != "@primary")
+                    } else if event["kind"] == "assignment" {
+                        let policy = crate::task_runtime::personal_stand_in::project_policy(
+                            role,
+                            event["projectId"].as_str().unwrap_or_default(),
+                            event["projectStore"].as_str().unwrap_or_default(),
+                        );
+                        crate::task_runtime::personal_stand_in::immediate_policy(&policy)
+                    } else {
+                        stand_in_connection(role, &event["source"]).is_some_and(|connection| {
                             crate::task_runtime::personal_stand_in::immediate_policy(
                                 &connection["policy"],
                             )
                         })
-                });
+                    })
+            });
             let binding = self
                 .coordination_binding(store, user, settings, event)
                 .await?;
-            let dispatch = if event["kind"] == "assignment"
+            let dispatch = if binding.is_none()
+                && immediate
+                && matches!(
+                    event["kind"].as_str(),
+                    Some("assignment" | "connection" | "calendar")
+                )
                 && event["roleIds"]
                     .as_array()
                     .is_some_and(|ids| ids.len() == 1)
@@ -384,7 +401,7 @@ impl RuntimeWorkRpcHandler {
                     }
                     (
                         "create_work",
-                        json!({"eventIds":ids,"roleId":action["roleId"],"title":selected[0]["issue"]["title"].as_str().unwrap_or("Assigned work")}),
+                        json!({"eventIds":ids,"roleId":action["roleId"],"title":selected[0]["title"].as_str().or(selected[0]["issue"]["title"].as_str()).or(selected[0]["source"]["name"].as_str()).unwrap_or("Work")}),
                     )
                 }
                 "assess" if !assessment => {

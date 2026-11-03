@@ -168,7 +168,7 @@ it('preserves unsaved edits on failure and requires discarding before closing', 
   await user.type(screen.getByTestId('stand-in-memory-content'), '，先问我')
   await user.click(screen.getByTestId('stand-in-memory-save'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。'
+    '暂时无法完成此操作。请保留当前修改，重新加载后再试。'
   )
   expect(screen.getByTestId('stand-in-memory-content')).toHaveValue('回复简洁，先问我')
   await user.click(screen.getByTestId('stand-in-memory-close'))
