@@ -18,10 +18,10 @@ fn proposals_require_explicit_owner_confirmation_and_reject_stale_versions() {
         .unwrap();
     assert_eq!(store.personal_stand_in(7, "mac").unwrap(), original);
     assert!(store
-        .resolve_stand_in_proposal(8, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(8, "mac", proposal["id"].as_str().unwrap(), true, None)
         .is_err());
     let saved = store
-        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
         .unwrap();
     assert_eq!(
         saved["primary"]["connections"][0]["policy"]["askBeforeAct"],
@@ -29,14 +29,14 @@ fn proposals_require_explicit_owner_confirmation_and_reject_stale_versions() {
     );
     assert!(saved["primary"]["connections"][0]["enabledAfter"].is_string());
     assert!(store
-        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true, None)
         .is_err());
     let stale = store
         .propose_stand_in_settings(7, "mac", None, "Update preferences", saved.clone())
         .unwrap();
     store.save_personal_stand_in(7, "mac", saved).unwrap();
     assert!(store
-        .resolve_stand_in_proposal(7, "mac", stale["id"].as_str().unwrap(), true)
+        .resolve_stand_in_proposal(7, "mac", stale["id"].as_str().unwrap(), true, None)
         .is_err());
     assert_eq!(
         store.stand_in_proposal(7, None).unwrap()["status"],

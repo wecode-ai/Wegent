@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { runnerModelKey } from '@wegent/collaboration'
@@ -6,6 +6,7 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse } from '@/types/api'
+import type { StandInExecutorApi } from '@/api/standIn'
 import '@/i18n'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 
@@ -14,6 +15,9 @@ vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
 }))
 vi.mock('@/features/automations/AutomationsPage', () => ({
   AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
+}))
+vi.mock('@/features/dsh-runtime/dshExtensions', () => ({
+  getDshExtensionHost: () => ({ backend: { scope: () => ({ request: async () => [] }) } }),
 }))
 
 function fixture() {
@@ -115,6 +119,38 @@ it('consumes a menu calendar deep link once and returns to the connection list o
     await user.click(screen.getByTestId('stand-in-add-connection'))
   expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
   expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+})
+
+it('protects an unsaved mailbox when returning from the primary connections header', async () => {
+  const props = fixture()
+  const provider = '@wegent/dsh-connection-runtime/email'
+  const api = {
+    connectionProviders: async () => ({
+      items: [
+        { id: provider, displayName: '邮箱', dependencies: [], availability: { status: 'ready' } },
+      ],
+    }),
+  } as unknown as StandInExecutorApi
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} api={api} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-add-connection'))
+  await user.click(await screen.findByTestId(`stand-in-add-${provider}-connection`))
+  await user.click(screen.getByTestId('stand-in-email-add'))
+  fireEvent.change(screen.getByTestId('stand-in-email-email'), {
+    target: { value: 'owner@example.com' },
+  })
+  expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  expect(screen.getByTestId('stand-in-email-discard')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-email-discard-cancel-button'))
+  expect(screen.getByTestId('stand-in-email-email')).toHaveValue('owner@example.com')
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  await user.click(screen.getByTestId('stand-in-email-discard'))
+  expect(screen.queryByTestId('stand-in-email-connections')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-primary-connections-open')).toBeVisible()
+  expect(props.onSave).not.toHaveBeenCalled()
 })
 
 it('does not save a changed receive switch when the user discards the draft', async () => {

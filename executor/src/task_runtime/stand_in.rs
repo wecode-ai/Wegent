@@ -102,6 +102,10 @@ impl LocalTaskStore {
         if value["agentId"].is_string() {
             value["agentProject"] = project;
         }
+        super::personal_stand_in::stamp_stand_in_connections(
+            &mut value,
+            before.unwrap_or(&Value::Null),
+        );
         validate_role(&value, &device)?;
         value["version"] = json!(version + 1);
         value["userId"] = json!(user_id);

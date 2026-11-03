@@ -7232,6 +7232,15 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
         "message": params.get("message").cloned().unwrap_or(Value::Null),
         "questions": questions,
     });
+    if is_tool_approval {
+        payload["approvalKind"] = json!("mcp_tool_call");
+        if let Some(title) = meta.and_then(|meta| meta.get("tool_title")) {
+            payload["toolTitle"] = title.clone();
+        }
+        if let Some(arguments) = meta.and_then(|meta| meta.get("tool_params")) {
+            payload["toolArguments"] = arguments.clone();
+        }
+    }
     elicitation::copy_lifecycle(params, &mut payload);
     Some(payload)
 }

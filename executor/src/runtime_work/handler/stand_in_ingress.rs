@@ -70,7 +70,7 @@ impl RuntimeWorkRpcHandler {
                 if state["source"]["enabledAfter"] != source["enabledAfter"] {
                     state = Value::Null;
                 }
-                if state["error"].is_object() && state["version"] == settings["version"] {
+                if collection_error_latched(source, &state, &settings["version"]) {
                     continue;
                 }
                 let outcome = self
@@ -196,19 +196,14 @@ impl RuntimeWorkRpcHandler {
                     "Connection event is missing required fields",
                 ));
             }
-            let at = message_time(&message["at"])?;
+            message_time(&message["at"])?;
             {
                 let eligible: Vec<Value> = roles
                     .iter()
                     .filter(|role| {
                         stand_in_connection(role, source).is_some_and(|connection| {
                             connection["policy"]["automatic"] == true
-                                && connection["enabledAfter"]
-                                    .as_str()
-                                    .and_then(|time| {
-                                        chrono::DateTime::parse_from_rfc3339(time).ok()
-                                    })
-                                    .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                                && source_accepts_message(connection, &message)
                         })
                     })
                     .map(|role| role["id"].clone())
@@ -223,10 +218,7 @@ impl RuntimeWorkRpcHandler {
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
                     connection["policy"]["automatic"] != true
-                        && connection["enabledAfter"]
-                            .as_str()
-                            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                            .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                        && source_accepts_message(connection, &message)
                 })
             }) {
                 if let Err(error) = self
@@ -409,6 +401,13 @@ fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, 
     Ok(result)
 }
 
+fn collection_error_latched(source: &Value, state: &Value, version: &Value) -> bool {
+    state["error"].is_object()
+        && state["version"] == *version
+        && !(source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+            && state["error"]["code"] == "email_transport_failed")
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -454,6 +453,48 @@ fn validate_collection_version(
         ));
     }
     Ok(())
+}
+
+pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
+    if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER {
+        let boundary = &source["boundary"];
+        let position = &message["position"];
+        return boundary["partition"].is_string()
+            && boundary["partition"] == position["partition"]
+            && boundary["sequence"]
+                .as_u64()
+                .zip(position["sequence"].as_u64())
+                .is_some_and(|(start, received)| received > start);
+    }
+    source["enabledAfter"]
+        .as_str()
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+        .is_some_and(|enabled| {
+            message_time(&message["at"])
+                .is_ok_and(|received| received >= enabled.timestamp_millis())
+        })
+}
+
+#[cfg(test)]
+mod ordered_email_tests {
+    use super::*;
+
+    #[test]
+    fn ordered_email_intake_uses_each_roles_uid_boundary_instead_of_timestamp_precision() {
+        let mut source = json!({"providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER,
+            "boundary":{"partition":"123","sequence":5},"enabledAfter":"2026-11-04T00:00:00.500Z"});
+        let mut message =
+            json!({"at":"2026-11-04T00:00:00Z","position":{"partition":"123","sequence":6}});
+        assert!(source_accepts_message(&source, &message));
+        source["boundary"]["sequence"] = json!(6);
+        assert!(!source_accepts_message(&source, &message));
+        message["position"]["sequence"] = json!(7);
+        assert!(source_accepts_message(&source, &message));
+        message["position"]["partition"] = json!("reset");
+        assert!(!source_accepts_message(&source, &message));
+        source.as_object_mut().unwrap().remove("boundary");
+        assert!(!source_accepts_message(&source, &message));
+    }
 }
 
 pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
@@ -634,6 +675,55 @@ mod tests {
         }
         assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
         assert!(handler.local_task_links(true).is_empty());
+    }
+
+    #[test]
+    fn email_transport_failure_retains_progress_and_retries_without_settings_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"id":"INBOX","kind":"inbox","profile":"account","providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER});
+        let version = json!(3);
+        let state = json!({"checkpoint":{"partition":"12","sequence":42}});
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &state,
+            Err(AppIpcError::new(
+                "email_transport_failed",
+                "Connection interrupted",
+            )),
+        )
+        .unwrap();
+        let failed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(failed["checkpoint"], state["checkpoint"]);
+        assert_eq!(failed["error"]["code"], "email_transport_failed");
+        assert!(!collection_error_latched(&source, &failed, &version));
+        let mut other_provider = source.clone();
+        other_provider["providerId"] = json!("@test/other");
+        assert!(collection_error_latched(&other_provider, &failed, &version));
+        for code in [
+            "email_auth_failed",
+            "email_message_invalid",
+            "email_connection_failed",
+        ] {
+            let mut permanent = failed.clone();
+            permanent["error"]["code"] = json!(code);
+            assert!(collection_error_latched(&source, &permanent, &version));
+        }
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &failed,
+            Ok(json!({"checkpoint":{"partition":"12","sequence":43}})),
+        )
+        .unwrap();
+        let resumed = store.stand_in_source(7, &source).unwrap();
+        assert!(resumed["error"].is_null());
+        assert_eq!(resumed["checkpoint"]["sequence"], 43);
     }
 
     #[test]

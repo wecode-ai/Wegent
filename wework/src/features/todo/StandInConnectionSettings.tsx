@@ -1,6 +1,6 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import { ChevronRight, Folder, MessageSquare, Plus, type LucideIcon } from 'lucide-react'
+import { ChevronRight, Folder, Mail, MessageSquare, Plus, type LucideIcon } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
@@ -9,6 +9,7 @@ import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
 import {
   AutomationsPage,
   type AutomationNavigationHandle,
@@ -59,22 +60,26 @@ export function StandInConnectionSettings({
 }) {
   const { t, i18n } = useTranslation('common')
   const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [emailDirty, setEmailDirty] = useState(false)
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
   const calendarRef = useRef<AutomationNavigationHandle>(null)
+  const emailRef = useRef<AutomationNavigationHandle>(null)
   useImperativeHandle(ref, () => ({
     back() {
       const back = () => setView(null)
       if (calendarRef.current) calendarRef.current.requestLeave(back)
+      else if (emailRef.current) emailRef.current.requestLeave(back)
       else back()
     },
     requestLeave(action) {
       if (calendarRef.current) calendarRef.current.requestLeave(action)
+      else if (emailRef.current) emailRef.current.requestLeave(action)
       else action()
     },
   }))
   useEffect(() => {
-    onScheduleDirtyChange?.(scheduleDirty)
-  }, [scheduleDirty, onScheduleDirtyChange])
+    onScheduleDirtyChange?.(scheduleDirty || emailDirty)
+  }, [scheduleDirty, emailDirty, onScheduleDirtyChange])
   useEffect(() => {
     onDetailViewChange?.(view !== null)
     return () => onDetailViewChange?.(false)
@@ -252,7 +257,17 @@ export function StandInConnectionSettings({
                 disabled={disabled || loading}
                 onInstall={() => void install(provider)}
               />
-              {['ready', 'auth_required'].includes(provider.availability.status) && (
+              {provider.id === EMAIL_PROVIDER ? (
+                <StandInEmailConnections
+                  ref={emailRef}
+                  onDirtyChange={setEmailDirty}
+                  key={deviceId}
+                  role={role}
+                  local={deviceId === localDeviceId}
+                  disabled={disabled || loading}
+                  onChange={onChange}
+                />
+              ) : ['ready', 'auth_required'].includes(provider.availability.status) ? (
                 <StandInSourceConnections
                   key={`${deviceId}:${provider.id}`}
                   provider={provider}
@@ -264,7 +279,7 @@ export function StandInConnectionSettings({
                   onChange={onChange}
                   onReady={() => setRefresh(value => value + 1)}
                 />
-              )}
+              ) : null}
             </>
           ) : (
             <div className="space-y-3">
@@ -344,7 +359,7 @@ export function StandInConnectionSettings({
                 <ConnectionTypeRow
                   key={item.id}
                   testId={`stand-in-add-${item.id === DINGTALK_PROVIDER ? 'dingtalk' : item.id}-connection`}
-                  icon={MessageSquare}
+                  icon={item.id === EMAIL_PROVIDER ? Mail : MessageSquare}
                   label={item.displayName}
                   disabled={disabled}
                   onSelect={() => {
@@ -368,6 +383,8 @@ export function StandInConnectionSettings({
                 >
                   {row.view === 'projects' ? (
                     <Folder aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+                  ) : row.view === EMAIL_PROVIDER ? (
+                    <Mail aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
                   ) : (
                     <MessageSquare
                       aria-hidden="true"

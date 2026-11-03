@@ -5,7 +5,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { RequestUserInputCard } from './RequestUserInputCard'
+import { RequestUserInputCard, type RequestUserInputPayload } from './RequestUserInputCard'
 
 vi.mock('@/lib/external-links', () => ({ openExternalUrl: vi.fn().mockResolvedValue(true) }))
 
@@ -480,6 +480,188 @@ test('shows the exact bound reply and localized actions while preserving native 
     answers: { 'mcp_tool_call_approval_call-reply': { answers: ['Allow'] } },
   })
 })
+
+test('previews complete email contents and preserves the native cancellation value', async () => {
+  const onSubmit = vi.fn(async () => true)
+  const payload = {
+    kind: 'request_user_input',
+    requestId: 'email-approval',
+    itemId: 'mail-call',
+    questions: [
+      {
+        id: 'mcp_tool_call_approval_mail-call',
+        question: 'Allow?',
+        options: [{ label: 'Allow' }, { label: 'Cancel' }],
+      },
+    ],
+  }
+  const messages = [
+    {
+      id: 'mail-turn',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        {
+          id: 'mail-call',
+          type: 'tool',
+          toolName: 'wework_stand_in.send_email',
+          toolInput: {
+            from: 'owner@example.com',
+            to: 'recipient@example.com',
+            subject: 'Review this email',
+            text: 'First paragraph\n\nComplete final paragraph',
+          },
+        },
+        { id: 'approval', type: 'tool', toolName: 'request_user_input', renderPayload: payload },
+      ],
+    },
+  ] as WorkbenchMessage[]
+  render(<RequestUserInputCard messages={messages} payload={payload} onSubmit={onSubmit} />)
+  const preview = screen.getByTestId('request-user-input-question-mcp_tool_call_approval_mail-call')
+  for (const value of [
+    'owner@example.com',
+    'recipient@example.com',
+    'Review this email',
+    'Complete final paragraph',
+  ])
+    expect(preview).toHaveTextContent(value)
+  await userEvent.click(screen.getByRole('button', { name: /不发送/ }))
+  expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      answers: { 'mcp_tool_call_approval_mail-call': { answers: ['Cancel'] } },
+    })
+  )
+})
+
+test.each([
+  'exact',
+  'mismatched',
+  'ambiguous',
+  'unknown-tool',
+  'completed',
+  'wrong-server',
+  'plain-form',
+  'missing-arguments',
+  'other-owner',
+  'no-tools',
+  'wrong-title',
+  'missing-title',
+  'wrong-question',
+  'wrong-interaction',
+  'invalid-field',
+  'expired',
+  'answered',
+] as const)(
+  'uses the current native email approval identity and arguments independently of tool display state: %s',
+  async variant => {
+    const input = {
+      from: 'owner@example.com',
+      to: 'sender@example.com',
+      subject: 'Re: Review',
+      text: 'Complete native email body\n\nFinal paragraph <b>plain text</b>',
+    }
+    const payload: RequestUserInputPayload = {
+      kind: 'request_user_input',
+      requestId: 'native-email-approval',
+      itemId: 'mcp_server_elicitation',
+      serverName: variant === 'wrong-server' ? 'other-server' : 'wework_stand_in',
+      approvalKind: variant === 'plain-form' ? undefined : 'mcp_tool_call',
+      toolTitle:
+        variant === 'wrong-title'
+          ? 'Other tool'
+          : variant === 'missing-title'
+            ? undefined
+            : 'Wework: Send email',
+      interactionKind: variant === 'wrong-interaction' ? 'mcp_url' : 'mcp_form',
+      interactionStatus:
+        variant === 'expired' ? 'expired' : variant === 'answered' ? 'answered' : 'pending',
+      interactionScope: 'native-turn',
+      toolArguments:
+        variant === 'missing-arguments'
+          ? undefined
+          : variant === 'mismatched'
+            ? { ...input, text: 'Different body' }
+            : variant === 'invalid-field'
+              ? { ...input, text: 42 }
+              : input,
+      questions: [
+        {
+          id: variant === 'wrong-question' ? 'other-question' : '__mcp_approval',
+          question: 'Native approval',
+          options: [{ label: 'Allow' }, { label: 'Decline' }],
+        },
+      ],
+    }
+    const tool = {
+      id: 'mail-call',
+      type: 'tool',
+      status: variant === 'completed' ? 'done' : 'pending',
+      toolName: 'wework_stand_in.send_email',
+      toolInput: input,
+    }
+    const messages = [
+      {
+        id: 'current-turn',
+        role: 'assistant',
+        content: '',
+        blocks: [
+          ...(variant === 'other-owner' ? [] : [tool]),
+          ...(variant === 'ambiguous' || variant === 'unknown-tool'
+            ? [
+                {
+                  ...tool,
+                  id: 'other-mail-call',
+                  toolName: variant === 'unknown-tool' ? 'other.send' : tool.toolName,
+                },
+              ]
+            : []),
+          { id: 'approval', type: 'tool', toolName: 'request_user_input', renderPayload: payload },
+        ],
+      },
+      ...(variant === 'other-owner'
+        ? [{ id: 'previous-turn', role: 'assistant', content: '', blocks: [tool] }]
+        : []),
+    ] as WorkbenchMessage[]
+    const onSubmit = vi.fn(async () => true)
+    render(
+      <RequestUserInputCard
+        messages={variant === 'no-tools' ? [] : messages}
+        payload={payload}
+        onSubmit={onSubmit}
+      />
+    )
+    if (
+      [
+        'wrong-server',
+        'plain-form',
+        'missing-arguments',
+        'wrong-title',
+        'missing-title',
+        'wrong-question',
+        'wrong-interaction',
+        'invalid-field',
+        'expired',
+        'answered',
+      ].includes(variant)
+    ) {
+      expect(screen.queryByText(/Complete native email body/)).not.toBeInTheDocument()
+      expect(onSubmit).not.toHaveBeenCalled()
+      return
+    }
+    const preview = screen.getByTestId('request-user-input-question-__mcp_approval')
+    for (const value of Object.values(payload.toolArguments!))
+      expect(preview).toHaveTextContent(String(value).replace(/\s+/g, ' '))
+    await userEvent.click(screen.getByRole('button', { name: /不发送/ }))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'native-email-approval',
+        itemId: 'mcp_server_elicitation',
+        interactionScope: 'native-turn',
+        answers: { __mcp_approval: { answers: ['Decline'] } },
+      })
+    )
+  }
+)
 
 test('binds reused tool IDs to the message owning the current approval request', () => {
   const payload = {

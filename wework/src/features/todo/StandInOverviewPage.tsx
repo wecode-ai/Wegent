@@ -391,26 +391,37 @@ export function StandInOverviewPage({
               </div>
             ))}
             {!roleId && conversation && !!needsAttention.length && (
-              <div className="flex flex-wrap gap-2 px-5 pt-3" data-testid="stand-in-important-work">
-                {needsAttention.slice(0, 3).map(item => (
-                  <button
-                    type="button"
-                    key={item.key}
-                    data-testid={`stand-in-attention-${item.task.taskId}`}
-                    onClick={() => {
-                      if (onOpenTask) void onOpenTask(item.address)
-                    }}
-                    className="min-h-8 rounded-md border border-border px-3 text-sm hover:bg-muted"
-                  >
-                    {item.task.title} ·{' '}
-                    {t(`standIn.personal.activity_${standInState(item).status}`)}
-                  </button>
-                ))}
+              <div className="space-y-2 px-5 pt-3" data-testid="stand-in-important-work">
+                {needsAttention.slice(0, 3).map(item => {
+                  const sourceName = inbox.items.find(work => work.taskId === item.task.taskId)
+                    ?.source.name
+                  return (
+                    <button
+                      type="button"
+                      key={item.key}
+                      data-testid={`stand-in-attention-${item.task.taskId}`}
+                      onClick={() => {
+                        if (onOpenTask) void onOpenTask(item.address)
+                      }}
+                      className="flex min-h-14 w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{item.task.title}</span>
+                        <span className="mt-1 block truncate text-text-muted">
+                          {sourceName && `${sourceName} · `}
+                          {t(`standIn.personal.activity_${standInState(item).status}`)}
+                        </span>
+                      </span>
+                      <span className="shrink-0">{t('standIn.workspace.review_work')}</span>
+                    </button>
+                  )
+                })}
               </div>
             )}
             {conversation && api && deviceId ? (
               <StandInConversation
                 active={active && conversation}
+                hasPendingWork={!roleId && needsAttention.length > 0}
                 key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
                 api={api}
                 userId={props.userId}
