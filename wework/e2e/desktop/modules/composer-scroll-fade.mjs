@@ -1,12 +1,15 @@
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS, assert } from './shared.mjs'
 
-const SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-composer-scroll-container]:has([data-testid="chat-message-input"])`
+function composerScrollSelector() {
+  return `${ACTIVE_WORKBENCH_SELECTOR} [data-composer-scroll-container]:has([data-testid="chat-message-input"])`
+}
 
 async function readComposerFade(control, composerSelector) {
-  const viewports = JSON.parse(await control.command('getElementMetrics', SCROLL_SELECTOR))
+  const scrollSelector = composerScrollSelector()
+  const viewports = JSON.parse(await control.command('getElementMetrics', scrollSelector))
   assert.equal(viewports.length, 1, 'The active rich composer must use one content viewport')
   const style = property =>
-    control.command('getComputedStyleValue', SCROLL_SELECTOR, { value: property })
+    control.command('getComputedStyleValue', scrollSelector, { value: property })
   return {
     ...viewports[0],
     value: await control.command('getValue', composerSelector),
@@ -40,7 +43,7 @@ function isUnmasked(state, value) {
 
 export async function verifyComposerFadeBeforeSubmit(control, composerSelector, draft) {
   await control.command('fill', composerSelector, { value: draft })
-  await control.command('scrollToRatioAsUser', SCROLL_SELECTOR, { value: '1' })
+  await control.command('scrollToRatioAsUser', composerScrollSelector(), { value: '1' })
   await waitForComposerFade(
     control,
     composerSelector,
