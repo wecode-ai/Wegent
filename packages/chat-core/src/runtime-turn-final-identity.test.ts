@@ -9,6 +9,72 @@ import {
 const content = 'The complete answer'
 const nativeId = 'wework-e2e-response-2-message'
 
+test.each([undefined, 0])(
+  'completion replaces a partial process item at position %s before native history hydration',
+  position => {
+    const streaming: RuntimeConversationTurn = {
+      id: 'turn-1',
+      status: 'streaming',
+      items: [
+        {
+          id: nativeId,
+          position,
+          type: 'block',
+          block: {
+            id: nativeId,
+            type: 'text',
+            content: 'The complete',
+            status: 'streaming',
+            createdAt: 1,
+          },
+        },
+      ],
+    }
+    const completed = reduceRuntimeConversationTurns([streaming], {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+      itemId: nativeId,
+      content,
+    })
+    const native: RuntimeConversationTurn = {
+      id: 'turn-1',
+      status: 'done',
+      position: 0,
+      items: [{ id: nativeId, type: 'assistant_text', content, position: 0 }],
+    }
+    expect
+      .soft(completed[0].items)
+      .toEqual([
+        expect.objectContaining({ id: nativeId, type: 'assistant_text', content, position }),
+      ])
+    const hydrated = mergeRuntimeConversationTurns(completed, [native])
+    expect.soft(hydrated[0].items).toEqual(native.items)
+    expect(projectRuntimeConversationTurns(hydrated)[0].content).toBe(content)
+  }
+)
+
+test('completion preserves distinct process output with identical text', () => {
+  const process = {
+    id: 'commentary',
+    type: 'block' as const,
+    block: {
+      id: 'commentary',
+      type: 'text' as const,
+      content,
+      status: 'done' as const,
+      createdAt: 1,
+    },
+  }
+  const completed = reduceRuntimeConversationTurns(
+    [{ id: 'turn-1', status: 'streaming', items: [process] }],
+    { type: 'assistant_done', subtaskId: 'turn-1', itemId: nativeId, content }
+  )
+  expect(completed[0].items).toEqual([
+    process,
+    expect.objectContaining({ id: nativeId, type: 'assistant_text', content }),
+  ])
+})
+
 test('completion retains a process item identity before native history hydration', () => {
   const streaming: RuntimeConversationTurn = {
     id: 'turn-1',
