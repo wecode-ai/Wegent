@@ -1,10 +1,15 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { DesktopCloudCredentialError } from '@/desktop/cloudCredentials'
-import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
+import type {
+  CloudConnectionContextValue,
+  OpenCloudAuthorizationUrl,
+} from './CloudConnectionContext'
+import type { User } from '@/types/api'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
 import { getJwtExpiry, saveStoredCloudConnection } from './cloudConnectionStorage'
 import { useCloudConnection } from './useCloudConnection'
@@ -95,6 +100,61 @@ function CloudSocketProbe() {
   )
 }
 
+function CloudSnapshotProbe({
+  observe,
+}: {
+  observe: (snapshot: CloudConnectionContextValue) => void
+}) {
+  const cloud = useCloudConnection()
+  useEffect(() => observe(cloud), [cloud, observe])
+  return null
+}
+
+async function observeConnectedOwner() {
+  const owner = {
+    backendUrl: 'https://owner-a.example.com',
+    apiBaseUrl: 'https://owner-a.example.com/api',
+    socketBaseUrl: 'wss://owner-a.example.com',
+    socketPath: '/socket.io',
+    webUrl: 'https://owner-a.example.com',
+    credentialMode: 'legacy_access_token' as const,
+    token: tokenWithExp(),
+    user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+    connectedAt: '2026-08-28T00:00:00.000Z',
+  }
+  saveStoredCloudConnection(owner)
+  httpMocks.get.mockImplementation((endpoint: string) => {
+    if (endpoint === '/auth/wework/config') {
+      return Promise.resolve({ web_url: owner.webUrl, socket_url: owner.socketBaseUrl })
+    }
+    if (endpoint === '/users/me') return Promise.resolve(owner.user)
+    return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+  })
+  const observe = vi.fn<(snapshot: CloudConnectionContextValue) => void>()
+  render(
+    <CloudConnectionProvider>
+      <CloudSnapshotProbe observe={observe} />
+    </CloudConnectionProvider>
+  )
+  await waitFor(() =>
+    expect(httpMocks.get).toHaveBeenCalledWith('/users/me', { redirectOnUnauthorized: false })
+  )
+  const read = () => observe.mock.lastCall![0]
+  await waitFor(() => expect(read().status).toBe('connected'))
+  return { owner, observe, read }
+}
+
+function mockCandidateAuthSession() {
+  httpMocks.post.mockResolvedValueOnce({
+    session_id: 'candidate-session',
+    poll_token: 'candidate-poll',
+    authorize_url: 'https://owner-b.example.com/auth/wework/authorize',
+    web_url: 'https://owner-b.example.com',
+    expires_at: Math.floor(Date.now() / 1000) + 30,
+    poll_interval_seconds: 0.001,
+  })
+}
+
 describe('CloudConnectionProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -118,6 +178,160 @@ describe('CloudConnectionProvider', () => {
   afterEach(() => {
     delete window.weworkElectronLifecycle
     vi.restoreAllMocks()
+  })
+
+  describe('connection owner publication', () => {
+    afterEach(() => {
+      httpMocks.get.mockReset()
+      httpMocks.post.mockReset()
+      credentialMocks.claimAuthorization.mockReset()
+    })
+
+    it('keeps an empty owner while an unreachable candidate connects and fails', async () => {
+      let rejectHealth!: (error: Error) => void
+      httpMocks.get.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectHealth = reject
+          })
+      )
+      const observe = vi.fn<(snapshot: CloudConnectionContextValue) => void>()
+      render(
+        <CloudConnectionProvider>
+          <CloudSnapshotProbe observe={observe} />
+        </CloudConnectionProvider>
+      )
+      const read = () => observe.mock.lastCall![0]
+      let pending!: Promise<unknown>
+      act(() => {
+        pending = read()
+          .connectWithAuthorization('https://unreachable.example.com')
+          .catch(error => error)
+      })
+      await waitFor(() => expect(rejectHealth).toBeDefined())
+      const connecting = read()
+      await act(async () => {
+        rejectHealth(new Error('Backend unavailable'))
+        await pending
+      })
+
+      expect(connecting.status).toBe('connecting')
+      expect(read().status).toBe('error')
+      expect(read().error).toContain('健康检查失败')
+      for (const [snapshot] of observe.mock.calls) {
+        expect(snapshot.backendUrl).toBeUndefined()
+        expect(snapshot.apiBaseUrl).toBeUndefined()
+        expect(snapshot.socketBaseUrl).toBeUndefined()
+        expect(snapshot.user).toBeNull()
+        expect(snapshot.token).toBeNull()
+      }
+    })
+
+    it('publishes a candidate backend and its authenticated user together after authorization', async () => {
+      const { owner, observe, read } = await observeConnectedOwner()
+      const nextUser: User = { id: 8, user_name: 'bob', email: 'bob@example.com' }
+      const nextToken = tokenWithExp(Math.floor(Date.now() / 1000) + 7200)
+      let resolveClaim!: (result: unknown) => void
+      let resolveUser!: (user: User) => void
+      credentialMocks.claimAuthorization.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveClaim = resolve
+          })
+      )
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/health') return Promise.resolve({ status: 'healthy' })
+        if (endpoint === '/auth/wework/config') {
+          return Promise.resolve({
+            web_url: 'https://owner-b.example.com',
+            socket_url: 'wss://owner-b.example.com',
+          })
+        }
+        if (endpoint === '/users/me') {
+          return new Promise<User>(resolve => {
+            resolveUser = resolve
+          })
+        }
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
+      mockCandidateAuthSession()
+      let pending!: Promise<unknown>
+      act(() => {
+        pending = read().connectWithAuthorization('https://owner-b.example.com')
+      })
+      await waitFor(() => expect(resolveClaim).toBeDefined())
+      const authorizing = read()
+      await act(async () => {
+        resolveClaim({ status: 'success', accessToken: nextToken })
+      })
+      await waitFor(() => expect(resolveUser).toBeDefined())
+      const authenticating = read()
+      await act(async () => {
+        resolveUser(nextUser)
+        await pending
+      })
+
+      for (const snapshot of [authorizing, authenticating]) {
+        expect(snapshot.status).toBe('connecting')
+        expect(snapshot).toMatchObject(owner)
+      }
+      expect(read()).toMatchObject({
+        status: 'connected',
+        apiBaseUrl: 'https://owner-b.example.com/api',
+        socketBaseUrl: 'wss://owner-b.example.com',
+        token: nextToken,
+        user: nextUser,
+      })
+      for (const [snapshot] of observe.mock.calls) {
+        if (snapshot.apiBaseUrl === 'https://owner-b.example.com/api') {
+          expect(snapshot.user).toEqual(nextUser)
+          expect(snapshot.token).toBe(nextToken)
+        }
+      }
+    })
+
+    it('retains the previous owner after candidate authorization fails and clears its token', async () => {
+      const { owner, observe, read } = await observeConnectedOwner()
+      let rejectClaim!: (error: Error) => void
+      credentialMocks.claimAuthorization.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectClaim = reject
+          })
+      )
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/health') return Promise.resolve({ status: 'healthy' })
+        if (endpoint === '/auth/wework/config') {
+          return Promise.resolve({
+            web_url: 'https://owner-b.example.com',
+            socket_url: 'wss://owner-b.example.com',
+          })
+        }
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
+      mockCandidateAuthSession()
+      let pending!: Promise<unknown>
+      act(() => {
+        pending = read()
+          .connectWithAuthorization('https://owner-b.example.com')
+          .catch(error => error)
+      })
+      await waitFor(() => expect(rejectClaim).toBeDefined())
+      await act(async () => {
+        rejectClaim(new Error('Authorization failed'))
+        await pending
+      })
+
+      expect(read()).toMatchObject({
+        ...owner,
+        status: 'error',
+        token: null,
+      })
+      expect(read().error).toContain('Authorization failed')
+      expect(
+        observe.mock.calls.every(([snapshot]) => snapshot.apiBaseUrl === owner.apiBaseUrl)
+      ).toBe(true)
+    })
   })
 
   it('reports the failing cloud connection stage when health cannot reach backend', async () => {

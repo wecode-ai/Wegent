@@ -47,6 +47,8 @@ flowchart LR
     Transport[Reconnect and token refresh] --> Generation[Replace request generation and cancel old reads]
     Generation --> Preserve[Same backend and account retain navigation and user state]
     Owner[Backend or account change] --> Reset[Recreate workbench state and lifecycle cache]
+    Candidate[Candidate backend] --> Auth[Validate and authorize]
+    Auth -->|Publish backend and account together on success| Owner
     Profile[Explicit profile and preference updates] --> UserState[Current user state]
 ```
 
@@ -128,6 +130,10 @@ flowchart LR
   so summary lookup cannot recover an old task or seed a new store from old reducer
   state. Same-owner token refresh retains them. Do not migrate old lifecycle storage
   that lacks backend/account ownership.
+  Candidate connection configuration stays local to the authorization attempt until
+  success publishes it with the authenticated account. Failure must not combine an
+  old account with a candidate backend or unmount the connection dialog that owns
+  its error and recovery actions.
 
 ## Verification contract
 

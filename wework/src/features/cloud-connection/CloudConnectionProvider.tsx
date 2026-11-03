@@ -589,9 +589,10 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       const connectionGeneration = refreshGenerationRef.current + 1
       refreshGenerationRef.current = connectionGeneration
       let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
+      // Keep candidate endpoints request-local until their authenticated user is
+      // ready, so consumers never observe a new backend with the previous owner.
       setSnapshot(current => ({
         ...current,
-        ...config,
         status: 'connecting',
         error: null,
       }))
@@ -603,10 +604,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
           throw new Error('Cloud connection was cancelled')
         }
         config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride, metadata.socketUrl)
-        setSnapshot(current => ({
-          ...current,
-          ...config,
-        }))
         const session = await createWeworkAuthSession(config)
         const authorizationHandle = await openAuthorizationUrl?.(session.authorize_url)
         const windowClosed = authWindowClosedPromise(authorizationHandle)
@@ -664,7 +661,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             ? current
             : {
                 ...current,
-                ...config,
                 status: 'error',
                 token: null,
                 error: getCloudErrorMessage(error, t),
