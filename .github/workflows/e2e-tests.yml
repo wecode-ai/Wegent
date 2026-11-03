@@ -1918,6 +1918,8 @@ jobs:
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env DATABASE_URL \
             --env E2E_DEVICE_ID \
+            --env GITHUB_RUN_ID \
+            --env GITHUB_RUN_ATTEMPT \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
             node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
