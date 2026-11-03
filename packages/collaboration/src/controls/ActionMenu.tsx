@@ -176,17 +176,19 @@ export function ActionMenu({
       const previousFocus = contextMenuPreviousFocusRef.current;
       contextMenuPreviousFocusRef.current = null;
       if (restoreFocus) {
+        // Restore before an action opens a dialog and captures its return target.
         const focusTarget = contextMenuPosition
           ? previousFocus
           : triggerRef.current;
-        window.requestAnimationFrame(() => {
-          if (
-            focusTarget?.isConnected &&
-            document.activeElement === document.body
-          ) {
-            focusTarget.focus();
-          }
-        });
+        const activeElement = document.activeElement;
+        if (
+          focusTarget?.isConnected &&
+          (activeElement === document.body ||
+            menuRef.current?.contains(activeElement) ||
+            submenuRef.current?.contains(activeElement))
+        ) {
+          focusTarget.focus();
+        }
       }
     },
     [cancelSubmenuClose, contextMenuPosition, onContextMenuClose, onOpenChange],

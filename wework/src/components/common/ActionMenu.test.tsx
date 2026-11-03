@@ -138,7 +138,7 @@ describe('ActionMenu', () => {
     await waitFor(() => expect(previousFocus).toHaveFocus())
   })
 
-  test('preserves dialog focus when a context menu action opens a dialog', async () => {
+  test('hands focus to an action dialog and restores the original target on dismissal', async () => {
     const user = userEvent.setup()
     render(<ContextMenuFixture opensDialog />)
     await user.click(screen.getByTestId('previous-focus'))
@@ -152,6 +152,9 @@ describe('ActionMenu', () => {
     expect(screen.getByTestId('rename-dialog-input')).toHaveFocus()
     await user.keyboard('Renamed')
     expect(screen.getByTestId('rename-dialog-input')).toHaveValue('Renamed')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('previous-focus')).toHaveFocus()
   })
 
   test('mouse opening does not focus an action or return focus to the icon after Escape', async () => {

@@ -400,6 +400,9 @@ async function verifyConversationContextMenuDismissal(control, taskRowTestId, co
   })
   await control.command('nativePress', renameInput, { key: 'Escape' })
   await control.command('waitFor', renameInput, { visible: false })
+  await control.command('waitFor', `${composerSelector}:focus`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+  })
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
