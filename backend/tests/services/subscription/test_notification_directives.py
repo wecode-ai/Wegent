@@ -227,3 +227,13 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
     assert appended.startswith("Check the service.")
     assert "【静默】" in appended
     assert "【@列表:1234,1235】" in appended
+    assert "【通知路由控制规则】" in appended
+    assert "本规则仅控制群聊通知路由，不改变私聊通知" in appended
+    assert "群聊静默不得影响私聊，不要调用 silent_exit" in appended
+    assert "只要启用了群聊通知，默认必须向已绑定群聊发送通知" in appended
+    assert "除非任务或用户明确要求本次不通知群聊" in appended
+    assert "不得根据消息是否例行、是否测试、是否成功、是否有异常" in appended
+    assert "【静默】或【silent】" in appended
+    assert "只能使用明确指定或可确定的实际 staffId" in appended
+    assert "不输出任何控制标记" in appended
+    assert "不得写进正文或做解释" in appended

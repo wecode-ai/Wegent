@@ -94,12 +94,12 @@ You can override the agent's default model:
 
 #### On-demand group silence and mentions
 
-After a subscription is bound to a group chat, the AI can control that run's group notification. This works for Chat, ClaudeCode, Codex, Agno, and Dify shells. The system appends the control instructions to the execution Prompt. The AI ends its answer with one of these lines, enclosed in `【】`:
+After a subscription is bound to a group chat, the AI can control that run's group notification. This works for Chat, ClaudeCode, Codex, Agno, and Dify shells. The system appends the control instructions to the execution Prompt. These rules control group routing only and do not change private notifications. When group delivery is enabled, group delivery is the default. Only an explicit task or user request not to notify the group for that run may produce a control marker, which the AI places at the end of its answer enclosed in `【】`:
 
-- `【silent】`: send the private notification normally, but skip the bound group chat.
+- `【静默】` or `【silent】`: send the private notification normally, but skip the bound group chat.
 - `【@列表:1234,1235】` or `【mention:1234,1235】`: mention these DingTalk staffIds in the group chat for this run. Separate IDs with English or Chinese commas; the colon after the list keyword may be ASCII or full-width.
 
-There is no static mention list to maintain in notification settings; each run decides from the message tail. Both markers may be present; silence takes precedence. The markers control routing only and are removed from group messages, webhook payloads and execution history before use.
+There is no static mention list to maintain in notification settings; each run decides from the message tail. When the run should deliver normally without mentions, it must not emit a control marker. Mentions may only use staffIds explicitly provided or unambiguously recoverable from the task context; they must not be invented. Both markers may be present; silence takes precedence. The markers control routing only and are removed from group messages, webhook payloads and execution history before use. Group silence must not affect private delivery, and group notification control should not be replaced by `silent_exit`.
 
 #### Visibility Settings
 
