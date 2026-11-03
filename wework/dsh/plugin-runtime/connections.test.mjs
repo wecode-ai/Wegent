@@ -228,3 +228,57 @@ test('independent providers work without querying a Codex catalog', async () => 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('reuses only declared alternate sources before installing the preferred source', async () => {
+  const manifest = declaration()
+  const alternate = { marketplaceId: 'legacy', pluginId: 'mail@legacy' }
+  manifest.wework.connections.dependencies.mail.alternateSources = [alternate]
+  const definition = parseConnections(manifest)
+  const legacy = installed({ ...alternate })
+  const preferred = installed({ installed: false, enabled: false })
+  const plan = rows => dependencyPlan(definition, rows, satisfies)[0]
+  assert.equal(plan([preferred, legacy]).resolved, legacy)
+  assert.equal(plan([installed(), legacy]).resolved.marketplaceId, 'company')
+  assert.equal(plan([installed({ marketplaceId: 'unrelated' })]).status, 'missing')
+  assert.equal(plan([{ ...legacy, enabled: false }]).status, 'disabled')
+  assert.equal(plan([{ ...legacy, version: '2.0.0' }]).status, 'incompatible')
+  assert.throws(() => plan([legacy, legacy]), /Ambiguous/)
+  const calls = []
+  const dependencies = new ConnectionDependencies(async method => {
+    calls.push(method)
+    return {
+      marketplaces: [
+        { name: 'company', plugins: [{ id: 'mail@company', name: 'mail', installed: false }] },
+        {
+          name: 'legacy',
+          plugins: [
+            {
+              id: 'mail@legacy',
+              name: 'mail',
+              installed: true,
+              enabled: true,
+              localVersion: '1.2.0',
+            },
+          ],
+        },
+      ],
+    }
+  }, satisfies)
+  assert.equal((await dependencies.install(definition, ['mail']))[0].status, 'ready')
+  assert.ok(!calls.includes('plugin/install'))
+})
+
+test('rejects malformed and duplicate alternate source declarations', () => {
+  for (const alternateSources of [
+    null,
+    {},
+    [null],
+    [{}],
+    [{ marketplaceId: 'legacy' }],
+    [declaration().wework.connections.dependencies.mail.source],
+  ]) {
+    const manifest = declaration()
+    manifest.wework.connections.dependencies.mail.alternateSources = alternateSources
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+})

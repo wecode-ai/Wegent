@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@file-viewer/renderer-word@2.1.27>@file-viewer/docx': 0.3.34
+
 packageExtensionsChecksum: sha256-WE38AAKnRy6d54cL6yvi0cklx5r0uwplT5PiqrcuqYE=
 
 patchedDependencies:
@@ -96,6 +99,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.7)
+      '@file-viewer/docx':
+        specifier: 0.3.34
+        version: 0.3.34
       '@file-viewer/preset-office':
         specifier: 2.1.27
         version: 2.1.27
@@ -1775,6 +1781,9 @@ packages:
 
   '@file-viewer/doc@2.1.27':
     resolution: {integrity: sha512-vdedUn/Cgp4LrGr75cn/9wL0VFFfANXbKXBn3hbiGml/mBmRT7YX6Ulc0pnfKpFkwF9ILZbqDGKgWRf7zholMw==}
+
+  '@file-viewer/docx@0.3.34':
+    resolution: {integrity: sha512-ser6ws0xgnG0hnYxL0yM8rggmHtGWSyNY8GPvvWMiv8RYroS/ts0u3tUPy5hD0jAMsv3Clt5ivK/9ScKsaH2XQ==}
 
   '@file-viewer/docx@0.3.19':
     resolution: {integrity: sha512-LgJn6Qnhibd2HHbfdDYkO7uv4UxgRVYbAR1bw01eQJNAUMQ6n4zl28thddPXMmqptwh7/v8Vw0dSM6DkzkdeeQ==}
@@ -4613,6 +4622,10 @@ packages:
 
   '@vitest/utils@4.1.8':
     resolution: {integrity: sha512-uOJamYALNhfJ6iolExyQM40yIQwDqYnkKtQ5VCiSe17E33H0aQ/u+1GlRuz4LZBk6Mm3sg90G9hEbmEt37C1Zg==}
+
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
+    engines: {node: '>=14.6'}
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
@@ -10597,6 +10610,11 @@ snapshots:
 
   '@file-viewer/doc@2.1.27': {}
 
+  '@file-viewer/docx@0.3.34':
+    dependencies:
+      '@xmldom/xmldom': 0.9.12
+      jszip: 3.10.2
+
   '@file-viewer/docx@0.3.19':
     dependencies:
       jszip: 3.10.1
@@ -10826,7 +10844,7 @@ snapshots:
     dependencies:
       '@file-viewer/core': 2.1.27
       '@file-viewer/doc': 2.1.27
-      '@file-viewer/docx': 0.3.19
+      '@file-viewer/docx': 0.3.34
       jszip: 3.10.1
       rtf.js: 3.0.9
 
@@ -13807,6 +13825,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.8
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
+
+  '@xmldom/xmldom@0.9.12': {}
 
   '@xmldom/xmldom@0.9.10': {}
 
