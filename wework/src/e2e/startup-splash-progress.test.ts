@@ -2,15 +2,15 @@ import assert from 'node:assert/strict'
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
+import { test } from 'vitest'
 
 import {
   assertStartupProgressStages,
   startupSlowObservation,
   startupTimeoutObservation,
   waitForStartupProgressEvidence,
-} from '../e2e/desktop/modules/startup-splash-progress.mjs'
+} from '../../e2e/desktop/modules/startup-splash-progress.mjs'
 
 const stages = [
   'launch',
@@ -22,8 +22,13 @@ const stages = [
   'core-dsh',
   'renderer',
 ]
-const progress = stage => ({ step: 'startup-progress', status: 'started', stage, elapsedMs: 1 })
-const line = event =>
+const progress = (stage: string) => ({
+  step: 'startup-progress',
+  status: 'started',
+  stage,
+  elapsedMs: 1,
+})
+const line = (event: Record<string, unknown>) =>
   `[startup] ${JSON.stringify(event)
     .replaceAll('"', "'")
     .replaceAll(/'([a-zA-Z]+)':/g, '$1: ')}\n`
