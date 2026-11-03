@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import {
   createSingleRootLocalProject,
   DEFAULT_MODEL_ID,
+  runChecked,
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
@@ -154,11 +155,13 @@ export function createDesktopScenario({
           control,
           prompt: PROMPT,
           timeoutMs: modelResponseTimeoutMs,
+          workspacePath,
         })
       } else if (checkpoint === 'human-interactions-hidden') {
         const hiddenPath = join(dirname(workspacePath), 'unlisted-question-workspace')
         originalWorkspacePath = hiddenPath
-        await mkdir(hiddenPath, { recursive: true })
+        // Keep the unlisted workspace independent of the enclosing CI checkout.
+        await runChecked('git', ['clone', '--no-hardlinks', workspacePath, hiddenPath])
         const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
         const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
         assert.ok(model)

@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
     | undefined
     | {
         getError: () => undefined
+        isDisabled: () => boolean
         isSubmitting: () => boolean
         getDraft: () => Record<string, string>
         setDraft: ReturnType<typeof vi.fn>
@@ -1520,6 +1521,7 @@ describe('TemporaryChatPanel', () => {
     ] as typeof mocks.conversationMessages
     mocks.inputHost = {
       getError: () => undefined,
+      isDisabled: () => false,
       isSubmitting: () => false,
       getDraft: () => ({ question_1: 'Keep the old rule for existing customers.' }),
       setDraft: vi.fn(),
@@ -1542,6 +1544,12 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('request-user-input-custom-question_1')).toHaveValue(
       'Keep the old rule for existing customers.'
     )
+    expect(screen.queryByTestId('runtime-input-submitting')).not.toBeInTheDocument()
+    mocks.inputHost.isSubmitting = () => true
+    mocks.inputHost.isDisabled = () => true
+    rerender(panel(question))
+    expect(screen.getByTestId('runtime-input-submitting')).toHaveTextContent(/正在发送|Sending/)
+    expect(screen.getByTestId('request-user-input-submit-button')).toBeDisabled()
     rerender(panel(null))
     expect(screen.queryByTestId('request-user-input-custom-question_1')).not.toBeInTheDocument()
     rerender(panel(undefined))

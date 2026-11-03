@@ -956,11 +956,20 @@ export function TemporaryChatPanel({
         readOnly || !active ? null : (
           <>
             {!pendingRequest && composerHeader}
+            {pendingRequest && requestUserInputHost?.isSubmitting(pendingRequest) ? (
+              <div
+                data-testid="runtime-input-submitting"
+                role="status"
+                className="pb-2 text-xs text-text-muted"
+              >
+                {t('workbench.sending_message')}
+              </div>
+            ) : null}
             {pendingRequest ? (
               <RequestUserInputCard
                 key={requestUserInputPayloadKey(pendingRequest)}
                 payload={pendingRequest}
-                disabled={requestUserInputHost?.isSubmitting(pendingRequest)}
+                disabled={requestUserInputHost?.isDisabled(pendingRequest)}
                 error={requestUserInputHost?.getError(pendingRequest)}
                 messages={messages}
                 draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}

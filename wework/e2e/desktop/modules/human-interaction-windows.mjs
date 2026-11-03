@@ -69,6 +69,7 @@ export async function verifyHumanInteractionAcrossWindows({
       'The second renderer must wait on the same real browser lock'
     )
     assert.equal(second.held.filter(lock => lock.name === requestLock.name).length, 1)
+    await detached.command('waitFor', `${page} [data-testid="runtime-input-submitting"]`)
     await captureScreenshot(detached, '06b-second-window-waits-for-owner.png')
   } finally {
     await gates.reset()

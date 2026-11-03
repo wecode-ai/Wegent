@@ -98,7 +98,14 @@ it('restores an offline draft without enabling submission before the live reques
   }
   const { result, value } = host({ pending: [cached] })
   expect(result.current!.getDraft(interactionQuestion)).toEqual({ compatibility: 'Saved reply' })
-  expect(result.current!.isSubmitting(interactionQuestion)).toBe(true)
+  expect(result.current!.isDisabled(interactionQuestion)).toBe(true)
+  expect(result.current!.isSubmitting(interactionQuestion)).toBe(false)
   expect(await result.current!.submit(response, interactionQuestion)).toBe(false)
   expect(value.respond).not.toHaveBeenCalled()
+})
+
+it('distinguishes an active submission from disabled cached or unregistered input', () => {
+  const { result } = host({ busy: new Set([item.id]) })
+  expect(result.current!.isSubmitting(interactionQuestion)).toBe(true)
+  expect(result.current!.isDisabled(interactionQuestion)).toBe(true)
 })

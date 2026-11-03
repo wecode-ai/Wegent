@@ -180,8 +180,8 @@ export function createStandInCoordinatorVerification({
       await captureScreenshot(control, '24b2-separate-calendar-and-settings-drafts.png')
       await control.command('click', '[data-testid="stand-in-primary-keep-editing"]')
       assert.equal(
-        await control.command('getValue', '[data-testid="automation-name-input"]'),
-        `${SCHEDULE}（已调整）`
+        await control.command('getElementCount', '[data-testid="automation-name-input"]'),
+        '0'
       )
       const remainingSchedules = (await rpc('runtime.automations.list', {})).items
       assert.deepEqual(

@@ -10,6 +10,7 @@ import {
 
 interface RuntimeUserInputHost {
   getError(payload: RequestUserInputPayload): string | undefined
+  isDisabled(payload: RequestUserInputPayload): boolean
   isSubmitting(payload: RequestUserInputPayload): boolean
   getDraft(payload: RequestUserInputPayload): Record<string, string> | undefined
   setDraft(payload: RequestUserInputPayload, answers: Record<string, string>): void
@@ -31,15 +32,20 @@ export function useRuntimeInteractionInputHost(
       interactions.pending.find(item => item.id === interactionId({ address }, key ?? ''))
     const question = (payload: RequestUserInputPayload) =>
       pending(requestUserInputPayloadKey(payload))
+    const isSubmitting = (payload: RequestUserInputPayload) => {
+      const item = question(payload)
+      return Boolean(item && interactions.busy.has(item.id))
+    }
     return {
       getError(payload) {
         const item = question(payload)
         return item ? interactions.errors[item.id] : undefined
       },
-      isSubmitting(payload) {
+      isSubmitting,
+      isDisabled(payload) {
         const item = question(payload)
         return (
-          Boolean(item && interactions.busy.has(item.id)) ||
+          isSubmitting(payload) ||
           (canQuickReply(payload) && (!item || !canReplyToInteraction(item)))
         )
       },
