@@ -13,7 +13,7 @@ source_workflow="${ACTIONS_ARTIFACT_WORKFLOW:-}"
 source_head_sha="${ACTIONS_ARTIFACT_HEAD_SHA:-}"
 source_job="${ACTIONS_ARTIFACT_JOB:-}"
 source_event="${GITHUB_EVENT_NAME:-}"
-if [[ -n "$source_workflow" ]]; then
+if [[ -n "$source_workflow" || -n "$source_job" ]]; then
   : "${ACTIONS_ARTIFACT_HEAD_SHA:?ACTIONS_ARTIFACT_HEAD_SHA is required for a source workflow}"
   : "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME is required for a source workflow}"
 fi
@@ -41,6 +41,29 @@ request() {
     "$@"
 }
 
+producer_state_for() {
+  local jobs_json
+  jobs_json="$(request "$api_url/repos/$repository/actions/runs/$1/jobs?per_page=100")"
+  node -e '
+const fs = require("node:fs")
+const payload = JSON.parse(fs.readFileSync(0, "utf8"))
+if (!Array.isArray(payload.jobs)) throw new Error("Invalid workflow jobs response")
+const job = payload.jobs.find(job => job.name === process.argv[1])
+console.log(job ? job.conclusion || job.status : "absent")
+' "$source_job" <<<"$jobs_json"
+}
+
+if [[ -z "$source_workflow" && -n "$source_job" ]]; then
+  run_json="$(request "$api_url/repos/$repository/actions/runs/$run_id")"
+  node -e '
+const fs = require("node:fs")
+const run = JSON.parse(fs.readFileSync(0, "utf8"))
+const [sha, event] = process.argv.slice(1)
+if (run.head_sha !== sha || run.event !== event)
+  throw new Error("Current artifact run does not match the expected commit and event")
+' "$source_head_sha" "$source_event" <<<"$run_json"
+fi
+
 deadline=$((SECONDS + wait_seconds))
 discovery_started=$SECONDS
 polls=0
@@ -48,6 +71,7 @@ artifact_id=""
 while [[ -z "$artifact_id" ]]; do
   polls=$((polls + 1))
   source_run_status=""
+  producer_ready=true
   if [[ -n "$source_workflow" ]]; then
     runs_json="$(request \
       "$api_url/repos/$repository/actions/workflows/$source_workflow/runs?head_sha=$source_head_sha&event=$source_event&per_page=100")"
@@ -65,14 +89,7 @@ for (const run of runs) console.log(run.id, run.status)
     while read -r candidate_id candidate_status; do
       [[ -n "$candidate_id" ]] || continue
       if [[ -n "$source_job" ]]; then
-        jobs_json="$(request "$api_url/repos/$repository/actions/runs/$candidate_id/jobs?per_page=100")"
-        producer_state="$(node -e '
-const fs = require("node:fs")
-const payload = JSON.parse(fs.readFileSync(0, "utf8"))
-if (!Array.isArray(payload.jobs)) throw new Error("Invalid workflow jobs response")
-const job = payload.jobs.find(job => job.name === process.argv[1])
-console.log(job ? job.conclusion || job.status : "absent")
-' "$source_job" <<<"$jobs_json")"
+        producer_state="$(producer_state_for "$candidate_id")"
         case "$producer_state" in
           skipped) continue ;;
           absent) [[ "$candidate_status" != "completed" ]] || continue ;;
@@ -85,8 +102,17 @@ console.log(job ? job.conclusion || job.status : "absent")
       source_run_status="$candidate_status"
       break
     done <<<"$source_run"
+  elif [[ -n "$source_job" ]]; then
+    producer_state="$(producer_state_for "$run_id")"
+    case "$producer_state" in
+      success) ;;
+      absent|queued|in_progress|waiting|pending|requested) producer_ready=false ;;
+      *)
+        echo "Producer $source_job in run $run_id ended with $producer_state" >&2
+        exit 1 ;;
+    esac
   fi
-  if [[ -n "$run_id" ]]; then
+  if [[ -n "$run_id" && "$producer_ready" == "true" ]]; then
     artifacts_json="$(request \
       "$api_url/repos/$repository/actions/runs/$run_id/artifacts?per_page=100")"
     artifact_id="$(

@@ -19,6 +19,58 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
+test("Executor preparation overlaps the frontend build but consumes only a verified successful producer", () => {
+  const parsed = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(parsed.status, 0, parsed.stderr);
+  const jobs = JSON.parse(parsed.stdout);
+  const executor = jobs["executor-e2e-tests"];
+  assert.deepEqual(executor.needs, [
+    "build-backend-rs-e2e-runtime",
+    "build-executor-e2e-runtime",
+    "prepare-platform-e2e-image",
+  ]);
+  assert.equal(executor["runs-on"], "ubuntu-latest");
+  assert.equal(executor["timeout-minutes"], 35);
+  assert.deepEqual(executor.permissions, {
+    actions: "read",
+    contents: "read",
+    packages: "read",
+  });
+  assert.deepEqual(Object.keys(executor.services), ["mysql", "redis", "minio"]);
+  const steps = executor.steps.map((step) => step.name);
+  const download = executor.steps[steps.indexOf("Download frontend E2E build")];
+  assert.equal(
+    download.env.ACTIONS_ARTIFACT_JOB,
+    "Build Frontend E2E Artifact",
+  );
+  assert.equal(
+    download.env.ACTIONS_ARTIFACT_HEAD_SHA,
+    "${{ github.event.pull_request.head.sha || github.sha }}",
+  );
+  assert.equal(
+    Number(download.env.ACTIONS_ARTIFACT_WAIT_SECONDS),
+    jobs["build-frontend-e2e"]["timeout-minutes"] * 60,
+  );
+  for (const name of [
+    "Restore frontend E2E build",
+    "Start frontend server",
+    "Run Executor E2E tests",
+  ]) {
+    assert(steps.indexOf(name) > steps.indexOf(download.name), name);
+  }
+  assert(jobs["platform-e2e-summary"].needs.includes("build-frontend-e2e"));
+});
+
 test("Backend deduplication requires a successful same-head guard and appends its coverage", () => {
   const parsed = spawnSync(
     "ruby",

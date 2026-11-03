@@ -17,6 +17,32 @@ set -euo pipefail
 url="${@: -1}"
 printf '%s\n' "$url" >>"$TEST_TEMP_DIR/requests"
 case "$url" in
+  */runs/7)
+    if [[ "$TEST_CASE" == "current-wrong-sha" ]]; then
+      printf '{"head_sha":"wrong","event":"pull_request"}'
+    elif [[ "$TEST_CASE" == "current-wrong-event" ]]; then
+      printf '{"head_sha":"target","event":"push"}'
+    else
+      printf '{"head_sha":"target","event":"pull_request"}'
+    fi
+    ;;
+  */runs/7/jobs*)
+    state=success
+    case "$TEST_CASE" in
+      current-pending)
+        if [[ ! -f "$TEST_TEMP_DIR/current-producer-seen" ]]; then
+          touch "$TEST_TEMP_DIR/current-producer-seen"
+          state=in_progress
+        fi
+        ;;
+      current-producer-*) state="${TEST_CASE#current-producer-}" ;;
+    esac
+    if [[ "$state" == in_progress ]]; then
+      printf '{"jobs":[{"name":"%s","status":"in_progress","conclusion":null}]}' "$TEST_PRODUCER_JOB"
+    else
+      printf '{"jobs":[{"name":"%s","status":"completed","conclusion":"%s"}]}' "$TEST_PRODUCER_JOB" "$state"
+    fi
+    ;;
   */workflows/e2e-tests.yml/runs*)
     if [[ "$TEST_CASE" == "queued" && ! -f "$TEST_TEMP_DIR/producer-seen" ]]; then
       touch "$TEST_TEMP_DIR/producer-seen"
@@ -135,6 +161,35 @@ for artifact_spec in executor-e2e-binary:wegent-executor backend-rs-e2e-runtime:
     exit 1
   fi
   grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA is required' "$temp_dir/error"
+done
+
+unset ACTIONS_ARTIFACT_WORKFLOW
+export TEST_ARTIFACT_NAME=frontend-next-build
+export TEST_PRODUCER_JOB='Build Frontend E2E Artifact'
+export ACTIONS_ARTIFACT_JOB="$TEST_PRODUCER_JOB" ACTIONS_ARTIFACT_HEAD_SHA=target
+rm -f "$temp_dir/requests" "$temp_dir/current-producer-seen"
+TEST_CASE=current-pending ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
+  "$script_dir/download-actions-artifact.sh" "$TEST_ARTIFACT_NAME" "$temp_dir/current-frontend" \
+  2> "$temp_dir/current-timing"
+cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/current-frontend/wegent-executor"
+test "$(grep -Fc '/runs/7/jobs?' "$temp_dir/requests")" = 2
+test "$(grep -Fc '/runs/7/artifacts?' "$temp_dir/requests")" = 1
+grep -Eq 'phase=discovery-wait seconds=[0-9]+ polls=2$' "$temp_dir/current-timing"
+
+for failure_case in current-wrong-sha current-wrong-event \
+  current-producer-failure current-producer-cancelled current-producer-timed_out \
+  current-producer-skipped current-producer-neutral; do
+  rm -f "$temp_dir/requests"
+  if TEST_CASE="$failure_case" "$script_dir/download-actions-artifact.sh" \
+    "$TEST_ARTIFACT_NAME" "$temp_dir/$failure_case" >"$temp_dir/error" 2>&1; then
+    echo "Current-run downloader unexpectedly accepted $failure_case" >&2
+    exit 1
+  fi
+  test ! -e "$temp_dir/$failure_case/wegent-executor"
+  if grep -Fq '/artifacts/201/zip' "$temp_dir/requests"; then
+    echo 'A failed or mismatched frontend producer must not be consumed' >&2
+    exit 1
+  fi
 done
 
 printf 'Actions artifact downloader tests passed\n'
