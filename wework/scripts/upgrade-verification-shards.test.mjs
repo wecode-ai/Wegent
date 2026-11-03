@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import {
   aggregateUpgradeShards,
@@ -190,4 +195,71 @@ test('an initial protocol release has explicit source-free shards and generates 
         catalog.edges.length === 0 && catalog.releases[0].minSourceVersion === target.version
     )
   )
+})
+
+test('the aggregation CLI requires both platforms and writes every channel policy', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-shards-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const plans = join(root, 'plans')
+  const reports = join(root, 'reports')
+  const output = join(root, 'policies')
+  await mkdir(plans)
+  await mkdir(reports)
+  const policy = JSON.parse(
+    await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+  )
+  const f = fixture()
+  for (const [platform, arch] of [
+    ['windows', 'x64'],
+    ['macos', 'arm64'],
+  ]) {
+    const catalogs = Object.fromEntries(
+      Object.entries(f.options.catalogs).map(([channel, catalog]) => [
+        channel,
+        { ...catalog, platform, arch },
+      ])
+    )
+    const frozen = planUpgradeShards({ ...f.options, catalogs, policy, platform, arch })
+    await writeFile(join(plans, `${platform}.json`), JSON.stringify(frozen))
+    for (const [index, original] of f.shards.entries()) {
+      const evidence = { ...JSON.parse(original.evidence), platform, arch }
+      const shard = {
+        ...original,
+        target: { ...original.target, platform, arch, minSourceVersion: policy.minSourceVersion },
+        evidence: JSON.stringify(evidence),
+      }
+      await writeFile(
+        join(reports, `upgrade-shard-${platform}-${index}.json`),
+        JSON.stringify(shard)
+      )
+    }
+  }
+  const run = () =>
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./aggregate-release-upgrades.mjs', import.meta.url)),
+        plans,
+        reports,
+        output,
+      ],
+      {
+        env: {
+          ...process.env,
+          GITHUB_RUN_ID: '123',
+          WEWORK_UPGRADE_VERSION: f.options.version,
+          WEWORK_UPGRADE_CHANNEL: f.options.channel,
+        },
+        stdio: 'pipe',
+      }
+    )
+  run()
+  assert.deepEqual((await readdir(output)).sort(), [
+    'upgrade-policy-beta-macos-arm64.json',
+    'upgrade-policy-beta-windows-x64.json',
+    'upgrade-policy-stable-macos-arm64.json',
+    'upgrade-policy-stable-windows-x64.json',
+  ])
+  await rm(join(reports, 'upgrade-shard-macos-0.json'))
+  assert.throws(run, /Missing upgrade source shard/)
 })
