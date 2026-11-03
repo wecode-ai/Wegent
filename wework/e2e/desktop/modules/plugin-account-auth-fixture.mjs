@@ -6,6 +6,23 @@ import { promisify } from 'node:util'
 import { createNativeAccountFixture } from './native-account-runtime-isolation.mjs'
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const run = promisify(execFile)
+
+export async function seedHistoricalAccountAuth(cloud, mode, id) {
+  const { stdout } = await run(
+    'uv',
+    [
+      'run',
+      'python',
+      join(repository, 'wework/e2e/desktop/fixtures/historical-account-auth.py'),
+      mode,
+      String(id),
+    ],
+    { cwd: join(repository, 'backend'), env: cloud.backendEnv }
+  )
+  const result = JSON.parse(stdout.trim())
+  if (!(result.removed > 0)) throw new Error('Historical account-auth fixture was not seeded')
+}
+
 export async function createAccountAuthFixture({
   resultDir,
   homePath,

@@ -1,4 +1,7 @@
-import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture.mjs'
+import {
+  createAccountAuthFixture,
+  seedHistoricalAccountAuth,
+} from '../modules/plugin-account-auth-fixture.mjs'
 import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -256,6 +259,9 @@ export async function createDesktopScenario({
         version: '1.0.0',
         packageRoot: fixtureRoot,
       })
+      if (checkpoint === 'plugin-account-auth-password') {
+        await seedHistoricalAccountAuth(cloud, 'scan', release.releaseId)
+      }
       await control.command('click', '[data-testid="plugins-button"]')
       await control.command('waitFor', '[data-testid="plugins-search-input"]')
       await control.command('fill', '[data-testid="plugins-search-input"]', { value: slug })
@@ -281,6 +287,28 @@ export async function createDesktopScenario({
         item => item.spec.source.pluginKey === slug
       )
       const installedId = Number(installed.metadata.labels.id)
+      if (checkpoint === 'plugin-account-auth-password') {
+        assert.ok(
+          installed.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Installing a historical release must preserve manifest accountAuth'
+        )
+        await seedHistoricalAccountAuth(cloud, 'installed', installedId)
+        await api(
+          `/plugins/installed/sync-device?device_id=${encodeURIComponent(local.device_id)}`,
+          'POST'
+        )
+        const repaired = (await api('/plugins/installed')).items.find(
+          item => Number(item.metadata.labels.id) === installedId
+        )
+        assert.ok(
+          repaired.spec.components.connectors.find(connector => connector.slug === 'mail')
+            ?.accountAuth,
+          'Synchronizing a historical installation must restore manifest accountAuth'
+        )
+        assert.equal(repaired.spec.releaseId, installed.spec.releaseId)
+        assert.equal(repaired.spec.packageRef.checksum, installed.spec.packageRef.checksum)
+      }
       const cloudHome = dirname(cloud.remoteCodexHome)
       const cloudRoot = await waitForValue(
         () => managedRoot(cloudHome, installedId),
