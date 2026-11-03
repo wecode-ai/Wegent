@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import {
   Bell,
   ChevronDown,
@@ -86,11 +87,12 @@ export function AutomationListPane({
               </button>
             ))}
           </div>
-          <button
+          <Button
+            size="sm"
             type="button"
             data-testid="create-automation-button"
             onClick={() => onCreate()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-text-primary px-3 text-sm font-medium text-background transition-opacity hover:opacity-85"
+            className="h-8"
           >
             {t(calendar ? 'standIn.workspace.calendar_create' : 'workbench.automation_create')}
             {calendar ? (
@@ -98,7 +100,7 @@ export function AutomationListPane({
             ) : (
               <ChevronDown className="h-3.5 w-3.5" />
             )}
-          </button>
+          </Button>
         </div>
         <div className="relative mb-5 mt-5">
           <Search className="pointer-events-none absolute left-3 top-2 h-4 w-4 text-text-secondary" />
@@ -172,15 +174,16 @@ export function AutomationEmptyState({
   if (calendar)
     return (
       <div className="min-w-0 flex-1 overflow-y-auto py-3" data-testid="stand-in-calendar-empty">
-        <button
+        <Button
+          size="sm"
           type="button"
           data-testid="create-automation-button"
           onClick={() => onCreate()}
-          className="inline-flex min-h-8 items-center gap-2 rounded-md bg-text-primary px-3 text-sm text-background"
+          className="h-8"
         >
           <Plus aria-hidden="true" className="h-4 w-4" />
           {t('standIn.workspace.calendar_create')}
-        </button>
+        </Button>
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}
         {loading ? (
           <p role="status" className="py-5 text-sm text-text-muted">

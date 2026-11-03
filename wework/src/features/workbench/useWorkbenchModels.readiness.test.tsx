@@ -1,27 +1,55 @@
+import type { UnifiedModel } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import type { UnifiedModel } from '@/types/api'
 import { useWorkbenchModels } from './useWorkbenchModels'
 
-test('distinguishes restored default settings from an available model', async () => {
-  const replacement: UnifiedModel = { name: 'replacement', type: 'public' }
-  const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+test('keeps a restored native provider through catalog refresh and clears it on model change', async () => {
+  const model: UnifiedModel = { name: 'native-codex', type: 'runtime' }
+  const replacement: UnifiedModel = { name: 'other-codex', type: 'runtime' }
+  const api = { listModels: vi.fn().mockResolvedValue({ data: [model, replacement] }) }
   const { result } = renderHook(() =>
-    useWorkbenchModels({ api, locked: false, persistSelection: false })
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      selectionConfig: {
+        modelName: model.name,
+        modelType: model.type,
+        options: { runnerModelProvider: 'native-provider' },
+      },
+    })
   )
 
-  await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
-  await waitFor(() => expect(result.current.isLoading).toBe(false))
-  expect(result.current.selectedModel).toBeNull()
   await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
-  expect(result.current.selectedModelAvailable).toBe(false)
-
-  api.listModels.mockResolvedValue({ data: [replacement] })
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  api.listModels.mockResolvedValue({ data: [{ ...model }, { ...replacement }] })
   act(() => result.current.refreshModels())
-  await waitFor(() => expect(result.current.models).toEqual([replacement]))
+  await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current.isLoading).toBe(false))
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  act(() => result.current.setSelectedModelAndOptions(model, { reasoning: 'medium' }))
+  expect(result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+  })
+  act(() =>
+    result.current.setSelectedModelAndOptions(replacement, result.current.getSelectedModelOptions())
+  )
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
+  act(() =>
+    result.current.setSelectedModelAndOptions(model, { runnerModelProvider: 'native-provider' })
+  )
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
+  act(() =>
+    result.current.setSelectionForScope('default', model, {
+      runnerModelProvider: 'native-provider',
+    })
+  )
   act(() => result.current.setSelectedModel(replacement))
-  expect(result.current.isSelectionReady).toBe(true)
-  expect(result.current.selectedModelAvailable).toBe(true)
+  expect(result.current.getSelectedModelOptions()).not.toHaveProperty('runnerModelProvider')
 })
 
 test('does not advertise send readiness before a deferred catalog has loaded', async () => {

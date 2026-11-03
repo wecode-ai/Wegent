@@ -1,3 +1,4 @@
+import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { createLocalCollaborationProject } from './workspace-flows.mjs'
@@ -10,7 +11,7 @@ const ROLE = 'project-connection-names'
 /** All-project scope belongs to the selected Executor, not the editor's computer. */
 export async function verifyRemoteStandInProjectScope(control, localProjectId, cloudProjectId) {
   await control.command('click', CONNECTIONS_OPEN)
-  await control.command('click', '[data-testid="stand-in-add-connection"]')
+  await openConnectionTypePicker(control)
   await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
   const source = '[data-testid="stand-in-source-collaboration"]'
   if ((await control.command('getAttribute', source, { value: 'aria-checked' })) !== 'true')
@@ -105,6 +106,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     await control.command('getElementCount', '[data-testid^="stand-in-connection-project-"]'),
     '0'
   )
+  await openConnectionTypePicker(control)
   await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
   const disconnected = await rpc('runtime.stand_in.personal.get', { userId: USER })
   assert.deepEqual(disconnected.roles.find(role => role.id === ROLE).collaboration.projects, [])

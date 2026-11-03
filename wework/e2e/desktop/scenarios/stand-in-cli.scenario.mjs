@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
+import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 
-export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario(options) {
+  const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
+  const dingtalk = createStandInDingTalkFixture(options)
   return {
+    prepareApp: dingtalk.prepareApp,
     async verify(control) {
+      await dingtalk.install(control)
       // The first catalog request initializes the connection dependency inventory.
       // Keep ordinary permission checks and the warm recovery request on the UI budget.
       const catalog = await requestExecutor(
@@ -45,7 +50,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           providerId: provider.id,
           dependencyAlias: dependency.alias,
           source: dependency.source,
-          expectedVersion: null,
+          expectedVersion: dependency.resolved.version,
           operation: 'callTool',
           ...input,
           // Caller-owned declarations and executable paths must never grant capability.
@@ -67,7 +72,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         providerId: provider.id,
         dependencyAlias: 'undeclared',
         source: dependency.source,
-        expectedVersion: null,
+        expectedVersion: dependency.resolved.version,
         operation: 'callTool',
         tool: 'searchGroups',
         arguments: { query: 'must not run' },

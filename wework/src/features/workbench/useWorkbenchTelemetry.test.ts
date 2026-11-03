@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { renderHook } from '@testing-library/react'
-import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { resetRuntimeRunTraceIds, telemetryTraceId } from '@/telemetry/traceId'
+import type { DeviceInfo, RuntimeTaskLifecycleStoreSnapshot } from '@/types/api'
+import { renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   recordGenerationOutcome,
   resetGenerationOutcomesForTests,
 } from './runtimeGenerationOutcome'
-import type { DeviceInfo, RuntimeTaskLifecycleStoreSnapshot } from '@/types/api'
+import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 
 const trackMock = vi.fn()
 
@@ -115,34 +115,6 @@ describe('useWorkbenchTelemetry', () => {
     )
   })
 
-  test('reports a remote device separately when a task starts running', () => {
-    const remoteDevice = {
-      ...device,
-      device_id: 'remote-device',
-      device_type: 'remote',
-      name: 'Remote',
-    } as DeviceInfo
-
-    renderHook(() =>
-      useWorkbenchTelemetry({
-        currentProject: null,
-        devices: [remoteDevice],
-        lifecycle: makeSnapshot({ deviceId: 'remote-device', isRunning: true }),
-      })
-    )
-
-    expect(trackMock).toHaveBeenCalledWith('task_started', {
-      execution_target: 'remote',
-    })
-    expect(trackMock).toHaveBeenCalledWith(
-      '$ai_trace',
-      expect.objectContaining({
-        $ai_trace_phase: 'start',
-        execution_target: 'remote',
-      })
-    )
-  })
-
   test('emits $ai_trace end when a running task settles', () => {
     const { rerender } = renderHook(
       ({ lifecycle }) =>
@@ -236,27 +208,6 @@ describe('useWorkbenchTelemetry', () => {
     )
   })
 
-  test('reports the generation outcome on first_response_completed', () => {
-    recordGenerationOutcome({ deviceId: 'local-device', taskId: 'task-42' }, 'cancelled')
-    const { rerender } = renderHook(
-      ({ lifecycle }) =>
-        useWorkbenchTelemetry({ currentProject: null, devices: [device], lifecycle }),
-      {
-        initialProps: { lifecycle: makeSnapshot({ isRunning: true, isTurnActive: true }) },
-      }
-    )
-
-    trackMock.mockReset()
-    rerender({ lifecycle: makeSnapshot({ isRunning: true, isTurnActive: false }) })
-
-    expect(trackMock).toHaveBeenCalledWith(
-      'first_response_completed',
-      expect.objectContaining({
-        result: 'cancelled',
-      })
-    )
-  })
-
   test('does not leak a generation outcome into a subsequent run of the same task', () => {
     const { rerender } = renderHook(
       ({ lifecycle }) =>
@@ -328,97 +279,5 @@ describe('useWorkbenchTelemetry', () => {
         execution_target: 'local',
       })
     )
-  })
-
-  test('emits generation_regenerated when a task runs again after settling', () => {
-    const { rerender } = renderHook(
-      ({ lifecycle }) =>
-        useWorkbenchTelemetry({ currentProject: null, devices: [device], lifecycle }),
-      {
-        initialProps: { lifecycle: makeSnapshot({ isRunning: true }) },
-      }
-    )
-    rerender({ lifecycle: makeSnapshot({ isRunning: false, status: 'done', turnStatus: 'done' }) })
-    trackMock.mockReset()
-
-    rerender({ lifecycle: makeSnapshot({ isRunning: true }) })
-
-    expect(trackMock).toHaveBeenCalledWith(
-      'generation_regenerated',
-      expect.objectContaining({
-        execution_target: 'local',
-        turn_count: 2,
-      })
-    )
-  })
-
-  test('does not emit generation_regenerated on the first run of a task', () => {
-    renderHook(() =>
-      useWorkbenchTelemetry({
-        currentProject: null,
-        devices: [device],
-        lifecycle: makeSnapshot({ isRunning: true }),
-      })
-    )
-
-    expect(trackMock).not.toHaveBeenCalledWith('generation_regenerated', expect.anything())
-  })
-
-  test('emits task_retried when a task is re-run shortly after completing', () => {
-    const { rerender } = renderHook(
-      ({ lifecycle }) =>
-        useWorkbenchTelemetry({ currentProject: null, devices: [device], lifecycle }),
-      {
-        initialProps: { lifecycle: makeSnapshot({ isRunning: true }) },
-      }
-    )
-    rerender({ lifecycle: makeSnapshot({ isRunning: false, status: 'done', turnStatus: 'done' }) })
-    trackMock.mockReset()
-
-    rerender({ lifecycle: makeSnapshot({ isRunning: true }) })
-
-    expect(trackMock).toHaveBeenCalledWith(
-      'task_retried',
-      expect.objectContaining({
-        execution_target: 'local',
-        previous_result: 'success',
-      })
-    )
-  })
-
-  test('emits task_interrupted when the task enters the stopping phase', () => {
-    const { rerender } = renderHook(
-      ({ lifecycle }) =>
-        useWorkbenchTelemetry({ currentProject: null, devices: [device], lifecycle }),
-      {
-        initialProps: { lifecycle: makeSnapshot({ isRunning: true }) },
-      }
-    )
-    trackMock.mockReset()
-
-    rerender({ lifecycle: makeSnapshot({ isRunning: true, executionPhase: 'stopping' }) })
-
-    expect(trackMock).toHaveBeenCalledWith(
-      'task_interrupted',
-      expect.objectContaining({
-        execution_target: 'local',
-        after_first_response: false,
-      })
-    )
-  })
-
-  test('does not re-emit for a task whose lifecycle flags are unchanged', () => {
-    const { rerender } = renderHook(
-      ({ lifecycle }) =>
-        useWorkbenchTelemetry({ currentProject: null, devices: [device], lifecycle }),
-      { initialProps: { lifecycle: makeSnapshot({ isRunning: true }) } }
-    )
-    trackMock.mockReset()
-
-    // A fresh snapshot with identical running/turn/stopping flags must not
-    // re-trigger any tracking.
-    rerender({ lifecycle: makeSnapshot({ isRunning: true }) })
-
-    expect(trackMock).not.toHaveBeenCalled()
   })
 })

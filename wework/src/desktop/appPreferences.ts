@@ -9,6 +9,10 @@ export {
   type QuickPhraseMode,
 } from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  INTERACTIONS_PATH,
+  INTERACTIONS_TAB_ID,
+} from '@/features/notifications/RuntimeInteractionsContext'
 import type { ModelSelectionConfig } from '@/types/api'
 import {
   defaultLocalHarnessPreferences,
@@ -161,6 +165,7 @@ export const defaultAppPreferences: AppPreferences = {
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: INTERACTIONS_TAB_ID, kind: 'auxiliary', contentRoute: INTERACTIONS_PATH },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,

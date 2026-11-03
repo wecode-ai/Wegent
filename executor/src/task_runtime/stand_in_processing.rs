@@ -45,8 +45,8 @@ pub(super) fn update_processing_configuration(
     let mut state = get_item_from(connection, &id, STATE)?
         .map(|row| row.metadata)
         .unwrap_or_else(|| json!({"id":id,"userId":user}));
-    // Bind observation to configuration commit, before newly assigned work can
-    // finish. A delayed first poll must not classify that completion as history.
+    // Work may finish before the first poll. Establish its observation boundary
+    // in the configuration transaction rather than treating that work as history.
     if !state["observedSince"].is_i64() {
         state["observedSince"] = json!(Utc::now().timestamp_millis());
     }

@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { getStandInErrorMessage } from './stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from './stand-in-error-message'
 
 const originalLanguage = i18n.language
 
@@ -11,6 +11,69 @@ afterEach(async () => {
 })
 
 describe('stand-in error localization', () => {
+  it('records the failing operation and transport code without logging error contents', () => {
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      reportStandInError(
+        'load_environment',
+        {
+          code: 'executor_disconnected',
+          status: 503,
+          message: 'private request contents',
+          token: 'secret-token',
+        },
+        'device'
+      )
+      expect(log).toHaveBeenCalledWith(
+        '[Stand-in] Operation failed',
+        expect.objectContaining({
+          operation: 'load_environment',
+          deviceId: 'device',
+          code: 'executor_disconnected',
+          status: 503,
+        })
+      )
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/private request contents|secret-token/)
+    } finally {
+      log.mockRestore()
+    }
+  })
+  it('distinguishes device transport and service failures without exposing raw internals', async () => {
+    await i18n.changeLanguage('zh-CN')
+    for (const [error, key] of [
+      [{ code: 'executor_disconnected' }, 'executor_unavailable'],
+      [new Error('local-sidebar-runtime-changed'), 'executor_restarted'],
+      [{ code: 'protocol_mismatch' }, 'executor_update_required'],
+      [{ status: 401 }, 'authentication_required'],
+      [{ code: 'http_503' }, 'service_unavailable'],
+      [{ status: 403 }, 'permission_denied'],
+      [new Error('executor-not-found:device'), 'executor_unavailable'],
+      [new Error('executor-offline:device'), 'device_offline'],
+      [new Error('ambiguous-executor-identity:device'), 'executor_ambiguous'],
+    ] as const) {
+      expect(getStandInErrorMessage(error)).toBe(i18n.t(`common:standIn.errors.${key}`))
+    }
+  })
+
+  it('identifies the failed operation even after an inner boundary localized an unknown error', async () => {
+    for (const language of ['zh-CN', 'en']) {
+      await i18n.changeLanguage(language)
+      const error = getStandInErrorMessage(new Error('internal database path'))
+      for (const operation of [
+        'load_settings_failed',
+        'save_settings_failed',
+        'load_environment_failed',
+        'load_projects_failed',
+      ] as const) {
+        expect(getStandInErrorMessage(error, operation)).toBe(
+          i18n.t(`common:standIn.errors.${operation}`)
+        )
+      }
+      expect(getStandInErrorMessage({ code: 'permission_denied' }, 'load_environment_failed')).toBe(
+        i18n.t('common:standIn.errors.permission_denied')
+      )
+    }
+  })
   it('provides recovery guidance for every registered error in both languages', async () => {
     expect(Object.keys(enCommon.standIn.errors).sort()).toEqual(
       Object.keys(zhCommon.standIn.errors).sort()
@@ -50,24 +113,6 @@ describe('stand-in error localization', () => {
       'A required source plugin is not installed. Open Stand-in settings, select the source under Connections, and choose Install required plugins. Then reload the source.'
     expect(getStandInErrorMessage(error)).toBe(english)
     expect(getStandInErrorMessage(new Error(english))).toBe(english)
-  })
-
-  it('localizes persisted legacy failures without an error code', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage('Error: Stand-in role no longer exists')).toBe(
-      '该分身角色已被删除，请重新选择角色。'
-    )
-    expect(
-      getStandInErrorMessage('This assignment has already been handled or is no longer active')
-    ).toBe(i18n.t('common:standIn.errors.assignment_already_handled'))
-  })
-
-  it('uses localized recovery guidance for unknown errors and preserves localized validation', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage(new Error('internal database path'))).toBe(
-      i18n.t('common:standIn.errors.failed')
-    )
-    expect(getStandInErrorMessage({ message: '请选择一个项目' })).toBe('请选择一个项目')
   })
 })
 

@@ -7,6 +7,7 @@ export interface InteractionHistory {
   question: string
   address: RuntimeInteraction['task']['address']
   originalUrl?: string
+  sourceMessageIds?: string[]
   answeredAt: number
 }
 
@@ -18,7 +19,11 @@ export interface RuntimeInteractionsValue {
   busy: ReadonlySet<string>
   loading: boolean
   setDraft: (id: string, text: string) => void
-  respond: (item: RuntimeInteraction, answer: string) => Promise<boolean>
+  respond: (
+    item: RuntimeInteraction,
+    answer: string,
+    options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+  ) => Promise<boolean>
   refresh: () => Promise<void>
   open: (id?: string) => void
   notice: RuntimeInteraction | null

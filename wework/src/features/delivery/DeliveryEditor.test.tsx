@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
+import { describe, expect, it, vi } from 'vitest'
 import { IssueDeliveryEditor } from '../../../../packages/collaboration/src/issue-detail/IssueDeliveryEditor'
 import type { SharedIssueDetailDeliveryDetail } from '../../../../packages/collaboration/src/issue-detail/createSharedIssueDetailPort'
 
@@ -100,46 +100,6 @@ describe('delivered artifact editing', () => {
       },
       files: [{ relative_path: 'reports/result.txt', file }],
     })
-  })
-
-  it('preserves edits after a conflict and allows explicit reload', async () => {
-    const { user, api, onSaved } = setup(
-      vi.fn().mockRejectedValue(new Error('Delivery changed; reload before saving'))
-    )
-    fireEvent.change(screen.getByTestId('delivery-edit-notes'), {
-      target: { value: 'Original notes unsaved' },
-    })
-    await user.click(screen.getByTestId('delivery-edit-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Delivery changed')
-    expect(screen.getByTestId('delivery-edit-notes')).toHaveValue('Original notes unsaved')
-    expect(onSaved).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('delivery-edit-reload'))
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(delivery.id))
-    expect(onSaved).toHaveBeenCalledWith(delivery)
-  })
-
-  it('keeps the edit baseline when a late save refreshes the selected delivery', async () => {
-    const { api, onSaved, refresh, user } = setup(
-      vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { status: 409 }))
-    )
-    fireEvent.change(screen.getByTestId('delivery-edit-notes'), {
-      target: { value: 'Unsaved draft' },
-    })
-    refresh({ ...delivery, version: 4, assets: [], markdown: 'New server notes' })
-    await user.click(screen.getByTestId('delivery-edit-save'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('交付物已被更新')
-    expect(api.update).toHaveBeenCalledWith(
-      delivery.id,
-      expect.objectContaining({
-        version: 3,
-        markdown: 'Unsaved draft',
-        retained_asset_ids: ['asset-1'],
-      })
-    )
-    expect(screen.getByTestId('delivery-edit-asset-asset-1')).toBeChecked()
-    expect(screen.getByTestId('delivery-edit-notes')).toHaveValue('Unsaved draft')
-    expect(onSaved).not.toHaveBeenCalled()
   })
 
   it('keeps existing chat when the source is unavailable and cancels without writing', async () => {

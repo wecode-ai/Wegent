@@ -97,7 +97,7 @@ test('core settings are metadata-driven DSH pages', async () => {
   assert.equal('module' in registrations[0].options, false)
 })
 
-test('first-party routes preserve direct access while arrangements stay inside stand-in navigation', async () => {
+test('first-party routes include independent schedules in sidebar navigation', async () => {
   const registrations = []
   const injections = []
   for (const packageName of [
@@ -121,9 +121,14 @@ test('first-party routes preserve direct access while arrangements stay inside s
   )
   assert.deepEqual(
     navigation.map(entry => entry.descriptor.path),
-    ['/plugins', '/sites', '/cloud-work']
+    ['/plugins', '/sites', '/automations', '/cloud-work']
   )
-  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 3)
+  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 4)
+  const schedules = navigation.find(entry => entry.descriptor.id === 'automations.navigation')
+  assert.equal(schedules.descriptor.testId, 'automation-button')
+  assert.equal(schedules.descriptor.labelKey, 'workbench.automation')
+  assert.equal(schedules.descriptor.path, '/automations')
+  assert.equal(schedules.descriptor.activeItem, 'automation')
   assert.ok(actions.some(entry => entry.descriptor.id === 'plugin-center.open'))
   assert.ok(
     routes

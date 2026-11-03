@@ -3,7 +3,7 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
 import { StandInOverviewPage } from './StandInOverviewPage'
@@ -59,7 +59,10 @@ export function PersonalStandInWorkspace({
         }
       },
       cause => {
-        if (current) setError(getStandInErrorMessage(cause))
+        if (current) {
+          reportStandInError('load_projects', cause)
+          setError(getStandInErrorMessage(cause, 'load_projects_failed'))
+        }
       }
     )
     return () => {

@@ -70,7 +70,7 @@ impl RuntimeWorkRpcHandler {
                 if state["source"]["enabledAfter"] != source["enabledAfter"] {
                     state = Value::Null;
                 }
-                if state["error"].is_object() && state["version"] == settings["version"] {
+                if collection_error_latched(source, &state, &settings["version"]) {
                     continue;
                 }
                 let outcome = self
@@ -185,6 +185,8 @@ impl RuntimeWorkRpcHandler {
         let (messages, next) = page;
         let mut failure = None;
         for message in messages {
+            let concrete = concrete_connection_source(source, &message)?;
+            let source = &concrete;
             if !["id", "text", "at"]
                 .iter()
                 .all(|key| message[*key].as_str().is_some_and(|text| !text.is_empty()))
@@ -194,19 +196,14 @@ impl RuntimeWorkRpcHandler {
                     "Connection event is missing required fields",
                 ));
             }
-            let at = message_time(&message["at"])?;
+            message_time(&message["at"])?;
             {
                 let eligible: Vec<Value> = roles
                     .iter()
                     .filter(|role| {
                         stand_in_connection(role, source).is_some_and(|connection| {
                             connection["policy"]["automatic"] == true
-                                && connection["enabledAfter"]
-                                    .as_str()
-                                    .and_then(|time| {
-                                        chrono::DateTime::parse_from_rfc3339(time).ok()
-                                    })
-                                    .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                                && source_accepts_message(connection, &message)
                         })
                     })
                     .map(|role| role["id"].clone())
@@ -221,10 +218,7 @@ impl RuntimeWorkRpcHandler {
             for role in roles.iter().filter(|role| {
                 stand_in_connection(role, source).is_some_and(|connection| {
                     connection["policy"]["automatic"] != true
-                        && connection["enabledAfter"]
-                            .as_str()
-                            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                            .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                        && source_accepts_message(connection, &message)
                 })
             }) {
                 if let Err(error) = self
@@ -287,13 +281,19 @@ impl RuntimeWorkRpcHandler {
         };
         let connection = stand_in_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
+        let mut connection = connection.clone();
+        if connection["scope"] == "all" {
+            connection.as_object_mut().unwrap().remove("scope");
+            connection["id"] = source["id"].clone();
+            connection["name"] = source["name"].clone();
+        }
         if confident {
-            store.ingest_stand_in_message(user, role_id, connection, message, work_id.as_deref())
+            store.ingest_stand_in_message(user, role_id, &connection, message, work_id.as_deref())
         } else {
             store.ingest_ungrouped_stand_in_message(
                 user,
                 role_id,
-                connection,
+                &connection,
                 message,
                 grouping_error.as_deref(),
             )
@@ -376,6 +376,38 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, AppIpcError> {
+    let mut result = source.clone();
+    if source["scope"] != "all" {
+        return Ok(result);
+    }
+    let resource = &message["resource"];
+    if resource["kind"] != source["kind"]
+        || !["id", "name"].iter().all(|key| {
+            resource[*key]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty() && value.len() <= 512)
+        })
+        || resource["id"] == "*"
+    {
+        return Err(AppIpcError::new(
+            "connection_response_invalid",
+            "Missing concrete event resource",
+        ));
+    }
+    result.as_object_mut().unwrap().remove("scope");
+    result["id"] = resource["id"].clone();
+    result["name"] = resource["name"].clone();
+    Ok(result)
+}
+
+fn collection_error_latched(source: &Value, state: &Value, version: &Value) -> bool {
+    state["error"].is_object()
+        && state["version"] == *version
+        && !(source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+            && state["error"]["code"] == "email_transport_failed")
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -423,6 +455,48 @@ fn validate_collection_version(
     Ok(())
 }
 
+pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
+    if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER {
+        let boundary = &source["boundary"];
+        let position = &message["position"];
+        return boundary["partition"].is_string()
+            && boundary["partition"] == position["partition"]
+            && boundary["sequence"]
+                .as_u64()
+                .zip(position["sequence"].as_u64())
+                .is_some_and(|(start, received)| received > start);
+    }
+    source["enabledAfter"]
+        .as_str()
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+        .is_some_and(|enabled| {
+            message_time(&message["at"])
+                .is_ok_and(|received| received >= enabled.timestamp_millis())
+        })
+}
+
+#[cfg(test)]
+mod ordered_email_tests {
+    use super::*;
+
+    #[test]
+    fn ordered_email_intake_uses_each_roles_uid_boundary_instead_of_timestamp_precision() {
+        let mut source = json!({"providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER,
+            "boundary":{"partition":"123","sequence":5},"enabledAfter":"2026-11-04T00:00:00.500Z"});
+        let mut message =
+            json!({"at":"2026-11-04T00:00:00Z","position":{"partition":"123","sequence":6}});
+        assert!(source_accepts_message(&source, &message));
+        source["boundary"]["sequence"] = json!(6);
+        assert!(!source_accepts_message(&source, &message));
+        message["position"]["sequence"] = json!(7);
+        assert!(source_accepts_message(&source, &message));
+        message["position"]["partition"] = json!("reset");
+        assert!(!source_accepts_message(&source, &message));
+        source.as_object_mut().unwrap().remove("boundary");
+        assert!(!source_accepts_message(&source, &message));
+    }
+}
+
 pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
     let text = value.as_str().unwrap_or_default();
     if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
@@ -443,6 +517,57 @@ pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connection_all_scope_persists_distinct_conversations_and_rejects_missing_identity() {
+        for kind in ["group", "direct"] {
+            let root = tempfile::tempdir().unwrap();
+            let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+            handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+            let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":false,"askBeforeAct":true}});
+            settings["roles"][0]["connections"] = json!([source]);
+            settings["roles"][0]["enabled"] = json!(true);
+            let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let role = stand_in_identities(&settings).remove(0);
+            let source = &role["connections"][0];
+            let messages:Vec<Value> = ["first","second"].iter().map(|id| json!({"id":id,"text":"New matter","at":"2099-01-01T00:00:00Z","resource":{"kind":kind,"id":id,"name":id}})).collect();
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    source,
+                    std::slice::from_ref(&role),
+                    (messages.clone(), json!({})),
+                )
+                .await
+                .unwrap();
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    source,
+                    std::slice::from_ref(&role),
+                    (messages, json!({})),
+                )
+                .await
+                .unwrap();
+            let works = store.list_stand_in_work(7, None).unwrap();
+            assert_eq!(works.len(), 2);
+            assert!(works.iter().all(|work| work["source"]["id"] != "*"
+                && work["source"].get("scope").is_none()
+                && work["source"]["profile"] == "corp"
+                && work["source"]["kind"] == kind));
+            for resource in [
+                Value::Null,
+                json!({"id":"*","kind":kind,"name":"Bad"}),
+                json!({"id":"other","kind":"wrong","name":"Bad"}),
+            ] {
+                assert!(concrete_connection_source(source, &json!({"resource":resource})).is_err());
+            }
+        }
+    }
 
     #[tokio::test]
     async fn silent_collection_keeps_manual_sources_pending_and_automatic_sources_in_intake() {
@@ -550,6 +675,55 @@ mod tests {
         }
         assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
         assert!(handler.local_task_links(true).is_empty());
+    }
+
+    #[test]
+    fn email_transport_failure_retains_progress_and_retries_without_settings_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"id":"INBOX","kind":"inbox","profile":"account","providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER});
+        let version = json!(3);
+        let state = json!({"checkpoint":{"partition":"12","sequence":42}});
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &state,
+            Err(AppIpcError::new(
+                "email_transport_failed",
+                "Connection interrupted",
+            )),
+        )
+        .unwrap();
+        let failed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(failed["checkpoint"], state["checkpoint"]);
+        assert_eq!(failed["error"]["code"], "email_transport_failed");
+        assert!(!collection_error_latched(&source, &failed, &version));
+        let mut other_provider = source.clone();
+        other_provider["providerId"] = json!("@test/other");
+        assert!(collection_error_latched(&other_provider, &failed, &version));
+        for code in [
+            "email_auth_failed",
+            "email_message_invalid",
+            "email_connection_failed",
+        ] {
+            let mut permanent = failed.clone();
+            permanent["error"]["code"] = json!(code);
+            assert!(collection_error_latched(&source, &permanent, &version));
+        }
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &failed,
+            Ok(json!({"checkpoint":{"partition":"12","sequence":43}})),
+        )
+        .unwrap();
+        let resumed = store.stand_in_source(7, &source).unwrap();
+        assert!(resumed["error"].is_null());
+        assert_eq!(resumed["checkpoint"]["sequence"], 43);
     }
 
     #[test]
