@@ -92,6 +92,7 @@ test("release creation waits for every candidate build and validation", () => {
     "build",
     "prepare-upgrade-inputs",
     "verify-upgrades",
+    "aggregate-upgrades",
   ]);
   assert.doesNotMatch(jobs.publish.if, /always\(\)/);
   const names = jobs.publish.steps.map((step) => step.name);
@@ -155,7 +156,7 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     jobs["verify-upgrades"].strategy.matrix,
     "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
-  assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 4);
+  assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
   assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 10);
   assert.equal(jobs.build["timeout-minutes"], 90);
   const step = jobs["verify-upgrades"].steps.find(
@@ -248,4 +249,43 @@ test("upgrade verification only consumes release artifacts and has no signing cr
     ),
   );
   assert.match(verification.if, /!cancelled\(\)/);
+});
+
+test("source runners consume one frozen plan and complete aggregation gates publication", () => {
+  const prepare = jobs["prepare-upgrade-inputs"];
+  assert.match(
+    prepare.outputs.verification_matrix,
+    /steps.plan.outputs.matrix/,
+  );
+  assert.ok(
+    prepare.steps.some((step) =>
+      step.run?.includes("plan-wework-upgrade-shards.mjs"),
+    ),
+  );
+  const runner = jobs["verify-upgrades"];
+  const execute = runner.steps.find((step) =>
+    step.run?.includes("verify-release-upgrades.mjs"),
+  );
+  assert.equal(
+    execute.env.WEWORK_UPGRADE_VERIFY_SOURCE,
+    "${{ matrix.source_version }}",
+  );
+  assert.match(execute.env.WEWORK_UPGRADE_PLAN_DIRECTORY, /upgrade-plan/);
+  assert.match(runner.name, /matrix.source_version/);
+  const aggregate = jobs["aggregate-upgrades"];
+  assert.deepEqual(aggregate.needs, [
+    "prepare-upgrade-inputs",
+    "verify-upgrades",
+  ]);
+  assert.match(aggregate.if, /diagnostic_checkpoint == ''/);
+  assert.ok(
+    aggregate.steps.some((step) =>
+      step.run?.includes("aggregate-release-upgrades.mjs"),
+    ),
+  );
+  assert.match(
+    aggregate.steps.at(-1).run,
+    /verify-wework-upgrade-duration.mjs/,
+  );
+  assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
 });

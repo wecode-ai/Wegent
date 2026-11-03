@@ -526,7 +526,7 @@ jobs:
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
       diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
       published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
-      verification_matrix: ${{ steps.inputs.outputs.verification_matrix }}
+      verification_matrix: ${{ steps.plan.outputs.matrix || steps.inputs.outputs.verification_matrix }}
       source_run_id: ${{ steps.inputs.outputs.source_run_id }}
       source_version: ${{ steps.inputs.outputs.source_version }}
     steps:
@@ -545,8 +545,32 @@ jobs:
           VERIFICATION_SOURCE_RUN_ID: ${{ inputs.verification_source_run_id }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
+      - name: Checkout pinned verification source
+        if: steps.inputs.outputs.diagnostic_checkpoint == ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.verification_sha }}
+
+      - name: Freeze complete source upgrade matrix
+        if: steps.inputs.outputs.diagnostic_checkpoint == ''
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPGRADE_VERSION: ${{ steps.inputs.outputs.version }}
+          UPGRADE_CHANNEL: ${{ steps.inputs.outputs.channel }}
+          UPGRADE_PLAN_DIRECTORY: ${{ runner.temp }}/upgrade-plan
+        run: node .github/scripts/plan-wework-upgrade-shards.mjs
+
+      - name: Retain frozen source upgrade plans
+        if: steps.inputs.outputs.diagnostic_checkpoint == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-upgrade-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/upgrade-plan/*.json
+          if-no-files-found: error
+
   verify-upgrades:
-    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }}/${{ matrix.channel }})
+    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }}/${{ matrix.channel }}${{ matrix.source_version && format('/{0}', matrix.source_version) || '' }})
     permissions:
       contents: read
       actions: read
@@ -559,7 +583,7 @@ jobs:
         shell: bash
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -583,6 +607,13 @@ jobs:
           run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download frozen source upgrade plans
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-upgrade-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/upgrade-plan
+
       - name: Download immutable diagnostic source
         if: needs.prepare-upgrade-inputs.outputs.source_run_id != ''
         uses: actions/download-artifact@v6
@@ -605,6 +636,8 @@ jobs:
           WEWORK_UPGRADE_VERIFY_CHANNEL: ${{ matrix.channel }}
           WEWORK_UPGRADE_SOURCE_ASSETS: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id != '' && format('{0}/upgrade-source/wework-release-assets', runner.temp) || '' }}
           WEWORK_UPGRADE_SOURCE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.source_version }}
+          WEWORK_UPGRADE_PLAN_DIRECTORY: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && format('{0}/upgrade-plan', runner.temp) || '' }}
+          WEWORK_UPGRADE_VERIFY_SOURCE: ${{ matrix.source_version }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
@@ -616,7 +649,7 @@ jobs:
         if: always() && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
-          name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}-${{ matrix.source_version || 'diagnostic' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/summary.json
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/*.log
@@ -635,13 +668,55 @@ jobs:
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
-          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}
+          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}-${{ matrix.source_version }}
           path: ${{ runner.temp }}/upgrade-input/wework-release-assets/**/upgrade-*.json
           if-no-files-found: error
           compression-level: 0
 
       - name: Enforce complete upgrade verification time budget
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
+          UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs
+
+  aggregate-upgrades:
+    name: Aggregate complete upgrade verification
+    needs: [prepare-upgrade-inputs, verify-upgrades]
+    if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' && needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-upgrade-inputs.outputs.verification_sha }}
+      - name: Download frozen source upgrade plans
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-upgrade-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upgrade-plan
+      - name: Download every source verification result
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-*
+          path: upgrade-shards
+          merge-multiple: true
+      - name: Aggregate exact package evidence and enforce all required sources
+        env:
+          WEWORK_UPGRADE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.version }}
+          WEWORK_UPGRADE_CHANNEL: ${{ needs.prepare-upgrade-inputs.outputs.channel }}
+        run: node wework/scripts/aggregate-release-upgrades.mjs upgrade-plan upgrade-shards upgrade-policies
+      - name: Upload complete verified upgrade policies
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-policies
+          path: upgrade-policies/*.json
+          if-no-files-found: error
+      - name: Enforce complete verification including aggregation
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
@@ -655,6 +730,7 @@ jobs:
       - build
       - prepare-upgrade-inputs
       - verify-upgrades
+      - aggregate-upgrades
     runs-on: ubuntu-latest
     if: ${{ !inputs.build_only && needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none' }}
 

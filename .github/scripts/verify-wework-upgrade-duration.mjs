@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const LIMIT_MS = 600_000;
+const MAX_PARALLEL = 8;
 
 function timestamp(value) {
   const result = Date.parse(value);
@@ -49,7 +50,11 @@ export function verifyUpgradeDuration({
       (item.platform === "macos" && item.arch === "arm64") ||
         (item.platform === "windows" && item.arch === "x64"),
     );
-    const name = `Verify release upgrades (${item.platform}/${item.arch}/${item.channel})`;
+    assert.match(
+      item.source_version ?? "",
+      /^(?:initial|\d+\.\d+\.\d+(?:-beta\.\d+)?)$/,
+    );
+    const name = `Verify release upgrades (${item.platform}/${item.arch}/${item.channel}/${item.source_version})`;
     const matches = jobs.filter((job) => job.name === name);
     assert.equal(
       matches.length,
@@ -62,7 +67,7 @@ export function verifyUpgradeDuration({
     }
     return matches[0];
   });
-  assert.ok(selected.length >= 2 && selected.length <= 4);
+  assert.ok(selected.length >= 2 && selected.length <= 256);
   assert.equal(new Set(selected.map((job) => job.name)).size, selected.length);
   if (String(producerRunId) === String(run.id)) {
     const builds = jobs.filter(
@@ -75,12 +80,38 @@ export function verifyUpgradeDuration({
     );
   }
   const resolverMs = executionDuration(resolver[0], now);
-  // The maintained matrix has at most four jobs and max-parallel is four.
-  // Count its complete execution critical path, independently of runner queues.
-  const matrixMs = Math.max(
-    ...selected.map((job) => executionDuration(job, now)),
+  // Remove external runner waits while retaining the eight-runner resource
+  // limit. Recorded execution order determines scheduling for additional waves.
+  const slots = Array(MAX_PARALLEL).fill(0);
+  const started = selected.filter(
+    (job) => !["queued", "waiting", "pending"].includes(job.status),
   );
-  const elapsedMs = resolverMs + matrixMs;
+  const firstStep = (job) =>
+    Math.min(
+      ...job.steps
+        .filter((step) => step.started_at)
+        .map((step) => timestamp(step.started_at)),
+    );
+  for (const job of started.sort(
+    (left, right) => firstStep(left) - firstStep(right),
+  )) {
+    const slot = slots.indexOf(Math.min(...slots));
+    slots[slot] += executionDuration(job, now);
+  }
+  const matrixMs = Math.max(...slots);
+  const aggregates = jobs.filter(
+    (job) => job.name === "Aggregate complete upgrade verification",
+  );
+  assert.ok(aggregates.length <= 1, "Duplicate upgrade aggregation");
+  if (completed) {
+    assert.equal(aggregates.length, 1, "Missing complete upgrade aggregation");
+    assert.equal(aggregates[0].status, "completed");
+    assert.equal(aggregates[0].conclusion, "success");
+  }
+  const aggregateMs = aggregates.length
+    ? executionDuration(aggregates[0], now)
+    : 0;
+  const elapsedMs = resolverMs + matrixMs + aggregateMs;
   const reserveMs = completed ? 0 : 15_000;
   assert.ok(
     elapsedMs + reserveMs < LIMIT_MS,
@@ -90,6 +121,8 @@ export function verifyUpgradeDuration({
     timing: "execution-without-runner-queues",
     resolverMs,
     matrixMs,
+    aggregateMs,
+    maxParallel: MAX_PARALLEL,
     elapsedMs,
     limitMs: LIMIT_MS,
     reserveMs,

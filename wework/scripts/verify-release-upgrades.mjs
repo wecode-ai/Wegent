@@ -18,6 +18,7 @@ import {
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import { bundledRuntimeCacheKey } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
+import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
@@ -76,10 +77,23 @@ const node = {
   minSourceVersion: policy.minSourceVersion,
   revoked: false,
 }
+const planDirectory = process.env.WEWORK_UPGRADE_PLAN_DIRECTORY || ''
+const shardSourceVersion = process.env.WEWORK_UPGRADE_VERIFY_SOURCE || ''
+if (
+  Boolean(planDirectory) !== Boolean(shardSourceVersion) ||
+  (planDirectory && diagnosticCheckpoint)
+)
+  throw new Error('Source sharding requires a frozen complete verification plan')
+const frozen = planDirectory
+  ? validateUpgradeShardPlan(
+      JSON.parse(await readFile(join(planDirectory, `${platform}-${arch}.json`), 'utf8')),
+      { version: node.version, channel, policy, platform, arch }
+    )
+  : null
 const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
 const downloadedSources = new Map()
 try {
-  const catalogs = publishedUpgradePolicies({ repository, platform, arch })
+  const catalogs = frozen?.catalogs ?? publishedUpgradePolicies({ repository, platform, arch })
   const published = Object.values(catalogs)
   if (
     published.some(catalog => catalog.releases.some(item => item.version === release.version)) &&
@@ -126,6 +140,46 @@ async function verifyChannel(catalogs, targetChannel) {
   }
   await saveReport()
   try {
+    if (frozen) {
+      const selected = frozen.channels.find(item => item.channel === targetChannel)
+      const source = selected.sources.find(item => item.version === shardSourceVersion) ?? null
+      if (!source && !(shardSourceVersion === 'initial' && selected.sources.length === 0))
+        throw new Error('The source shard is outside the frozen verification plan')
+      const edge = source ? await verifySource(source, targetChannel, plan?.previous) : null
+      report.status = source ? (edge ? 'passed' : 'failed') : 'initial'
+      if (source)
+        report.attempts.push({
+          version: source.version,
+          sha256: source.sha256,
+          status: report.status,
+        })
+      const evidence = edge
+        ? await readFile(
+            join(
+              assets,
+              `upgrade-evidence-${targetChannel}-${source.version}-${release.version}-${platform}-${arch}.json`
+            ),
+            'utf8'
+          )
+        : null
+      await writeFile(
+        join(
+          assets,
+          `upgrade-shard-${targetChannel}-${shardSourceVersion}-${platform}-${arch}.json`
+        ),
+        JSON.stringify({
+          schemaVersion: 1,
+          suiteVersion: UPGRADE_SUITE_VERSION,
+          runId: String(process.env.GITHUB_RUN_ID),
+          channel: targetChannel,
+          source,
+          target: node,
+          status: report.status,
+          evidence,
+        }) + '\n'
+      )
+      return
+    }
     if (diagnosticCheckpoint) {
       if (!sourceAssets && !plan?.previous)
         throw new Error('Diagnostic replay requires a previous release')

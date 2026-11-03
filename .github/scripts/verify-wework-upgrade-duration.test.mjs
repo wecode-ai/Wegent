@@ -13,8 +13,18 @@ function fixture() {
     now: origin + 400_000,
     matrix: {
       include: [
-        { platform: "macos", arch: "arm64", channel: "stable" },
-        { platform: "windows", arch: "x64", channel: "stable" },
+        {
+          platform: "macos",
+          arch: "arm64",
+          channel: "stable",
+          source_version: "0.6.3",
+        },
+        {
+          platform: "windows",
+          arch: "x64",
+          channel: "stable",
+          source_version: "0.6.3",
+        },
       ],
     },
     jobs: [
@@ -26,14 +36,14 @@ function fixture() {
         completed_at: iso(100_000),
       },
       {
-        name: "Verify release upgrades (macos/arm64/stable)",
+        name: "Verify release upgrades (macos/arm64/stable/0.6.3)",
         status: "completed",
         conclusion: "success",
         steps: steps(120_000),
         completed_at: iso(300_000),
       },
       {
-        name: "Verify release upgrades (windows/x64/stable)",
+        name: "Verify release upgrades (windows/x64/stable/0.6.3)",
         status: "in_progress",
         conclusion: null,
         steps: steps(200_000),
@@ -59,6 +69,13 @@ test("counts resolver and complete execution of the slowest shard while excludin
 test("publication counts setup, downloads, scenarios, cleanup and the final artifact upload", () => {
   const value = fixture();
   value.completed = true;
+  value.jobs.push({
+    name: "Aggregate complete upgrade verification",
+    status: "completed",
+    conclusion: "success",
+    steps: steps(800_000),
+    completed_at: iso(800_000),
+  });
   Object.assign(value.jobs[2], {
     status: "completed",
     conclusion: "success",
@@ -83,6 +100,13 @@ test("queued shards have no execution yet but cannot authorize completion", () =
   };
   assert.equal(verifyUpgradeDuration(value).elapsedMs, 190_000);
   value.completed = true;
+  value.jobs.push({
+    name: "Aggregate complete upgrade verification",
+    status: "completed",
+    conclusion: "success",
+    steps: steps(800_000),
+    completed_at: iso(800_000),
+  });
   assert.throws(() => verifyUpgradeDuration(value));
 });
 
@@ -118,6 +142,43 @@ test("all four channel/platform shards contribute to the bounded parallel critic
   assert.equal(verifyUpgradeDuration(value).elapsedMs, 260_000);
 });
 
+test("source shards retain the eight-runner cap and count aggregation execution", () => {
+  const value = fixture();
+  value.matrix.include = [];
+  value.jobs = value.jobs.slice(0, 1);
+  for (let index = 0; index < 9; index++) {
+    const source_version = `0.6.${index}`;
+    value.matrix.include.push({
+      platform: "windows",
+      arch: "x64",
+      channel: "stable",
+      source_version,
+    });
+    value.jobs.push({
+      name: `Verify release upgrades (windows/x64/stable/${source_version})`,
+      status: "completed",
+      conclusion: "success",
+      steps: steps(100_000 + index * 1_000),
+      completed_at: iso(300_000 + index * 1_000),
+    });
+  }
+  value.jobs.push({
+    name: "Aggregate complete upgrade verification",
+    status: "completed",
+    conclusion: "success",
+    steps: steps(500_000),
+    completed_at: iso(525_000),
+  });
+  value.completed = true;
+  const result = verifyUpgradeDuration(value);
+  assert.equal(result.maxParallel, 8);
+  assert.equal(result.matrixMs, 400_000);
+  assert.equal(result.aggregateMs, 25_000);
+  assert.equal(result.elapsedMs, 435_000);
+  value.jobs.at(-1).completed_at = iso(700_000);
+  assert.throws(() => verifyUpgradeDuration(value), /10-minute budget/);
+});
+
 test("missing, failed, duplicate, unfinished or malformed execution records cannot authorize publication", () => {
   for (const change of [
     (value) => value.jobs.pop(),
@@ -143,6 +204,13 @@ test("missing, failed, duplicate, unfinished or malformed execution records cann
   ]) {
     const value = fixture();
     value.completed = true;
+    value.jobs.push({
+      name: "Aggregate complete upgrade verification",
+      status: "completed",
+      conclusion: "success",
+      steps: steps(800_000),
+      completed_at: iso(800_000),
+    });
     Object.assign(value.jobs[2], {
       status: "completed",
       conclusion: "success",
