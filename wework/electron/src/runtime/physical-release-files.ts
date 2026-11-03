@@ -32,10 +32,11 @@ const SCRIPT = `
     const path = require('node:path')
     const systemRoot = process.env.SystemRoot
     if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable')
-    await require('node:util').promisify(require('node:child_process').execFile)(
+    const { stderr } = await require('node:util').promisify(require('node:child_process').execFile)(
       path.join(systemRoot, 'System32', 'tar.exe'), ['-xf', source, '-C', destination],
       {timeout:290_000,maxBuffer:1024*1024,windowsHide:true}
     )
+    if (stderr.trim()) throw new Error('Archive extraction warning: ' + stderr.trim())
   }
   else if (operation === 'extract') await tar.extract({file:source,cwd:destination,strict:true})
   else throw new Error('Invalid physical release operation')

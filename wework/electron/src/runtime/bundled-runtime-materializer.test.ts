@@ -124,7 +124,7 @@ describe('materializeBundledRuntimes', () => {
     )
   })
 
-  test('extracts runtimes without an external tar executable', async () => {
+  test('extracts runtimes without depending on PATH', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
     roots.push(root)
     const resources = join(root, 'resources')

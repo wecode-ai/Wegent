@@ -46,6 +46,15 @@ test('rejects parent traversal without writing outside the destination', async (
   await expect(readFile(join(root, 'escaped'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
+test('rejects absolute archive paths rather than silently stripping their root', async () => {
+  const { destination, archive } = await fixture()
+  const header = new Header({ path: '/absolute-archive-entry', size: 0, type: 'File' })
+  header.encode()
+  await writeFile(archive, Buffer.concat([header.block!, Buffer.alloc(1024)]))
+
+  await expect(extractPhysicalRelease(archive, destination)).rejects.toThrow()
+})
+
 test('rejects extraction through an archive symlink pointing outside the destination', async () => {
   const { root, destination, archive } = await fixture()
   const outside = join(root, 'outside')
