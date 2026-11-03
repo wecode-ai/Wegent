@@ -438,10 +438,10 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
     provider_id = "dingtalk"
 
     @trace_async(tracer_name="knowledge.external_import")
-    async def get_update_time(
+    async def get_document_info(
         self, db: Session, user: User, node_id: str
-    ) -> int | None:
-        """Read the live node timestamp without fetching content or changing a copy."""
+    ) -> dict[str, Any]:
+        """Read live metadata with the same bounded, sanitized transport as fetch."""
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
                 async with open_dingtalk_session(db, user, "docs") as session:
@@ -466,7 +466,50 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
             raise ExternalDocumentFetchError(
                 f"DingTalk metadata read failed: {type(failure).__name__}"
             ) from None
-        return _read_update_time(info, node_id)
+        return info
+
+    async def get_update_time(
+        self, db: Session, user: User, node_id: str
+    ) -> int | None:
+        """Read the live node timestamp without fetching content or changing a copy."""
+        return _read_update_time(
+            await self.get_document_info(db, user, node_id), node_id
+        )
+
+    async def resolve_live_importable(
+        self, db: Session, user: User, node_id: str
+    ) -> dict[str, Any]:
+        """Resolve a node directly, without reading or populating the directory."""
+        info = await self.get_document_info(db, user, node_id)
+        if not get_import_extension(info):
+            raise ExternalDocumentImportError(
+                "This DingTalk file type cannot be imported"
+            )
+        title = _live_title(info)
+        if not title:
+            raise ExternalDocumentImportError("DingTalk document has no readable title")
+        self._check_spreadsheet_service(user, info)
+        return {
+            "provider": self.provider_id,
+            "resource_id": node_id,
+            "title": title,
+            "url": f"https://alidocs.dingtalk.com/i/nodes/{node_id}",
+        }
+
+    @staticmethod
+    def _check_spreadsheet_service(user: User, info: dict[str, Any]) -> None:
+        from app.services.dingtalk_doc_service import DingTalkDocService
+
+        extension = str(info.get("extension") or "").strip().lower()
+        if (
+            str(info.get("contentType") or "").strip().upper() == "ALIDOC"
+            and extension in _SPREADSHEET_MCP_SERVICES
+        ):
+            service, label = _SPREADSHEET_MCP_SERVICES[extension]
+            if not DingTalkDocService.get_user_dingtalk_mcp_url(user, service):
+                raise ExternalDocumentImportError(
+                    f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."
+                )
 
     def resolve_importable(
         self,
@@ -504,15 +547,9 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
             raise ExternalDocumentImportError(
                 "DingTalk Docs is not configured for this account"
             )
-        if (
-            node.content_type.strip().upper() == "ALIDOC"
-            and node.extension in _SPREADSHEET_MCP_SERVICES
-        ):
-            service, label = _SPREADSHEET_MCP_SERVICES[node.extension]
-            if not DingTalkDocService.get_user_dingtalk_mcp_url(user, service):
-                raise ExternalDocumentImportError(
-                    f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."
-                )
+        self._check_spreadsheet_service(
+            user, {"contentType": node.content_type, "extension": node.extension}
+        )
         return {
             "provider": self.provider_id,
             "resource_id": node.dingtalk_node_id,
@@ -527,12 +564,6 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
         user: User,
         external_resource_id: str,
     ) -> ExternalDocumentContent:
-        try:
-            metadata = self.resolve_importable(db, user, external_resource_id)
-        except ExternalDocumentImportError as exc:
-            # The local directory is an import prerequisite, not proof that
-            # the remote source was deleted. Only live MCP errors prove that.
-            raise ExternalDocumentFetchError(str(exc)) from exc
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
                 (
@@ -560,14 +591,17 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
             raise ExternalDocumentFetchError(
                 f"DingTalk content read failed: {type(failure).__name__}"
             ) from None
-        # The source's own title wins over the cached directory name, so a
-        # rename reaches the copy without waiting for a directory refresh.
+        metadata: dict[str, Any] = {
+            "provider": self.provider_id,
+            "resource_id": external_resource_id,
+            "url": f"https://alidocs.dingtalk.com/i/nodes/{external_resource_id}",
+        }
         if source_title:
             metadata = {**metadata, "title": source_title}
         if update_time is not None:
             metadata = {**metadata, "source_update_time": update_time}
         return ExternalDocumentContent(
-            name=metadata["title"],
+            name=source_title,
             file_extension=extension,
             content=content,
             metadata=metadata,

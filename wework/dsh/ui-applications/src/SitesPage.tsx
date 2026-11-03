@@ -90,6 +90,10 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const searchParams = new URLSearchParams(search)
   const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
   const smartAppsView = searchParams.get('view')
+  const requestedSmartAppId = searchParams.get('smartAppId') ?? ''
+  const targetSmartAppId = /^[1-9]\d{0,15}$/.test(requestedSmartAppId)
+    ? Number(requestedSmartAppId)
+    : null
 
   useEffect(() => {
     if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
@@ -509,9 +513,18 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
           smartAppsEnabled={experimentalFeatures.enabled}
           smartAppsContent={
             smartAppsView === 'owned' ? (
-              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" onNavigate={onNavigate} />
+              <SmartAppsMarketplacePage
+                api={smartAppsApi}
+                mode="owned"
+                onNavigate={onNavigate}
+                targetSmartAppId={targetSmartAppId}
+              />
             ) : (
-              <SmartAppsMarketplacePage api={smartAppsApi} onNavigate={onNavigate} />
+              <SmartAppsMarketplacePage
+                api={smartAppsApi}
+                onNavigate={onNavigate}
+                targetSmartAppId={targetSmartAppId}
+              />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}
