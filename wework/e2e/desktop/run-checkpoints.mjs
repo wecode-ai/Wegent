@@ -12,7 +12,11 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  rejectFailedReleaseCheckpoint,
+} from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
@@ -853,6 +857,8 @@ async function runParallelCheckpoints(checkpoints) {
         console.error(
           `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
         )
+        // A failed pair cannot produce an edge; release its serial budget to the next source.
+        if (workerCount === 1) rejectFailedReleaseCheckpoint(checkpoint, result)
       },
     })
     if (failures.length === 0) {

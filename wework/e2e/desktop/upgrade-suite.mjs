@@ -10,3 +10,9 @@ export const UPGRADE_CHECKPOINTS = [
 ]
 export const UPGRADE_PACKAGE_CHECKPOINTS = [...UPGRADE_CHECKPOINTS, 'app-update-full']
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
+
+export function rejectFailedReleaseCheckpoint(checkpoint, result) {
+  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint) && result.code !== 0) {
+    throw new Error(`Release package checkpoint failed: ${checkpoint}`)
+  }
+}
