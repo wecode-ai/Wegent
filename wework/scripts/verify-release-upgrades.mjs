@@ -9,12 +9,10 @@ import {
   readPrebuiltDesktopRelease,
 } from './lib/published-desktop-release.mjs'
 import {
-  mergeUpgradePolicy,
   releaseVerificationChannels,
   releaseUpgradePlan,
   upgradeSource,
   verifiedUpgradeEdge,
-  verifyReleaseUpgradePlan,
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import { bundledRuntimeCacheKey } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
@@ -84,6 +82,8 @@ if (
   (planDirectory && diagnosticCheckpoint)
 )
   throw new Error('Source sharding requires a frozen complete verification plan')
+if (!diagnosticCheckpoint && !planDirectory)
+  throw new Error('Complete verification requires the frozen source matrix')
 const frozen = planDirectory
   ? validateUpgradeShardPlan(
       JSON.parse(await readFile(join(planDirectory, `${platform}-${arch}.json`), 'utf8')),
@@ -91,7 +91,6 @@ const frozen = planDirectory
     )
   : null
 const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
-const downloadedSources = new Map()
 try {
   const catalogs = frozen?.catalogs ?? publishedUpgradePolicies({ repository, platform, arch })
   const published = Object.values(catalogs)
@@ -192,43 +191,6 @@ async function verifyChannel(catalogs, targetChannel) {
       if (!passed) throw new Error('Upgrade diagnostic checkpoint failed')
       return
     }
-    const requiredSources = (policy.requiredDirectUpgrades?.[release.version] ?? []).map(version =>
-      upgradeSource(
-        targetChannel === 'stable' ? [catalogs.stable] : Object.values(catalogs),
-        version
-      )
-    )
-    const result = await verifyReleaseUpgradePlan(
-      plan,
-      async source => {
-        const edge = await verifySource(source, targetChannel, plan?.previous)
-        report.attempts.push({
-          version: source.version,
-          sha256: source.sha256,
-          status: edge ? 'passed' : 'failed',
-        })
-        await saveReport()
-        return edge
-      },
-      requiredSources
-    )
-    const minSourceVersion = result?.minSourceVersion ?? release.version
-    const verified = mergeUpgradePolicy(
-      catalogs[targetChannel] ?? null,
-      { ...node, minSourceVersion },
-      result?.verified.map(item => item.result) ?? [],
-      { channel: targetChannel, platform, arch },
-      result?.verified.map(item => item.source) ?? []
-    )
-    await writeFile(
-      join(assets, `upgrade-policy-${targetChannel}-${platform}-${arch}.json`),
-      JSON.stringify(verified, null, 2) + '\n'
-    )
-    report.status = 'passed'
-    report.minSourceVersion = minSourceVersion
-    console.log(
-      `Verified ${targetChannel}/${platform}/${arch} ${release.version}: minimum source ${minSourceVersion}`
-    )
   } catch (error) {
     report.status = diagnosticCheckpoint ? 'diagnostic-failed' : 'blocked'
     throw error
@@ -237,13 +199,7 @@ async function verifyChannel(catalogs, targetChannel) {
   }
 }
 
-function downloadSource(source, targetChannel) {
-  const key = `${targetChannel}/${source.version}/${source.sha256 ?? 'prebuilt'}`
-  if (!downloadedSources.has(key)) downloadedSources.set(key, loadSource(source, targetChannel))
-  return downloadedSources.get(key)
-}
-
-async function loadSource(source, targetChannel) {
+async function downloadSource(source, targetChannel) {
   const downloaded = sourceAssets
     ? await readPrebuiltDesktopRelease({
         directory: resolve(sourceAssets),
