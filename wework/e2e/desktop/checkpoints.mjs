@@ -72,6 +72,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-archive',
   'collaboration-board-sorting',
   'collaboration-board-backlog',
+  'collaboration-parent-board',
   'collaboration-board-move-recovery',
   'collaboration-home-preload',
   'board-transcript-followup',

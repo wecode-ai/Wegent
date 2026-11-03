@@ -888,6 +888,18 @@ describe("CollaborationApp API boundary", () => {
     );
     const read = { ...issue, is_unread: false };
     renderIssueDetail.mock.calls[0][0].onRead(read);
+    const related = { ...issue, id: "child-issue", parent_id: issue.id };
+    const openRelated = renderIssueDetail.mock.calls[0][0].onOpenRelatedIssue;
+    openRelated(related);
+    expect(host.navigate).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      issueId: related.id,
+      view: "board",
+    });
+    vi.mocked(host.navigate).mockClear();
+    openRelated({ ...related, can_view_detail: false });
+    openRelated({ ...related, cloud_project_id: "foreign-project" });
+    expect(host.navigate).not.toHaveBeenCalled();
     expect(
       controller.commands.confirmIssueRead,
     ).toHaveBeenCalledExactlyOnceWith(read);
