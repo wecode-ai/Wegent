@@ -360,6 +360,14 @@ jobs:
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
+      - name: Prepare real mailbox server runtime
+        if: contains(matrix.segments, 'stand-in-email')
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends openjdk-21-jre-headless
+          java -version
+          keytool -help >/dev/null
+
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
         id: local-harness-clis-cache
