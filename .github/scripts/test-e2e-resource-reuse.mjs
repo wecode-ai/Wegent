@@ -455,10 +455,10 @@ test("platform sharding preserves four runners and every provider shard", () => 
     (step) => step.name === "Prepare isolated DingTalk HTTPS download fixture",
   );
   const oauth = steps.find(
-    (step) => step.name === "Run DingTalk OAuth import and authorization E2E",
+    (step) => step.name === "Run DingTalk document protocol integration tests",
   );
   const report = steps.find(
-    (step) => step.name === "Upload DingTalk OAuth E2E results",
+    (step) => step.name === "Upload DingTalk protocol integration results",
   );
   assert(preparation && oauth && report);
   assert(

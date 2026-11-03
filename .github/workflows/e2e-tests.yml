@@ -1240,7 +1240,7 @@ jobs:
 
       # Run 41478921743: OAuth took 162s on the 862s shard 1; shard 2 took 545s.
       # Keep its HTTPS fixture, sole NET_ADMIN grant and report on the same runner.
-      - name: Run DingTalk OAuth import and authorization E2E
+      - name: Run DingTalk document protocol integration tests
         id: dingtalk_oauth_e2e
         if: matrix.dingtalkOAuth
         timeout-minutes: 10
@@ -1262,7 +1262,7 @@ jobs:
           uv run --no-sync pytest e2e_checks/dingtalk_oauth -n 0 \
             --junitxml=reports/dingtalk-oauth-e2e.xml
 
-      - name: Upload DingTalk OAuth E2E results
+      - name: Upload DingTalk protocol integration results
         if: always() && matrix.dingtalkOAuth && steps.dingtalk_oauth_e2e.outcome != 'skipped' && steps.dingtalk_oauth_e2e.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
