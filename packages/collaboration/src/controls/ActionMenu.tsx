@@ -173,21 +173,36 @@ export function ActionMenu({
       cancelSubmenuClose();
       onContextMenuClose?.();
       onOpenChange?.(false);
+      const previousFocus = contextMenuPreviousFocusRef.current;
+      contextMenuPreviousFocusRef.current = null;
       if (restoreFocus) {
-        window.requestAnimationFrame(() => triggerRef.current?.focus());
-      } else if (contextMenuPosition) {
-        window.requestAnimationFrame(() => {
-          if (contextMenuPreviousFocusRef.current?.isConnected) {
-            contextMenuPreviousFocusRef.current.focus();
-          }
-          contextMenuPreviousFocusRef.current = null;
-        });
+        // Restore before an action opens a dialog and captures its return target.
+        const focusTarget = contextMenuPosition
+          ? previousFocus
+          : triggerRef.current;
+        const activeElement = document.activeElement;
+        if (
+          focusTarget?.isConnected &&
+          (activeElement === document.body ||
+            menuRef.current?.contains(activeElement) ||
+            submenuRef.current?.contains(activeElement))
+        ) {
+          focusTarget.focus();
+        }
       }
     },
     [cancelSubmenuClose, contextMenuPosition, onContextMenuClose, onOpenChange],
   );
-  const menuOpen = open || Boolean(contextMenuPosition);
+  const contextMenuOpen = Boolean(contextMenuPosition);
+  const menuOpen = open || contextMenuOpen;
   const openSubmenuItem = items.find((item) => item.testId === openSubmenuId);
+
+  useLayoutEffect(() => {
+    contextMenuPreviousFocusRef.current =
+      contextMenuOpen && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  }, [contextMenuOpen]);
 
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -221,7 +236,7 @@ export function ActionMenu({
 
   const handleItemSelect = async (item: ActionMenuItem) => {
     if (item.disabled || item.children?.length || !item.onSelect) return;
-    closeMenu();
+    closeMenu(Boolean(contextMenuPosition));
     await item.onSelect();
   };
 
@@ -414,12 +429,6 @@ export function ActionMenu({
     if (!menuOpen) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
-      if (contextMenuPosition) {
-        contextMenuPreviousFocusRef.current =
-          document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
-      }
       if (
         menuRef.current?.contains(document.activeElement) ||
         submenuRef.current?.contains(document.activeElement)
@@ -445,11 +454,14 @@ export function ActionMenu({
         closeMenu();
       }
     };
+    const handleWindowBlur = () => closeMenu();
 
     document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("blur", handleWindowBlur);
     return () => {
       window.cancelAnimationFrame(animationFrame);
       document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("blur", handleWindowBlur);
     };
   }, [closeMenu, contextMenuPosition, menuOpen]);
 
@@ -461,7 +473,9 @@ export function ActionMenu({
         itemRefs.current[openSubmenuId]?.focus();
         return;
       }
-      closeMenu(initialItemFocusRef.current !== null && !contextMenuPosition);
+      closeMenu(
+        Boolean(contextMenuPosition) || initialItemFocusRef.current !== null,
+      );
     },
     menuOpen,
     menuRef,
