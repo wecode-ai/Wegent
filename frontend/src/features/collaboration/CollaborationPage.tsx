@@ -244,15 +244,9 @@ export function CollaborationPage() {
   const projectSettingsSection =
     projectView === 'manage' &&
     section &&
-    [
-      'project',
-      'agents',
-      'members',
-      'groups',
-      'environments',
-      'automatic-processing',
-      'configuration-sharing',
-    ].includes(section)
+    ['project', 'agents', 'members', 'groups', 'environments', 'automatic-processing'].includes(
+      section
+    )
       ? (section as ProjectSettingsSectionId)
       : null
   useEffect(() => {

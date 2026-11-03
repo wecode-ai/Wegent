@@ -10,6 +10,9 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationMember, CollaborationProject } from '../types'
 import { useCollaborationWorkspaceController } from '../workspace-controller/useCollaborationWorkspaceController'
 import { ProjectCollaborationGroups } from './ProjectCollaborationGroups'
+import { CollaborationTemplateContext } from '../templates/context'
+import { CollaborationTemplateStore } from '../templates/store'
+import { builtinCollaborationTemplates } from '../templates/builtins'
 
 const view = vi.hoisted(() => ({
   props: null as ComponentProps<typeof WorkspaceCollaborationGroupsConfiguration> | null,
@@ -59,7 +62,8 @@ function apiFor(listMembers = vi.fn(async () => [member])) {
 async function render(
   api: SharedWorkspaceApi,
   projectId = 'project-1',
-  workspaceId = 'workspace-1'
+  workspaceId = 'workspace-1',
+  templateStore: CollaborationTemplateStore | null = null
 ) {
   if (!root) {
     container = document.createElement('div')
@@ -68,15 +72,17 @@ async function render(
   }
   await act(async () =>
     root!.render(
-      <ProjectCollaborationGroups
-        api={api}
-        projectId={projectId}
-        workspaceId={workspaceId}
-        members={[]}
-        agents={[]}
-        locale="en"
-        canManage
-      />
+      <CollaborationTemplateContext.Provider value={templateStore}>
+        <ProjectCollaborationGroups
+          api={api}
+          projectId={projectId}
+          workspaceId={workspaceId}
+          members={[]}
+          agents={[]}
+          locale="en"
+          canManage
+        />
+      </CollaborationTemplateContext.Provider>
     )
   )
 }
@@ -86,7 +92,96 @@ afterEach(() => {
   root = undefined
   container?.remove()
   view.props = null
+  vi.restoreAllMocks()
 })
+
+it.each(['success', 'groups', 'configuration'] as const)(
+  'imports within the team page without resubmission after a refresh failure (%s)',
+  async failure => {
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: {
+        configurable: true,
+        value: function () {
+          this.open = true
+        },
+      },
+      close: {
+        configurable: true,
+        value: function () {
+          this.open = false
+        },
+      },
+    })
+    const record = structuredClone(builtinCollaborationTemplates()[0])
+    record.document.metadata.name = 'import-test'
+    const configuration = record.document.spec.resources.collaboration
+    delete configuration.project.taskAssignment
+    delete configuration.project.board
+    configuration.groups = [
+      {
+        ...configuration.groups[0],
+        name: 'Imported team',
+        roles: [configuration.groups[0].roles[0]],
+        stages: [],
+      },
+    ]
+    const store = new CollaborationTemplateStore({
+      scope: 'test:1',
+      ownerId: 1,
+      persistence: { read: async () => [record], write: async () => undefined },
+    })
+    const api = apiFor()
+    const groups = [group]
+    let importedReads = 0
+    api.projects.get = vi.fn(async () => {
+      if (groups.length > 1 && failure === 'configuration') {
+        throw new Error('Configuration refresh failed')
+      }
+      return { id: 'project-1', name: 'Delivery' } as CollaborationProject
+    })
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => {
+      if (groups.length > 1 && ++importedReads === 1 && failure === 'groups') {
+        throw new Error('Group refresh failed')
+      }
+      return [...groups]
+    })
+    vi.mocked(api.projects.createCollaborationGroup!).mockImplementation(async () => {
+      const created = { ...group, id: 'imported', name: 'Imported team' }
+      groups.push(created)
+      return created
+    })
+    await render(api, 'project-1', 'workspace-1', store)
+    expect(container.textContent).toContain('Delivery')
+    expect(api.projects.get).not.toHaveBeenCalled()
+    const click = async (id: string) => {
+      const target = container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)
+      expect(target).not.toBeNull()
+      expect(target!.disabled).toBe(false)
+      await act(async () => target!.click())
+    }
+    await click('collaboration-project-settings-sharing')
+    await click('project-template-import')
+    await click('template-details-import-test')
+    await click('template-use')
+    await click('template-bindings-apply')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(view.props!.groups.map(group => group.name)).toEqual(
+      failure === 'groups' ? ['Delivery'] : ['Delivery', 'Imported team']
+    )
+    if (failure === 'groups') {
+      expect(
+        container.querySelector('[data-testid="project-groups-load-error"]')?.textContent
+      ).toContain('Group refresh failed')
+    } else {
+      expect(container.textContent).toContain('Imported team')
+    }
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="project-template-export"]')!
+        .disabled
+    ).toBe(failure === 'configuration')
+    expect(container.querySelector('[data-testid="template-bindings-apply"]')).toBeNull()
+  }
+)
 
 describe('project collaboration-group loading', () => {
   it('keeps groups and agents usable after members fail, completes mutations, and retries members', async () => {
@@ -302,7 +397,12 @@ it('ignores an earlier same-scope reload after a newer reload fails', async () =
 it('keeps groups scoped when the real metadata-only controller switches cached projects in one batch', async () => {
   const projects = ['a', 'b'].map(
     id =>
-      ({ id, name: id, workspace_id: 'workspace', task_provider: 'local' }) as CollaborationProject
+      ({
+        id,
+        name: id,
+        workspace_id: 'workspace',
+        task_provider: 'local',
+      }) as CollaborationProject
   )
   const api = apiFor()
   api.projects.list = vi.fn(async () => projects)
@@ -310,7 +410,11 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   vi.mocked(api.projects.listCollaborationGroups!)
     .mockReturnValueOnce(a.promise)
     .mockResolvedValue([{ ...group, id: 'b-group', name: 'B' }])
-  const messages = { loadFailed: 'load', saveFailed: 'save', conflict: 'conflict' }
+  const messages = {
+    loadFailed: 'load',
+    saveFailed: 'save',
+    conflict: 'conflict',
+  }
   function Harness({ projectId }: { projectId: string | null }) {
     const { state } = useCollaborationWorkspaceController({
       api,
@@ -352,7 +456,9 @@ it('ignores A post-save reload already in flight when B becomes active', async (
     .mockResolvedValue([{ ...group, id: 'b-group', name: 'B' }])
   let pending!: Promise<unknown>
   await act(async () => {
-    pending = view.props!.commands.updateCollaborationGroup!(group.id, { name: 'Saved A' })
+    pending = view.props!.commands.updateCollaborationGroup!(group.id, {
+      name: 'Saved A',
+    })
     await Promise.resolve()
   })
   await render(api, 'b')

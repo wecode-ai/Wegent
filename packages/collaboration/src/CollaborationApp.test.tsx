@@ -16,6 +16,7 @@ const collaborationAppMocks = vi.hoisted(() => ({
     assignmentsByIssueId: {},
     replaceIssueAssignments: vi.fn(),
   })),
+  useTemplateStore: vi.fn(),
   stateSetters: [] as Array<{
     initialValue: unknown;
     setter: ReturnType<typeof vi.fn>;
@@ -52,7 +53,7 @@ vi.mock("./workspace-controller", () => ({
 
 vi.mock("./templates/context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./templates/context")>()),
-  useCollaborationTemplateStore: () => null,
+  useCollaborationTemplateStore: collaborationAppMocks.useTemplateStore,
 }));
 
 vi.mock("./platform", async (importOriginal) => ({
@@ -240,6 +241,7 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
 
 describe("CollaborationApp API boundary", () => {
   beforeEach(() => {
+    collaborationAppMocks.useTemplateStore.mockReturnValue(null);
     collaborationAppMocks.useAssignments.mockClear();
     collaborationAppMocks.useController.mockReset();
     collaborationAppMocks.stateSetters.length = 0;
@@ -601,6 +603,9 @@ describe("CollaborationApp API boundary", () => {
   });
 
   it("exposes agents, members and collaboration teams as grouped settings pages", () => {
+    collaborationAppMocks.useTemplateStore.mockReturnValue({
+      library: { ownerId: 1 },
+    });
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",

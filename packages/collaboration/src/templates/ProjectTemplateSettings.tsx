@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
@@ -15,25 +16,56 @@ import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 import { applyProjectTemplate } from './projectConfiguration'
 
-export function ProjectTemplateSettings({
-  api,
-  project,
-  locale,
-  currentUserId,
-  canManage,
-  onChange,
-}: {
+interface ProjectTemplateSettingsProps {
   api: SharedWorkspaceApi
-  project: CollaborationProject
+  projectId: string
   locale: CollaborationLocale
   currentUserId?: number
   canManage: boolean
-  onChange?(project: CollaborationProject): void
-}) {
+  onImported?(): Promise<void>
+  onChange?(project: CollaborationProject): void | Promise<void>
+}
+
+export function ProjectTemplateSettings(props: ProjectTemplateSettingsProps) {
+  const store = useCollaborationTemplateStore()
+  const [expanded, setExpanded] = useState(false)
+  const contentId = useId()
+  if (!store) return null
+  return (
+    <section className="mt-6 border-t border-border pt-4">
+      <button
+        type="button"
+        className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-8"
+        data-testid="collaboration-project-settings-sharing"
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        onClick={() => setExpanded(value => !value)}
+      >
+        <ChevronRight className={`h-4 w-4 ${expanded ? 'rotate-90' : ''}`} aria-hidden="true" />
+        {templateMessages[props.locale].configuration}
+      </button>
+      <div id={contentId} hidden={!expanded}>
+        {expanded && <ProjectTemplateSettingsContent {...props} />}
+      </div>
+    </section>
+  )
+}
+
+function ProjectTemplateSettingsContent({
+  api,
+  projectId,
+  locale,
+  currentUserId,
+  canManage,
+  onImported,
+  onChange,
+}: ProjectTemplateSettingsProps) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
   const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [configurationProject, setConfigurationProject] = useState(project)
+  const [configurationProject, setConfigurationProject] = useState<CollaborationProject | null>(
+    null
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false)
@@ -46,9 +78,9 @@ export function ProjectTemplateSettings({
     setLoading(true)
     try {
       const [result, latest, rules] = await Promise.all([
-        api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
-        api.projects.get(project.id),
-        api.automations?.list(project.id) ?? Promise.resolve([]),
+        api.projects.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
+        api.projects.get(projectId),
+        api.automations?.list(projectId) ?? Promise.resolve([]),
       ])
       if (scope.current === generation) {
         setGroups(result)
@@ -64,7 +96,7 @@ export function ProjectTemplateSettings({
     } finally {
       if (scope.current === generation) setLoading(false)
     }
-  }, [api, project.id, m.failed])
+  }, [api, projectId, m.failed])
   useEffect(() => {
     setGroups([])
     void reload()
@@ -73,11 +105,17 @@ export function ProjectTemplateSettings({
     }
   }, [reload])
   if (!store) return null
-  const snapshot = () =>
-    templateFromProject(configurationProject, groups, `template-${crypto.randomUUID()}`, locale)
+  const snapshot = () => {
+    if (!configurationProject) throw new Error('Project configuration has not loaded')
+    return templateFromProject(
+      configurationProject,
+      groups,
+      `template-${crypto.randomUUID()}`,
+      locale
+    )
+  }
   return (
     <section className="collaboration-template-settings" data-testid="project-template-settings">
-      <h2>{m.configuration}</h2>
       <p>{m.configurationHint}</p>
       {error && (
         <p role="alert">
@@ -101,8 +139,8 @@ export function ProjectTemplateSettings({
               setLoading(true)
               try {
                 const [members, agents] = await Promise.all([
-                  api.members.list(project.id),
-                  api.agents.list(project.id),
+                  api.members.list(projectId),
+                  api.agents.list(projectId),
                 ])
                 if (scope.current !== generation) return
                 setCandidates([
@@ -198,9 +236,10 @@ export function ProjectTemplateSettings({
             void reload()
           }}
           onApply={async (drafts, document) => {
-            await applyProjectTemplate(api, project.id, document, drafts, locale, m.partial)
+            await applyProjectTemplate(api, projectId, document, drafts, locale, m.partial)
+            await onImported?.()
             const latest = await reload()
-            if (latest) onChange?.(latest)
+            if (latest) await onChange?.(latest)
           }}
         />
       )}

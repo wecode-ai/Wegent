@@ -4622,6 +4622,9 @@ export function CloudTodoWorkspace({
                           ) ? (
                             <ProjectCollaborationGroups
                               key={selectedProject.id}
+                              onProjectChanged={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
+                              }
                               api={
                                 selectedProject.location === 'cloud'
                                   ? cloudWorkspaceApi!

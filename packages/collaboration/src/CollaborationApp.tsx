@@ -2,9 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
-import { templateMessages } from "./templates/messages";
 import { bulkIssueStatus } from "./platform/bulkIssueStatus";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
@@ -1027,29 +1025,6 @@ export function CollaborationApp({
                           />
                         ),
                       },
-                      ...(templateStore
-                        ? [
-                            {
-                              id: "configuration-sharing",
-                              label: templateMessages[locale].configuration,
-                              testId: "collaboration-project-settings-sharing",
-                              content: (
-                                <ProjectTemplateSettings
-                                  key={project.id}
-                                  onChange={commands.replaceProject}
-                                  api={api}
-                                  project={project}
-                                  locale={locale}
-                                  currentUserId={templateStore.library.ownerId}
-                                  canManage={
-                                    project.access_role === "Owner" ||
-                                    project.access_role === "Maintainer"
-                                  }
-                                />
-                              ),
-                            },
-                          ]
-                        : []),
                       ...createProjectAiTeamSections({
                         translate: translate,
                         membersContent: (

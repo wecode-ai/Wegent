@@ -64,6 +64,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command('waitFor', enabled, { timeoutMs: uiTimeoutMs })
     await control.command('clickWhenEnabled', enabled, { timeoutMs: uiTimeoutMs })
     await control.command('waitFor', enabled, { visible: false, timeoutMs: uiTimeoutMs })
+    await click(control, 'collaboration-project-settings-groups')
     await click(control, 'collaboration-project-settings-sharing')
   }
 
@@ -325,6 +326,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await wait(control, 'cloud-project-header-title', projectName)
       await click(control, 'collaboration-tab-manage')
+      await click(control, 'collaboration-project-settings-groups')
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
       await capture(control, '04-sharing-settings')

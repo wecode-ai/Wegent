@@ -227,8 +227,14 @@ test('exports configuration from project settings without task content or member
     )
     expect(issueResponse.ok()).toBeTruthy()
     await page.goto(
-      `/collaboration/workspaces/${workspace.id}/projects/${project.id}?view=manage&section=configuration-sharing`
+      `/collaboration/workspaces/${workspace.id}/projects/${project.id}?view=manage&section=groups`
     )
+    await expect(page.getByTestId('collaboration-project-settings-groups')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    await expect(page.getByTestId('project-template-export')).toHaveCount(0)
+    await page.getByTestId('collaboration-project-settings-sharing').click()
     await expect(page.getByTestId('project-template-export')).toBeEnabled()
     await page.screenshot({
       path: testInfo.outputPath('05-configuration-export.png'),

@@ -14,6 +14,7 @@ import { WorkspaceCollaborationGroupsConfiguration } from "../platform/Workspace
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
+import { ProjectTemplateSettings } from "../templates/ProjectTemplateSettings";
 
 function ScopedProjectCollaborationGroups({
   api,
@@ -353,6 +354,21 @@ function ScopedProjectCollaborationGroups({
             await api.projects.removeCollaborationGroup(projectId, groupId);
             await reload();
           },
+        }}
+      />
+      <ProjectTemplateSettings
+        api={api}
+        projectId={projectId}
+        locale={locale}
+        currentUserId={currentUserId}
+        canManage={canManage}
+        onImported={async () => {
+          await reload().catch(() => {
+            // Reload owns the error; a successful import must not be submitted again.
+          });
+        }}
+        onChange={(project) => {
+          if (active.current) onProjectChanged?.(project);
         }}
       />
     </>

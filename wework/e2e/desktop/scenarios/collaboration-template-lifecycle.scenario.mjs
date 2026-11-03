@@ -312,6 +312,7 @@ export function createDesktopScenario({
         agent => agent.name === LEADER || agent.display_name === LEADER
       ).id
       workerId = agents.find(agent => agent.name === WORKER || agent.display_name === WORKER).id
+      await click('collaboration-project-settings-groups')
       await click('collaboration-project-settings-sharing')
       await control.command('clickWhenEnabled', selector('project-template-import'), {
         timeoutMs: uiTimeoutMs,

@@ -517,7 +517,6 @@ export type CollaborationView =
   | "manage";
 export type CollaborationRootView = "home" | "my-work";
 export type ProjectSettingsSectionId =
-  | "configuration-sharing"
   | "project"
   | "agents"
   | "members"
