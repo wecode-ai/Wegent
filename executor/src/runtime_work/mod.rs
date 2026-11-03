@@ -5,7 +5,6 @@
 mod api_context;
 pub(crate) mod automations;
 mod codex_global_state;
-mod codex_item_page;
 mod codex_legacy_search;
 mod codex_notifications;
 mod codex_rollout;

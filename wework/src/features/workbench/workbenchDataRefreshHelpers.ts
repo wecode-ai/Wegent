@@ -1,4 +1,5 @@
 import type { CloudRuntimeState } from '@/types/workbench'
+import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   DeviceInfo,
   RuntimeDeviceWorkspace,
@@ -8,8 +9,29 @@ import type {
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
-import { EMPTY_CLOUD_RUNTIME_STATE, clearCloudRuntimeSync } from './workbenchCloudStatus'
+import {
+  EMPTY_CLOUD_RUNTIME_STATE,
+  clearCloudRuntimeSync,
+  readCachedDeviceList,
+} from './workbenchCloudStatus'
 import { getRuntimeTaskRouteKey, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+
+export async function loadDevicesForRefresh(
+  executorClient: ExecutorClient,
+  cacheScope: string,
+  options?: { useCacheFallback?: boolean }
+): Promise<DeviceInfo[]> {
+  let devices: DeviceInfo[]
+  try {
+    devices = await executorClient.commands.listDevices()
+  } catch (error) {
+    if (options?.useCacheFallback === false) throw error
+    const cachedDevices = readCachedDeviceList(cacheScope)
+    if (cachedDevices.length === 0) throw error
+    devices = cachedDevices
+  }
+  return devices
+}
 
 /**
  * Resolve the standalone device after a device or runtime-work refresh.

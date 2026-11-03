@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import { applyAppearance } from '@/features/appearance/applyAppearance'
@@ -1915,6 +1915,15 @@ describe('DesktopSidebar', () => {
   })
 
   test('preserves manual task-list scrolling across runtime refreshes', async () => {
+    localStorage.setItem('wework:debug-runtime', '1')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    onTestFinished(() => debug.mockRestore())
+    const autoScrollEntries = () =>
+      debug.mock.calls.flatMap(([prefix, entry]) =>
+        prefix === '[Wework] Runtime sidebar state' && entry?.event === 'active-task-auto-scroll'
+          ? [entry]
+          : []
+      )
     const chatPath = '/Users/alice/.wework/workspace/chats/sidebar-scroll'
     const runtimeWork = (status: string) => ({
       projects: [],
@@ -1971,6 +1980,13 @@ describe('DesktopSidebar', () => {
 
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
     scrollIntoView.mockClear()
+    const initialAutoScrollCount = autoScrollEntries().length
+    expect(autoScrollEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'before', willScroll: true }),
+        expect.objectContaining({ phase: 'after', willScroll: true }),
+      ])
+    )
 
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     scrollContainer.scrollTop = 180
@@ -1990,6 +2006,7 @@ describe('DesktopSidebar', () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
     expect(screen.getByTestId('runtime-local-task-waiting-active-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-hover-actions-active-task')).toHaveClass(
       'right-full',
@@ -2014,6 +2031,7 @@ describe('DesktopSidebar', () => {
     )
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(scrollContainer.scrollTop).toBe(180)
+    expect(autoScrollEntries()).toHaveLength(initialAutoScrollCount)
 
     const switchedProps = createSidebarProps({
       projects: [],
@@ -2023,6 +2041,9 @@ describe('DesktopSidebar', () => {
         taskId: 'other-task',
         workspacePath: chatPath,
       },
+    })
+    scrollIntoView.mockImplementationOnce(() => {
+      scrollContainer.scrollTop = 50
     })
     view.rerender(
       <RuntimeTaskLifecycleProvider store={lifecycleStore}>
@@ -2034,6 +2055,20 @@ describe('DesktopSidebar', () => {
     expect(scrollIntoView.mock.contexts[0]).toBe(
       screen.getByTestId('runtime-local-task-row-other-task')
     )
+    expect(autoScrollEntries().slice(-2)).toEqual([
+      expect.objectContaining({
+        phase: 'before',
+        changedDependencies: ['taskId', 'taskKey'],
+        previousDependencies: expect.objectContaining({ taskId: 'active-task', rowVisible: true }),
+        dependencies: expect.objectContaining({ taskId: 'other-task', rowVisible: true }),
+        metrics: expect.objectContaining({ scrollTop: 180 }),
+      }),
+      expect.objectContaining({
+        phase: 'after',
+        changedDependencies: ['taskId', 'taskKey'],
+        metrics: expect.objectContaining({ scrollTop: 50 }),
+      }),
+    ])
   })
 
   test('clears accepted async replies while the priority list still has its old snapshot', async () => {

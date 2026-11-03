@@ -9,6 +9,22 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use super::*;
 
 pub(super) const MAX_CONCURRENT_HISTORY_READS: usize = 2;
+const MAX_QUEUED_HISTORY_READS: usize = 8;
+const MAX_PENDING_HISTORY_READS: usize = MAX_CONCURRENT_HISTORY_READS + MAX_QUEUED_HISTORY_READS;
+
+pub(super) struct HistoryReadAdmission {
+    active: Arc<Semaphore>,
+    pending: Arc<Semaphore>,
+}
+
+impl Default for HistoryReadAdmission {
+    fn default() -> Self {
+        Self {
+            active: Arc::new(Semaphore::new(MAX_CONCURRENT_HISTORY_READS)),
+            pending: Arc::new(Semaphore::new(MAX_PENDING_HISTORY_READS)),
+        }
+    }
+}
 
 pub(super) fn is_cancellable_read(method: Option<&str>) -> bool {
     method == Some("runtime.tasks.transcript")
@@ -18,11 +34,11 @@ type PendingReads = StdMutex<HashMap<String, watch::Sender<bool>>>;
 
 pub(super) struct ConnectionReadRequests {
     pending: Arc<PendingReads>,
-    admission: Arc<Semaphore>,
+    admission: Arc<HistoryReadAdmission>,
 }
 
 impl ConnectionReadRequests {
-    pub(super) fn new(admission: Arc<Semaphore>) -> Self {
+    pub(super) fn new(admission: Arc<HistoryReadAdmission>) -> Self {
         Self {
             pending: Arc::new(StdMutex::new(HashMap::new())),
             admission,
@@ -64,19 +80,26 @@ impl ConnectionReadRequests {
                 "A history read with this request id is already running",
             ));
         }
-        let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
-            AppIpcError::new(
-                "runtime_read_busy",
-                "History reads are busy; retry after the current read finishes",
-            )
-        })?;
+        let permit = self
+            .admission
+            .pending
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                AppIpcError::new(
+                    "runtime_read_busy",
+                    "History read queue is full; retry after the current read finishes",
+                )
+            })?;
         let (sender, receiver) = watch::channel(false);
         pending.insert(id.to_owned(), sender);
         Ok((
             ReadRequestGuard {
                 pending: Arc::downgrade(&self.pending),
                 id: id.to_owned(),
-                _permit: permit,
+                admission: self.admission.active.clone(),
+                _pending_permit: permit,
+                active_permit: None,
             },
             receiver,
         ))
@@ -99,7 +122,19 @@ impl Drop for ConnectionReadRequests {
 pub(super) struct ReadRequestGuard {
     pending: Weak<PendingReads>,
     id: String,
-    _permit: OwnedSemaphorePermit,
+    admission: Arc<Semaphore>,
+    _pending_permit: OwnedSemaphorePermit,
+    active_permit: Option<OwnedSemaphorePermit>,
+}
+
+impl ReadRequestGuard {
+    pub(super) async fn wait_for_admission(&mut self) -> Result<(), AppIpcError> {
+        // Waiting stays inside the request's cancellation and deadline boundary.
+        self.active_permit = Some(self.admission.clone().acquire_owned().await.map_err(|_| {
+            AppIpcError::new("runtime_read_busy", "History read admission is closed")
+        })?);
+        Ok(())
+    }
 }
 
 impl Drop for ReadRequestGuard {

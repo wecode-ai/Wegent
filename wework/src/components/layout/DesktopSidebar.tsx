@@ -205,7 +205,11 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import { debugRuntimeSidebarState } from '@/features/workbench/runtimeSidebarDiagnostics'
+import {
+  debugRuntimeSidebarState,
+  runtimeSidebarScrollMetrics,
+  RuntimeSidebarScrollDiagnostics,
+} from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
@@ -3110,6 +3114,7 @@ export function DesktopSidebar({
   const runtimeTaskPinSnapshotRevisionRef = useRef(0)
   const runtimeTaskPersistedPinStatesRef = useRef(new Map<string, boolean>())
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
+  const sidebarScrollDiagnosticsRef = useRef(new RuntimeSidebarScrollDiagnostics())
   const {
     scrollContainerRef: sidebarWorklistsScrollRef,
     dragOutsideSidebar: paneDragOutsideSidebar,
@@ -3965,15 +3970,47 @@ export function DesktopSidebar({
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [collapseReadShortcut, collapseReadTaskView, priorityFilterShortcut, togglePriorityTaskView])
 
+  const autoScrollDependenciesRef = useRef<{
+    taskId: string | null
+    taskKey: string | null
+    rowVisible: boolean
+  } | null>(null)
   useEffect(() => {
-    if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
-
-    const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+    const dependencies = {
+      taskId: currentRuntimeTask?.taskId ?? null,
+      taskKey: currentRuntimeTaskKey,
+      rowVisible: currentRuntimeTaskRowVisible,
+    }
+    const previousDependencies = autoScrollDependenciesRef.current
+    autoScrollDependenciesRef.current = dependencies
+    const changedDependencies = (['taskId', 'taskKey', 'rowVisible'] as const).filter(
+      key => previousDependencies?.[key] !== dependencies[key]
     )
-
+    const shouldScroll = Boolean(currentRuntimeTaskKey && currentRuntimeTaskRowVisible)
+    const taskRow = shouldScroll
+      ? document.querySelector(
+          `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
+        )
+      : null
+    const recordScroll = (phase: 'before' | 'after') =>
+      debugRuntimeSidebarState('active-task-auto-scroll', () => ({
+        phase,
+        dependencies,
+        previousDependencies,
+        changedDependencies,
+        willScroll: shouldScroll && taskRow !== null,
+        metrics: runtimeSidebarScrollMetrics(sidebarWorklistsScrollRef.current, taskRow),
+      }))
+    recordScroll('before')
+    if (!shouldScroll) return
     taskRow?.scrollIntoView({ block: 'nearest' })
-  }, [currentRuntimeTask?.taskId, currentRuntimeTaskKey, currentRuntimeTaskRowVisible])
+    recordScroll('after')
+  }, [
+    currentRuntimeTask?.taskId,
+    currentRuntimeTaskKey,
+    currentRuntimeTaskRowVisible,
+    sidebarWorklistsScrollRef,
+  ])
 
   return (
     <aside
@@ -4096,8 +4133,28 @@ export function DesktopSidebar({
             scrolled={sidebarScrolled}
             locked={paneDragOutsideSidebar}
             onScroll={event => {
-              if (preserveLockedScrollPosition(event)) return
-              setSidebarScrolled(event.currentTarget.scrollTop > 0)
+              const viewport = event.currentTarget
+              const scrollLocked = preserveLockedScrollPosition(event)
+              sidebarScrollDiagnosticsRef.current.record(
+                () =>
+                  runtimeSidebarScrollMetrics(
+                    viewport,
+                    currentRuntimeTask
+                      ? document.querySelector(
+                          `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
+                        )
+                      : null
+                  ),
+                {
+                  taskId: currentRuntimeTask?.taskId ?? null,
+                  taskKey: currentRuntimeTaskKey,
+                  rowVisible: currentRuntimeTaskRowVisible,
+                  loadPhase: runtimeWorkLoad?.phase ?? null,
+                  scrollLocked,
+                }
+              )
+              if (scrollLocked) return
+              setSidebarScrolled(viewport.scrollTop > 0)
             }}
           >
             <RuntimeWorkLoadStatus

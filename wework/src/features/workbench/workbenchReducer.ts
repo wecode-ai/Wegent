@@ -1012,6 +1012,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
   return next
 }
 
+function userForNavigationRefresh(current: User | null, incoming?: User): User | null {
+  // Navigation responses do not own profile or preference updates for an existing account.
+  return incoming && incoming.id !== current?.id ? incoming : current
+}
+
 function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'runtime_work_scope_reset':
@@ -1054,7 +1059,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         action.currentProject === undefined ? state.currentProject : action.currentProject
       return {
         ...state,
-        user: action.user,
+        user: userForNavigationRefresh(state.user, action.user),
         projects: action.projects,
         devices,
         runtimeWork,
@@ -1127,7 +1132,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       return {
         ...state,
-        user: action.user ?? state.user,
+        user: userForNavigationRefresh(state.user, action.user),
         isBootstrapping: action.user ? false : state.isBootstrapping,
         devices,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(

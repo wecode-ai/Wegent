@@ -74,8 +74,7 @@ use crate::{
     version::get_version,
 };
 use read_requests::{
-    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests,
-    MAX_CONCURRENT_HISTORY_READS,
+    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests, HistoryReadAdmission,
 };
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
@@ -397,7 +396,7 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
-    history_read_admission: Arc<tokio::sync::Semaphore>,
+    history_read_admission: Arc<HistoryReadAdmission>,
 }
 
 impl Default for AppIpcServer {
@@ -414,9 +413,7 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
-            history_read_admission: Arc::new(tokio::sync::Semaphore::new(
-                MAX_CONCURRENT_HISTORY_READS,
-            )),
+            history_read_admission: Arc::new(HistoryReadAdmission::default()),
         }
     }
 }
@@ -1287,7 +1284,7 @@ impl AppIpcServer {
                     } else {
                         None
                     };
-                    let (read_guard, mut cancellation) = match admission {
+                    let (mut read_guard, mut cancellation) = match admission {
                         Some(Ok((guard, receiver))) => (Some(guard), Some(receiver)),
                         Some(Err(error)) => {
                             response_tx.send(error_message(request_id.as_deref(), &error))
@@ -1298,7 +1295,6 @@ impl AppIpcServer {
                         None => (None, None),
                     };
                     tokio::spawn(async move {
-                        let _read_guard = read_guard;
                         let started_at = Instant::now();
                         log_app_ipc_request(
                             "app IPC request started",
@@ -1317,12 +1313,9 @@ impl AppIpcServer {
                                     &AppIpcError::new("request_cancelled", "History read cancelled"),
                                 ))
                             }
-                            result = tokio::time::timeout(
-                                Duration::from_secs(timeout_seconds),
-                                server.handle_line(&request_line),
-                            ) => match result {
-                            Ok(response) => response,
-                            Err(_) => {
+                            // Expired queued reads must not enter their handler when
+                            // an active request releases its permit at the same deadline.
+                            _ = tokio::time::sleep(Duration::from_secs(timeout_seconds)) => {
                                 log_app_ipc_request(
                                     "app IPC request timed out",
                                     request_id.as_deref(),
@@ -1340,8 +1333,15 @@ impl AppIpcServer {
                                         ),
                                     ),
                                 ))
-                            }
                             },
+                            response = async {
+                                if let Some(guard) = &mut read_guard {
+                                    if let Err(error) = guard.wait_for_admission().await {
+                                        return Some(error_message(request_id.as_deref(), &error));
+                                    }
+                                }
+                                server.handle_line(&request_line).await
+                            } => response,
                         };
 
                         if let Some(response) = outcome {

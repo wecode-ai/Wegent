@@ -56,12 +56,14 @@ import {
   readCachedRemoteRuntimeWork,
   reconcileCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
+  workbenchCacheScope,
 } from './remoteRuntimeWorkCache'
 
 import {
   createCloudRuntimeStateWithCache,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
+  loadDevicesForRefresh,
   removeRuntimeProject,
   removeRuntimeProjectFromCloudState,
   removeRuntimeTasksFromCloudState,
@@ -70,6 +72,7 @@ import {
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
+  ownershipKey?: string
   state: WorkbenchState
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
@@ -83,18 +86,20 @@ const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 30_000
 
 export function useWorkbenchDataRefresh({
   user,
+  ownershipKey = '',
   state,
   dispatch,
   executorClient,
   services,
 }: UseWorkbenchDataRefreshOptions) {
+  const cacheScope = workbenchCacheScope(ownershipKey, user.id)
   const initialCachedRemoteRuntimeWork = useMemo(
-    () => readCachedRemoteRuntimeWork(user.id),
-    [user.id]
+    () => readCachedRemoteRuntimeWork(cacheScope),
+    [cacheScope]
   )
   const hasCloudBackgroundApi = Boolean(services.cloudBackgroundApi)
   const cachedRemoteRuntimeWorkRef = useRef({
-    userId: user.id,
+    ownershipKey: cacheScope,
     runtimeWork: initialCachedRemoteRuntimeWork,
   })
   const [cloudRuntimeState, setCloudRuntimeState] = useState<CloudRuntimeState>(() =>
@@ -103,12 +108,19 @@ export function useWorkbenchDataRefresh({
       : EMPTY_CLOUD_RUNTIME_STATE
   )
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
+  const updateCloudRuntimeState = useCallback((next: CloudRuntimeState) => {
+    cloudRuntimeStateRef.current = next
+    setCloudRuntimeState(next)
+  }, [])
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
   const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
   const workListRefreshRevisionRef = useRef(0)
   const deviceListRevisionRef = useRef(0)
   const runtimeLoadGenerationRef = useRef(0)
-  const scope = useMemo(() => ({ executorClient, userId: user.id }), [executorClient, user.id])
+  const scope = useMemo(
+    () => ({ executorClient, userId: user.id, ownershipKey }),
+    [executorClient, ownershipKey, user.id]
+  )
   const scopeRef = useRef<typeof scope | null>(scope)
   const previousScopeRef = useRef(scope)
   const userRef = useRef(user)
@@ -136,20 +148,45 @@ export function useWorkbenchDataRefresh({
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   useLayoutEffect(() => {
     scopeRef.current = scope
-    if (previousScopeRef.current !== scope) {
-      previousScopeRef.current = scope
-      cloudBackgroundRequestControllerRef.current?.abort()
+    const previousScope = previousScopeRef.current
+    previousScopeRef.current = scope
+    if (previousScope !== scope) cloudBackgroundRequestControllerRef.current?.abort()
+    // Transport replacement invalidates requests, not the same owner's navigation.
+    if (
+      previousScope.userId !== scope.userId ||
+      previousScope.ownershipKey !== scope.ownershipKey
+    ) {
       workListRefreshRevisionRef.current += 1
       deviceListRevisionRef.current += 1
       localRuntimeWorkRef.current = null
       runtimeWorkRef.current = null
       devicesRef.current = []
+      cachedRemoteRuntimeWorkRef.current = {
+        ownershipKey: cacheScope,
+        runtimeWork: initialCachedRemoteRuntimeWork,
+      }
+      runtimeTaskTitleOverridesRef.current.clear()
+      runtimeTaskPinOverridesRef.current.clear()
+      supervisorSnapshotsRef.current.clear()
+      archivedRuntimeTaskAddressesRef.current = []
+      updateCloudRuntimeState(
+        hasCloudBackgroundApi
+          ? createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
+          : EMPTY_CLOUD_RUNTIME_STATE
+      )
       dispatch({ type: 'runtime_work_scope_reset' })
     }
     return () => {
       scopeRef.current = null
     }
-  }, [dispatch, scope])
+  }, [
+    cacheScope,
+    dispatch,
+    hasCloudBackgroundApi,
+    initialCachedRemoteRuntimeWork,
+    scope,
+    updateCloudRuntimeState,
+  ])
   useEffect(
     () => () => {
       cloudBackgroundRequestControllerRef.current?.abort()
@@ -160,11 +197,6 @@ export function useWorkbenchDataRefresh({
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
   )
-
-  const updateCloudRuntimeState = useCallback((next: CloudRuntimeState) => {
-    cloudRuntimeStateRef.current = next
-    setCloudRuntimeState(next)
-  }, [])
 
   const applyRuntimeTaskOverrides = useCallback(
     (
@@ -201,22 +233,6 @@ export function useWorkbenchDataRefresh({
   }, [services.cloudBackgroundApi, state.devices, state.runtimeWork])
 
   useEffect(() => {
-    cachedRemoteRuntimeWorkRef.current = {
-      userId: user.id,
-      runtimeWork: initialCachedRemoteRuntimeWork,
-    }
-    runtimeTaskTitleOverridesRef.current.clear()
-    runtimeTaskPinOverridesRef.current.clear()
-    supervisorSnapshotsRef.current.clear()
-    archivedRuntimeTaskAddressesRef.current = []
-    updateCloudRuntimeState(
-      hasCloudBackgroundApi
-        ? createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
-        : EMPTY_CLOUD_RUNTIME_STATE
-    )
-  }, [hasCloudBackgroundApi, initialCachedRemoteRuntimeWork, updateCloudRuntimeState, user.id])
-
-  useEffect(() => {
     const nextCloudState = hasCloudBackgroundApi
       ? createCloudRuntimeStateWithCache(cachedRemoteRuntimeWorkRef.current.runtimeWork)
       : EMPTY_CLOUD_RUNTIME_STATE
@@ -235,24 +251,25 @@ export function useWorkbenchDataRefresh({
 
   const markRuntimeTasksArchived = useCallback(
     (addresses: RuntimeTaskAddress[]) => {
-      if (addresses.length === 0) return
+      if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope || addresses.length === 0)
+        return
       const archivedAddresses = mergeRuntimeTaskAddresses(
         archivedRuntimeTaskAddressesRef.current,
         addresses
       )
       archivedRuntimeTaskAddressesRef.current = archivedAddresses
       const runtimeWork = writeCachedRemoteRuntimeWork(
-        user.id,
+        cacheScope,
         removeRuntimeTasks(cachedRemoteRuntimeWorkRef.current.runtimeWork, archivedAddresses),
         devicesRef.current
       )
-      cachedRemoteRuntimeWorkRef.current = { userId: user.id, runtimeWork }
+      cachedRemoteRuntimeWorkRef.current = { ownershipKey: cacheScope, runtimeWork }
       updateCloudRuntimeState(
         removeRuntimeTasksFromCloudState(cloudRuntimeStateRef.current, archivedAddresses)
       )
       dispatch({ type: 'runtime_tasks_archived', addresses: archivedAddresses })
     },
-    [dispatch, updateCloudRuntimeState, user.id]
+    [cacheScope, dispatch, updateCloudRuntimeState]
   )
 
   const releaseConfirmedArchivedRuntimeTasks = useCallback(
@@ -361,6 +378,7 @@ export function useWorkbenchDataRefresh({
           devicesResult?.status === 'fulfilled'
         ) {
           const devices = resolveDeviceListWithCache(
+            cacheScope,
             mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
             { useCacheFallback: false }
           )
@@ -387,7 +405,7 @@ export function useWorkbenchDataRefresh({
           cloudRuntimeStateRef.current.inFlightRevision !== revision ||
           cloudBackgroundApiRef.current !== backgroundApi
         ) {
-          if (revision != null) {
+          if (isCurrentRefresh() && revision != null) {
             updateCloudRuntimeState(abandonCloudRuntimeSync(cloudRuntimeStateRef.current, revision))
           }
           return
@@ -434,9 +452,9 @@ export function useWorkbenchDataRefresh({
             : runtimeWorkResult
         if (reconciledRuntimeWorkResult?.status === 'fulfilled') {
           cachedRemoteRuntimeWorkRef.current = {
-            userId: user.id,
+            ownershipKey: cacheScope,
             runtimeWork: writeCachedRemoteRuntimeWork(
-              user.id,
+              cacheScope,
               reconciledRuntimeWorkResult.value,
               devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
             ),
@@ -451,6 +469,7 @@ export function useWorkbenchDataRefresh({
         updateCloudRuntimeState(nextCloudState)
 
         const devices = resolveDeviceListWithCache(
+          cacheScope,
           selectVisibleDevices(
             devicesResult?.status === 'fulfilled' ? localDeviceSnapshot(baseDevices) : baseDevices,
             nextCloudState
@@ -488,7 +507,7 @@ export function useWorkbenchDataRefresh({
       services.cloudBackgroundApi,
       releaseConfirmedArchivedRuntimeTasks,
       updateCloudRuntimeState,
-      user.id,
+      cacheScope,
       scope,
     ]
   )
@@ -572,6 +591,7 @@ export function useWorkbenchDataRefresh({
     ).then(result => {
       if (!isCurrent() || deviceRevision !== deviceListRevisionRef.current) return
       const devices = resolveDeviceListWithCache(
+        cacheScope,
         result.status === 'fulfilled' ? result.value : [],
         {
           useCacheFallback: result.status !== 'fulfilled',
@@ -623,6 +643,7 @@ export function useWorkbenchDataRefresh({
       cancelled = true
     }
   }, [
+    cacheScope,
     dispatch,
     executorClient,
     loadLocalRuntimeWork,
@@ -645,13 +666,15 @@ export function useWorkbenchDataRefresh({
       const devicesRequest = executorClient.commands
         .listDevices()
         .catch(error => {
-          const cachedDevices = readCachedDeviceList()
+          const cachedDevices = readCachedDeviceList(cacheScope)
           if (cachedDevices.length === 0) throw error
           return cachedDevices
         })
         .then(rawDevices => {
           if (!isCurrent() || deviceRevision !== deviceListRevisionRef.current) return
-          const devices = resolveDeviceListWithCache(rawDevices, { useCacheFallback: false })
+          const devices = resolveDeviceListWithCache(cacheScope, rawDevices, {
+            useCacheFallback: false,
+          })
           const visibleDevices = selectVisibleDevices(devices, cloudRuntimeStateRef.current)
           devicesRef.current = visibleDevices
           dispatch({
@@ -691,6 +714,7 @@ export function useWorkbenchDataRefresh({
       if (devicesResult.status === 'rejected') throw devicesResult.reason
     },
     [
+      cacheScope,
       dispatch,
       executorClient,
       loadLocalRuntimeWork,
@@ -703,27 +727,9 @@ export function useWorkbenchDataRefresh({
     ]
   )
 
-  const loadDevicesForRefresh = useCallback(
-    async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {
-      let devices: DeviceInfo[]
-      try {
-        devices = await executorClient.commands.listDevices()
-      } catch (error) {
-        if (options?.useCacheFallback === false) throw error
-        const cachedDevices = readCachedDeviceList()
-        if (cachedDevices.length > 0) {
-          devices = cachedDevices
-        } else {
-          throw error
-        }
-      }
-      return resolveDeviceListWithCache(devices, { useCacheFallback: false })
-    },
-    [executorClient]
-  )
-
   const markRuntimeProjectRemoved = useCallback(
     (projectId: number, workspace?: { deviceId: string; workspacePath: string }) => {
+      if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
       const normalizedWorkspace = workspace
         ? {
             deviceId: workspace.deviceId.trim(),
@@ -743,7 +749,7 @@ export function useWorkbenchDataRefresh({
       cachedRemoteRuntimeWorkRef.current = {
         ...cachedRemoteRuntimeWorkRef.current,
         runtimeWork: writeCachedRemoteRuntimeWork(
-          user.id,
+          cacheScope,
           removeRuntimeProject(
             cachedRemoteRuntimeWorkRef.current.runtimeWork,
             projectId,
@@ -760,16 +766,17 @@ export function useWorkbenchDataRefresh({
         )
       )
     },
-    [updateCloudRuntimeState, user.id]
+    [cacheScope, updateCloudRuntimeState]
   )
 
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
       if (scopeRef.current !== scope) return
       const revision = ++deviceListRevisionRef.current
-      const devices = await loadDevicesForRefresh(options)
+      const devices = await loadDevicesForRefresh(executorClient, cacheScope, options)
       if (scopeRef.current !== scope || revision !== deviceListRevisionRef.current) return
       const visibleDevices = resolveDeviceListWithCache(
+        cacheScope,
         selectVisibleDevices(devices, cloudRuntimeStateRef.current),
         { useCacheFallback: false }
       )
@@ -792,8 +799,9 @@ export function useWorkbenchDataRefresh({
       }).catch(() => undefined)
     },
     [
+      cacheScope,
       dispatch,
-      loadDevicesForRefresh,
+      executorClient,
       refreshCloudBackgroundData,
       state.projects,
       state.runtimeWork,
@@ -927,6 +935,7 @@ export function useWorkbenchDataRefresh({
 
   const updateRuntimeProject = useCallback(
     (update: RuntimeProjectUpdate) => {
+      if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
       workListRefreshRevisionRef.current += 1
       cloudBackgroundRequestControllerRef.current?.abort()
       const projectUpdate = (work: RuntimeWorkListResponse) =>
@@ -935,9 +944,9 @@ export function useWorkbenchDataRefresh({
         localRuntimeWorkRef.current = projectUpdate(localRuntimeWorkRef.current)
       if (runtimeWorkRef.current) runtimeWorkRef.current = projectUpdate(runtimeWorkRef.current)
       cachedRemoteRuntimeWorkRef.current = {
-        userId: user.id,
+        ownershipKey: cacheScope,
         runtimeWork: writeCachedRemoteRuntimeWork(
-          user.id,
+          cacheScope,
           projectUpdate(cachedRemoteRuntimeWorkRef.current.runtimeWork)
         ),
       }
@@ -953,7 +962,7 @@ export function useWorkbenchDataRefresh({
       })
       dispatch({ type: 'runtime_local_project_updated', ...update })
     },
-    [dispatch, updateCloudRuntimeState, user.id]
+    [cacheScope, dispatch, updateCloudRuntimeState]
   )
 
   const getRuntimeWorkSnapshot = useCallback(() => runtimeWorkRef.current, [])

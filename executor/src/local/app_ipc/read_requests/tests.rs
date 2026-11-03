@@ -12,6 +12,7 @@ use super::*;
 struct ControlledRuntime {
     entered: Arc<Notify>,
     release: Arc<Notify>,
+    started: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
 }
 
@@ -27,6 +28,7 @@ impl RuntimeWorkHandler for ControlledRuntime {
     fn handle_runtime_rpc<'a>(&'a self, _: Value) -> BoxFuture<'a, Result<Value, AppIpcError>> {
         Box::pin(async move {
             let _counter = DropCounter(self.dropped.clone());
+            self.started.fetch_add(1, Ordering::SeqCst);
             self.entered.notify_one();
             self.release.notified().await;
             Ok(json!({"accepted": true}))
@@ -63,6 +65,33 @@ async fn read_response(reader: &mut BufReader<tokio::io::ReadHalf<DuplexStream>>
         .expect("executor response must remain responsive")
         .unwrap();
     serde_json::from_str(&line).unwrap()
+}
+
+async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while counter.load(Ordering::SeqCst) != expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("history request count must settle");
+}
+
+async fn start_history_reads(
+    writer: &mut tokio::io::WriteHalf<DuplexStream>,
+    runtime: &ControlledRuntime,
+    count: usize,
+) {
+    for index in 0..count {
+        write_frame(
+            writer,
+            request(&format!("read-{index}"), "runtime.tasks.transcript"),
+        )
+        .await;
+        if index < MAX_CONCURRENT_HISTORY_READS {
+            runtime.entered.notified().await;
+        }
+    }
 }
 
 fn request(id: &str, method: &str) -> Value {
@@ -138,25 +167,49 @@ async fn history_deadline_drops_work_and_releases_admission() {
     let runtime = ControlledRuntime::default();
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
     let (mut reader, mut writer) = connect(server.clone()).await;
-    write_frame(&mut writer, request("deadline", "runtime.tasks.transcript")).await;
-    runtime.entered.notified().await;
+    start_history_reads(&mut writer, &runtime, MAX_PENDING_HISTORY_READS).await;
+    write_frame(&mut writer, request("health", "executor.health")).await;
+    assert_eq!(read_response(&mut reader).await["id"], "health");
+    wait_for_count(&runtime.started, MAX_CONCURRENT_HISTORY_READS).await;
     tokio::time::advance(Duration::from_secs(APP_IPC_REQUEST_TIMEOUT_SECONDS)).await;
-    let response = read_response(&mut reader).await;
-    assert_eq!(response["error"]["code"], "request_timeout");
-    assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
+    let mut timed_out = Vec::new();
+    for _ in 0..MAX_PENDING_HISTORY_READS {
+        let response = read_response(&mut reader).await;
+        assert_eq!(response["error"]["code"], "request_timeout");
+        timed_out.push(response["id"].as_str().unwrap().to_owned());
+    }
+    timed_out.sort();
     assert_eq!(
-        server.history_read_admission.available_permits(),
+        timed_out,
+        (0..MAX_PENDING_HISTORY_READS)
+            .map(|index| format!("read-{index}"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_HISTORY_READS
+    );
+    assert_eq!(
+        runtime.dropped.load(Ordering::SeqCst),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    assert_eq!(
+        server.history_read_admission.active.available_permits(),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    assert_eq!(
+        server.history_read_admission.pending.available_permits(),
+        MAX_PENDING_HISTORY_READS
     );
     write_frame(&mut writer, request("health", "executor.health")).await;
     assert_eq!(read_response(&mut reader).await["ok"], true);
 }
 
 #[tokio::test]
-async fn history_admission_is_bounded_across_connections_and_disconnect_cancels_reads() {
+async fn history_reads_wait_across_connections_without_blocking_control_requests() {
     let runtime = ControlledRuntime::default();
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
-    let (reader, mut writer) = connect(server.clone()).await;
+    let (mut reader, mut writer) = connect(server.clone()).await;
     let (mut other_reader, mut other_writer) = connect(server.clone()).await;
     for id in ["first", "second"] {
         write_frame(&mut writer, request(id, "runtime.tasks.transcript")).await;
@@ -164,25 +217,135 @@ async fn history_admission_is_bounded_across_connections_and_disconnect_cancels_
     }
     write_frame(
         &mut other_writer,
-        request("busy", "runtime.tasks.transcript"),
+        request("queued", "runtime.tasks.transcript"),
+    )
+    .await;
+    write_frame(&mut other_writer, request("health", "executor.health")).await;
+    assert_eq!(read_response(&mut other_reader).await["ok"], true);
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    runtime.release.notify_one();
+    assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
+    runtime.entered.notified().await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_HISTORY_READS + 1
+    );
+    runtime.release.notify_one();
+    runtime.release.notify_one();
+    assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
+    assert_eq!(read_response(&mut other_reader).await["id"], "queued");
+}
+
+#[tokio::test]
+async fn queued_history_admission_is_fifo_across_connections() {
+    let admission = Arc::new(HistoryReadAdmission::default());
+    let first_connection = ConnectionReadRequests::new(admission.clone());
+    let second_connection = ConnectionReadRequests::new(admission.clone());
+    let (mut first, _) = first_connection.admit("first").unwrap();
+    let (mut second, _) = second_connection.admit("second").unwrap();
+    first.wait_for_admission().await.unwrap();
+    second.wait_for_admission().await.unwrap();
+    let (mut queued_first, _) = second_connection.admit("queued-first").unwrap();
+    let (mut queued_second, _) = first_connection.admit("queued-second").unwrap();
+    {
+        let first_wait = queued_first.wait_for_admission();
+        let second_wait = queued_second.wait_for_admission();
+        tokio::pin!(first_wait, second_wait);
+        assert!(futures_util::poll!(first_wait.as_mut()).is_pending());
+        assert!(futures_util::poll!(second_wait.as_mut()).is_pending());
+        drop(first);
+        assert!(futures_util::poll!(second_wait.as_mut()).is_pending());
+        first_wait.await.unwrap();
+        drop(second);
+        second_wait.await.unwrap();
+    }
+    assert_eq!(admission.active.available_permits(), 0);
+    drop(queued_first);
+    drop(queued_second);
+    assert_eq!(
+        admission.active.available_permits(),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    assert_eq!(
+        admission.pending.available_permits(),
+        MAX_PENDING_HISTORY_READS
+    );
+}
+
+#[tokio::test]
+async fn history_queue_is_bounded_globally_and_waiting_cancellation_releases_capacity() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let (mut other_reader, mut other_writer) = connect(server.clone()).await;
+    start_history_reads(&mut writer, &runtime, MAX_PENDING_HISTORY_READS).await;
+    write_frame(&mut writer, request("health", "executor.health")).await;
+    assert_eq!(read_response(&mut reader).await["id"], "health");
+    wait_for_count(&runtime.started, MAX_CONCURRENT_HISTORY_READS).await;
+    assert_eq!(server.history_read_admission.pending.available_permits(), 0);
+    write_frame(
+        &mut other_writer,
+        request("overflow", "runtime.tasks.transcript"),
     )
     .await;
     let busy = read_response(&mut other_reader).await;
     assert_eq!(busy["error"]["code"], "runtime_read_busy");
     assert_eq!(busy["error"]["retryable"], true);
+    // Another authenticated connection cannot cancel a queued request with the same ID.
+    write_frame(&mut other_writer, json!({"type":"cancel", "id":"read-9"})).await;
     write_frame(&mut other_writer, request("health", "executor.health")).await;
-    assert_eq!(read_response(&mut other_reader).await["ok"], true);
+    assert_eq!(read_response(&mut other_reader).await["id"], "health");
+    assert_eq!(server.history_read_admission.pending.available_permits(), 0);
+    write_frame(&mut writer, json!({"type":"cancel", "id":"read-9"})).await;
+    let cancelled = read_response(&mut reader).await;
+    assert_eq!(cancelled["id"], "read-9");
+    assert_eq!(cancelled["error"]["code"], "request_cancelled");
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    write_frame(
+        &mut other_writer,
+        request("replacement", "runtime.tasks.transcript"),
+    )
+    .await;
+    write_frame(&mut other_writer, request("health", "executor.health")).await;
+    assert_eq!(read_response(&mut other_reader).await["id"], "health");
+    assert_eq!(server.history_read_admission.pending.available_permits(), 0);
+}
+
+#[tokio::test]
+async fn disconnect_cancels_active_and_queued_reads_without_starting_waiting_work() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let (mut other_reader, mut other_writer) = connect(server.clone()).await;
+    start_history_reads(&mut writer, &runtime, MAX_PENDING_HISTORY_READS).await;
+    write_frame(&mut writer, request("health", "executor.health")).await;
+    assert_eq!(read_response(&mut reader).await["id"], "health");
+    wait_for_count(&runtime.started, MAX_CONCURRENT_HISTORY_READS).await;
     drop(writer);
     drop(reader);
+    wait_for_count(&runtime.dropped, MAX_CONCURRENT_HISTORY_READS).await;
     tokio::time::timeout(Duration::from_secs(1), async {
-        while runtime.dropped.load(Ordering::SeqCst) != 2
-            || server.history_read_admission.available_permits() != MAX_CONCURRENT_HISTORY_READS
+        while server.history_read_admission.pending.available_permits() != MAX_PENDING_HISTORY_READS
         {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("disconnect must stop connection-owned reads");
+    .expect("disconnect must release active and queued registrations");
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_HISTORY_READS
+    );
+    assert_eq!(
+        server.history_read_admission.active.available_permits(),
+        MAX_CONCURRENT_HISTORY_READS
+    );
     write_frame(
         &mut other_writer,
         request("fresh", "runtime.tasks.transcript"),

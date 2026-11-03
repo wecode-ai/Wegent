@@ -38,12 +38,16 @@ flowchart LR
     Lifecycle --> Repair[Bounded tail repair]
     User[Explicit history navigation] --> Page[Item cursor pages]
     Repair --> Page
-    Page --> Admission[Bounded admission]
+    Page --> Admission[2 active reads and at most 8 waiting]
     Admission --> Worker[Isolated history computation]
     Worker --> Transfer[Existing lossless chunk transport]
     Cancel[View exit, disconnect, deadline] --> Token[Cancellation token]
     Token --> Worker
     Control[Status, discovery, send acceptance] --> Runtime[Runtime control]
+    Transport[Reconnect and token refresh] --> Generation[Replace request generation and cancel old reads]
+    Generation --> Preserve[Same backend and account retain navigation and user state]
+    Owner[Backend or account change] --> Reset[Clear old snapshots]
+    Profile[Explicit profile and preference updates] --> UserState[Current user state]
 ```
 
 - Consume task events and authoritative execution state first. Complete live
@@ -69,9 +73,15 @@ flowchart LR
   receipt queries and results through their existing authorization path.
 - Normal history uses item cursors and item/byte budgets. Long turns remain
   pageable. Full export is explicit and never a prerequisite for terminal state.
-  Building a rollout offset index initially still scans its file on a cancellable
+  Building a native rollout offset index initially still scans its file on a cancellable
   isolated worker. Later reads update the index incrementally and load only the
   selected page's item bodies.
+  Explicit `historyMode=legacy` threads use the shared legacy projection of their
+  canonical rollout instead of the unsupported `thread/items/list` API. Ordinary
+  pages retain at most 100 item bodies and 2 MiB, allowing one oversized item
+  alone. Record-level cancellation preserves synthetic IDs, rollbacks, and late
+  terminal metadata. Each legacy page still scans metadata to EOF; it does not
+  have the incremental index's read cost.
 - Preserve content and ordering. The page byte budget permits one oversized item
   alone through existing lossless chunks. It is not a strict per-body memory
   bound. A strict bound requires a separate body-reference/hydration contract,
@@ -88,6 +98,9 @@ flowchart LR
 - The new IPC cancellation and admission contract applies only to
   `runtime.tasks.transcript` requests owned by the same authenticated connection.
   Search endpoints retain their existing contract.
+  Ordinary concurrent reads wait in FIFO order instead of failing as soon as both
+  active slots are occupied. Waiting remains subject to the existing deadline,
+  disconnect, and cancellation; an expired queued request cannot start computation.
   HTTP cancellation cannot establish that a send or another action
   was not accepted; retain message identity and idempotency semantics.
   Existing search and search-result context computation paths are outside this
@@ -96,20 +109,29 @@ flowchart LR
 - A read deadline, cancellation, or busy response is local operation state, not
   evidence that the executor process stopped.
 - Task lists distinguish initial loading, successful empty, refresh, and failure.
-  Keep successful same-scope data during refresh failure. Clear old scope data on
-  account/runtime changes and reject late responses from previous scopes.
+  Keep successful same-scope data during refresh failure. A same-owner reconnect or
+  token refresh replaces request generations without clearing the selected project,
+  conversation, or navigation and without unmounting active collaboration panels.
+  Remote task and device caches share the backend/account scope. Older cache entries
+  without backend identity cannot hydrate a new backend, and an old request cannot
+  abandon synchronization owned by the new scope.
+  List and device responses own discovery data, not profile or preference updates:
+  they cannot overwrite the current account's newer model selection with an older
+  user snapshot. Explicit profile and preference updates own that state. Clear old
+  snapshots on backend or account changes and reject late responses from previous scopes.
 
 ## Verification contract
 
-| Scenario                                   | Required result                                                            |
-| ------------------------------------------ | -------------------------------------------------------------------------- |
-| One turn with 7,000+ tool items            | Bounded normal reads; cursor traversal preserves all items and their order |
-| Status during heavy history work           | Control requests proceed without waiting for projection                    |
-| Transcript deadline, disconnect, view exit | Transcript work cancels; permits release after actual computation exit     |
-| Two shared viewers, one exits              | The remaining viewer receives its complete result                          |
-| Old completion overlaps a new send         | The old result cannot settle or overwrite the new turn                     |
-| Initial/refresh list failure               | Local error and retry; no false empty state or discarded valid data        |
-| Refresh overlaps account switch            | Independent results publish promptly; old responses cannot cross scopes    |
+| Scenario                                    | Required result                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------- |
+| One turn with 7,000+ tool items             | Bounded normal reads; cursor traversal preserves all items and their order          |
+| Status during heavy history work            | Control requests proceed without waiting for projection                             |
+| Transcript deadline, disconnect, view exit  | Transcript work cancels; permits release after actual computation exit              |
+| Two shared viewers, one exits               | The remaining viewer receives its complete result                                   |
+| Old completion overlaps a new send          | The old result cannot settle or overwrite the new turn                              |
+| Initial/refresh list failure                | Local error and retry; no false empty state or discarded valid data                 |
+| Refresh overlaps account switch             | Independent results publish promptly; old responses cannot cross scopes             |
+| Same-account reconnect overlaps preferences | Retain project, conversation, and new model selection; reject old transport results |
 
 Run focused Rust, component, and protocol tests locally. Desktop regression
 coverage uses the existing CI checkpoint runner. Repository policy requires an

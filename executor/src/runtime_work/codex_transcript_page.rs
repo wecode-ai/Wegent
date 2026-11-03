@@ -164,6 +164,20 @@ pub(crate) async fn load_codex_transcript(
             .await
             .map_err(Into::into);
     }
+    if (!request.full_content && request.bounded_items && thread["historyMode"] == "legacy")
+        || request
+            .cursor
+            .is_some_and(super::codex_legacy_search::is_legacy_page_cursor)
+    {
+        return super::codex_legacy_search::load_legacy_transcript_page(
+            thread,
+            request.cursor,
+            request.direction,
+            request.limit,
+        )
+        .await
+        .map_err(Into::into);
+    }
     if request.prefer_rollout_history {
         if request.bounded_items
             && !request.full_content
@@ -214,18 +228,6 @@ pub(crate) async fn load_codex_transcript(
         None
     };
     let request_cursor = resolved_navigation_cursor.as_deref().or(request.cursor);
-    if !request.full_content && request.bounded_items
-        || request_cursor.is_some_and(super::codex_item_page::is_cursor)
-    {
-        return super::codex_item_page::load(
-            client,
-            thread,
-            request.thread_id,
-            request_cursor,
-            request.direction,
-        )
-        .await;
-    }
     let mut cursor = request_cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;

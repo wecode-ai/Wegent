@@ -1090,6 +1090,7 @@ export function WorkbenchProvider({
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user,
+    ownershipKey: JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity.id]),
     state,
     dispatch,
     executorClient,

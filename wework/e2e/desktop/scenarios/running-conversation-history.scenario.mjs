@@ -476,6 +476,13 @@ export function createDesktopScenario({
             transcript: snapshot.pane?.transcript ?? null,
           })
       )
+      // Hold a completed successful read before switching. Switching earlier now
+      // correctly cancels the read and cannot prove that a late success is ignored.
+      const heldSourceTranscript = await gates.wait(
+        'source-task-transcript',
+        undefined,
+        uiTimeoutMs
+      )
       await recordTranscriptRace('cached-task-click-before')
       const cachedClickStartedAt = performance.now()
       await control.command('click', switchTaskRow)
@@ -495,11 +502,6 @@ export function createDesktopScenario({
             taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
             transcript: snapshot.pane?.transcript ?? null,
           })
-      )
-      const heldSourceTranscript = await gates.wait(
-        'source-task-transcript',
-        undefined,
-        uiTimeoutMs
       )
       assert.equal(
         heldSourceTranscript.value.params.taskId,

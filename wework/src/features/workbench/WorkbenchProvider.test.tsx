@@ -62,7 +62,7 @@ import {
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
-import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
+import { writeCachedRemoteRuntimeWork, workbenchCacheScope } from './remoteRuntimeWorkCache'
 import {
   WorkspaceTabActivityContext,
   WorkspaceTabsContext,
@@ -5894,7 +5894,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('restores cached remote task summaries when the device is offline at startup', async () => {
-    writeCachedRemoteRuntimeWork(1, {
+    writeCachedRemoteRuntimeWork(workbenchCacheScope(JSON.stringify(['', 1]), 1), {
       projects: [
         {
           project: { key: '/srv/Wegent', name: 'Remote Wegent' },
@@ -5984,7 +5984,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('hides remote work on disconnect and restores it when the cloud reconnects', async () => {
-    writeCachedRemoteRuntimeWork(1, {
+    writeCachedRemoteRuntimeWork(workbenchCacheScope(JSON.stringify(['/api', 1]), 1), {
       projects: [
         {
           project: { key: '/srv/Wegent', name: 'Remote Wegent' },
@@ -12218,7 +12218,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('does not restore a removed workspace under different project and device identities', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
-    writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
+    writeCachedRemoteRuntimeWork(workbenchCacheScope(JSON.stringify(['', 1]), 1), staleRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi
         .fn()
@@ -12254,8 +12254,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
-        .runtimeWork.projects
+      JSON.parse(
+        localStorage.getItem(
+          `wework.workbench.remoteRuntimeWork.v4.${encodeURIComponent(workbenchCacheScope(JSON.stringify(['', 1]), 1))}`
+        ) ?? '{}'
+      ).runtimeWork.projects
     ).toEqual([])
 
     await act(async () => {
@@ -12408,8 +12411,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
     expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
-        .runtimeWork.projects
+      JSON.parse(
+        localStorage.getItem(
+          `wework.workbench.remoteRuntimeWork.v4.${encodeURIComponent(workbenchCacheScope(JSON.stringify(['', 1]), 1))}`
+        ) ?? '{}'
+      ).runtimeWork.projects
     ).toEqual([])
   })
 
