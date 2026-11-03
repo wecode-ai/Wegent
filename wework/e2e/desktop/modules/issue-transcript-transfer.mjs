@@ -115,7 +115,6 @@ export async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  const start = proxy.requests.length
   // Cached text can render before the shared snapshot writer settles. Finish
   // that read before remounting, or the next viewer can reuse its pending reply.
   await control.command(
@@ -130,6 +129,8 @@ export async function verifyCachedInitialRecovery({
     snapshot => !snapshot.testIds.includes('ai-chat-modal'),
     'The previous Issue conversation did not unmount before testing its next history read'
   )
+  const start = proxy.requests.length
+  console.log('[issue-history-fault] installing rule', { at: new Date().toISOString(), start })
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -148,6 +149,20 @@ export async function verifyCachedInitialRecovery({
     )
     updateFixtureReply(sqliteHome, threadId)
   } finally {
+    console.log('[issue-history-fault] releasing rule', {
+      at: new Date().toISOString(),
+      requests: proxy.requests
+        .slice(start)
+        .map(({ method, path, receivedAt, completedAt, fault, status, dropped }) => ({
+          method,
+          path,
+          receivedAt,
+          completedAt,
+          fault,
+          status,
+          dropped,
+        })),
+    })
     proxy.rule = () => null
   }
   await control.command('clickWhenEnabled', `${modal} [data-testid="runtime-transcript-retry"]`)

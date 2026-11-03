@@ -1080,6 +1080,15 @@ export function CollaborationApp({
                         ),
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
+                            agentConfiguration={host.projectAgentConfiguration}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === "local"
+                                ? "local"
+                                : "cloud"
+                            }
                             onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}

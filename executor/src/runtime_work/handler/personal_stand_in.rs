@@ -143,6 +143,37 @@ impl RuntimeWorkRpcHandler {
         prompt: String,
         schema: Value,
     ) -> Result<Value, AppIpcError> {
+        let request = self
+            .prepare_coordination_text_request(
+                selected_model,
+                prompt,
+                schema,
+                format!("stand-in-grouping-{}", uuid::Uuid::new_v4()),
+            )
+            .await?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.generate_text(json!({"executionRequest":request})),
+        )
+        .await
+        .map_err(|_| {
+            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
+        })??;
+        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
+            AppIpcError::new(
+                "stand_in_grouping_failed",
+                "The model returned an invalid message grouping",
+            )
+        })
+    }
+
+    pub(super) async fn prepare_coordination_text_request(
+        &self,
+        selected_model: Option<&Value>,
+        prompt: String,
+        schema: Value,
+        task: String,
+    ) -> Result<ExecutionRequest, AppIpcError> {
         let catalog = self.runner_catalog().await?;
         let model = selected_model
             .filter(|model| model["runtime"] == "codex")
@@ -163,7 +194,7 @@ impl RuntimeWorkRpcHandler {
                     "Choose an available Codex model for message grouping",
                 )
             })?;
-        let mut payload = json!({"taskId":format!("stand-in-grouping-{}",uuid::Uuid::new_v4()),"message":prompt,"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":self.device_id},"model_policy":{"mode":"user_select"}},"runnerSelection":{"model":model}});
+        let mut payload = json!({"taskId":task,"message":prompt,"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":self.device_id},"model_policy":{"mode":"user_select"}},"runnerSelection":{"model":model}});
         crate::task_runtime::runner_routing::resolve_pending(
             &mut payload,
             Some(&catalog),
@@ -184,22 +215,9 @@ impl RuntimeWorkRpcHandler {
             .insert("runtime_permission_profile".into(), json!(":read-only"));
         request.extra.insert("output_schema".into(), schema);
         self.apply_backend_connection(&mut request);
-        let response = tokio::time::timeout(
-            Duration::from_secs(60),
-            self.generate_text(json!({"executionRequest":request})),
-        )
-        .await
-        .map_err(|_| {
-            AppIpcError::new("stand_in_grouping_failed", "Message grouping timed out")
-        })??;
-        serde_json::from_str(response["content"].as_str().unwrap_or_default()).map_err(|_| {
-            AppIpcError::new(
-                "stand_in_grouping_failed",
-                "The model returned an invalid message grouping",
-            )
-        })
+        Ok(request)
     }
-    pub(super) fn personal_stand_in_settings(
+    pub(super) async fn personal_stand_in_settings(
         &self,
         payload: Value,
         save: bool,
@@ -209,6 +227,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
             store
                 .save_personal_stand_in(user, &self.device_id, payload["settings"].clone())
                 .map_err(settings_error)

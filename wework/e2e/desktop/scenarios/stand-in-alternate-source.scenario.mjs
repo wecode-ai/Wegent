@@ -42,6 +42,14 @@ export function createDesktopScenario(options) {
         marketplacePath: join(root, '.agents/plugins/marketplace.json'),
       })
       const catalog = await rpc(control, 'runtime.connections.catalog', {})
+      const dingtalk = catalog.items.find(
+        item => item.id === '@wegent/dsh-connection-dingtalk/dingtalk'
+      )
+      assert.ok(dingtalk, 'The packaged DingTalk provider must be registered')
+      assert.deepEqual(dingtalk.dependencies[0].source, {
+        marketplaceId: 'wework',
+        pluginId: 'dingtalk@wework',
+      })
       const provider = catalog.items.find(item => item.id === providerId)
       assert.equal(provider.availability.status, 'ready')
       assert.deepEqual(provider.dependencies[0].source, {

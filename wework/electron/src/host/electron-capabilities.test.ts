@@ -990,6 +990,43 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each(['true', 'false'])(
+    'preserves process snapshot collection options with E2E diagnostics %s',
+    async e2e => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: (capability: HostCapability, handler: HostCapabilityHandler) =>
+          handlers.set(capability, handler),
+      } as unknown as HostCapabilityRouter
+      const snapshot = vi.fn(async () => ({ processes: [], degraded: [] }))
+      const log = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      vi.stubEnv('VITE_WEWORK_E2E', e2e)
+      try {
+        registerDesktopServiceCapabilities(
+          router,
+          { processExplorer: { snapshot } } as unknown as ElectronDesktopServices,
+          {
+            openLogDirectory: vi.fn(),
+            openDevTools: vi.fn(),
+            openProcessExplorer: vi.fn(),
+            setProcessExplorerAlwaysOnTop: vi.fn(),
+          }
+        )
+        const handler = handlers.get('diagnostics.processSnapshot')!
+        await handler({}, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true })
+        await handler({ waitForSystemProcesses: false }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false })
+        const failure = new Error('Snapshot collection failed')
+        snapshot.mockRejectedValueOnce(failure)
+        await expect(handler({}, { principal: 'test' })).rejects.toBe(failure)
+      } finally {
+        vi.unstubAllEnvs()
+        log.mockRestore()
+      }
+    }
+  )
+
   test.each([
     {
       label: 'supplied',

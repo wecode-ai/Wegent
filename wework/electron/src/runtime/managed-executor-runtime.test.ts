@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
   managedExecutorLogPath,
@@ -267,15 +267,21 @@ describe('managed executor runtime', () => {
     }
   })
 
-  test('reconnects the owner stream after the executor restarts', async () => {
-    const directory = await temporaryDirectory('managed-executor-restart-')
-    const ownerConnectionsPath = join(directory.path, 'owner-connections')
-    const identityPath = join(directory.path, 'executor-identity.json')
-    const runtime = new ManagedExecutorRuntime({
-      command: process.execPath,
-      args: [
-        '-e',
-        `
+  describe('owner stream recovery', () => {
+    let directory: Awaited<ReturnType<typeof temporaryDirectory>>
+    let ownerConnectionsPath: string
+    let identityPath: string
+    let runtime: ManagedExecutorRuntime
+
+    beforeEach(async () => {
+      directory = await temporaryDirectory('managed-executor-restart-')
+      ownerConnectionsPath = join(directory.path, 'owner-connections')
+      identityPath = join(directory.path, 'executor-identity.json')
+      runtime = new ManagedExecutorRuntime({
+        command: process.execPath,
+        args: [
+          '-e',
+          `
           const net = require('node:net')
           const fs = require('node:fs')
           const path = require('node:path')
@@ -308,22 +314,33 @@ describe('managed executor runtime', () => {
             })
           }).listen(endpoint)
         `,
-        ownerConnectionsPath,
-        identityPath,
-      ],
-      environment: {
-        ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
-        VITE_WEWORK_E2E: 'true',
-        WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
-      },
-      dataDirectory: join(directory.path, 'data'),
-      logDirectory: join(directory.path, 'logs'),
-      deviceId: 'test-device',
-      deviceName: 'Test Device',
+          ownerConnectionsPath,
+          identityPath,
+        ],
+        environment: {
+          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
+          VITE_WEWORK_E2E: 'true',
+          WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
+        },
+        dataDirectory: join(directory.path, 'data'),
+        logDirectory: join(directory.path, 'logs'),
+        deviceId: 'test-device',
+        deviceName: 'Test Device',
+      })
+
+      await runtime.start()
     })
 
-    try {
-      await runtime.start()
+    afterEach(async () => {
+      // Cleanup must run even when startup or the recovery assertion times out.
+      try {
+        await runtime?.stop()
+      } finally {
+        await directory?.remove()
+      }
+    })
+
+    test('reconnects the owner stream after the executor restarts', async () => {
       await expect
         .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
         .toEqual({
@@ -342,10 +359,7 @@ describe('managed executor runtime', () => {
           { timeout: 5_000 }
         )
         .toBe(2)
-    } finally {
-      await runtime.stop()
-      await directory.remove()
-    }
+    })
   })
 
   test('sends authenticated executor requests without a renderer transport', async () => {

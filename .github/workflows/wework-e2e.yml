@@ -914,6 +914,7 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
+          RUNNER_PROCESS_SAMPLE_AFTER_MS: ${{ contains(matrix.segments, 'plugin-write-coordination') && '390000' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork

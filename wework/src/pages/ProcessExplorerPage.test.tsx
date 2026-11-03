@@ -93,7 +93,9 @@ describe('ProcessExplorerPage', () => {
     expect(screen.getByTestId('process-explorer-resize-0')).toBeTruthy()
     expect(screen.getByTestId('process-explorer-resize-3')).toBeTruthy()
     expect(screen.queryByTestId('process-explorer-resize-4')).toBeNull()
-    expect(mocks.invoke).toHaveBeenCalledWith('diagnostics.processSnapshot')
+    expect(mocks.invoke).toHaveBeenCalledWith('diagnostics.processSnapshot', {
+      waitForSystemProcesses: false,
+    })
   })
 
   test('never exposes termination actions', async () => {

@@ -59,7 +59,7 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       experimentalFeaturesEnabled: true,
       async command(action: string, selector: string) {
         calls.push({ action, selector })
-        if (selector === '[data-testid="collaboration-primary-stand-in"]') {
+        if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
           waiting.release()

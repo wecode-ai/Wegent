@@ -89,7 +89,7 @@ export function ProcessExplorerView({
     const startedAt = Date.now()
     traceSnapshotLoad('requested', sequence, startedAt)
     try {
-      const next = await client.snapshot()
+      const next = await client.snapshot({ waitForSystemProcesses: false })
       traceSnapshotLoad('received', sequence, startedAt, {
         accepted: loadSequence.current === sequence,
         processCount: next.processes.length,
@@ -276,6 +276,15 @@ export function ProcessExplorerView({
           className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-secondary"
         >
           {t('process_explorer.load_failed')}
+        </div>
+      ) : null}
+
+      {snapshot?.collectingSystemProcesses ? (
+        <div
+          data-testid="process-explorer-collecting"
+          className="border-b border-border px-3 py-1.5 text-xs text-text-secondary"
+        >
+          {t('process_explorer.collecting_system_processes')}
         </div>
       ) : null}
 
