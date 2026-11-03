@@ -61,13 +61,19 @@ export async function parseMail(source) {
 export function imapError(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('email_')) return error
   if (error?.authenticationFailed === true) return mailError('email_auth_failed')
+  // Cover platform socket errno variants and pinned ImapFlow disconnect codes.
+  // Authentication, certificate and protocol failures require explicit recovery.
   const transportCodes = [
     'ECONNREFUSED',
     'ECONNRESET',
+    'ECONNABORTED',
     'EPIPE',
     'ETIMEDOUT',
     'EHOSTUNREACH',
+    'EHOSTDOWN',
     'ENETUNREACH',
+    'ENETDOWN',
+    'ENETRESET',
     'EAI_AGAIN',
     'ENOTFOUND',
     'ETIMEOUT',

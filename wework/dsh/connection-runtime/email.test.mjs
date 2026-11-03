@@ -1,12 +1,30 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { constants as osConstants } from 'node:os'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider } from './email-provider.js'
 import { createEmailSender } from './email-send.js'
 import { imapError, mailError } from './email-client.js'
 
 test('distinguishes recoverable IMAP transport from authentication, TLS and message errors', () => {
-  for (const code of ['ECONNRESET', 'NoConnection', 'ClosedAfterConnectTLS', 'ETIMEOUT', 'ENOTFOUND'])
+  const networkCodes = Object.keys(osConstants.errno).filter(code =>
+    /^(ECONN|ENET|EHOST)/.test(code)
+  )
+  assert.ok(networkCodes.length > 0)
+  for (const code of networkCodes)
+    assert.equal(
+      imapError({ code }).code,
+      'email_transport_failed',
+      `Recover the platform network error ${code}`
+    )
+  for (const code of [
+    'ECONNRESET',
+    'NoConnection',
+    'ClosedAfterConnectTLS',
+    'ETIMEOUT',
+    'ENOTFOUND',
+    'EHOSTDOWN',
+  ])
     assert.equal(
       imapError({ code, message: 'private server details' }).code,
       'email_transport_failed'
