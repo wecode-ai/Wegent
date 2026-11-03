@@ -37,6 +37,31 @@ async function bundleIdentifier(application: string): Promise<string> {
   return stdout.trim()
 }
 
+async function bridgedApplication(
+  store: ReleaseStore,
+  source: DesktopRelease,
+  root: string
+): Promise<string | null> {
+  // Legacy registration copied the host into a slot, but retained the exact
+  // installed executable as its bridge. Verify this owned handoff before
+  // consulting unrelated Launch Services registrations.
+  const bridge = await optionalText(join(store.root, 'bridge'))
+  if (!bridge) return null
+  const candidate = await realpath(macosApplication(bridge))
+  if (contains(root, candidate)) return null
+  await execute('/usr/bin/cmp', [
+    '-s',
+    source.executable,
+    join(candidate, 'Contents', 'MacOS', basename(source.executable)),
+  ])
+  await execute('/usr/bin/cmp', [
+    '-s',
+    join(source.resources, 'app.asar'),
+    join(candidate, 'Contents', 'Resources', 'app.asar'),
+  ])
+  return candidate
+}
+
 async function installedApplication(
   store: ReleaseStore,
   source: DesktopRelease,
@@ -47,6 +72,7 @@ async function installedApplication(
   const sourceBundle = await realpath(macosApplication(source.executable))
   const saved = await optionalText(join(store.root, 'macos-application'))
   let application = !contains(root, sourceBundle) ? sourceBundle : saved
+  if (!application) application = await bridgedApplication(store, source, root)
   if (!application) {
     // Delivered upgrades retained the original installation in previousHealthy.
     // Prefer that transaction-owned URL over unrelated Launch Services copies.

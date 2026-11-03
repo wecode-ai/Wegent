@@ -1,5 +1,15 @@
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -34,13 +44,17 @@ if (process.platform === 'darwin') {
     await mkdir(join(application, 'Contents/Resources'), { recursive: true })
     await copyFile('/usr/bin/true', join(application, 'Contents/MacOS/WeWork'))
     await writeFile(
+      join(application, 'Contents/Resources/app.asar'),
+      `signed application ${version}`
+    )
+    await writeFile(
       join(application, 'Contents/Info.plist'),
       `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${identifier}</string><key>CFBundleExecutable</key><string>WeWork</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
     )
     await execute('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', application])
   }
 
-  async function fixture(versioned = false, binding: 'saved' | 'previous' = 'saved') {
+  async function fixture(versioned = false, binding: 'saved' | 'previous' | 'bridge' = 'saved') {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'wework-installed-app-test-')))
     roots.push(directory)
     const store = new ReleaseStore(join(directory, 'data/releases'))
@@ -48,7 +62,10 @@ if (process.platform === 'darwin') {
     const sourceBundle = versioned ? join(store.slot('source'), 'host/WeWork.app') : installed
     const targetBundle = join(store.slot('target'), 'host/WeWork.app')
     await bundle(installed, '1.0.0')
-    if (versioned) await bundle(sourceBundle, '2.0.0')
+    if (versioned) {
+      if (binding === 'bridge') await cp(installed, sourceBundle, { recursive: true })
+      else await bundle(sourceBundle, '2.0.0')
+    }
     await bundle(targetBundle, '3.0.0')
     const release = (id: string, application: string, version: string): DesktopRelease => ({
       schemaVersion: 1,
@@ -61,7 +78,11 @@ if (process.platform === 'darwin') {
       dataSchema: 1,
       readableDataSchemas: [1],
     })
-    const source = release('source', sourceBundle, versioned ? '2.0.0' : '1.0.0')
+    const source = release(
+      'source',
+      sourceBundle,
+      versioned && binding !== 'bridge' ? '2.0.0' : '1.0.0'
+    )
     const target = release('target', targetBundle, '3.0.0')
     await store.save(source)
     await store.save(target)
@@ -85,6 +106,11 @@ if (process.platform === 'darwin') {
     if (versioned) {
       if (binding === 'saved')
         await atomicReleaseWrite(join(store.root, 'macos-application'), installed)
+      else if (binding === 'bridge')
+        await atomicReleaseWrite(
+          join(store.root, 'bridge'),
+          join(installed, 'Contents/MacOS/WeWork')
+        )
       else {
         await store.save(release('previous', installed, '1.0.0'))
         await atomicReleaseWrite(
@@ -101,12 +127,12 @@ if (process.platform === 'darwin') {
     return { store, source, target, installed }
   }
 
-  test.each(['installed', 'mapped', 'history'] as const)(
+  test.each(['installed', 'mapped', 'history', 'bridge'] as const)(
     'prepares signed replacement and rollback without changing the live source (%s)',
     async mode => {
       const { store, source, target, installed } = await fixture(
         mode !== 'installed',
-        mode === 'history' ? 'previous' : 'saved'
+        mode === 'history' ? 'previous' : mode === 'bridge' ? 'bridge' : 'saved'
       )
       const inode = (await stat(installed)).ino
       const installedInfo = await readFile(join(installed, 'Contents/Info.plist'))
@@ -179,6 +205,15 @@ if (process.platform === 'darwin') {
       expect((await stat(installed)).ino).toBe(inode)
     }
   )
+
+  test('a legacy bridge cannot select another signed application payload', async () => {
+    const { store, target, installed } = await fixture(true, 'bridge')
+    await bundle(installed, '9.0.0')
+    await expect(
+      prepareMacosReleaseInstallation(store, target, 'io.wecode.wework.installation-test')
+    ).rejects.toThrow()
+    expect((await store.read(target.id)).macosInstallation).toBeUndefined()
+  })
 
   test('a different installed identity cannot be prepared or overwritten', async () => {
     const { store, target, installed } = await fixture()
