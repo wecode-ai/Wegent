@@ -234,4 +234,9 @@ timeout alone does not identify an upgrade or rollback failure's cause. Unstarte
 transaction fixtures use the retained installation's preparation API while keeping
 the source version's running components and package identity.
 
+Native launcher handoffs explicitly pass the selected release's owned `userData`
+and release root on every platform, including recovery after an interrupted
+rollback. Legacy entries may still resolve the store from the parent directory;
+directory bridges or macOS-only installation handoffs are insufficient.
+
 If the matching version has been published with different bytes from the original candidate, add `-f verification_release_tag=wework-v<same-version>`. This option is restricted to non-publishing replays: driver dependencies reuse the build artifact, while the target archive and descriptor are downloaded and verified directly from that Release. No package is modified or re-signed. The version must match the input artifact, and the cross-channel package hash check remains enforced.
