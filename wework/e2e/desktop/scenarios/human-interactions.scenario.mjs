@@ -223,6 +223,20 @@ export function createDesktopScenario({
         })
         return
       }
+      if (issueFixture) {
+        // This scenario verifies in-app reminders; collaboration defaults to system delivery.
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command('click', '[data-testid="wework-notifications-settings"]')
+        const systemSwitch = '[data-testid="wework-notifications-setting-collaboration-system"]'
+        await control.command('waitFor', `${systemSwitch}[aria-checked="true"]`)
+        await control.command('click', systemSwitch)
+        await control.command('waitFor', `${systemSwitch}[aria-checked="false"]`)
+        await control.command(
+          'waitFor',
+          '[data-testid="wework-notifications-setting-collaboration-in_app"][aria-checked="true"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+      }
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await captureScreenshot(control, '01-working-in-another-tab.png')
       await control.command('focusMainWindow', 'body')
