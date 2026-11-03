@@ -641,6 +641,7 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       tabId: 'legacy',
       url: 'http://127.0.0.1:4404',
       command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: 'legacy' },
     })
     expect(createWorkbenchHostPipe).not.toHaveBeenCalled()
     expect(open.mock.calls[0][0]).not.toHaveProperty('hostPipe')

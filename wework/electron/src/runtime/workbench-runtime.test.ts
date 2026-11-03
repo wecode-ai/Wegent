@@ -110,19 +110,23 @@ describe('WorkbenchRuntimeManager', () => {
     })
   })
 
-  test('rejects an explicit privileged pipe for an unauthenticated legacy runtime', async () => {
-    const factory = vi.fn()
-    const manager = new WorkbenchRuntimeManager(factory)
-    await expect(
-      manager.open({
-        tabId: 'legacy',
-        url: 'http://127.0.0.1:4301',
-        command: '/runtime/dsh',
-        hostPipe: { environment: () => ({}) } as never,
-        hostPrincipal: '@wegent/dsh-workbench',
-      })
-    ).rejects.toThrow('Workbench Host pipe requires browser authentication')
-    expect(factory).not.toHaveBeenCalled()
-    expect(manager.list()).toEqual([])
-  })
+  test.each([undefined, 'legacy'])(
+    'rejects an explicit privileged pipe in %s authentication mode',
+    async authentication => {
+      const factory = vi.fn()
+      const manager = new WorkbenchRuntimeManager(factory)
+      await expect(
+        manager.open({
+          tabId: 'legacy',
+          url: 'http://127.0.0.1:4301',
+          command: '/runtime/dsh',
+          environment: { WEWORK_DSH_BROWSER_AUTH: authentication },
+          hostPipe: { environment: () => ({}) } as never,
+          hostPrincipal: '@wegent/dsh-workbench',
+        })
+      ).rejects.toThrow('Workbench Host pipe requires native browser authentication')
+      expect(factory).not.toHaveBeenCalled()
+      expect(manager.list()).toEqual([])
+    }
+  )
 })

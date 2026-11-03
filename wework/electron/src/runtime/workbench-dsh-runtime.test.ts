@@ -34,7 +34,7 @@ describe('workbench DSH runtime', () => {
     await fixture.root.remove()
   })
 
-  test('refuses a privileged host bridge on a Runtime without browser authentication', async () => {
+  test('refuses a privileged host bridge on a Runtime without native browser authentication', async () => {
     const fixture = await workbenchFixture('workbench-legacy-host-')
     const options = workbenchOptions(fixture)
     await writeFile(
@@ -56,7 +56,9 @@ describe('workbench DSH runtime', () => {
     expect(options.run).not.toHaveBeenCalled()
     const launch = await prepareWorkbenchDshLaunch(options)
     expect(launch.version).toBe('0.1.0-rc.8')
-    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBeUndefined()
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe('legacy')
+    expect(launch.args).toContain('--require')
+    expect(launch.args).toContain(join(launch.environment.DSH_HOME!, 'browser-auth.cjs'))
     expect(
       options.run.mock.calls.some(([, args]) =>
         args.some(
@@ -96,7 +98,7 @@ describe('workbench DSH runtime', () => {
           includeElectronHostBridge: version === WORKBENCH_DSH_VERSION,
         })
         const authenticates = version === WORKBENCH_DSH_VERSION
-        expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe(authenticates ? '1' : undefined)
+        expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe(authenticates ? '1' : 'legacy')
         expect(launch.environment.WEWORK_DSH_BROWSER_AUTH_FD).toBeUndefined()
         expect(
           options.run.mock.calls.filter(([, args]) =>

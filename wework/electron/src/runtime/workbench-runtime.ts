@@ -103,7 +103,7 @@ function workbenchEnvironment(launch: WorkbenchRuntimeLaunch): NodeJS.ProcessEnv
   const environment = isolatedWorkbenchEnvironment(launch.environment)
   if (!launch.hostPipe) return environment
   if (environment.WEWORK_DSH_BROWSER_AUTH !== '1') {
-    throw new Error('Workbench Host pipe requires browser authentication')
+    throw new Error('Workbench Host pipe requires native browser authentication')
   }
   if (!launch.hostPrincipal?.trim()) throw new Error('Workbench Host principal is required')
   return {

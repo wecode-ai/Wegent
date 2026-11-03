@@ -11,6 +11,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
+import { fetchLocalRuntime } from './runtime-request.mjs'
+import { request } from 'node:http'
 
 export async function prepareHarnessAppUi(
   control,
@@ -249,8 +251,20 @@ async function verifyLegacyAppLaunch(
   assert.equal(legacy.runtimeVersion, '0.1.0-rc.8')
   assert.match(legacy.webUrl, /^http:\/\/127\.0\.0\.1:\d+\/?$/)
   const page = await fetch(legacy.webUrl)
-  assert.equal(page.status, 200)
-  assert.match(await page.text(), /<html[\s>]/i, 'The legacy app did not serve its application')
+  assert.equal(page.status, 401, 'An unauthenticated client could access the legacy runtime')
+  const api = await fetch(new URL('/api/settings.describe', legacy.webUrl))
+  assert.equal(api.status, 401, 'An unauthenticated client could access the legacy API')
+  await verifyLegacyWebSocketAuthentication(legacy.webUrl)
+  const authenticatedPage = await fetchLocalRuntime(
+    control,
+    new URL('/wework/legacy-compatibility-page', legacy.webUrl)
+  )
+  assert.equal(authenticatedPage.status, 200)
+  assert.match(
+    await authenticatedPage.text(),
+    /<html[\s>]/i,
+    'The legacy app did not serve its application'
+  )
   const profile = JSON.parse(
     await readFile(
       join(
@@ -271,13 +285,37 @@ async function verifyLegacyAppLaunch(
     ),
     'A legacy runtime must not expose the privileged Electron host bridge'
   )
-  const hostResponse = await fetch(new URL('/wework/electron-host/v1/invoke', legacy.webUrl), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ capability: 'desktop.getInfo', params: {} }),
-  })
+  const hostResponse = await fetchLocalRuntime(
+    control,
+    new URL('/wework/electron-host/v1/invoke', legacy.webUrl),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capability: 'desktop.getInfo', params: {} }),
+    }
+  )
   assert.equal(hostResponse.status, 405, 'A legacy app exposed the privileged invoke endpoint')
   await removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
+}
+
+async function verifyLegacyWebSocketAuthentication(baseUrl) {
+  const status = await new Promise((resolve, reject) => {
+    const outgoing = request(new URL('/api/events', baseUrl), {
+      headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    outgoing.on('response', response => {
+      response.resume()
+      resolve(response.statusCode)
+    })
+    outgoing.on('upgrade', (response, socket) => {
+      socket.destroy()
+      resolve(response.statusCode)
+    })
+    outgoing.on('error', reject)
+    outgoing.end()
+  })
+  assert.equal(status, 401, 'An unauthenticated client could upgrade the legacy WebSocket')
 }
 
 async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs) {
