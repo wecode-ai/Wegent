@@ -1,4 +1,14 @@
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -89,6 +99,23 @@ test('copied-host ownership cannot cancel an activation with a different live pr
   )
   expect(await store.activation()).toEqual(activation)
 })
+
+test.each(['slots', 'slot', 'host'])(
+  'rejects a %s directory alias that moves copied programs outside their owner',
+  async entry => {
+    const { home, store, source, profile, parent } = await fixture()
+    const path =
+      entry === 'slots'
+        ? join(store.root, 'slots')
+        : entry === 'slot'
+          ? store.slot(source.id)
+          : join(store.slot(source.id), 'host')
+    const outside = join(home, `foreign-${entry}`)
+    await rename(path, outside)
+    await symlink(outside, path, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(await ownsLegacyPreparedSource(store, source, profile, parent)).toBe(false)
+  }
+)
 
 test.each(['executable', 'app.asar', 'revision', 'profile', 'host'])(
   'rejects a legacy copy with a foreign or changed %s',

@@ -12,12 +12,17 @@ export async function ownsLegacyPreparedSource(
   parent: string
 ): Promise<boolean> {
   if (!source.id.startsWith(`installed-${source.version}-`)) return false
+  const root = await realpath(store.root)
+  const slots = await realpath(join(store.root, 'slots'))
+  if (slots !== join(root, 'slots')) return false
   const slot = await realpath(store.slot(source.id))
+  if (slot !== join(slots, source.id)) return false
   if (resolve(source.profileRoot) !== join(store.slot(source.id), 'profile')) return false
   if ((await realpath(source.profileRoot)) !== join(slot, 'profile')) return false
   if ((await realpath(sourceProfile)) !== (await realpath(currentCoreProfile(dirname(store.root)))))
     return false
   const host = await realpath(join(slot, 'host'))
+  if (host !== join(slot, 'host')) return false
   for (const path of [source.executable, source.resources]) {
     const child = relative(host, await realpath(path))
     if (
