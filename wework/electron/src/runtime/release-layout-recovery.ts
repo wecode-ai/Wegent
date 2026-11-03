@@ -17,7 +17,7 @@ export async function recoverReleaseLayout(
   if (environment.WEWORK_USER_DATA_DIR?.trim()) return
   const activation = await store.activation()
   const source = activation ? await store.read(activation.from) : await store.active()
-  if (!source || !AFFECTED_VERSIONS.has(source.version)) return
+  if (!source || (!activation && !AFFECTED_VERSIONS.has(source.version))) return
   if (!source.readableDataSchemas.includes(nextDataSchema))
     throw new Error('Repair the legacy release layout before upgrading the data schema')
   const metadata = JSON.parse(
@@ -35,6 +35,7 @@ export async function recoverReleaseLayout(
   if ((await releaseParentExecutable()) !== (await realpath(source.executable)))
     throw new Error('Recovery source does not match the running update host')
   const prepare = async () => {
+    if (!AFFECTED_VERSIONS.has(source.version)) return
     await publishDirectoryBridge(join(desktop, 'releases'), store.root)
     await publishDirectoryBridge(join(desktop, 'dsh-core'), join(desktop, 'user-data', 'dsh-core'))
   }
