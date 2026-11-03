@@ -136,7 +136,9 @@ export async function createDesktopScenario({
         '--git-dir',
         remote,
         'rev-parse',
-        (await exec('git', ['branch', '--show-current'], { cwd: workspacePath })).stdout.trim(),
+        (
+          await exec('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: workspacePath })
+        ).stdout.trim(),
       ])
       assert.equal(local.stdout.trim(), upstream.stdout.trim())
       assert.equal(local.stdout.trim(), remoteHead.stdout.trim())
