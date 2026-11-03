@@ -412,6 +412,8 @@ export function createDesktopScenario({
         )
         assert.ok(execution, 'The Issue must expose its actual execution address')
         const executionAction = `${page} [data-testid="cloud-task-activity-execution-badge-${execution.id}"]`
+        await control.command('waitFor', `${executionAction}:not(:disabled)`)
+        await control.command('scrollIntoView', executionAction)
         await control.command('waitFor', `${executionAction}:not(:disabled)`, { visible: true })
         await control.command('click', executionAction)
         await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
@@ -424,7 +426,7 @@ export function createDesktopScenario({
           Number(
             await control.command(
               'getElementCount',
-              `${ACTIVE} [data-testid="runtime-execution-detail-overlay"]`
+              '[data-testid="runtime-execution-detail-overlay"]'
             )
           ),
           0,
