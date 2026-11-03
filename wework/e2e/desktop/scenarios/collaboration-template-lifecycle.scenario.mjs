@@ -107,7 +107,7 @@ export function createDesktopScenario({
     control.command('waitFor', selector(name), { text, timeoutMs: uiTimeoutMs })
   const capture = async (name, description) => {
     assert.equal(
-      await control.command('getElementCount', selector('collaboration-navigation-error')),
+      Number(await control.command('getElementCount', selector('collaboration-navigation-error'))),
       0,
       'Lifecycle evidence must not contain a navigation load failure'
     )
