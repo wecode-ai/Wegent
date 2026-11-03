@@ -55,6 +55,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const boardTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
         value: 'data-testid',
       })
+      await control.command('openWeworkScheme', 'body', { value: 'wework://apps/wework' })
+      await control.command('waitFor', `${selector(taskTab)}[aria-selected="true"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', selector(boardTab))
       const source = await waitFor(
         control,
         async () => JSON.parse(await control.command('snapshot', 'body')),

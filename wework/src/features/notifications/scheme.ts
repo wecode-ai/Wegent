@@ -9,6 +9,8 @@ export type WeworkDestination =
     }
   | { kind: 'task'; deviceId: string; taskId: string }
   | { kind: 'interaction'; deviceId: string; taskId: string; requestKey: string }
+  | { kind: 'app'; appId: string }
+  | { kind: 'smart-app'; smartAppId: number }
 
 export function weworkInteractionScheme(
   address: { deviceId: string; taskId: string },
@@ -30,6 +32,17 @@ export function weworkIssueScheme(
   return `wework://boards/${storePrefix}${encodeURIComponent(projectId)}/issues/${encodeURIComponent(itemId)}`
 }
 
+export function weworkAppScheme(appId: string): string {
+  return `wework://apps/${encodeURIComponent(appId)}`
+}
+
+export function weworkSmartAppScheme(smartAppId: number): string {
+  if (!Number.isSafeInteger(smartAppId) || smartAppId <= 0) {
+    throw new Error('Smart app id must be a positive safe integer')
+  }
+  return `wework://smart-apps/${smartAppId}`
+}
+
 function segment(value: string, limit = 128): string | null {
   const decoded = decodeURIComponent(value)
   return decoded &&
@@ -42,6 +55,7 @@ function segment(value: string, limit = 128): string | null {
 export function parseWeworkScheme(input: string): WeworkDestination | null {
   try {
     if (
+      !input.startsWith('wework://') ||
       input !== input.trim() ||
       input.includes('?') ||
       input.includes('#') ||
@@ -92,6 +106,16 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       const taskId = segment(parts[1])
       return deviceId && taskId ? { kind: 'task', deviceId, taskId } : null
     }
+    if (url.hostname === 'apps' && parts.length === 1) {
+      const appId = segment(parts[0])
+      return appId ? { kind: 'app', appId } : null
+    }
+    if (url.hostname === 'smart-apps' && parts.length === 1) {
+      const smartAppSegment = segment(parts[0])
+      if (!smartAppSegment || !/^[1-9]\d{0,15}$/.test(smartAppSegment)) return null
+      const smartAppId = Number(smartAppSegment)
+      return Number.isSafeInteger(smartAppId) ? { kind: 'smart-app', smartAppId } : null
+    }
     return null
   } catch {
     return null
@@ -108,6 +132,15 @@ export function weworkDestinationRoute(
   }
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
+  }
+  if (destination.kind === 'smart-app') {
+    return `/sites?${new URLSearchParams({
+      app_type: 'smart_app',
+      smartAppId: String(destination.smartAppId),
+    })}`
+  }
+  if (destination.kind === 'app') {
+    return `/app/${encodeURIComponent(destination.appId)}`
   }
   const params = new URLSearchParams({
     projectStore: destination.projectStore ?? 'backend',
