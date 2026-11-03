@@ -1,3 +1,4 @@
+import '@/i18n'
 import type { ProcessingBlock } from '@/types/workbench'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'

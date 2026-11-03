@@ -100,6 +100,99 @@ describe('Provider settings page', () => {
     }
   )
 
+  test('DeepSeek only needs a key and preserves the preset runtime settings', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
+    expect(screen.queryByTestId('provider-base-url')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('provider-protocol')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    const profile = findLocalModelProviderProfile('deepseek')
+    const modelId = profile.allowedModelIds![0]
+    discover = async () => [modelId, 'unsupported-model']
+    await user.type(screen.getByTestId('provider-api-key'), 'deepseek-test-key')
+    await user.click(screen.getByTestId('provider-discover'))
+    expect(screen.queryByTestId('provider-discovered-unsupported-model')).not.toBeInTheDocument()
+    await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toHaveLength(2))
+    expect(savedProviders()[1]).toEqual(
+      expect.objectContaining({
+        base_url: profile.baseUrl,
+        api_format: profile.apiFormat,
+        request_path: profile.requestPath,
+        api_key: 'deepseek-test-key',
+        models: [
+          expect.objectContaining({
+            model_id: modelId,
+            provider_profile_id: 'deepseek',
+            context_window: profile.contextWindow,
+            tool_profile: profile.toolProfile,
+            web_search_mode: profile.webSearchMode,
+          }),
+        ],
+      })
+    )
+  })
+
+  test('keeps a provider with a missing device key editable and allows replacement', async () => {
+    snapshot.providers[0].api_key_ref = 'wework-model-key.missing'
+    snapshot.providers[0].api_key_configured = false
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-api-key')).toBeEnabled()
+    await user.type(screen.getByTestId('provider-api-key'), 'replacement-key')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()?.[0].api_key).toBe('replacement-key'))
+    expect(screen.queryByTestId('provider-settings-error')).not.toBeInTheDocument()
+  })
+
+  test('adds models individually without re-entering the stored key', async () => {
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-api-key')).toHaveValue('')
+    await user.click(screen.getByTestId('provider-model-add'))
+    await user.type(screen.getAllByTestId(/^provider-model-id-/)[0], 'upstream-a')
+    await user.click(screen.getByTestId('provider-model-add'))
+    await user.type(screen.getAllByTestId(/^provider-model-id-/)[1], 'upstream-b')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toHaveLength(1))
+    const provider = savedProviders()[0]
+    expect(provider.base_url).toBe('https://relay.example/v1')
+    expect(provider.models.map((model: { model_id: string }) => model.model_id)).toEqual([
+      'upstream-a',
+      'upstream-b',
+    ])
+    expect(provider.api_key).toBeUndefined()
+    expect(invoke.mock.calls.every(call => call[0].startsWith('modelConfiguration.'))).toBe(true)
+  })
+
+  test('a new connection can fetch with the current address and key before saving', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'custom')
+    expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
+    await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
+    // Unfinished manual model rows are not part of the discovery request.
+    await user.click(screen.getByTestId('provider-model-add'))
+    expect(screen.getByTestId('provider-discover')).toBeEnabled()
+    await user.click(screen.getByTestId('provider-discover'))
+    expect(await screen.findByTestId('provider-discovered-upstream-a')).toBeEnabled()
+    expect(invoke).toHaveBeenCalledWith('modelConfiguration.discover', {
+      providerId: expect.stringMatching(/^provider-/),
+      provider: {
+        base_url: 'https://new.example/v1',
+        api_key: 'draft-key',
+        api_format: 'openai-responses',
+        models_path: undefined,
+        models_api_key_header: undefined,
+      },
+    })
+    expect(savedProviders()).toBeUndefined()
+  })
+
   test('editing a saved connection fetches the new draft rather than old saved settings', async () => {
     const user = await openEditor()
     await user.clear(screen.getByTestId('provider-base-url'))

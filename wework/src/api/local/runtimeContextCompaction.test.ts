@@ -1,4 +1,8 @@
-import { clearLocalModelConfigs } from '@/features/model-settings/localModelSettings'
+import {
+  clearLocalModelConfigs,
+  localModelName,
+  saveLocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAppServices } from './localServices'
 
@@ -74,6 +78,32 @@ describe('runtime context compaction model configuration', () => {
     })
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.compact')![1]
     expect(payload.modelConfig.model_id).toBe('destination-model')
+  })
+
+  test('rebuilds a custom model from local settings and resolves its proxy', async () => {
+    const localModel = saveLocalModelConfig({
+      id: 'compact-model',
+      displayName: 'Compact model',
+      modelId: 'provider-model',
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'current-provider-key',
+      apiFormat: 'openai-responses',
+      catalogReady: true,
+    })
+    const resolveProxy = vi.fn().mockResolvedValue('http://proxy.example:3128')
+    window.weworkElectronNetwork = { resolveProxy }
+    const { api, request } = services()
+    await api.compactRuntimeTask({
+      address,
+      modelSelection: { modelName: localModelName(localModel), modelType: 'runtime', options: {} },
+    })
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.compact')![1]
+    expect(payload.modelConfig).toMatchObject({
+      model_id: 'provider-model',
+      api_key: 'current-provider-key',
+      proxy: { url: 'http://proxy.example:3128' },
+    })
+    expect(resolveProxy).toHaveBeenCalledWith('https://provider.example/v1/responses')
   })
 
   test('fails before dispatch when the cloud gateway is unavailable', async () => {

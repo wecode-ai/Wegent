@@ -9,12 +9,6 @@ import {
   runtimeTurnNavigationLoadOptions,
 } from './useWorkbenchPaneSession'
 
-describe('resolveRuntimeTranscriptPageSize', () => {
-  afterEach(() => {
-    delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
-  })
-})
-
 describe('runtimeTurnNavigationLoadOptions', () => {
   test('uses the provider cursor for a navigation turn outside the loaded transcript page', () => {
     expect(

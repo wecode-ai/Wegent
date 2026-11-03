@@ -15,3 +15,11 @@ test('hides incomplete streaming attributes and reveals the complete file refere
   rerender(<AssistantMarkdown content={`原稿：${citation}`} />)
   expect(screen.getByTestId('assistant-markdown-link')).toHaveTextContent('report.xlsx')
 })
+
+test.each(['javascript:alert(1)', 'data:text/html,hello', 'https://example.com/report.xlsx'])(
+  'does not interpret %s as a local file',
+  path => {
+    render(<AssistantMarkdown content={`:codex-file-citation{path="${path}"}`} />)
+    expect(document.querySelector('[data-citation-purpose]')).toBeNull()
+  }
+)

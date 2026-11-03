@@ -127,13 +127,4 @@ describe('TaskDescriptionEditor', () => {
     fireEvent.compositionEnd(editor)
     await waitFor(() => expect(onChange).toHaveBeenCalled())
   })
-
-  describe('attachment image preview', () => {
-    beforeAll(() => {
-      if (typeof URL.createObjectURL !== 'function') {
-        URL.createObjectURL = () => 'blob:mock-attachment'
-      }
-      URL.revokeObjectURL = vi.fn()
-    })
-  })
 })

@@ -1,7 +1,12 @@
 import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { installExternalLinkHandler, isLocalHttpUrl, openExternalUrl } from './external-links'
+import {
+  installExternalLinkHandler,
+  isHttpUrl,
+  isLocalHttpUrl,
+  openExternalUrl,
+} from './external-links'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
 const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn())
@@ -34,6 +39,14 @@ afterEach(() => {
 })
 
 describe('external link helpers', () => {
+  test('accepts only http and https URLs', () => {
+    expect(isHttpUrl('https://example.com')).toBe(true)
+    expect(isHttpUrl('http://example.com')).toBe(true)
+    expect(isHttpUrl('mailto:user@example.com')).toBe(false)
+    expect(isHttpUrl('/settings')).toBe(false)
+    expect(isHttpUrl('javascript:alert(1)')).toBe(false)
+  })
+
   test('detects localhost URLs without treating private remote hosts as local', () => {
     expect(isLocalHttpUrl('http://localhost:3000')).toBe(true)
     expect(isLocalHttpUrl('https://app.localhost/path')).toBe(true)

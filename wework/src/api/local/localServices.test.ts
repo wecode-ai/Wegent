@@ -1,3 +1,4 @@
+import '@/i18n'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
@@ -2474,6 +2475,64 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
+  test('keeps a prepared model_config and applies the selected runtime options', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      cloudProjectId: 'cloud-project-42',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'run the scan',
+      title: 'Scan',
+      modelId: 'wecode-kimi',
+      modelConfig: {
+        base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+        api_key: 'short-lived-token',
+        codex_catalog_model_id: 'wework-kimi-k2-7',
+        codex_responses_compat_proxy: true,
+        reasoning: { effort: 'high' },
+      },
+      modelOptions: {
+        reasoning: 'low',
+        speed: 'fast',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+            api_key: 'short-lived-token',
+            codex_catalog_model_id: 'wework-kimi-k2-7',
+            reasoning: { effort: 'low' },
+            service_tier: 'fast',
+          }),
+        }),
+      })
+    )
+  })
+
   test('rejects local runtime task creation without a workspace path', async () => {
     const request = vi.fn()
     const services = createLocalAppServices({
@@ -4910,6 +4969,47 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.mcp_servers).toEqual([])
   })
+
+  test.each(['manager', 'executor', 'member'])(
+    'uses managed project-space tools for the %s dispatch role',
+    async dispatchRole => {
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+        request,
+        subscribe: vi.fn(),
+        cloudModelGateway: {
+          baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          apiKey: 'cloud-login-token',
+          backendUrl: 'https://cloud.example.com',
+        },
+      })
+
+      await services.runtimeWorkApi?.createRuntimeTask({
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: `task-${dispatchRole}-context`,
+        runtime: 'codex',
+        message: '处理当前 Issue',
+        cloudProjectId: 'default-work-items',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: 'default-work-items',
+          loopItemId: 'WORK-806',
+          dispatchRole,
+        },
+        additionalContext: {
+          projectSpaceIssue: {
+            kind: 'application',
+            value: 'Current space: default-work-items; current Issue: WORK-806.',
+          },
+        },
+      })
+
+      const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+      expect(payload.executionRequest.mcp_servers).toEqual([])
+    }
+  )
 
   test('automatically deploys and emphasizes dws for a DingTalk AI Table project', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
