@@ -339,6 +339,16 @@ export function createDesktopScenario({
         )
       }
       if (issueFixture) {
+        for (const selector of [
+          '[data-testid="work-item-context-panel"] > div',
+          '.task-detail-workspace-panel-shell',
+        ]) {
+          focusDiagnostics.entityMetrics[selector] = JSON.parse(
+            await control.command('getElementMetrics', `${page} ${selector}`)
+          )
+        }
+      }
+      if (issueFixture) {
         assert.equal(
           Number(
             await control.command(
@@ -351,6 +361,11 @@ export function createDesktopScenario({
         )
         const container = focusDiagnostics.entityMetrics['interaction-entity-container'][0]
         const detail = focusDiagnostics.entityMetrics['cloud-todo-detail'][0]
+        assert.equal(
+          focusDiagnostics.entityMetrics['.task-detail-workspace-panel-shell'][0].scrollTop,
+          0,
+          'Comment focus must scroll the content rather than the Issue frame'
+        )
         assert.ok(
           detail.top >= container.top - 1,
           'The original Issue header must stay inside its entity pane'

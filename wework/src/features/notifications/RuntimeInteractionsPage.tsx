@@ -23,6 +23,7 @@ export function RuntimeInteractionsPage({
   const [selected, setSelected] = useState<string | null>(selectedId ?? null)
   const [showList, setShowList] = useState(!selectedId)
   const twoPanes = useIsDesktop()
+  const [lastTwoPanes, setLastTwoPanes] = useState(twoPanes)
   const list = useRef<HTMLElement>(null)
   const listHeading = useRef<HTMLHeadingElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -50,6 +51,11 @@ export function RuntimeInteractionsPage({
       restoreListFocus.current = false
     }
   }, [twoPanes, showList, selected, viewed])
+  if (lastTwoPanes !== twoPanes) {
+    setLastTwoPanes(twoPanes)
+    // The desktop detail is already open; preserve it when the window becomes narrow.
+    if (!twoPanes) setShowList(false)
+  }
   if (lastRouteId !== selectedId) {
     setLastRouteId(selectedId)
     setSelected(selectedId ?? null)

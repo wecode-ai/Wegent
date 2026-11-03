@@ -153,6 +153,28 @@ it('only registers a narrow-screen request as viewed after opening it and restor
   expect(row).toHaveFocus()
 })
 
+it('keeps the displayed detail open when resizing a desktop inbox to a narrow window', () => {
+  const value = interactionValue()
+  const page = (
+    <RuntimeInteractionsContext.Provider value={value}>
+      <RuntimeInteractionsPage />
+    </RuntimeInteractionsContext.Provider>
+  )
+  const { rerender } = render(page)
+  viewport.twoPanes = false
+  rerender(
+    <RuntimeInteractionsContext.Provider value={value}>
+      <RuntimeInteractionsPage />
+    </RuntimeInteractionsContext.Provider>
+  )
+  const back = screen.getByTestId('interactions-back-to-list')
+  expect(back.closest('section')).not.toHaveClass('hidden')
+  expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
+  fireEvent.click(back)
+  expect(screen.getByTestId('interaction-list-item').closest('section')).not.toHaveClass('hidden')
+  expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), null)
+})
+
 it('restores narrow-screen list heading focus when the handled request no longer has a row', () => {
   viewport.twoPanes = false
   const value = interactionValue()
