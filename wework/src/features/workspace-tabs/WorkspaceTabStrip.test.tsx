@@ -298,6 +298,33 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
+  test('restores the pending route when its tab has navigated to another page', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'pending-interactions',
+        tabs: [
+          {
+            id: 'pending-interactions',
+            kind: 'auxiliary',
+            title: '站点',
+            contentRoute: '/sites',
+            fixed: false,
+          },
+        ],
+      })
+    )
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/sites')
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-pending-interactions'))
+    expect(window.location.pathname).toBe('/pending-interactions')
+    expect(screen.getByTestId('workspace-tab-select-pending-interactions')).toHaveTextContent(
+      '待你处理'
+    )
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+  })
+
   test('hides pending interactions when auxiliary tabs are unavailable', async () => {
     const user = userEvent.setup()
     renderStrip('', ['task'])

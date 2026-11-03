@@ -585,13 +585,16 @@ export function WorkspaceTabStrip({
                   role="menuitem"
                   data-testid="workspace-tab-add-pending-interactions"
                   onClick={() => {
+                    const destination = {
+                      title: t('interactions.title', '待你处理'),
+                      contentRoute: INTERACTIONS_PATH,
+                    }
                     const existing = tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
-                    if (existing) selectTab(existing.id)
+                    if (existing) selectTab(existing.id, destination)
                     else
                       openTab('auxiliary', {
                         id: INTERACTIONS_TAB_ID,
-                        title: t('interactions.title', '待你处理'),
-                        contentRoute: INTERACTIONS_PATH,
+                        ...destination,
                       })
                     setAddMenuPosition(null)
                   }}
