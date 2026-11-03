@@ -81,6 +81,7 @@ interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
   onNavigate?: (path: string) => void
+  targetSmartAppId?: number | null
 }
 
 interface PendingInstall {
@@ -247,6 +248,7 @@ export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
   onNavigate = navigateTo,
+  targetSmartAppId = null,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
@@ -277,6 +279,22 @@ export function SmartAppsMarketplacePage({
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
+  const [targetInstallItem, setTargetInstallItem] = useState<SmartAppMarketplaceItem | null>(null)
+  const [targetLookupError, setTargetLookupError] = useState<string | null>(null)
+  const [targetLookupPending, setTargetLookupPending] = useState(false)
+  const [targetLookupRevision, setTargetLookupRevision] = useState(0)
+  const previousTargetSmartAppIdRef = useRef<number | null>(null)
+  const handledTargetSmartAppIdRef = useRef<number | null>(null)
+  const catalogTargetSmartAppIdRef = useRef<number | null>(null)
+  const resolvedTargetApiRef = useRef<SmartAppsApi | null>(null)
+  const targetItemsSnapshotRef = useRef<SmartAppMarketplaceItem[] | null>(null)
+  const targetLookupFailedRef = useRef<number | null>(null)
+  const targetLookupInFlightRef = useRef<{ target: number; api: SmartAppsApi } | null>(null)
+  const targetLookupRevisionRef = useRef(0)
+  const targetLookupRequestRef = useRef(0)
+  const dismissedTargetSmartAppIdRef = useRef<number | null>(null)
+  const downloadRequestRef = useRef(0)
+  const installRequestRef = useRef(0)
   const {
     items,
     marketItems,
@@ -326,6 +344,213 @@ export function SmartAppsMarketplacePage({
     onError: setError,
     onRefresh: refresh,
   })
+  useEffect(() => {
+    downloadRequestRef.current += 1
+    installRequestRef.current += 1
+    queueMicrotask(() => {
+      setPendingInstall(null)
+      setModelKey('')
+      setBusy(current =>
+        current === 'install' || current?.startsWith('download-') ? null : current
+      )
+    })
+  }, [api])
+  useEffect(() => {
+    if (targetSmartAppId) return
+    previousTargetSmartAppIdRef.current = null
+    handledTargetSmartAppIdRef.current = null
+    catalogTargetSmartAppIdRef.current = null
+    resolvedTargetApiRef.current = null
+    targetItemsSnapshotRef.current = null
+    targetLookupFailedRef.current = null
+    targetLookupInFlightRef.current = null
+    dismissedTargetSmartAppIdRef.current = null
+    targetLookupRevisionRef.current = targetLookupRevision
+    targetLookupRequestRef.current += 1
+    downloadRequestRef.current += 1
+    installRequestRef.current += 1
+    queueMicrotask(() => {
+      setSelected(null)
+      setPendingInstall(null)
+      setModelKey('')
+      setBusy(current =>
+        current === 'install' || current?.startsWith('download-') ? null : current
+      )
+      setTargetInstallItem(null)
+      setTargetLookupError(null)
+      setTargetLookupPending(false)
+    })
+  }, [targetLookupRevision, targetSmartAppId])
+  useEffect(() => {
+    if (!targetSmartAppId) return
+    if (previousTargetSmartAppIdRef.current !== targetSmartAppId) {
+      previousTargetSmartAppIdRef.current = targetSmartAppId
+      handledTargetSmartAppIdRef.current = null
+      catalogTargetSmartAppIdRef.current = null
+      resolvedTargetApiRef.current = api
+      targetItemsSnapshotRef.current = null
+      targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
+      dismissedTargetSmartAppIdRef.current = null
+      targetLookupRevisionRef.current = targetLookupRevision
+      targetLookupRequestRef.current += 1
+      downloadRequestRef.current += 1
+      installRequestRef.current += 1
+      queueMicrotask(() => {
+        setSelected(null)
+        setPendingInstall(null)
+        setModelKey('')
+        setBusy(current =>
+          current === 'install' || current?.startsWith('download-') ? null : current
+        )
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+      })
+    }
+    if (resolvedTargetApiRef.current !== api) {
+      resolvedTargetApiRef.current = api
+      catalogTargetSmartAppIdRef.current = null
+      targetItemsSnapshotRef.current = null
+      targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
+      targetLookupRevisionRef.current = targetLookupRevision
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setSelected(null)
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+      })
+    }
+    const installation = activeInstallations.find(
+      candidate => candidate.smartAppId === targetSmartAppId
+    )
+    if (installation && (installation.state !== 'running' || installation.webUrl)) {
+      const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
+      if (shouldOpen && (installation.state === 'running' || hasSelectedModel(installation))) {
+        handledTargetSmartAppIdRef.current = targetSmartAppId
+      }
+      targetLookupInFlightRef.current = null
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+        if (!shouldOpen) return
+        if (installation.state === 'running') openInstalledApp(installation)
+        else startInstalledApp(installation)
+      })
+      return
+    }
+    if (installation) {
+      handledTargetSmartAppIdRef.current = null
+      targetLookupInFlightRef.current = null
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setSelected(null)
+        setTargetInstallItem(null)
+        setTargetLookupError(null)
+        setTargetLookupPending(true)
+      })
+      return
+    }
+    handledTargetSmartAppIdRef.current = null
+    if (!api) return
+    const currentApiItems = items
+    const catalogRefreshed =
+      currentApiItems !== null && currentApiItems !== targetItemsSnapshotRef.current
+    const retryRequested = targetLookupRevisionRef.current !== targetLookupRevision
+    if (retryRequested) {
+      targetLookupRevisionRef.current = targetLookupRevision
+      targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
+      dismissedTargetSmartAppIdRef.current = null
+    }
+    const item = currentApiItems?.find(candidate => candidate.id === targetSmartAppId)
+    if (item) {
+      catalogTargetSmartAppIdRef.current = targetSmartAppId
+      targetItemsSnapshotRef.current = currentApiItems
+      targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
+      targetLookupRequestRef.current += 1
+      queueMicrotask(() => {
+        setTargetInstallItem(item)
+        setTargetLookupError(null)
+        setTargetLookupPending(false)
+        if (dismissedTargetSmartAppIdRef.current !== targetSmartAppId) {
+          setSelected({ item, readInstallations: readLocalInstallations })
+        }
+      })
+      return
+    }
+    if (catalogTargetSmartAppIdRef.current === targetSmartAppId) {
+      if (targetItemsSnapshotRef.current === null || !catalogRefreshed) {
+        if (targetLookupFailedRef.current !== targetSmartAppId || !retryRequested) return
+      }
+      catalogTargetSmartAppIdRef.current = null
+      targetItemsSnapshotRef.current = null
+      targetLookupInFlightRef.current = null
+      queueMicrotask(() => {
+        setTargetInstallItem(null)
+        setSelected(null)
+      })
+    }
+    if (targetLookupFailedRef.current === targetSmartAppId && !retryRequested) return
+    const inFlight = targetLookupInFlightRef.current
+    if (inFlight?.target === targetSmartAppId && inFlight.api === api) return
+    const requestId = ++targetLookupRequestRef.current
+    targetLookupInFlightRef.current = { target: targetSmartAppId, api }
+    queueMicrotask(() => {
+      setTargetLookupPending(true)
+      setTargetLookupError(null)
+    })
+    void api
+      .getItem(targetSmartAppId)
+      .then(item => {
+        if (requestId !== targetLookupRequestRef.current) return
+        catalogTargetSmartAppIdRef.current = targetSmartAppId
+        targetItemsSnapshotRef.current = null
+        targetLookupFailedRef.current = null
+        setTargetInstallItem(item)
+        setTargetLookupError(null)
+        if (dismissedTargetSmartAppIdRef.current !== targetSmartAppId) {
+          setSelected({ item, readInstallations: readLocalInstallations })
+        }
+      })
+      .catch(error => {
+        if (requestId !== targetLookupRequestRef.current) return
+        targetLookupFailedRef.current = targetSmartAppId
+        setTargetInstallItem(null)
+        setTargetLookupError(
+          getSmartAppErrorMessage(
+            error,
+            t(
+              'workbench.smart_apps_deep_link_unavailable',
+              '未找到此智能工作台，可能已下架或你没有访问权限。'
+            ),
+            t
+          )
+        )
+      })
+      .finally(() => {
+        if (requestId === targetLookupRequestRef.current) {
+          targetLookupInFlightRef.current = null
+          queueMicrotask(() => setTargetLookupPending(false))
+        }
+      })
+  }, [
+    activeInstallations,
+    api,
+    hasSelectedModel,
+    items,
+    openInstalledApp,
+    readLocalInstallations,
+    startInstalledApp,
+    t,
+    targetSmartAppId,
+    targetLookupRevision,
+  ])
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
     return activeInstallations.map(installation => {
@@ -436,7 +661,13 @@ export function SmartAppsMarketplacePage({
   }
 
   function selectDetails(item: SmartAppMarketplaceItem) {
+    if (item.id === targetSmartAppId) dismissedTargetSmartAppIdRef.current = null
     setSelected({ item, readInstallations: readLocalInstallations })
+  }
+
+  function closeDetails() {
+    if (targetSmartAppId) dismissedTargetSmartAppIdRef.current = targetSmartAppId
+    setSelected(null)
   }
 
   function currentInstallation(installation: HarnessAppInstallation) {
@@ -466,16 +697,19 @@ export function SmartAppsMarketplacePage({
     if (!api || !installations) return
     const current = installations.find(candidate => candidate.smartAppId === item.id)
     const intent = current && current.releaseId !== item.latestReleaseId ? 'update' : 'install'
+    const requestId = ++downloadRequestRef.current
     setBusy(`download-${item.id}`)
     setError(null)
     try {
       const preparation = await prepareMarketplaceSmartApp(api, item, intent)
+      if (requestId !== downloadRequestRef.current) return
       const latest = readLocalInstallations()
       if (!latest) return
       setPendingInstall({ ...preparation, readInstallations: readLocalInstallations })
       setModelKey(latest.find(candidate => candidate.smartAppId === item.id)?.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
+      if (requestId !== downloadRequestRef.current) return
       setError(
         getSmartAppErrorMessage(
           downloadError,
@@ -484,7 +718,7 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      setBusy(null)
+      if (requestId === downloadRequestRef.current) setBusy(null)
     }
   }
 
@@ -494,21 +728,25 @@ export function SmartAppsMarketplacePage({
     const current = installations.find(
       candidate => candidate.smartAppId === currentPendingInstall.item.id
     )
+    const requestId = ++installRequestRef.current
     if (current?.state === 'running') {
       const shouldStop = window.confirm(
         t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的工作台，是否继续？')
       )
       if (!shouldStop || !(await stopInstalledApp(current, false))) return
+      if (requestId !== installRequestRef.current) return
     }
     if (!readLocalInstallations()) return
     setBusy('install')
     setError(null)
     try {
       await installMarketplaceSmartApp(currentPendingInstall, installModelKey)
+      if (requestId !== installRequestRef.current) return
       setPendingInstall(null)
       setModelKey('')
       await refresh()
     } catch (installError) {
+      if (requestId !== installRequestRef.current) return
       setError(
         getSmartAppErrorMessage(
           installError,
@@ -517,7 +755,7 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      setBusy(null)
+      if (requestId === installRequestRef.current) setBusy(null)
     }
   }
 
@@ -1110,6 +1348,47 @@ export function SmartAppsMarketplacePage({
         </div>
       ) : null}
 
+      {targetLookupError ? (
+        <div
+          role="alert"
+          data-testid="smart-app-deep-link-error"
+          className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-danger/25 bg-danger/10 p-4 text-sm text-danger"
+        >
+          <span className="min-w-0">{targetLookupError}</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="min-h-11 shrink-0 sm:min-h-9"
+            data-testid="smart-app-deep-link-retry"
+            disabled={targetLookupPending}
+            onClick={() => setTargetLookupRevision(revision => revision + 1)}
+          >
+            {t('workbench.retry', '重试')}
+          </Button>
+        </div>
+      ) : null}
+
+      {targetInstallItem ? (
+        <div
+          role="status"
+          data-testid="smart-app-deep-link-install-prompt"
+          className="mt-4 flex items-start gap-3 rounded-xl border border-border/50 bg-muted/35 p-4"
+        >
+          <Download className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary">
+              {t('workbench.smart_apps_deep_link_install_title', '此智能工作台尚未安装')}
+            </p>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t(
+                'workbench.smart_apps_deep_link_install_description',
+                '安装“{{name}}”后，可像其他已安装工作台一样在独立标签页中运行。'
+              ).replace('{{name}}', targetInstallItem.displayName)}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       {exportNotice ? (
         <p
           role="status"
@@ -1164,7 +1443,7 @@ export function SmartAppsMarketplacePage({
             </Button>
           }
         />
-      ) : loading && !hasItems ? (
+      ) : (loading && !hasItems) || targetLookupPending ? (
         <div className="flex min-h-72 items-center justify-center text-text-muted">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           {t('workbench.smart_apps_loading', '正在加载')}
@@ -1541,7 +1820,7 @@ export function SmartAppsMarketplacePage({
           state={localState(currentSelected)}
           installDisabled={!localReady}
           busy={busy === `download-${currentSelected.id}`}
-          onClose={() => setSelected(null)}
+          onClose={closeDetails}
           onInstall={() => void download(currentSelected)}
         />
       ) : null}
