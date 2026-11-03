@@ -71,6 +71,7 @@ import {
   convertTypedComposerTable,
   indentComposerList,
 } from "./composerMarkdownInputRules";
+import { observeComposerScrollFade } from "./composerScrollFade";
 
 export interface ComposerEditorSnapshot {
   value: string;
@@ -715,6 +716,13 @@ export const ComposerProseMirrorEditor = forwardRef<
       view.destroy();
     };
   }, []);
+
+  useEffect(() => {
+    const viewport = mountRef.current;
+    const content = viewRef.current?.dom;
+    if (!props.scrollContainerClassName || !viewport || !content) return;
+    return observeComposerScrollFade(viewport, content);
+  }, [props.scrollContainerClassName]);
 
   useEffect(() => {
     const view = viewRef.current;
