@@ -3726,6 +3726,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify(result),
     })
+    await response.arrayBuffer()
     if (!response.ok) {
       throw new Error(`Desktop E2E control result failed with ${response.status}`)
     }
@@ -3767,6 +3768,7 @@ async function postDesktopControlStarted(
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    await response.arrayBuffer()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -3804,6 +3806,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
+  await readyResponse.arrayBuffer()
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }

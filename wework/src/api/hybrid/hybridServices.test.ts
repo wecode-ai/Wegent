@@ -98,6 +98,8 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     standInApi: {
+      projectCoordination: vi.fn(),
+      projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
@@ -189,6 +191,8 @@ const mocks = vi.hoisted(() => {
   }
   const cloudServices = {
     standInApi: {
+      projectCoordination: vi.fn(),
+      projectProcessing: vi.fn(),
       readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
@@ -512,6 +516,8 @@ describe('stand-in save routing', () => {
       const local = mocks.localServices.standInApi
       const cloud = mocks.cloudServices.standInApi
       for (const api of [local, cloud]) {
+        api.projectCoordination.mockClear()
+        api.projectProcessing.mockClear()
         api.personalSave.mockClear()
         api.save.mockClear()
         api.memories.mockClear()
@@ -546,6 +552,22 @@ describe('stand-in save routing', () => {
         deviceId
       )
       expect(other.save).not.toHaveBeenCalled()
+      const target = { projectId: 'project', projectStore: 'cloud' as const, groupId: 'group' }
+      const update = { enabled: true, expectedGeneration: 'current', takeover: true }
+      await services.standInApi!.projectCoordination(7, deviceId, target)
+      await services.standInApi!.projectCoordination(7, deviceId, target, update)
+      expect(selected.projectCoordination.mock.calls).toEqual([
+        [7, deviceId, target, undefined],
+        [7, deviceId, target, update],
+      ])
+      expect(other.projectCoordination).not.toHaveBeenCalled()
+      await services.standInApi!.projectProcessing(7, deviceId, target)
+      await services.standInApi!.projectProcessing(7, deviceId, target, true)
+      expect(selected.projectProcessing.mock.calls).toEqual([
+        [7, deviceId, target, undefined],
+        [7, deviceId, target, true],
+      ])
+      expect(other.projectProcessing).not.toHaveBeenCalled()
       const memory = { content: 'Prefer concise replies', scope: { kind: 'personal' as const } }
       await services.standInApi!.memories(7, deviceId)
       await services.standInApi!.saveMemory(7, deviceId, memory)
@@ -570,6 +592,34 @@ describe('stand-in save routing', () => {
 })
 
 describe('qualified local sidebar routing', () => {
+  it('resolves a cold app registration through the refreshed local runtime identity', async () => {
+    mocks.cloudListDevices.mockClear()
+    const local = {
+      id: 0,
+      device_id: 'electron-cold',
+      name: 'Local',
+      status: 'online',
+      is_default: true,
+      device_type: 'local',
+      runtime_instance_id: 'runtime-cold',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        ...local,
+        id: 73,
+        device_id: 'app-record-73',
+        device_type: 'app',
+        app_device_id: local.device_id,
+      },
+    ])
+    const services = createServices()
+    const entry = await services.executorClient!.registry.resolve('app-record-73')
+    expect(entry.device.device_id).toBe(local.device_id)
+    expect(entry.device.runtime_instance_id).toBe('runtime-cold')
+    expect(mocks.cloudListDevices).toHaveBeenCalledOnce()
+  })
+
   const identity = {
     deviceId: 'electron-shared',
     runtimeInstanceId: 'current-runtime',

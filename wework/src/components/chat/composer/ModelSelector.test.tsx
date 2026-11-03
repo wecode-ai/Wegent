@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { UnifiedModel } from '@/types/api'
+import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
 
 const isMobileMock = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -174,6 +175,29 @@ describe('ModelSelector desktop layout', () => {
       'text-sm',
       'font-normal'
     )
+  })
+
+  test('Escape closes the model menu before its containing conversation dialog', () => {
+    const onClose = vi.fn()
+    render(
+      <CloudTodoModal title="Project conversation" onClose={onClose}>
+        <ModelSelector
+          models={[SAMPLE_MODEL]}
+          selectedModel={SAMPLE_MODEL}
+          selectedModelOptions={{}}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+        />
+      </CloudTodoModal>
+    )
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Project conversation' })).toBeInTheDocument()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   test('asks the user to select a model instead of displaying a default model', () => {

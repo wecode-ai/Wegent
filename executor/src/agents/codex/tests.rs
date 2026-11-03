@@ -150,6 +150,22 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
 }
 
 #[test]
+fn stand_in_project_coordinator_disables_native_global_memories() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(
+        json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator"}}),
+    )
+    .unwrap();
+    let config = build_codex_launch_config(&request).unwrap();
+    for flag in [
+        "memories.use_memories=false",
+        "memories.generate_memories=false",
+    ] {
+        assert!(config.config_overrides.contains(&flag.to_owned()));
+    }
+}
+
+#[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(
@@ -215,7 +231,8 @@ approval_mode = "approve"
             fs::read_to_string(home.join("config.toml"))
                 .unwrap()
                 .contains("home_only"),
-            "The synthetic MCP fixture was overwritten during launch configuration"
+            "The synthetic MCP fixture was overwritten during launch configuration: home={} team_id={team_id} origin_type={origin_type}",
+            home.display()
         );
         assert!(config
             .config_overrides
@@ -310,7 +327,7 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
-fn spawn_idle_app_server_child() -> Child {
+pub(super) fn spawn_idle_app_server_child() -> Child {
     #[cfg(windows)]
     let mut command = {
         let mut command = Command::new("cmd");

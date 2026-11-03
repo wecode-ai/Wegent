@@ -5022,6 +5022,71 @@ describe('TaskActivityView', () => {
     )
   })
 
+  it.each([
+    [0, 0, 'backend', true],
+    [9001, 0, 'local', true],
+    [9001, 1, 'local', false],
+    [1, 1, 'backend', true],
+    [2, 1, 'backend', false],
+  ] as const)(
+    'checks the actual group execution creator for user %s',
+    async (currentUserId, creatorId, projectStore, allowed) => {
+      agentsMock.value = [{ ...agentsMock.value[0], createdByUserId: creatorId }]
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [
+              {
+                ...agentMessage,
+                metadata: {
+                  execution_id: 51,
+                  dispatch_role: 'manager',
+                  run_status: 'waiting_approval',
+                },
+              },
+            ],
+            latestSequence: 1,
+            currentUserId: String(currentUserId),
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(),
+        startAgentResponse: vi.fn(),
+        failAgentResponse: vi.fn(),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={currentUserId}
+          issueTimeline
+          linear
+          project={{ id: '11', name: 'Wework', project_store: projectStore } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Group work',
+              description: '',
+              status: 'in_progress',
+              version: 3,
+              assignee_group_id: 'group',
+              execution_id: 51,
+              execution_state: 'waiting_approval',
+            } as never
+          }
+        />
+      )
+      if (allowed) {
+        const user = userEvent.setup()
+        await user.click(await screen.findByTestId('cloud-task-activity-approve-WEG-1'))
+        await waitFor(() => expect(approveLoopItemRun).toHaveBeenCalledWith('11', 'WEG-1', 3))
+      } else {
+        await screen.findByTestId(`cloud-task-manager-event-${agentMessage.messageId}`)
+        expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
+      }
+    }
+  )
+
   it('shows approve/reject for the robot creator and approves the pending run', async () => {
     const user = userEvent.setup()
     approveLoopItemRun.mockResolvedValue({

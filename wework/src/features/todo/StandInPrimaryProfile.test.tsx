@@ -12,6 +12,9 @@ import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
   useProjectWorktreeAvailabilityProbe: () => null,
 }))
+vi.mock('@/features/automations/AutomationsPage', () => ({
+  AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
+}))
 
 function fixture() {
   const work = {
@@ -70,6 +73,43 @@ function fixture() {
   }
 }
 
+it('keeps existing identity and execution settings without a global processing switch', () => {
+  const props = fixture()
+  render(<StandInPrimaryProfile {...props} />)
+  expect(screen.getByTestId('stand-in-primary-enabled')).toBeChecked()
+  expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-device')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-execution')).toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-mode')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-processing-interval')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it('consumes a menu calendar deep link once and returns to the connection list on normal navigation', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} initialCalendar />)
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+})
+
+it('does not save a changed receive switch when the user discards the draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-enabled'))
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-primary-discard'))
+  expect(props.onClose).toHaveBeenCalledOnce()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 it('consolidates saved instructions without losing content and keeps connection rules out of the overview', async () => {
   const props = fixture()
   const user = userEvent.setup()
@@ -78,10 +118,12 @@ it('consolidates saved instructions without losing content and keeps connection 
   expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
     'Review my work\n\nKeep replies concise'
   )
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
   const connections = screen.getByTestId('stand-in-connection-settings')
   expect(within(connections).getByText('Design team')).toBeInTheDocument()
   expect(within(connections).queryByRole('combobox')).not.toBeInTheDocument()
   expect(within(connections).queryByRole('checkbox')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
   await user.type(screen.getByTestId('stand-in-preferences'), '; ask before sending')
   await user.click(screen.getByTestId('stand-in-primary-save'))
   expect(props.onSave).toHaveBeenCalledWith(
@@ -140,6 +182,7 @@ it('shows existing local connection names on a remote device while limiting new 
   ] as CollaborationProject[]
   const user = userEvent.setup()
   render(<StandInPrimaryProfile {...props} projects={projects} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
   const row = screen.getByTestId('stand-in-connection-project-local-local-project')
   expect(row).toHaveTextContent('Local review project')
   await user.click(row)
