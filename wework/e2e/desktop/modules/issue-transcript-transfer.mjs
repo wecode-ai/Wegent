@@ -106,7 +106,7 @@ function updateFixtureReply(sqliteHome, threadId) {
   }
 }
 
-async function verifyCachedInitialRecovery({
+export async function verifyCachedInitialRecovery({
   control,
   proxy,
   scope,
@@ -116,6 +116,12 @@ async function verifyCachedInitialRecovery({
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
   const start = proxy.requests.length
+  // Cached text can render before the shared snapshot writer settles. Finish
+  // that read before remounting, or the next viewer can reuse its pending reply.
+  await control.command(
+    'waitFor',
+    `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
+  )
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   // The closing drawer retains its conversation until the exit animation ends.
   // Inject the next read failure only after that previous reader is unmounted.
