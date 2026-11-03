@@ -68,6 +68,10 @@ import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAp
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
 import {
+  consumeNewChatComposerRequest,
+  requestNewChatComposerFocus,
+} from '@/lib/workbenchComposerFocus'
+import {
   closeFeedbackDialog,
   openFeedbackDialog,
   useFeedbackDialogRequest,
@@ -2920,6 +2924,7 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
+    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
       'flex',
       'min-h-0',
@@ -3293,7 +3298,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7', 'w-7')
+    expect(screen.queryByTestId('composer-plugin-picker-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('composer-plugin-preview-icons')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
@@ -14141,6 +14146,38 @@ describe('DesktopWorkbenchLayout', () => {
       'runtime:old-device:missing-task'
     )
   })
+
+  test.each([false, true])(
+    'opens the requested new task instead of the restored conversation (request before mount: %s)',
+    async requestBeforeMount => {
+      const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+      const props = propsForTask(taskA)
+      const workspaceTabId = 'new-task-navigation'
+      const paneKey = `runtime:${taskA.deviceId}:${taskA.taskId}`
+      localStorage.setItem(
+        workbenchSplitStorageKeys(workspaceTabId).storageKey,
+        serializeWorkbenchSplitGroups(createWorkbenchSplitGroupsState(paneKey))
+      )
+      if (requestBeforeMount) requestNewChatComposerFocus(workspaceTabId)
+      render(
+        <DesktopWorkbenchLayout
+          {...props}
+          workspaceTabId={workspaceTabId}
+          state={{ ...props.state, currentRuntimeTask: null }}
+        />
+      )
+      if (!requestBeforeMount) {
+        expect(screen.queryByTestId('composer-plugin-picker-button')).not.toBeInTheDocument()
+        act(() => requestNewChatComposerFocus('another-tab'))
+        expect(screen.queryByTestId('composer-plugin-picker-button')).not.toBeInTheDocument()
+        expect(consumeNewChatComposerRequest('another-tab')).toBe(true)
+        act(() => requestNewChatComposerFocus(workspaceTabId))
+      }
+      expect(await screen.findByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+      expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
+      expect(consumeNewChatComposerRequest(workspaceTabId)).toBe(false)
+    }
+  )
 
   test('reveals the workbench after task-list loading without waiting for route restoration', async () => {
     runtimeMocks.electron = true
