@@ -123,23 +123,26 @@ async function deliveredHostRuntime() {
     assert.ok(['Valid', 'NotSigned'].includes(status), `Unexpected signature status: ${status}`)
     console.log(JSON.stringify({ phase, status }))
   }
-  const nativeSignature = await measure('signature-native-environment', () =>
+  // A pwsh runner exports its own module search path to Windows PowerShell.
+  // Load the requested system module explicitly instead of importing a module
+  // from another PowerShell edition into this diagnostic process.
+  const systemSignature = await measure('signature-explicit-system-module', () =>
     execute(
       'powershell.exe',
       [
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `(Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
+        `Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; (Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
       ],
       {
-        env: process.env,
+        env: upgradeUserEnvironment(process.env, directory),
         windowsHide: true,
         timeout: 120_000,
       }
     )
   )
-  assert.ok(['Valid', 'NotSigned'].includes(nativeSignature.stdout.replace(/^\uFEFF/, '').trim()))
+  assert.ok(['Valid', 'NotSigned'].includes(systemSignature.stdout.replace(/^\uFEFF/, '').trim()))
   const resources = join(installation.resources, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resources, 'runtimes.json'), 'utf8'))
   const runtime = catalog.runtimes.find(item => item.role === 'core')
