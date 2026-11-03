@@ -25,6 +25,7 @@ const pickerSelector = name => `${PICKER} [data-testid="${name}"]`
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
+  workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
   resultDir,
 }) {
@@ -330,6 +331,16 @@ export function createDesktopScenario({
         visible: false,
       })
       await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
+      // Provisioning creates six agents, their group, routing rules, and the board.
+      // Observe its success or error before starting the ordinary UI render budget.
+      await control.command(
+        'waitFor',
+        `${selector('collaboration-platform-root')}:not(:has([data-testid="collaboration-project-create-dialog"])), ${CONTENT} .collaboration-project-create-error`,
+        { timeoutMs: workbenchReadyTimeoutMs }
+      )
+      await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
+        visible: false,
+      })
       await control.command('waitFor', selector('cloud-project-header-title'), { text: copiedName })
       await control.command('waitFor', selector('board-view-picker'), { text: '项目阶段' })
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
