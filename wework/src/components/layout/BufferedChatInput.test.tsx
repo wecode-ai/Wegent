@@ -949,19 +949,24 @@ describe('BufferedChatInput', () => {
     const props = {
       value: '',
       onChange: vi.fn(),
+      onDraftEdit: vi.fn(),
       onSubmit: vi.fn(),
       disabled: false,
     }
     const { rerender } = render(<BufferedChatInput {...props} />)
     await userEvent.type(screen.getByTestId('chat-message-input'), 'Existing draft')
+    props.onDraftEdit.mockClear()
 
     rerender(<BufferedChatInput {...props} insertion={{ id: 1, text: 'Selected response' }} />)
 
+    expect(props.onDraftEdit).toHaveBeenCalledExactlyOnceWith('Existing draft\nSelected response')
     await waitFor(() => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue(
         'Existing draft\nSelected response'
       )
     })
+    rerender(<BufferedChatInput {...props} insertion={{ id: 1, text: 'Selected response' }} />)
+    expect(props.onDraftEdit).toHaveBeenCalledOnce()
   })
 
   test('flushes the draft on blur before the debounce window elapses', async () => {

@@ -35,6 +35,8 @@ interface BufferedChatInputProps extends ChatInputProps {
   autoFocus?: boolean
   clearOnSubmit?: boolean
   insertion?: BufferedChatInputInsertion | null
+  // Increment for every explicit external restore, even when the value is unchanged.
+  // Without a new key, values matching pending publications are acknowledgements.
   replaceDraftKey?: number
   onDraftEdit?: (draft: string) => void
 }
@@ -274,7 +276,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     )
     const acknowledgesPublishedDraft =
       !replacingDraft && !changingScope && acknowledgedPublicationIndex >= 0
-    const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
+    const shouldSetComposer =
+      replacingDraft || (!acknowledgesPublishedDraft && value !== draftRef.current)
     recordComposerDiagnostic('draft-external-sync', {
       scopeKey: scopeKey ?? null,
       sourceValueLength: value.length,
@@ -288,6 +291,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     committedValueRef.current = value
     // Restoring a draft must still ignore acknowledgements already in flight.
     if (replacingDraft) {
+      cancelPendingFlush()
+      cancelPendingFlushFrame()
       const pendingPublications = publications.filter(
         publication => !publication.appliedSynchronously
       )
@@ -316,7 +321,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
-  }, [replaceDraftKey, scopeKey, setComposerValue, synchronousPublicationRevision, value])
+  }, [
+    cancelPendingFlush,
+    cancelPendingFlushFrame,
+    replaceDraftKey,
+    scopeKey,
+    setComposerValue,
+    synchronousPublicationRevision,
+    value,
+  ])
 
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
@@ -337,10 +350,11 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
+    onDraftEdit?.(nextDraft)
     setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
     setComposerValue(nextDraft, nextDraft.length)
     scheduleDraftFlush(nextDraft)
-  }, [insertion, scheduleDraftFlush, scopeKey, setComposerValue, value])
+  }, [insertion, onDraftEdit, scheduleDraftFlush, scopeKey, setComposerValue, value])
 
   const setDraft = useCallback(
     (nextDraft: string) => {
