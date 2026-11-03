@@ -6,6 +6,7 @@
 use super::*;
 use std::time::Instant;
 
+mod skill_packages;
 mod skill_toggles;
 
 #[derive(Default)]
@@ -16,13 +17,24 @@ struct Paths {
     cleanup: BTreeSet<PathBuf>,
 }
 
-#[derive(PartialEq)]
 struct Snapshot {
     plugins: BTreeMap<String, Value>,
     skills: BTreeMap<String, Value>,
     metadata: BTreeMap<PathBuf, Value>,
     cleanup: BTreeMap<PathBuf, Value>,
     mcps: Value,
+    pure_skill_packages: BTreeMap<String, skill_packages::PureSkills>,
+}
+
+// Classification controls reload eligibility, not whether effective state changed.
+impl PartialEq for Snapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.plugins == other.plugins
+            && self.skills == other.skills
+            && self.metadata == other.metadata
+            && self.cleanup == other.cleanup
+            && self.mcps == other.mcps
+    }
 }
 
 #[derive(Default)]
@@ -136,7 +148,10 @@ impl<'a> ActivationRevision<'a> {
         let after = Snapshot::capture(self.store, &self.paths);
         let skill_only = match (self.before.as_ref(), &after) {
             (Some(Ok(before)), Ok(after)) => {
-                match skill_toggles::only_skill_toggles(self.store, before, after) {
+                match skill_toggles::only_skill_toggles(self.store, before, after).map(|toggles| {
+                    toggles
+                        || skill_packages::only_membership(self.store, before, after, &self.paths)
+                }) {
                     Ok(skill_only) => skill_only,
                     Err(error) => {
                         // Publication already succeeded. An uninspectable selector
@@ -279,6 +294,7 @@ impl Snapshot {
             metadata,
             cleanup,
             mcps: manifest.get("mcps").cloned().unwrap_or_else(|| json!({})),
+            pure_skill_packages: skill_packages::capture(store, paths),
         })
     }
 }

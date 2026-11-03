@@ -33,6 +33,10 @@ vi.hoisted(() => {
   Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' })
 })
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/telemetry/client', async importOriginal => ({
   ...(await importOriginal<typeof import('@/telemetry/client')>()),
   track: telemetryMocks.track,

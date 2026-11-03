@@ -190,6 +190,8 @@ while IFS= read -r line; do
       thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
       if printf '%s' "$line" | grep -q other-turn; then
         other_index=${thread_id#thread-}
+        # This sibling is healthy model work, not another stalled startup.
+        printf '{"method":"item/agentMessage/delta","params":{"threadId":"%s","turnId":"turn-%s","delta":"Other turn is running","phase":"commentary"}}\n' "$thread_id" "$thread_id"
       fi
       if printf '%s' "$line" | grep -q delay-target || { [ "$turn_count" -eq 2 ] && printf '%s' "$line" | grep -q delay-response; }; then
         delayed_id=$request_id

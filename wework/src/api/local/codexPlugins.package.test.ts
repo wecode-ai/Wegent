@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   sha256Hex: vi.fn(),
 }))
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,

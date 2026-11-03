@@ -1,3 +1,4 @@
+import { clearPluginMarketplaceCache } from '@/features/plugins/pluginMarketplaceCache'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
 import {
@@ -7,6 +8,10 @@ import {
 } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -92,6 +97,7 @@ function installRuntime({
 
 describe('installation from a shared catalog item', () => {
   beforeEach(() => {
+    clearPluginMarketplaceCache()
     clearLocalCodexPluginsReadStateCache()
     mocks.request.mockReset()
   })
@@ -212,15 +218,16 @@ describe('installation from a shared catalog item', () => {
   })
 
   test.each([false, true])(
-    'distinguishes full and local-only catalog reads (local first=%s)',
+    'keeps official discovery separate from local catalog reads (local first=%s)',
     async localFirst => {
       installRuntime()
       const api = createLocalCodexPluginApi()
-      const full = { mergeAllMarketplaces: true }
-      const scoped = { ...full, marketplaceKinds: ['local'] as Array<'local'> }
-      await api.readState(localFirst ? scoped : full)
-      const second = await api.readState(localFirst ? full : scoped)
-      expect(second.marketplaceItems.some(item => item.name === 'github')).toBe(localFirst)
+      const localRead = async () =>
+        (await api.readState({ mergeAllMarketplaces: true })).marketplaceItems
+      const remoteRead = async () => (await api.readRemoteCatalog()).items
+      await (localFirst ? localRead() : remoteRead())
+      const second = await (localFirst ? remoteRead() : localRead())
+      expect(second.some(item => item.name === 'github')).toBe(localFirst)
       expect(
         mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
       ).toHaveLength(2)
@@ -243,8 +250,8 @@ describe('installation from a shared catalog item', () => {
       clearLocalCodexPluginsReadStateCache()
       window.localStorage.setItem('wework.plugins.codexCatalog.v1', JSON.stringify(store))
       expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
-      const full = await api.readState({ mergeAllMarketplaces: true })
-      expect(full.marketplaceItems.some(item => item.name === 'github')).toBe(true)
+      const remote = await api.readRemoteCatalog()
+      expect(remote.items.some(item => item.name === 'github')).toBe(true)
       expect(
         mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
       ).toHaveLength(2)

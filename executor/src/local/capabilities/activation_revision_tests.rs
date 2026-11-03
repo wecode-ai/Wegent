@@ -198,7 +198,7 @@ async fn known_plugin_skill_toggles_reload_without_process_invalidation() {
             let mut payload = plugin_payload(&provider, ordered, 1);
             let installed = sync(&handler, payload.clone(), true, true).await;
             assert_eq!(
-                installed["requires_restart"], true,
+                installed["requires_restart"], false,
                 "{context}: {installed}"
             );
 
@@ -1045,3 +1045,6 @@ async fn skill_content_links_and_removal_change_capabilities() {
     sync(&second, payload.clone(), true, true).await;
     sync(&second, payload, true, false).await;
 }
+
+#[path = "activation_revision_membership_tests.rs"]
+mod membership_tests;

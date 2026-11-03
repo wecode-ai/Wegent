@@ -18,6 +18,10 @@ import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
+}))
+
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
