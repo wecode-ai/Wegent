@@ -1625,6 +1625,7 @@ classify_path() {
       ;;
     wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
+      wework/e2e/desktop/fixtures/historical-plugin-revision.py | \
       wework/scripts/plugin-runtime-path-fixture.test.mjs)
       select_target "cloud:plugin-runtime-path-recovery"
       return
