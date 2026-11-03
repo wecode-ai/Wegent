@@ -12,6 +12,7 @@ import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import { installPreparedSource } from '../modules/installed-source-preparation.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   linkBundledRuntimeCache,
@@ -328,6 +329,11 @@ export async function createDesktopScenario(options) {
           { cause: error }
         )
       }
+      if (!options.preparationOnly)
+        await installPreparedSource(
+          join(root, 'slots/source-preparation'),
+          electronUserDataDirectory
+        )
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
     },
     async prepareUserDataLaunch() {
