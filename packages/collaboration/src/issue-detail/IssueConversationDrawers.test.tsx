@@ -31,6 +31,44 @@ describe("IssueConversationDrawers", () => {
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
   });
 
+  it("keeps the Issue open until its exit animation finishes", async () => {
+    const close = vi.fn();
+    let finishAnimation!: () => void;
+    const animation = {
+      playState: "running",
+      finished: new Promise<void>((resolve) => {
+        finishAnimation = resolve;
+      }),
+    };
+    await act(async () =>
+      root.render(
+        <IssueConversationDrawers
+          label="Issue detail"
+          conversation={null}
+          onClose={close}
+          onCloseConversation={vi.fn()}
+        >
+          {(requestClose) => <button onClick={requestClose}>Close</button>}
+        </IssueConversationDrawers>,
+      ),
+    );
+    Element.prototype.getAnimations = vi.fn(
+      () => [animation] as unknown as Animation[],
+    );
+
+    await act(async () => container.querySelector("button")?.click());
+
+    expect(container.querySelector('[data-dismissing="true"]')).not.toBeNull();
+    expect(close).not.toHaveBeenCalled();
+
+    await act(async () => {
+      animation.playState = "finished";
+      finishAnimation();
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("commits a dismiss once when the parent supplies a new onClose on every render", async () => {
     const close = vi.fn();
     const onCloseIdentities = new Set<() => void>();

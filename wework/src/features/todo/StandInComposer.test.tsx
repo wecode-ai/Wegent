@@ -1,3 +1,7 @@
+import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useState } from 'react'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -475,5 +479,22 @@ describe('Stand-in configuration composer', () => {
     expect(screen.getByTestId('goal-draft-pill')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('stand-in-save'))
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ goalMode: true }))
+  })
+  it('opens the marketplace in a separate tab while preserving the stand-in draft', async () => {
+    const openTab = vi.fn()
+    render(
+      <WorkspaceTabsContext.Provider value={{ openTab } as unknown as WorkspaceTabsContextValue}>
+        <Fixture save={vi.fn()} />
+      </WorkspaceTabsContext.Provider>
+    )
+    const editor = screen.getByTestId('stand-in-prompt') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = 'Keep my instructions /'
+      editor.focus()
+    })
+    await userEvent.click(await screen.findByTestId('slash-command-option-plugin-marketplace'))
+    expect(openTab).toHaveBeenCalledWith('auxiliary', { contentRoute: '/plugins' })
+    expect(screen.getByTestId('stand-in-prompt')).toBe(editor)
+    expect(editor.textContent).toContain('Keep my instructions')
   })
 })

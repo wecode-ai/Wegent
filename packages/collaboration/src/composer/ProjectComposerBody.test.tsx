@@ -123,6 +123,62 @@ describe('shared PC composer body', () => {
       target === 'surface' ? button('project-chat-composer-form') : input.current!.element!
     await act(async () => element.dispatchEvent(event))
   }
+
+  it('clears scroll fading after sending a Markdown draft', async () => {
+    let notifyResize = () => {}
+    const observed: Element[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          notifyResize = callback
+        }
+        observe(element: Element) {
+          observed.push(element)
+        }
+        disconnect() {}
+      }
+    )
+    await mount({
+      onSubmit: (value, options) => {
+        submit(value, options)
+        input.current!.setValue('')
+      },
+    })
+    const editor = input.current!.element!
+    const viewport = editor.closest<HTMLElement>('[data-composer-scroll-container]')!
+    expect(observed).toEqual([viewport, editor])
+    let scrollHeight = 400
+    Object.defineProperties(viewport, {
+      clientHeight: { get: () => 100 },
+      scrollHeight: { get: () => scrollHeight },
+    })
+    const markdown = '# Heading\n\n```text\n' + 'test line\n'.repeat(20) + '```'
+    await setValue(markdown)
+    expect(editor.querySelector('pre')).not.toBeNull()
+    viewport.scrollTop = 300
+    viewport.dispatchEvent(new Event('scroll'))
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(true)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('16px')
+
+    await enter()
+    expect(submit).toHaveBeenCalledOnce()
+    expect(editor.textContent).toBe('')
+    expect(editor.querySelector('pre')).toBeNull()
+    scrollHeight = 100
+    viewport.scrollTop = 0
+    notifyResize()
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(false)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('0px')
+
+    await setValue('测试文字 gjpqy')
+    notifyResize()
+    expect(input.current!.element).toBe(editor)
+    expect(viewport.hasAttribute('data-composer-scroll-overflow')).toBe(false)
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-top')).toBe('0px')
+    expect(viewport.style.getPropertyValue('--composer-scroll-fade-bottom')).toBe('0px')
+  })
+
   it('submits the visible ready composer while a model readiness transition suspends', async () => {
     const pending = new Promise<void>(() => {})
     const suspended = vi.fn()

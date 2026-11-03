@@ -47,12 +47,15 @@ test('project entry waits for the board to mount before clicking', async () => {
   }
 
   const opened = openProjectStandIn(control, entry)
-  assert.deepEqual(calls, [['clickWhenEnabled', entry]])
+  assert.deepEqual(calls, [['click', '[data-testid="workspace-tab-select-fixed-board"]']])
+  await Promise.resolve()
+  assert.deepEqual(calls.at(-1), ['clickWhenEnabled', entry])
   assert.equal(clicked, false)
   mountBoard()
   await opened
 
-  assert.deepEqual(calls.slice(0, 2), [
+  assert.deepEqual(calls.slice(0, 3), [
+    ['click', '[data-testid="workspace-tab-select-fixed-board"]'],
     ['clickWhenEnabled', entry],
     ['waitFor', '[data-testid="stand-in-project-select"]'],
   ])
@@ -70,12 +73,17 @@ test('missing project entry remains a checkpoint failure without clicking', asyn
   const control = {
     async command(action, selector) {
       calls.push([action, selector])
+      if (action === 'click' && selector === '[data-testid="workspace-tab-select-fixed-board"]')
+        return
       throw missingEntry
     },
   }
 
   await assert.rejects(openProjectStandIn(control, entry), error => error === missingEntry)
-  assert.deepEqual(calls, [['clickWhenEnabled', entry]])
+  assert.deepEqual(calls, [
+    ['click', '[data-testid="workspace-tab-select-fixed-board"]'],
+    ['clickWhenEnabled', entry],
+  ])
 })
 
 test('notification entry waits for the reloaded shell and category before clicking', async () => {

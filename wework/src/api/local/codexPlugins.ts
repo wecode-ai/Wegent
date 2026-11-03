@@ -236,7 +236,9 @@ export interface PluginIdentityReference {
 }
 
 export function codexMarketplaceManifestSource(source: string): string {
-  return `${normalizeMarketplaceSource(source).replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
+  const normalized = source.trim().replace(/\\/g, '/')
+  if (/\.json$/i.test(normalized)) return normalized
+  return `${normalized.replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
 }
 
 export interface LocalCodexPluginApi {

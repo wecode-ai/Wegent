@@ -11,7 +11,7 @@ pub(super) fn conversation_task_id(user: i64, role: Option<&str>) -> String {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn stand_in_proposal(
+    pub(super) async fn stand_in_proposal(
         &self,
         payload: Value,
         resolve: bool,
@@ -22,6 +22,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if resolve {
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
             let id = payload["proposalId"]
                 .as_str()
                 .ok_or_else(|| AppIpcError::new("bad_request", "proposalId is required"))?;
@@ -66,8 +68,8 @@ impl RuntimeWorkRpcHandler {
             .and_then(|role| role["name"].as_str())
             .filter(|name| !name.is_empty())
             .unwrap_or("我的分身");
-        let instructions = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress; each concrete work item has its own Runtime conversation. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
-        let origin = json!({"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
+        let instructions = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress; each concrete work item has its own Runtime conversation. Use the available Wework capabilities to carry out authorized work. When speaking as the primary stand-in, use list_tasks/read_task before creating or continuing concrete AI work with create_task/continue_task; preserve existing tasks when appropriate. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
+        let origin = json!({"runtimeTaskId":task_id,"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
         let mut config = role
             .cloned()
             .or_else(|| {
@@ -79,29 +81,68 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
         config["handlingPolicy"] = json!({"automatic":false,"askBeforeAct":true});
-        if payload["options"]["modelOptions"].is_object() {
-            config["modelOptions"] = payload["options"]["modelOptions"].clone();
+        config = self.conversation_model(config, &payload["options"]).await?;
+        let mut prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":title,"message":message,"origin":origin,"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"]}),&config).await?;
+        apply_runtime_model_selection(&mut prepared, &payload["options"]);
+        let system = prepared["executionRequest"]["system_prompt"]
+            .as_str()
+            .unwrap_or_default();
+        prepared["executionRequest"]["system_prompt"] =
+            json!(format!("{system}\n\n{instructions}"));
+        let result = if self.local_task_link(&task_id).is_some() {
+            prepared["queueIfBusy"] = json!(true);
+            self.send_message(prepared).await?
+        } else {
+            self.create_task(prepared).await?
+        };
+        if result["success"] == false {
+            return Err(AppIpcError::new(
+                "stand_in_start_failed",
+                result["error"]
+                    .as_str()
+                    .unwrap_or("Conversation was not accepted"),
+            ));
         }
-        if let Some(model_id) = payload["options"]["modelId"].as_str() {
+        Ok(self.identity_conversation_address(&task_id))
+    }
+    pub(super) fn identity_conversation_address(&self, task_id: &str) -> Value {
+        let mut address = json!({"deviceId":self.device_id,"taskId":task_id});
+        if let Some(link) = self.local_task_link(task_id) {
+            address["runtime"] = json!(link.runtime);
+            address["workspacePath"] = json!(link.workspace_path);
+            address["runtimeHandle"] = json!({"threadId":link.thread_id,"modelSelection":link.runtime_handle.get("modelSelection").or_else(||link.runtime_handle.get("model_selection"))});
+        }
+        address
+    }
+
+    pub(super) async fn conversation_model(
+        &self,
+        mut config: Value,
+        options: &Value,
+    ) -> Result<Value, AppIpcError> {
+        if options["modelOptions"].is_object() {
+            config["modelOptions"] = options["modelOptions"].clone();
+        }
+        if let Some(model_id) = options["modelId"].as_str() {
             if matches!(
-                payload["options"]["modelType"].as_str(),
+                options["modelType"].as_str(),
                 Some("public" | "user" | "group")
             ) {
-                let namespace = payload["options"]["modelOptions"]["weworkCloudModelNamespace"]
+                let namespace = options["modelOptions"]["weworkCloudModelNamespace"]
                     .as_str()
                     .ok_or_else(|| {
                         AppIpcError::new("model_unavailable", "Cloud model namespace is required")
                     })?;
-                let owner = payload["options"]["modelOptions"]["weworkCloudModelResourceUserId"]
+                let owner = options["modelOptions"]["weworkCloudModelResourceUserId"]
                     .as_str()
                     .and_then(|id| id.parse::<u64>().ok())
                     .ok_or_else(|| {
                         AppIpcError::new("model_unavailable", "Cloud model owner is required")
                     })?;
-                config["model"] = json!({"runtime":"codex","provider":"cloud_gateway","model_id":model_id,"source":"cloud","cloud_model":{"name":model_id,"type":payload["options"]["modelType"],"namespace":namespace,"resource_user_id":owner}});
+                config["model"] = json!({"runtime":"codex","provider":"cloud_gateway","model_id":model_id,"source":"cloud","cloud_model":{"name":model_id,"type":options["modelType"],"namespace":namespace,"resource_user_id":owner}});
             } else {
                 let catalog = self.runner_catalog().await?;
-                let provider = payload["options"]["modelOptions"]["codexProviderId"].as_str();
+                let provider = options["modelOptions"]["codexProviderId"].as_str();
                 let models = catalog["models"]
                     .as_array()
                     .into_iter()
@@ -122,35 +163,54 @@ impl RuntimeWorkRpcHandler {
                 config["model"] = models[0].clone();
             }
         }
-        let mut prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":title,"message":message,"origin":origin,"attachments":payload["options"]["attachments"],"clientUserMessageId":payload["options"]["clientUserMessageId"]}),&config).await?;
-        if payload["options"]["modelType"] == "runtime" && payload["options"]["modelId"].is_string()
-        {
-            // Identity chats start from the desktop model selector, just like their follow-ups.
-            // Runner catalog identities alone intentionally use the direct provider path.
-            prepared["executionRequest"]["model_config"]["runtime_config"] =
-                json!({"codex":{"use_user_config":true,"configured":true}});
-            prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
-            prepared["modelSelection"] = json!({"modelName":payload["options"]["modelId"],"modelType":"runtime","options":payload["options"]["modelOptions"]});
-        }
-        let system = prepared["executionRequest"]["system_prompt"]
-            .as_str()
-            .unwrap_or_default();
-        prepared["executionRequest"]["system_prompt"] =
-            json!(format!("{system}\n\n{instructions}"));
-        let result = if self.local_task_link(&task_id).is_some() {
-            prepared["queueIfBusy"] = json!(true);
-            self.send_message(prepared).await?
-        } else {
-            self.create_task(prepared).await?
-        };
-        if result["success"] == false {
-            return Err(AppIpcError::new(
-                "stand_in_start_failed",
-                result["error"]
-                    .as_str()
-                    .unwrap_or("Conversation was not accepted"),
-            ));
-        }
-        Ok(json!({"deviceId":self.device_id,"taskId":task_id}))
+        Ok(config)
+    }
+}
+
+pub(super) fn apply_runtime_model_selection(prepared: &mut Value, options: &Value) {
+    if !options["modelId"].is_string() {
+        return;
+    }
+    prepared["modelSelection"] = json!({"modelName":options["modelId"],"modelType":options["modelType"].as_str().unwrap_or("public"),"options":options["modelOptions"]});
+    if options["modelType"] == "runtime" {
+        // Runtime selectors use the current desktop catalog configuration.
+        prepared["executionRequest"]["model_config"]["runtime_config"] =
+            json!({"codex":{"use_user_config":true,"configured":true}});
+        prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
+    }
+}
+
+#[cfg(test)]
+mod model_selection_tests {
+    use super::*;
+
+    #[test]
+    fn identity_conversation_addresses_keep_selection_without_execution_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        let mut link = RuntimeTaskLink::new_pending("chat".into(), "/work".into(), "Chat".into());
+        let selection = json!({"modelName":"luna","modelType":"public","options":{}});
+        link.runtime_handle = json!({"modelSelection":selection,"executionRequest":{"model_config":{"api_key":"SYNTHETIC_SECRET"}}});
+        handler.store.upsert_task(link);
+        let address = handler.identity_conversation_address("chat");
+        assert_eq!(address["runtimeHandle"]["modelSelection"], selection);
+        assert!(!address.to_string().contains("SYNTHETIC_SECRET"));
+        assert!(address["runtimeHandle"]["executionRequest"].is_null());
+    }
+
+    #[test]
+    fn identity_chats_keep_cloud_model_selection_without_replacing_gateway_config() {
+        let config = json!({"model_id":"luna","model_provider":"cloud_gateway"});
+        let mut prepared = json!({"executionRequest":{"model_config":config}});
+        let options = json!({"modelId":"cloud-luna","modelType":"public","modelOptions":{"weworkCloudModelNamespace":"default","weworkCloudModelResourceUserId":"1"}});
+        apply_runtime_model_selection(&mut prepared, &options);
+        assert_eq!(prepared["modelSelection"]["modelName"], "cloud-luna");
+        assert_eq!(prepared["modelSelection"]["modelType"], "public");
+        assert_eq!(
+            prepared["modelSelection"]["options"],
+            options["modelOptions"]
+        );
+        assert_eq!(prepared["executionRequest"]["model_config"], config);
     }
 }

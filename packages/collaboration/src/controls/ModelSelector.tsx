@@ -55,6 +55,7 @@ import {
   selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
+import { useEscapeKey } from "../markdown/useEscapeKey";
 
 const MAIN_MENU_WIDTH = 320;
 const MAIN_MENU_TRIGGER_GAP = 8;
@@ -314,16 +315,7 @@ export function ModelSelector({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [closeMenu, isMobile, open]);
 
-  useEffect(() => {
-    if (!open || isMobile) return;
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeMenu();
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeMenu, isMobile, open]);
+  useEscapeKey(closeMenu, open && !isMobile, desktopMenuWrapperRef);
 
   const emptyModelLabel = t("workbench.no_models", "No models available");
   const selectedModelLabel = selectedModel

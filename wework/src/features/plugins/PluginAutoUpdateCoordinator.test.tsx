@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => {
     notifyLocalPluginSkillsChanged: vi.fn(),
     track: vi.fn(),
     runtimeConnected: true,
+    routeId: 'device-1',
+    requestLocalExecutor: vi.fn(),
     token: 'cloud-token',
     httpOptions: null as { signal?: AbortSignal } | null,
   }
@@ -74,6 +76,10 @@ vi.mock('@/api/local/codexPlugins', () => ({
   }),
 }))
 
+vi.mock('@/desktop/localExecutor', () => ({
+  requestLocalExecutor: mocks.requestLocalExecutor,
+}))
+
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn(options => {
     mocks.httpOptions = options
@@ -108,6 +114,12 @@ describe('PluginAutoUpdateCoordinator', () => {
     vi.clearAllMocks()
     mocks.handlers.clear()
     mocks.runtimeConnected = true
+    mocks.routeId = 'device-1'
+    mocks.listMarketplacePlugins.mockResolvedValue({ items: [] })
+    mocks.requestLocalExecutor.mockImplementation(async (_method, params) => ({
+      device_id: params.device_id,
+      device_route_id: mocks.routeId,
+    }))
     mocks.token = 'cloud-token'
     clearPluginDeviceAutoSyncAttempts()
     mocks.autoUpdateInstalledPlugins.mockResolvedValue({
@@ -157,6 +169,51 @@ describe('PluginAutoUpdateCoordinator', () => {
         results: [],
       },
     })
+  })
+
+  test('uses the registered route for background release sync and discovery', async () => {
+    mocks.routeId = 'app-record-73'
+    render(<PluginAutoUpdateCoordinator />)
+
+    await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
+    expect(mocks.listMarketplacePlugins).toHaveBeenCalledWith({ deviceId: mocks.routeId })
+    expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledWith(1, mocks.routeId)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.device_route', {
+      backend_url: 'https://cloud.example.com',
+      auth_token: 'cloud-token',
+      device_id: 'device-1',
+    })
+    expect(mocks.syncInstalledPluginsToDevice).not.toHaveBeenCalled()
+    expect(hasInFlightPluginDeviceSync('device-1')).toBe(false)
+  })
+
+  test('queries confirmed membership on the registered route without a redundant full sync', async () => {
+    mocks.routeId = 'app-record-73'
+    mocks.autoUpdateInstalledPlugins.mockResolvedValue({
+      updated: [],
+      updatedCount: 0,
+      remainingCount: 0,
+    })
+    mocks.listMarketplacePlugins.mockImplementation(async ({ deviceId }) => ({
+      items: [
+        {
+          installed: true,
+          installedLocally: deviceId === mocks.routeId,
+          installedPluginId: 1,
+          currentDeviceInstallation:
+            deviceId === mocks.routeId
+              ? { deviceId, state: 'installed', actualReleaseId: 4, desiredReleaseId: 4 }
+              : null,
+        },
+      ],
+    }))
+    render(<PluginAutoUpdateCoordinator />)
+
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
+    await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
+    expect(mocks.listMarketplacePlugins).toHaveBeenCalledWith({ deviceId: mocks.routeId })
+    expect(mocks.syncInstalledPluginsToDevice).not.toHaveBeenCalled()
+    expect(mocks.syncInstalledPluginToDevice).not.toHaveBeenCalled()
   })
 
   test('retains a release notification while a policy save holds the shared device lock', async () => {
@@ -463,7 +520,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
     expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
-    expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledWith('device-1')
+    expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledWith('device-1', false)
     expect(mocks.track).toHaveBeenCalledWith('operation_failed', {
       operation: 'plugin_auto_update',
     })

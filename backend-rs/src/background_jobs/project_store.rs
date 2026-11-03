@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::plugins_marketplace::query::PluginQuery;
 use brz_mysql::{
     FromMysqlRow, Json, Mysql, MysqlResult, MysqlTransaction, MysqlValue, MysqlValueWriter,
 };
@@ -77,7 +78,16 @@ pub(crate) fn iso(now: NaiveDateTime) -> String {
 }
 
 pub(crate) async fn get(mysql: &impl Mysql, kind: &str, id: &str) -> MysqlResult<Option<Node>> {
-    mysql
+    let mut query = mysql;
+    get_on(&mut query, kind, id).await
+}
+
+pub(crate) async fn get_on(
+    query: &mut impl PluginQuery,
+    kind: &str,
+    id: &str,
+) -> MysqlResult<Option<Node>> {
+    query
         .fetch_optional(
             format!("SELECT {COLUMNS} FROM loop_items WHERE id=? AND resource_type=?"),
             (id, kind),

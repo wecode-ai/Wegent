@@ -189,6 +189,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
+        let _guard = gate.lock().await;
         store
             .save_stand_in_settings(&project, user_id, settings)
             .map_err(settings_error)
@@ -684,7 +686,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        payload: Value,
+        mut payload: Value,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] == "cloud" {
             self.verify_stand_in_user(config).await?;
@@ -745,6 +747,14 @@ impl RuntimeWorkRpcHandler {
             "task_binding_created",
             json!({"taskId":task_id,"retry":retry}),
         );
+        if config["manual"] != true {
+            use sha2::{Digest, Sha256};
+            payload["automaticStandIn"] = json!(true);
+            payload["commandId"] = json!(format!(
+                "stand-in-initial:{:x}",
+                Sha256::digest(task_id.as_bytes())
+            ));
+        }
         let result = self.dispatch_stand_in_task(payload, retry).await;
         if let Err(error) = result {
             let cleanup = if local {
@@ -779,7 +789,7 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
-    async fn start_local_stand_in(
+    pub(super) async fn start_local_stand_in(
         &self,
         config: &Value,
         issue: &Value,
@@ -855,7 +865,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn prepare_stand_in_execution(
         &self,
-        mut payload: Value,
+        payload: Value,
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let agent = self.stand_in_agent(config).await?.or_else(|| {
@@ -865,6 +875,16 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         });
+        self.prepare_stand_in_execution_with_agent(payload, config, agent)
+            .await
+    }
+
+    pub(super) async fn prepare_stand_in_execution_with_agent(
+        &self,
+        mut payload: Value,
+        config: &Value,
+        agent: Option<Value>,
+    ) -> Result<Value, AppIpcError> {
         if let Some(agent) = agent {
             let catalog = self.runner_catalog().await?;
             apply_stand_in_agent(
@@ -922,7 +942,7 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
+pub(super) fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
     let parse = |value: &Value| {
         value
             .as_str()

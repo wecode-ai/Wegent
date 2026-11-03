@@ -145,7 +145,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-
+import { captureFailureFollowup } from './failure-followup.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -4769,6 +4769,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )}\n`,
       'utf8'
     )
+    try {
+      // Record whether the observed state settled after the step timeout so
+      // slow asynchronous updates are distinguishable from stuck states.
+      await captureFailureFollowup(control, resultDir)
+    } catch {
+      // The follow-up is best-effort evidence; never mask the original failure.
+    }
     throw error
   } finally {
     const teardownFailures = []

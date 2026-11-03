@@ -105,3 +105,23 @@ describe('BranchSelector AI generation', () => {
     expect(onGenerateBranchName).not.toHaveBeenCalled()
   })
 })
+
+describe('BranchSelector checkout', () => {
+  test('retains the menu and error when checking out the cached current branch fails', async () => {
+    const onCheckoutBranch = vi.fn().mockRejectedValue(new Error('Git checkout rejected'))
+    render(
+      <BranchSelector
+        variant="workbar"
+        currentBranch="main"
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-branch-button'))
+    fireEvent.click(await screen.findByTestId('project-branch-option'))
+
+    expect(await screen.findByText('Git checkout rejected')).toBeInTheDocument()
+    expect(screen.getByTestId('project-branch-menu')).toBeInTheDocument()
+  })
+})

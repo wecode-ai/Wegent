@@ -159,6 +159,8 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         task.runtime_handle["collaborationMemberRuntimeProfiles"] = serde_json::json!([{
             "runtimePayload": {"executionRequest": {"model_config": {"api_key": "memory-only"}}}
         }]);
+        task.runtime_handle["collaborationCoordinatorIdentity"] =
+            serde_json::json!({"authToken":"memory-only-coordinator-token"});
     });
     peer_store.update_task("owner-task", |task| {
         task.title = "Updated owner task".to_owned();
@@ -187,6 +189,10 @@ fn shared_index_reload_preserves_process_local_execution_state() {
     );
     assert_eq!(owner_task.runtime_handle["queuePosition"], Value::from(2));
     assert_eq!(
+        owner_task.runtime_handle["collaborationCoordinatorIdentity"]["authToken"],
+        "memory-only-coordinator-token"
+    );
+    assert_eq!(
         owner_task.runtime_handle["lastError"],
         Value::from("temporary error")
     );
@@ -209,6 +215,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
     assert!(!persisted_owner.contains_key("running"));
     assert!(persisted_owner["runtime_handle"]
         .get("collaborationMemberRuntimeProfiles")
+        .is_none());
+    assert!(persisted_owner["runtime_handle"]
+        .get("collaborationCoordinatorIdentity")
         .is_none());
     assert!(!persisted_owner.contains_key("status"));
     assert!(!persisted_owner.contains_key("thread_status"));
