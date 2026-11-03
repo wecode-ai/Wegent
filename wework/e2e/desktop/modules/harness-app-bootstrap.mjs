@@ -247,7 +247,7 @@ async function verifyLegacyAppLaunch(
   assert.equal(legacy?.state, 'running')
   assert.equal(legacy.error, null)
   assert.equal(legacy.runtimeVersion, '0.1.0-rc.8')
-  assert.match(legacy.webUrl, /^http:\/\/127\.0\.0\.1:\d+\//)
+  assert.match(legacy.webUrl, /^http:\/\/127\.0\.0\.1:\d+\/?$/)
   const page = await fetch(legacy.webUrl)
   assert.equal(page.status, 200)
   assert.match(await page.text(), /<html[\s>]/i, 'The legacy app did not serve its application')
