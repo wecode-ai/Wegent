@@ -19,6 +19,8 @@ import {
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = name => `${CONTENT} [data-testid="${name}"]`
+const PICKER = `${selector('collaboration-project-create-dialog')} [data-testid="collaboration-template-dialog"]`
+const pickerSelector = name => `${PICKER} [data-testid="${name}"]`
 
 export function createDesktopScenario({
   captureScreenshot,
@@ -241,10 +243,15 @@ export function createDesktopScenario({
         value: copiedName,
       })
       await control.command('click', selector('project-create-choose-template'))
-      await control.command('click', selector('template-tab-mine'))
-      await control.command('waitFor', selector(`template-details-${unavailableTemplateId}`))
-      await control.command('click', selector(`template-details-${unavailableTemplateId}`))
-      await control.command('click', selector('template-use'))
+      await control.command('click', pickerSelector('template-tab-mine'))
+      await control.command('waitFor', pickerSelector(`template-details-${unavailableTemplateId}`))
+      await control.command('click', pickerSelector(`template-details-${unavailableTemplateId}`))
+      await control.command('waitFor', pickerSelector('template-use'))
+      await control.command('click', pickerSelector('template-use'))
+      await control.command('waitFor', PICKER, { visible: false })
+      await control.command('waitFor', selector('project-create-template-section'), {
+        text: `待配置模型模板-${process.pid}`,
+      })
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
       assert.equal(
         catalog.models.some(model => model.runtime === 'claude_code' && model.is_default),
@@ -271,13 +278,21 @@ export function createDesktopScenario({
         CONTENT
       )
       await control.command('click', selector('project-create-choose-template'))
-      await control.command('click', selector('template-tab-mine'))
+      await control.command('click', pickerSelector('template-tab-mine'))
       await control.command(
         'waitFor',
-        selector(card.replace('template-card-', 'template-details-'))
+        pickerSelector(card.replace('template-card-', 'template-details-'))
       )
-      await control.command('click', selector(card.replace('template-card-', 'template-details-')))
-      await control.command('click', selector('template-use'))
+      await control.command(
+        'click',
+        pickerSelector(card.replace('template-card-', 'template-details-'))
+      )
+      await control.command('waitFor', pickerSelector('template-use'))
+      await control.command('click', pickerSelector('template-use'))
+      await control.command('waitFor', PICKER, { visible: false })
+      await control.command('waitFor', selector('project-create-template-section'), {
+        text: savedName,
+      })
       assert.equal(
         await control.command('getValue', selector('collaboration-project-name-input')),
         copiedName

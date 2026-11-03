@@ -243,7 +243,27 @@ export async function verifyStartupSplashProgress({
     snapshot =>
       snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
   )
-  assert.ok(slow.capturedAt < timeoutObservation.capturedAt)
+  const observationTiming = snapshot => ({
+    stage: snapshot.progress?.stage.id,
+    step: snapshot.stepCount,
+    startedAt: snapshot.progress?.startedAt,
+    capturedAt: snapshot.capturedAt,
+    slowHidden: snapshot.slowHidden,
+    timeoutHidden: snapshot.timeoutHidden,
+  })
+  const timingEvidence = {
+    slow: observationTiming(slow),
+    timeout: observationTiming(timeoutObservation),
+    observations: timeout.observations.map(observationTiming),
+  }
+  await writeFile(
+    join(root, 'timeout-observations.json'),
+    `${JSON.stringify(timingEvidence, null, 2)}\n`
+  )
+  assert.ok(
+    slow.capturedAt < timeoutObservation.capturedAt,
+    `Startup slow/timeout observations are out of order: ${JSON.stringify(timingEvidence)}`
+  )
   assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)
   assert.equal(timeout.recoveryHidden, true)
   assert.match(timeout.timeoutTitle, /首次启动可能较慢|First startup can take longer/)

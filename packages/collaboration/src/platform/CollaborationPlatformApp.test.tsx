@@ -3945,6 +3945,79 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("preflights the template chosen inside the project dialog instead of the background library", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    const templateStore = new CollaborationTemplateStore({
+      scope: "switch-template",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    const document = structuredClone(
+      builtinCollaborationTemplates()[0].document,
+    );
+    document.metadata = { name: "missing-default", namespace: "default" };
+    document.spec.displayName = "尚未配置模型的模板";
+    document.spec.resources.collaboration.agents![0].runtime = "claude_code";
+    await templateStore.save(document, 7);
+    const resolveTemplateAgentRouting = vi.fn(
+      async (runtime: "codex" | "claude_code") => {
+        if (runtime === "claude_code")
+          throw new Error("template_model_default_unavailable");
+        return {
+          executionPolicy: {
+            mode: "fixed" as const,
+            environment_id: environment.id,
+          },
+          modelPolicy: {
+            mode: "fixed" as const,
+            model: {
+              runtime,
+              provider: "openai",
+              model_id: "default",
+              source: "native" as const,
+            },
+          },
+        };
+      },
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectAgentConfiguration={{ resolveTemplateAgentRouting }}
+        start={{ ...initialLocation, rootView: "templates" }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("project-create-choose-template"));
+    const dialog = byTestId("collaboration-project-create-dialog");
+    const mine = dialog.querySelector('[data-testid="template-tab-mine"]')!;
+    expect(
+      container.querySelectorAll('[data-testid="template-tab-mine"]').length,
+    ).toBe(2);
+    expect(byTestId("template-tab-mine")).not.toBe(mine);
+    await click(mine);
+    await click(
+      dialog.querySelector('[data-testid="template-details-missing-default"]')!,
+    );
+    await click(dialog.querySelector('[data-testid="template-use"]')!);
+    expect(byTestId("project-create-template-section").textContent).toContain(
+      document.spec.displayName,
+    );
+    expect(
+      dialog.querySelector('[data-testid="collaboration-template-dialog"]'),
+    ).toBeNull();
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(resolveTemplateAgentRouting).toHaveBeenCalledWith(
+      "claude_code",
+      "cloud",
+      undefined,
+    );
+    expect(api.projects.create).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("请先为当前执行环境设置默认模型");
+  });
+
   it("locks template selection after a project has been partially configured", async () => {
     const { api } = createApi({ initialProjects: [] });
     api.automations!.list = vi
