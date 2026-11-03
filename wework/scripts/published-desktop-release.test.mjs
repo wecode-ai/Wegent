@@ -155,7 +155,7 @@ test('upgrade runner fails before any build when its producer artifact is missin
         [
           fileURLToPath(new URL('../e2e/desktop/run-checkpoints.mjs', import.meta.url)),
           '--segment',
-          'app-upgrade',
+          'app-rollback',
         ],
         { env: environment, timeout: 10_000 }
       ),

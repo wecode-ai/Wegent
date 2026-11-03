@@ -155,7 +155,7 @@ async function verifyChannel(catalogs, targetChannel) {
 }
 
 async function downloadSource(source, targetChannel) {
-  return downloadPublishedDesktopRelease({
+  const downloaded = await downloadPublishedDesktopRelease({
     repository,
     version: source.version,
     platform,
@@ -163,6 +163,7 @@ async function downloadSource(source, targetChannel) {
     directory: join(temporary, `${targetChannel}-${source.version}`),
     expected: source,
   })
+  return { ...downloaded, runtimeCache: join(temporary, 'installed-runtimes', source.sha256) }
 }
 
 async function verifySource(source, targetChannel, previous) {

@@ -35,7 +35,6 @@ on:
         type: choice
         options:
           - all
-          - app-upgrade
           - app-rollback
           - app-rollback-recovery
           - app-upgrade-recovery

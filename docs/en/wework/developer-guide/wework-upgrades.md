@@ -154,9 +154,13 @@ Suite v10 retains downloaded historical entry points without rebuilding them. Be
 
 Suite v11 removes `app-update-full`, which duplicated the `app-upgrade` scenario. Delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions remain in the shared scenario executed by all four upgrade/rollback checkpoints. Serial verification rejects a source pair immediately after any checkpoint fails, preserving diagnostics and continuing other policy-required sources. Failed pairs never produce upgrade edges.
 
+Suite v13 folds healthy upgrade and the unstarted-source transaction into `app-rollback`, retaining upgrade, task continuation, manual rollback, and every existing assertion. It removes the duplicate `app-upgrade` prefix. `app-upgrade-recovery` and `app-rollback-recovery` independently exercise real failures. Preparation of a later installed package runs only for the unstarted transaction that consumes it.
+
 Physical host and runtime extraction share an isolated child process. Windows uses `%SystemRoot%/System32/tar.exe`; other platforms use locked `node-tar`. Package size, SHA-256, runtime identity, and signing checks remain independent. Source retention, pruning, download, host extraction, signature verification, and target preparation each record their elapsed time; total preparation time must not be reported as extraction time.
 
 Installed-source prerequisites reuse the shared runner's runtime installer. It verifies size and SHA-256 from the original package, installs immutable cache content, and then invokes the source's shipped entry to prepare components and mutable profiles. Cache installation counts toward verification time. Historical packages, signatures, and entry points remain intact, and targets receive no warmed cache. Core/Workbench roles sharing a fingerprint extract once while validating both role identities.
+
+Formal pair verification reuses runtime files by source-package SHA-256 within the current job's temporary directory. Checkpoints link those files while retaining their own catalogs and mutable profiles. Every use still validates bundled archive size, SHA-256, and role identity. Incomplete or invalid caches fail without extraction retries. Checkpoint cleanup leaves shared content intact; job cleanup removes it, with cleanup time included in total verification.
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 

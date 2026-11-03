@@ -13,7 +13,10 @@ import { waitForUpdatePreparation } from '../modules/update-preparation-progress
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
-import { prepareBundledRuntimeCache } from '../modules/bundled-runtime-cache.mjs'
+import {
+  linkBundledRuntimeCache,
+  prepareBundledRuntimeCache,
+} from '../modules/bundled-runtime-cache.mjs'
 import {
   assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
@@ -77,7 +80,7 @@ export async function createDesktopScenario(options) {
   assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
   const verifiesUnstartedActivation =
     usesDefaultUserData &&
-    checkpoint === 'app-upgrade' &&
+    checkpoint === 'app-rollback' &&
     (pair.kind === 'regression' || Boolean(pair.from.installedSource))
   let legacyDataDirectory
   assert.equal(pair.schemaVersion, 1)
@@ -267,7 +270,10 @@ export async function createDesktopScenario(options) {
       // components and mutable profile state. The update target stays cold.
       const cacheStarted = performance.now()
       console.log(`[upgrade-e2e] Installing the delivered source runtime ${pair.from.version}`)
-      await prepareBundledRuntimeCache(resources, sourceRuntimeRoot)
+      const runtimeCache =
+        pair.from.runtimeCache || join(resultDir, 'installed-runtimes', pair.from.sha256)
+      await prepareBundledRuntimeCache(resources, runtimeCache)
+      await linkBundledRuntimeCache(runtimeCache, sourceRuntimeRoot)
       console.log(
         `[upgrade-e2e] Source runtime installed: durationMs=${Math.round(performance.now() - cacheStarted)}`
       )

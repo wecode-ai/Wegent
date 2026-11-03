@@ -4,7 +4,10 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { prepareBundledRuntimeCache } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
+import {
+  linkBundledRuntimeCache,
+  prepareBundledRuntimeCache,
+} from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import { hashReleaseAsset } from './lib/portable-desktop-release.mjs'
 
 async function fixture(t) {
@@ -34,7 +37,7 @@ async function fixture(t) {
   const runtimes = ['core', 'workbench'].map(role => ({ ...descriptor, role }))
   const save = () => writeFile(join(bundled, 'runtimes.json'), JSON.stringify({ runtimes }))
   await save()
-  return { resources, cache, archive, runtimes, save }
+  return { root, resources, cache, archive, runtimes, save }
 }
 
 test('installs the exact bundled runtime for both roles without changing package bytes', async t => {
@@ -74,4 +77,49 @@ test('validates each role even when its archive was already extracted for the ot
   runtimes[1].dshVersion = '2.0.0'
   await save()
   await assert.rejects(prepareBundledRuntimeCache(resources, cache))
+})
+
+test('reuses immutable files across checkpoints while keeping catalogs and cleanup isolated', async t => {
+  const { root, resources, cache, runtimes } = await fixture(t)
+  await prepareBundledRuntimeCache(resources, cache)
+  const file = join(cache, runtimes[0].sourceFingerprint, 'module.js')
+  const original = await stat(file)
+  const first = join(root, 'checkpoint-one')
+  await linkBundledRuntimeCache(cache, first)
+  await writeFile(join(first, 'runtimes.json'), JSON.stringify({ runtimes: [] }))
+  await rm(first, { recursive: true, force: true })
+
+  await prepareBundledRuntimeCache(resources, cache)
+  const second = join(root, 'checkpoint-two')
+  await linkBundledRuntimeCache(cache, second)
+
+  assert.equal((await stat(file)).ctimeMs, original.ctimeMs)
+  assert.equal(
+    await readFile(join(second, runtimes[0].sourceFingerprint, 'module.js'), 'utf8'),
+    'export const value = 42\n'
+  )
+  assert.deepEqual(
+    JSON.parse(await readFile(join(second, 'runtimes.json'), 'utf8')).runtimes,
+    runtimes
+  )
+})
+
+test('a warmed cache does not bypass verification of the delivered archive', async t => {
+  const { resources, cache, archive } = await fixture(t)
+  await prepareBundledRuntimeCache(resources, cache)
+  const bytes = await readFile(archive)
+  bytes[bytes.length - 1] ^= 1
+  await writeFile(archive, bytes)
+  await assert.rejects(prepareBundledRuntimeCache(resources, cache))
+})
+
+test('an incomplete installation fails without retrying extraction or deleting diagnostics', async t => {
+  const { resources, cache } = await fixture(t)
+  await mkdir(cache)
+  await writeFile(join(cache, 'partial-result'), 'failed producer')
+  await assert.rejects(
+    prepareBundledRuntimeCache(resources, cache),
+    /previous runtime installation failed/
+  )
+  assert.equal(await readFile(join(cache, 'partial-result'), 'utf8'), 'failed producer')
 })

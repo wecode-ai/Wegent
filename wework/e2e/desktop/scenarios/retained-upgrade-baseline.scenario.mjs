@@ -11,7 +11,7 @@ export async function createDesktopScenario(options) {
   // A retained later installation reproduces the delivered source's pending
   // activation without fabricating component state or changing program bytes.
   if (pair.kind !== 'regression' && !pair.from.installedSource) return scenario
-  if (pair.from.installedSource) {
+  if (pair.from.installedSource && options.checkpoint === 'app-rollback') {
     const prepareSource = scenario.prepareApp
     scenario.prepareApp = async preparation => {
       if (pair.transport === 'default-update-route') await prepareSource(preparation)

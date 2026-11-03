@@ -129,11 +129,11 @@ test("selects a matching immutable published target only for a replay", () => {
 
 test("a focused diagnostic is limited to a non-publishing replay", () => {
   const value = fixture();
-  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  value.environment.VERIFICATION_CHECKPOINT = "app-rollback";
   assert.equal(
     resolveUpgradeInputs(value.environment, value.execute)
       .diagnostic_checkpoint,
-    "app-upgrade",
+    "app-rollback",
   );
   value.environment.REPLAY = "false";
   assert.throws(
@@ -146,7 +146,7 @@ test("a focused diagnostic is limited to a non-publishing replay", () => {
     () => resolveUpgradeInputs(value.environment, value.execute),
     /requires an existing build replay/,
   );
-  value.environment.VERIFICATION_CHECKPOINT = "app-upgrade";
+  value.environment.VERIFICATION_CHECKPOINT = "app-rollback";
   value.environment.PUBLISH_RELEASE = "true";
   assert.throws(
     () => resolveUpgradeInputs(value.environment, value.execute),
