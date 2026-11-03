@@ -33,10 +33,21 @@ const line = (event: Record<string, unknown>) =>
     .replaceAll('"', "'")
     .replaceAll(/'([a-zA-Z]+)':/g, '$1: ')}\n`
 
+const rendererProgress = {
+  stage: {
+    id: 'renderer',
+    label: { en: 'Loading tasks and projects', zh: '加载任务与项目' },
+  },
+  index: 8,
+  total: 9,
+  startedAt: 100,
+}
+const rendererStep = 'Step 9 of 9 · Loading tasks and projects'
+
 test('slow evidence uses real observations from the same renderer stage before timeout', () => {
   const slow = {
-    progress: { stage: { id: 'renderer' }, startedAt: 100 },
-    stepCount: 'Step 9 of 9',
+    progress: rendererProgress,
+    stepCount: rendererStep,
     slowHidden: false,
     timeoutHidden: true,
     capturedAt: 200,
@@ -47,7 +58,7 @@ test('slow evidence uses real observations from the same renderer stage before t
   assert.equal(
     startupSlowObservation({
       ...current,
-      observations: [{ ...slow, progress: { stage: { id: 'renderer' }, startedAt: 1 } }],
+      observations: [{ ...slow, progress: { ...rendererProgress, startedAt: 1 } }],
     }),
     undefined
   )
@@ -65,16 +76,15 @@ test('slow evidence uses real observations from the same renderer stage before t
 })
 
 test('timeout evidence excludes the previous stage while its DOM update is in flight', () => {
-  const progress = { stage: { id: 'renderer' }, startedAt: 100 }
   const previous = {
-    progress,
+    progress: rendererProgress,
     stepCount: 'Step 8 of 9',
     timeoutHidden: false,
     capturedAt: 150,
   }
   const slow = {
     ...previous,
-    stepCount: 'Step 9 of 9',
+    stepCount: rendererStep,
     timeoutHidden: true,
     capturedAt: 200,
   }
@@ -86,6 +96,28 @@ test('timeout evidence excludes the previous stage while its DOM update is in fl
     timeout
   )
 })
+
+test.each([rendererStep, '第 9 步，共 9 步 · 加载任务与项目'])(
+  'matches progress instead of stale live DOM for %s',
+  stepCount => {
+    const previous = {
+      progress: rendererProgress,
+      stepCount: 'Step 8 of 9 · Starting the local service',
+      slowHidden: false,
+      timeoutHidden: true,
+    }
+    const oldTimeout = { ...previous, slowHidden: true, timeoutHidden: false }
+    const current = { ...previous, observations: [previous, oldTimeout] }
+    assert.equal(startupSlowObservation(current), undefined)
+    assert.equal(startupTimeoutObservation(current), undefined)
+
+    const slow = { ...previous, stepCount }
+    const timeout = { ...oldTimeout, stepCount }
+    const loaded = { ...current, observations: [previous, oldTimeout, slow, timeout] }
+    assert.equal(startupSlowObservation(loaded), slow)
+    assert.equal(startupTimeoutObservation(loaded), timeout)
+  }
+)
 
 test('startup evidence collapses adjacent repeated stages and rejects regressions', () => {
   const events = stages.flatMap(stage => [progress(stage), progress(stage)])

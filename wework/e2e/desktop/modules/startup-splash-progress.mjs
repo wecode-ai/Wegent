@@ -102,26 +102,29 @@ async function waitForSplash(control, predicate, description) {
   assert.fail(`${description}: ${JSON.stringify(state)}`)
 }
 
-export function startupSlowObservation(state) {
+function rendererStageObservation(state, accept) {
+  // Host progress can advance before the splash applies the renderer update.
+  const progress = state.progress
+  if (progress?.stage.id !== 'renderer') return undefined
+  const steps = [
+    `Step ${progress.index + 1} of ${progress.total} · ${progress.stage.label.en}`,
+    `第 ${progress.index + 1} 步，共 ${progress.total} 步 · ${progress.stage.label.zh}`,
+  ]
   return state.observations?.find(
     snapshot =>
       snapshot.progress?.stage.id === 'renderer' &&
-      snapshot.progress.startedAt === state.progress?.startedAt &&
-      snapshot.stepCount === state.stepCount &&
-      !snapshot.slowHidden &&
-      snapshot.timeoutHidden
+      snapshot.progress.startedAt === progress.startedAt &&
+      steps.includes(snapshot.stepCount) &&
+      accept(snapshot)
   )
 }
 
+export function startupSlowObservation(state) {
+  return rendererStageObservation(state, snapshot => !snapshot.slowHidden && snapshot.timeoutHidden)
+}
+
 export function startupTimeoutObservation(state) {
-  // Host progress can advance before the splash applies the renderer update.
-  return state.observations?.find(
-    snapshot =>
-      snapshot.progress?.stage.id === 'renderer' &&
-      snapshot.progress.startedAt === state.progress?.startedAt &&
-      snapshot.stepCount === state.stepCount &&
-      !snapshot.timeoutHidden
-  )
+  return rendererStageObservation(state, snapshot => !snapshot.timeoutHidden)
 }
 
 async function waitForHandlerLog(logPath, afterBytes, step, status) {
