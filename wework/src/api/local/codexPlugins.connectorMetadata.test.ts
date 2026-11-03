@@ -88,33 +88,47 @@ test.each([false, true])(
   }
 )
 
-test('marketplace detail uses the supplied local source without consulting a catalog cache', async () => {
-  request.mockImplementation(async (method, payload) => {
-    if (method === 'executor.plugins.manifest.read') {
-      expect(payload).toEqual({ marketplacePath: '/tmp/github-marketplace', pluginName: 'github' })
-      return { connectors: [{ slug: 'github', authPolicy: 'on_use' }] }
-    }
-    if (method === 'codex.app_server_request' && payload.method === 'plugin/read') {
-      expect(payload.params).toEqual({
-        marketplacePath: '/tmp/github-marketplace',
-        remoteMarketplaceName: null,
-        pluginName: 'github',
-      })
-      return {
-        plugin: { summary: { id: 'github@openai-official', name: 'github' }, connectors: [] },
+test.each([
+  ['/tmp/github-marketplace', '/tmp/github-marketplace/.agents/plugins/marketplace.json'],
+  [
+    '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+    '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+  ],
+  ['C:\\plugins\\github', 'C:/plugins/github/.agents/plugins/marketplace.json'],
+  [
+    'C:\\plugins\\github\\.agents\\plugins\\marketplace.json',
+    'C:/plugins/github/.agents/plugins/marketplace.json',
+  ],
+])(
+  'marketplace detail reads the supplied local source %s without a catalog cache',
+  async (source, manifest) => {
+    request.mockImplementation(async (method, payload) => {
+      if (method === 'executor.plugins.manifest.read') {
+        expect(payload).toEqual({ marketplacePath: source, pluginName: 'github' })
+        return { connectors: [{ slug: 'github', authPolicy: 'on_use' }] }
       }
-    }
-    throw new Error(`Unexpected request ${method}`)
-  })
+      if (method === 'codex.app_server_request' && payload.method === 'plugin/read') {
+        expect(payload.params).toEqual({
+          marketplacePath: manifest,
+          remoteMarketplaceName: null,
+          pluginName: 'github',
+        })
+        return {
+          plugin: { summary: { id: 'github@openai-official', name: 'github' }, connectors: [] },
+        }
+      }
+      throw new Error(`Unexpected request ${method}`)
+    })
 
-  const detail = await createLocalCodexPluginApi().readMarketplacePluginDetail(
-    { id: 'openai-official', name: 'GitHub fixture', path: '/tmp/github-marketplace' },
-    'github'
-  )
-  expect(detail.spec.components.connectors).toMatchObject([
-    { slug: 'github', authPolicy: 'on_use' },
-  ])
-})
+    const detail = await createLocalCodexPluginApi().readMarketplacePluginDetail(
+      { id: 'openai-official', name: 'GitHub fixture', path: source },
+      'github'
+    )
+    expect(detail.spec.components.connectors).toMatchObject([
+      { slug: 'github', authPolicy: 'on_use' },
+    ])
+  }
+)
 
 test('a missing local marketplace path fails before requesting a remote catalog', async () => {
   await expect(
