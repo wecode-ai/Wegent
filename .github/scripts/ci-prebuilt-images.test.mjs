@@ -402,7 +402,7 @@ test("prebuild publication is limited to main and explicit manual dispatches", (
   const needs = { changes: { result: "success", outputs: { docker: "true" } } };
   for (const event_name of ["pull_request", "push", "workflow_dispatch"]) {
     for (const ref of ["refs/heads/main", "refs/heads/topic"]) {
-      for (const prebuild of ["linux", "macos-runtimes"]) {
+      for (const prebuild of ["linux", "macos-runtimes", "frontend"]) {
         const enabled = runInNewContext(publisher.if, {
           github: { event_name, ref },
           inputs: { prebuild },

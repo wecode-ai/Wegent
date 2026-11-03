@@ -513,7 +513,7 @@ jobs:
   warm-executor-e2e-image:
     name: Publish CI prebuilds (${{ matrix.component }})
     needs: changes
-    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && (needs.changes.outputs.docker == 'true' || needs.changes.outputs.backend_rs_rust == 'true' || needs.changes.outputs.wework_target == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.prebuild != 'macos-runtimes'))
+    if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && (needs.changes.outputs.docker == 'true' || needs.changes.outputs.backend_rs_rust == 'true' || needs.changes.outputs.wework_target == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.prebuild == 'linux'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
