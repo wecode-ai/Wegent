@@ -1,20 +1,37 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { integrationChecks } from "./ci-feature-policy.mjs";
 
 export function readClassifier(root, script, files, all = false) {
-  const output = execFileSync(
-    "bash",
-    [resolve(root, ".github/scripts", script), ...(all ? ["--all"] : [])],
-    {
-      cwd: root,
-      input: files.join("\n"),
-      encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: "/dev/stdout" },
-    },
-  );
+  const directory = mkdtempSync(resolve(tmpdir(), "wegent-ci-classifier-"));
+  const outputFile = resolve(directory, "outputs");
+  writeFileSync(outputFile, "");
+  let output;
+  try {
+    // Node captures stdout through a socket on Linux; Bash cannot reopen it.
+    execFileSync(
+      "bash",
+      [resolve(root, ".github/scripts", script), ...(all ? ["--all"] : [])],
+      {
+        cwd: root,
+        input: files.join("\n"),
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      },
+    );
+    output = readFileSync(outputFile, "utf8");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
   return Object.fromEntries(
     output
       .trim()

@@ -16,6 +16,7 @@ import {
   desktopIds,
   filterDesktop,
   loadCatalog,
+  readClassifier,
 } from "./ci-feature-catalog.mjs";
 import { assertCurrentPlan, buildPlan } from "./ci-feature-plan.mjs";
 import { ciLabels, integrationChecks } from "./ci-feature-policy.mjs";
@@ -37,6 +38,27 @@ const planFor = (files, labels, extra = {}) =>
     ...extra,
   });
 const entries = (output) => JSON.parse(output).include;
+
+test("classifier output uses a regular file and ignores diagnostic stdout", () => {
+  const fixture = mkdtempSync(resolve(tmpdir(), "ci-classifier-output-"));
+  try {
+    mkdirSync(resolve(fixture, ".github/scripts"), { recursive: true });
+    writeFileSync(
+      resolve(fixture, ".github/scripts/probe.sh"),
+      `#!/usr/bin/env bash\nset -euo pipefail\n[[ -f "$GITHUB_OUTPUT" ]]\n[[ "$GITHUB_OUTPUT" != /dev/* ]]\nprintf 'diagnostic only\\n'\nprintf 'enabled=true\\n' >> "$GITHUB_OUTPUT"\n`,
+    );
+    assert.deepEqual(readClassifier(fixture, "probe.sh", []), {
+      enabled: "true",
+    });
+    writeFileSync(resolve(fixture, ".github/scripts/failure.sh"), "exit 17\n");
+    assert.throws(
+      () => readClassifier(fixture, "failure.sh", []),
+      /Command failed/,
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test("every physical desktop entry and platform spec has a registered feature", () => {
   const actual = new Set(
