@@ -946,6 +946,13 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('setSelectionOffset', sideComposerSelector, { value: '0' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', sideComposerSelector)),
+    0,
+    'The same-value queued draft must start with its caret at the beginning'
+  )
   await control.command('click', `${sideChatSelector} [data-testid^="queue-more-button-"]`)
   await control.command('click', '[data-testid^="queue-edit-button-"]')
   await control.command('waitFor', sideComposerSelector, {
@@ -959,6 +966,13 @@ async function verifySideChatAttachmentIsolation({
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )
+  await control.command('nativePress', sideComposerSelector, { key: 'Shift+Enter' })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}\n`,
+    'Explicitly restoring the same queued draft must put the next line break after its text'
+  )
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
   await control.command('clickWhenEnabled', sideSendButtonSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

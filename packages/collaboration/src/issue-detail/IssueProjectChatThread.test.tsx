@@ -68,6 +68,34 @@ describe("shared Issue threads", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ["pending_approval", "等待审批"],
+    ["queued", "排队中"],
+    ["waiting_runtime", "等待设备或模型配置"],
+    ["cancelled", "已停止任务规划"],
+  ])(
+    "shows the actual manager execution state %s without a planning spinner",
+    (status, label) => {
+      act(() =>
+        root.render(
+          <IssueChatMessage
+            message={message}
+            compact
+            plain
+            agentRole="manager"
+            executionStatus={status}
+            translate={translate}
+            onOpenAttachment={() => {}}
+            onOpenUrl={() => {}}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain(label);
+      expect(container.textContent).not.toContain("正在规划任务");
+      expect(container.querySelector(".animate-spin")).toBeNull();
+    },
+  );
+
   it("groups shuffled events under the actual root and keeps replies chronological", () => {
     const reply = {
       ...message,

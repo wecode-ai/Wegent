@@ -210,8 +210,9 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload, deviceId) =>
-      composerRuntimeIpc.request(method, payload, deviceId)
+    standInApi: createStandInExecutorApi(
+      (method, payload, deviceId) => composerRuntimeIpc.request(method, payload, deviceId),
+      cloudPluginApi
     ),
     composerCatalogApi: createRuntimeComposerApi(composerRuntimeIpc, deviceId =>
       cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)

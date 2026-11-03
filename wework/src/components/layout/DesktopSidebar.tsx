@@ -24,6 +24,7 @@ import {
   Search,
   SquareTerminal,
   Sparkles,
+  UserRound,
   X,
 } from 'lucide-react'
 import {
@@ -224,7 +225,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation' | 'stand-in'
   taskView?: 'workbench' | 'default-work-items'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
@@ -240,6 +241,7 @@ interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onNewChat: () => void
+  onOpenStandIn?: () => void
   onStartStandaloneChat: () => void
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
@@ -2932,6 +2934,7 @@ export function DesktopSidebar({
   localHarnessSessions = [],
   activeLocalHarnessSessionId = null,
   onNewChat,
+  onOpenStandIn,
   onStartStandaloneChat,
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
@@ -4071,6 +4074,15 @@ export function DesktopSidebar({
               testId="new-chat-button"
               onClick={onNewChat}
             />
+            {onOpenStandIn && (
+              <DesktopSidebarNavItem
+                icon={UserRound}
+                label={t('standIn.title')}
+                testId="personal-stand-in-button"
+                selected={activeItem === 'stand-in'}
+                onClick={onOpenStandIn}
+              />
+            )}
           </nav>
 
           <SidebarWorklistsScroll

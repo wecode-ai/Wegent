@@ -211,6 +211,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-plugin-runtime',
             '@wegent/dsh-connection-runtime',
+            '@wegent/dsh-coordination-runtime',
             '@wegent/dsh-connection-dingtalk',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
@@ -680,6 +681,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
       '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
       '@wework/dsh-browser-auth',
     ])
@@ -692,6 +694,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-plugin-runtime',
       '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-coordination-runtime',
       '@wegent/dsh-connection-dingtalk',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',

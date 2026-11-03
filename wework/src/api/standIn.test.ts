@@ -3,6 +3,45 @@ import i18n from '@/i18n'
 import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorApi } from './standIn'
 
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
+
+it('addresses project binding reads and explicit generation updates to the selected Executor', async () => {
+  const state = { binding: null, canEnable: true, canStop: false }
+  const request = vi.fn().mockResolvedValue(state)
+  const api = createStandInExecutorApi(request)
+  const target = { projectId: 'project', projectStore: 'cloud' as const, groupId: 'group' }
+  expect(await api.projectCoordination(7, 'selected-device', target)).toBe(state)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.binding.get',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+  const update = { enabled: true, expectedGeneration: 'current-generation', takeover: true }
+  expect(await api.projectCoordination(7, 'selected-device', target, update)).toBe(state)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.binding.save',
+    { userId: 7, ...target, binding: update },
+    'selected-device'
+  )
+})
+
+it('addresses project processing status and explicit checks to the chosen binding host', async () => {
+  const request = vi.fn().mockResolvedValue({ running: false, questions: {} })
+  const api = createStandInExecutorApi(request)
+  const target = { projectId: 'project', projectStore: 'cloud' as const, groupId: 'group' }
+  await api.projectProcessing(7, 'selected-device', target)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.processing.get',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+  await api.projectProcessing(7, 'selected-device', target, true)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.project_coordinator.processing.check',
+    { userId: 7, ...target },
+    'selected-device'
+  )
+})
+
 function fixture() {
   const transport = {
     notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),
@@ -268,4 +307,39 @@ it('preserves connection authorization metadata and retry policy', async () => {
     message: i18n.t('common:standIn.errors.connector_auth_required'),
   })
   expect(error.message).toBe('Authorize the account')
+})
+
+it('routes declared default-market dependencies through the platform installer instead of Codex plugin/list', async () => {
+  const dependency = {
+    alias: 'dingtalk',
+    status: 'missing',
+    version: '*',
+    source: { marketplaceId: 'wework', pluginId: 'dingtalk@wework' },
+  }
+  const request = vi.fn().mockResolvedValue({
+    items: [{ id: 'connection/dingtalk', dependencies: [dependency] }],
+  })
+  const listMarketplacePlugins = vi.fn(async () => ({
+    items: [
+      {
+        id: 42,
+        name: 'dingtalk',
+        sourceProvider: 'wegent',
+        visibility: 'public',
+        installed: false,
+        enabled: false,
+      },
+    ],
+  }))
+  const installMarketplacePlugin = vi.fn(async () => {
+    dependency.status = 'ready'
+    return {}
+  })
+  const api = createStandInExecutorApi(
+    request as never,
+    { listMarketplacePlugins, installMarketplacePlugin } as never
+  )
+  await api.installConnectionDependencies('selected-device', 'connection/dingtalk', ['dingtalk'])
+  expect(installMarketplacePlugin).toHaveBeenCalledWith(42, 'selected-device')
+  expect(request.mock.calls.every(call => call[0] === 'runtime.connections.catalog')).toBe(true)
 })

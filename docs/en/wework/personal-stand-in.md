@@ -4,7 +4,7 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
-Open **My stand-in** in the collaboration sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
+Open **My stand-in** in the Tasks sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
@@ -49,3 +49,10 @@ Disable **Receive new work** and save to pause new intake while retaining existi
 Inside the assignee dropdown control, an outlined person with a check marks **Read by recipient** and a filled person with a check marks **Received by stand-in**. Hover to view the status and timestamp. A successful detail open records the human receipt; a stand-in records reception once its task is accepted, before execution completes. Both receipts retain their own timestamps and do not complete the Issue. Notification previews, marking all notifications as read, and background reads do not record a human receipt.
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
+
+
+## Calendar arrangements and project leaders
+
+Create one-time or recurring work in **Settings → Connections → Calendar**. Calendar saves independently and protects unsaved edits when returning or closing. Open the corresponding work from its execution history. The work list contains concrete work, without a peer Scheduled tab.
+
+The project conversation uses the existing collaboration group leader. Its header identifies the group and leader, and settings use the existing group configuration. Automatic project event handling enables that leader on the selected device. Each project/group has exactly one active member/device binding, with explicit takeover required for switching. Private chat and memory remain private until selected content is explicitly published to an Issue.

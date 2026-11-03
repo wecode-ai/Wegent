@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
-import type { Automation } from '@/types/automation'
+import type { Automation, AutomationRun } from '@/types/automation'
 import { emptyAutomationDraft, type AutomationDraft } from './automationDraft'
 import { AutomationDetailWorkspace } from './AutomationDetailWorkspace'
 
@@ -13,19 +13,27 @@ function AutomationDetailHarness({
   automation = null,
   runtimeWork = null,
   localDeviceIds = ['local-device'],
+  runs = [],
+  onOpenRun,
+  validationError,
 }: {
   devices?: React.ComponentProps<typeof AutomationDetailWorkspace>['devices']
   initialDraft?: AutomationDraft
   automation?: Automation | null
   runtimeWork?: RuntimeWorkListResponse | null
   localDeviceIds?: string[]
+  runs?: AutomationRun[]
+  onOpenRun?(run: AutomationRun): void
+  validationError?: string
 }) {
   const [draft, setDraft] = useState<AutomationDraft>(initialDraft)
   return (
     <AutomationDetailWorkspace
       draft={draft}
       automation={automation}
-      runs={[]}
+      runs={runs}
+      onOpenRun={onOpenRun}
+      validationError={validationError}
       locale="zh-CN"
       devices={devices}
       projects={[]}
@@ -86,6 +94,38 @@ const savedAutomation: Automation = {
 }
 
 describe('AutomationDetailWorkspace', () => {
+  test('shows invalid draft feedback beside the editor and focuses the missing instructions', () => {
+    const draft = { ...emptyAutomationDraft('local', 'local-device'), name: '每周回顾' }
+    render(<AutomationDetailHarness initialDraft={draft} validationError="请填写名称和任务说明" />)
+    expect(screen.getByTestId('automation-draft-error')).toHaveTextContent('请填写名称和任务说明')
+    expect(screen.getByTestId('automation-prompt-input')).toHaveFocus()
+    expect(screen.getByTestId('automation-prompt-input')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('automation-name-input')).toHaveAttribute('aria-invalid', 'false')
+  })
+  test('opens the original work only when its execution has an exact task and device', async () => {
+    const onOpenRun = vi.fn()
+    const run = {
+      id: 'run',
+      automationId: savedAutomation.id,
+      status: 'succeeded',
+      taskId: 'original-work',
+      deviceId: 'runner',
+      scheduledFor: savedAutomation.createdAt,
+    } as AutomationRun
+    const view = render(
+      <AutomationDetailHarness automation={savedAutomation} runs={[run]} onOpenRun={onOpenRun} />
+    )
+    await userEvent.setup().click(screen.getByTestId('automation-run-open-run'))
+    expect(onOpenRun).toHaveBeenCalledWith(run)
+    view.rerender(
+      <AutomationDetailHarness
+        automation={savedAutomation}
+        runs={[{ ...run, deviceId: null }]}
+        onOpenRun={onOpenRun}
+      />
+    )
+    expect(screen.queryByTestId('automation-run-open-run')).not.toBeInTheDocument()
+  })
   test('enables the task instructions as a persistent goal', async () => {
     const user = userEvent.setup()
     render(<AutomationDetailHarness />)

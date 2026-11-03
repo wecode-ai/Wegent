@@ -600,60 +600,79 @@ describe("CollaborationApp API boundary", () => {
     expect(content?.props.className).not.toContain("overflow-hidden");
   });
 
-  it("exposes agents, members and collaboration teams as grouped settings pages", () => {
-    const host = createHost(false, "home");
-    host.location = {
-      projectId: "project-1",
-      issueId: null,
-      view: "manage",
-    };
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject({
-        ...createProject(1),
-        access_role: "Owner",
-        current_user_id: 1,
-        current_user_name: "Project owner",
-      }),
-    );
+  it.each(["local", "backend"] as const)(
+    "exposes grouped settings and the %s agent creator",
+    (store) => {
+      const host = createHost(false, "home");
+      host.projectAgentConfiguration = {
+        renderLocalAgentCreator: vi.fn(() => null),
+        renderAgentCreator: vi.fn(() => null),
+      };
+      host.projectAgentResourceContext = {
+        name: "Workspace",
+        namespace: "default",
+      };
+      host.location = {
+        projectId: "project-1",
+        issueId: null,
+        view: "manage",
+      };
+      collaborationAppMocks.useController.mockReturnValue(
+        controllerWithProject({
+          ...createProject(1),
+          project_store: store,
+          access_role: "Owner",
+          current_user_id: 1,
+          current_user_name: "Project owner",
+        }),
+      );
 
-    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
-    const settingsShell = findByType(
-      shell?.props.slots.manage,
-      ProjectSettingsShell,
-    );
-    const sectionIds = settingsShell?.props.sections.map(
-      (section: { id: string }) => section.id,
-    );
-    const groupsSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "groups",
-    );
-    const automaticProcessingSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "automatic-processing",
-    );
+      const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+      const settingsShell = findByType(
+        shell?.props.slots.manage,
+        ProjectSettingsShell,
+      );
+      const sectionIds = settingsShell?.props.sections.map(
+        (section: { id: string }) => section.id,
+      );
+      const groupsSection = settingsShell?.props.sections.find(
+        (section: { id: string }) => section.id === "groups",
+      );
+      const automaticProcessingSection = settingsShell?.props.sections.find(
+        (section: { id: string }) => section.id === "automatic-processing",
+      );
 
-    expect(sectionIds).toEqual([
-      "project",
-      "agents",
-      "members",
-      "groups",
-      "environments",
-      "automatic-processing",
-    ]);
-    expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 团队" });
-    expect(
-      findByType(
+      expect(sectionIds).toEqual([
+        "project",
+        "agents",
+        "members",
+        "groups",
+        "environments",
+        "automatic-processing",
+      ]);
+      expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 团队" });
+      const groups = findByType(
         groupsSection?.content.props.children,
         ProjectCollaborationGroups,
-      ),
-    ).toBeDefined();
-    expect(automaticProcessingSection).toBeDefined();
-    expect(automaticProcessingSection?.content.type).toBe(
-      ProjectAutomaticProcessing,
-    );
-    expect(groupsSection?.content).not.toBe(
-      automaticProcessingSection?.content,
-    );
-  });
+      );
+      expect(groups?.props.location).toBe(
+        store === "local" ? "local" : "cloud",
+      );
+      expect(groups?.props.agentConfiguration).toBe(
+        host.projectAgentConfiguration,
+      );
+      expect(groups?.props.agentResourceContext).toBe(
+        host.projectAgentResourceContext,
+      );
+      expect(automaticProcessingSection).toBeDefined();
+      expect(automaticProcessingSection?.content.type).toBe(
+        ProjectAutomaticProcessing,
+      );
+      expect(groupsSection?.content).not.toBe(
+        automaticProcessingSection?.content,
+      );
+    },
+  );
 
   it("orders collaboration participants as agents, project members and groups", () => {
     const participants = CollaborationParticipantsTabs({

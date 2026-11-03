@@ -546,9 +546,8 @@ async function verifyAutomaticProcessingControls(
     'The automatic processing rule did not pause',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'false',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="false"]`, {
+    enabled: true,
     timeoutMs,
   })
   await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
@@ -558,9 +557,8 @@ async function verifyAutomaticProcessingControls(
     'The automatic processing rule did not resume',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'true',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="true"]`, {
+    enabled: true,
     timeoutMs,
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))

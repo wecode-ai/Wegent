@@ -122,6 +122,48 @@ pub(crate) struct AutomationRun {
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<ArrangementBinding>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArrangementBinding {
+    pub user_id: i64,
+    pub role_id: String,
+    pub automation_version: u64,
+    pub task_id: String,
+}
+
+impl ArrangementBinding {
+    fn from_automation(automation: &Automation, run_id: &str) -> Option<Self> {
+        let owner = &automation.task_request["standInOwner"];
+        let user_id = owner["userId"].as_i64().filter(|user| *user >= 0)?;
+        let task_id = match automation.conversation_mode {
+            ConversationMode::Independent => format!("stand-in-arrangement-{user_id}-{run_id}"),
+            ConversationMode::ContinueThread => {
+                let payload = automation
+                    .continuation_payload
+                    .as_ref()
+                    .unwrap_or(&automation.task_payload);
+                payload
+                    .get("taskId")
+                    .or_else(|| payload.get("task_id"))
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())?
+                    .to_owned()
+            }
+        };
+        Some(Self {
+            user_id,
+            role_id: owner["roleId"]
+                .as_str()
+                .filter(|role| !role.is_empty())?
+                .into(),
+            automation_version: automation.version,
+            task_id,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -141,7 +183,7 @@ impl AutomationStore {
         Self::new(runtime_work_dir().join("automations.json"))
     }
 
-    fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         let state = shared_state(&path);
         Self { path, state }
     }
@@ -259,14 +301,18 @@ impl AutomationStore {
             });
             let missed = scheduled_for + Duration::minutes(1) < now;
             let status = if active
-                || (missed && !matches!(automation.schedule, AutomationSchedule::OneTime { .. }))
+                || (missed
+                    && !automation.task_request["standInOwner"].is_object()
+                    && !matches!(automation.schedule, AutomationSchedule::OneTime { .. }))
             {
                 AutomationRunStatus::Skipped
             } else {
                 AutomationRunStatus::Pending
             };
+            let run_id = Uuid::new_v4().to_string();
+            let coordination = ArrangementBinding::from_automation(&automation, &run_id);
             let run = AutomationRun {
-                id: Uuid::new_v4().to_string(),
+                id: run_id,
                 automation_id: automation_id.clone(),
                 scheduled_for,
                 trigger: "scheduled".to_owned(),
@@ -281,6 +327,7 @@ impl AutomationStore {
                 },
                 created_at: now,
                 updated_at: now,
+                coordination,
             };
             let mut updated = automation.clone();
             updated.last_run_at = Some(now);
@@ -318,8 +365,10 @@ impl AutomationStore {
                     AutomationRunStatus::Pending | AutomationRunStatus::Running
                 )
         });
+        let run_id = Uuid::new_v4().to_string();
+        let coordination = ArrangementBinding::from_automation(&automation, &run_id);
         let run = AutomationRun {
-            id: Uuid::new_v4().to_string(),
+            id: run_id,
             automation_id: automation.id.clone(),
             scheduled_for: now,
             trigger: "manual".to_owned(),
@@ -332,6 +381,7 @@ impl AutomationStore {
             error: active.then(|| "previous automation run is still active".to_owned()),
             created_at: now,
             updated_at: now,
+            coordination,
         };
         state.runs.push(run.clone());
         prune_runs(&mut state);
@@ -341,15 +391,27 @@ impl AutomationStore {
 
     pub fn mark_running(&self, run_id: &str, task_id: String) -> Result<(), String> {
         self.update_run(run_id, |run| {
-            run.status = AutomationRunStatus::Running;
             run.task_id = Some(task_id);
-            run.error = None;
+            if matches!(
+                run.status,
+                AutomationRunStatus::Pending | AutomationRunStatus::Running
+            ) {
+                run.status = AutomationRunStatus::Running;
+                run.error = None;
+            }
         })
     }
 
     pub fn mark_failed(&self, run_id: &str, error: String) -> Result<(), String> {
         self.update_run(run_id, |run| {
             run.status = AutomationRunStatus::Failed;
+            run.error = Some(error);
+        })
+    }
+
+    pub fn mark_needs_attention(&self, run_id: &str, error: String) -> Result<(), String> {
+        self.update_run(run_id, |run| {
+            run.status = AutomationRunStatus::NeedsAttention;
             run.error = Some(error);
         })
     }
@@ -366,7 +428,8 @@ impl AutomationStore {
         let now = Utc::now();
         let mut automation_id = None;
         for run in &mut state.runs {
-            if run.task_id.as_deref() == Some(task_id)
+            if run.coordination.is_none()
+                && run.task_id.as_deref() == Some(task_id)
                 && matches!(
                     run.status,
                     AutomationRunStatus::Pending | AutomationRunStatus::Running
@@ -396,6 +459,27 @@ impl AutomationStore {
             .collect::<Vec<_>>();
         runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         runs
+    }
+
+    pub fn settle_coordinated_run(
+        &self,
+        run_id: &str,
+        status: AutomationRunStatus,
+        task_id: Option<String>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        self.update_run(run_id, |run| {
+            if matches!(
+                run.status,
+                AutomationRunStatus::Pending | AutomationRunStatus::Running
+            ) {
+                run.status = status;
+                if task_id.is_some() {
+                    run.task_id = task_id;
+                }
+                run.error = error;
+            }
+        })
     }
 
     fn update_run(
@@ -569,6 +653,12 @@ fn prune_runs(state: &mut AutomationState) {
         .runs
         .sort_by_key(|run| std::cmp::Reverse(run.created_at));
     state.runs.retain(|run| {
+        if matches!(
+            run.status,
+            AutomationRunStatus::Pending | AutomationRunStatus::Running
+        ) {
+            return true;
+        }
         let count = counts.entry(run.automation_id.clone()).or_default();
         *count += 1;
         *count <= MAX_RUNS_PER_AUTOMATION
@@ -638,6 +728,33 @@ mod tests {
         ConversationMode, IntervalUnit, NotificationPolicy,
     };
     use serde_json::json;
+
+    #[test]
+    fn owned_recurring_arrangements_catch_up_once_and_keep_active_runs_when_pruning() {
+        let root = tempdir().unwrap();
+        let store = AutomationStore::new(root.path().join("automations.json"));
+        let automation: Automation = serde_json::from_value(json!({"id":"recurring","version":0,"name":"Review","prompt":"Review","schedule":{"type":"interval","value":1,"unit":"hours"},"taskRequest":{"standInOwner":{"userId":7,"roleId":"@primary"}},"taskPayload":{"runtime":"codex"}})).unwrap();
+        store.create(automation).unwrap();
+        let now = Utc::now() + chrono::Duration::hours(2);
+        let (_, run) = store.due(now).unwrap().pop().unwrap();
+        assert_eq!(run.status, AutomationRunStatus::Pending);
+        assert!(run.coordination.is_some());
+        assert!(store.due(now).unwrap().is_empty());
+        let mut state = super::read_state(&store.path);
+        for index in 0..150 {
+            let mut skipped = run.clone();
+            skipped.id = format!("skipped-{index}");
+            skipped.status = AutomationRunStatus::Skipped;
+            skipped.created_at = now + chrono::Duration::seconds(index);
+            state.runs.push(skipped);
+        }
+        super::prune_runs(&mut state);
+        assert!(state
+            .runs
+            .iter()
+            .any(|item| item.id == run.id && item.status == AutomationRunStatus::Pending));
+        assert_eq!(state.runs.len(), super::MAX_RUNS_PER_AUTOMATION + 1);
+    }
 
     #[test]
     fn cron_schedule_respects_timezone() {

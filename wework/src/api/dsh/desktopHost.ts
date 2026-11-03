@@ -108,6 +108,10 @@ export function subscribeDesktopHostEvents(
   }
 }
 
+export function readDesktopHostEventCursor(): number {
+  return desktopHostEventAfter
+}
+
 function startDesktopHostEventLoop(): void {
   if (desktopHostEventLoop || desktopHostEventHandlers.size === 0) return
   const generation = ++desktopHostEventLoopGeneration

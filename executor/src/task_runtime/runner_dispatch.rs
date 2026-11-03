@@ -33,6 +33,7 @@ pub(super) fn add_group_profiles(
 ) -> Result<(), TaskRuntimeError> {
     let agents = group_agents(connection, project_id, group)?;
     if !payload.contains_key("automation_run_id")
+        && !payload.contains_key("project_coordination")
         && !agents
             .iter()
             .any(|agent| agent.metadata["execution_policy"].is_object())
