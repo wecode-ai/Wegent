@@ -27,7 +27,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
           error: { code: 'approval_required' },
           approval: { reason: 'Confirm editing this field.' },
         })!
-        for (const status of ['running', 'idle', 'error'] as const) {
+        for (const status of ['running', 'idle'] as const) {
           manager.emitAgentState('workspace-browser', status, { action: 'inspect' })
           expect(events.at(-1)?.payload).toMatchObject({
             status: 'needs_user',
@@ -36,6 +36,18 @@ describe('EmbeddedBrowserManager lifecycle', () => {
             approval,
           })
         }
+        manager.emitAgentState('workspace-browser', 'error', {
+          action: 'inspect',
+          message: 'Inspection failed',
+          errorCode: 'operation_failed',
+        })
+        expect(events.at(-1)?.payload).toMatchObject({
+          status: 'error',
+          action: 'inspect',
+          message: 'Inspection failed',
+          errorCode: 'operation_failed',
+          approval,
+        })
         manager.emitAgentState('other-browser', 'idle', { action: 'inspect' })
         expect(events.at(-1)?.payload.approval).toBeNull()
         expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
@@ -93,6 +105,69 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(events.at(-1)?.payload).toMatchObject({ status: 'needs_user', approval })
       manager.resolveAgentApproval('workspace-browser', approval.approvalId, false)
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('distinguishes host registration from initial navigation completion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-navigation-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    let finishNavigation!: () => void
+    contents.loadURL.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishNavigation = resolve
+        })
+    )
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    const opening = manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: false,
+      navigateExisting: true,
+    })
+    try {
+      await vi.waitFor(() => expect(contents.loadURL).toHaveBeenCalled())
+      expect(manager.has('workspace-browser')).toBe(true)
+      expect(manager.state('workspace-browser').url).toBe('https://example.test/')
+      let ready = false
+      const completion = manager.waitForNavigation('workspace-browser').then(() => {
+        ready = true
+      })
+      await Promise.resolve()
+      expect(ready).toBe(false)
+      finishNavigation()
+      await completion
+      expect(ready).toBe(true)
+    } finally {
+      finishNavigation?.()
+      await opening
+      manager.close('workspace-browser')
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('reports failed initial navigation instead of marking the browser ready', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-navigation-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockRejectedValue(new Error('net::ERR_NAME_NOT_RESOLVED (-105)'))
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: false,
+        navigateExisting: true,
+      })
+      await expect(manager.waitForNavigation('workspace-browser')).rejects.toThrow(
+        'ERR_NAME_NOT_RESOLVED'
+      )
+    } finally {
+      manager.close('workspace-browser')
       await rm(directory, { recursive: true, force: true })
     }
   })

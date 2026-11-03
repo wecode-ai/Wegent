@@ -62,6 +62,7 @@ interface BrowserEntry {
   historyId: string | null
   historyGeneration: number
   initialNavigation: boolean
+  navigationCompletion: Promise<void>
 }
 
 interface BrowserOpenInput {
@@ -416,6 +417,7 @@ export class EmbeddedBrowserManager {
       historyId: null,
       historyGeneration: this.historyGeneration,
       initialNavigation: true,
+      navigationCompletion: Promise.resolve(),
     }
     contents.on('before-input-event', (event, input) => {
       const isBareF12 =
@@ -505,8 +507,8 @@ export class EmbeddedBrowserManager {
       void this.recordHistoryVisit(entry)
     })
     this.entries.set(label, entry)
-    // Registration, not navigation completion, is the browser host readiness boundary.
-    // The requested URL is already authoritative in state() while Chromium finishes loading.
+    // Register the host before loading so renderer attachment can complete independently.
+    // Agent open requests must await navigationCompletion before inspecting this document.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
   }
@@ -540,6 +542,16 @@ export class EmbeddedBrowserManager {
     // a preserved panel is hidden and shown again. Publish the authoritative
     // post-navigation state so bridge-driven navigation always updates its UI.
     this.emitPageState(entry)
+  }
+
+  async waitForNavigation(label: string): Promise<void> {
+    const entry = this.required(label)
+    let completion: Promise<void>
+    do {
+      completion = entry.navigationCompletion
+      await completion
+    } while (completion !== entry.navigationCompletion)
+    if (entry.navigationError) throw new Error(entry.navigationError.message)
   }
 
   reload(label: string): void {
@@ -852,6 +864,7 @@ export class EmbeddedBrowserManager {
         !candidate.approved &&
         candidate.payload.expiresAtUnixMs > Date.now()
     )?.payload
+    const awaitingApproval = approval && status !== 'error'
     if (status === 'running') {
       this.agentActive.add(normalizedLabel)
       this.clearAgentCursorHide(normalizedLabel)
@@ -862,11 +875,11 @@ export class EmbeddedBrowserManager {
     }
     this.emit('agent-state', {
       label: normalizedLabel,
-      status: approval ? 'needs_user' : status,
-      action: approval?.actionKind ?? detail.action ?? null,
-      target: approval ? null : (detail.target ?? null),
-      message: approval?.reason ?? detail.message ?? null,
-      errorCode: approval ? 'approval_required' : (detail.errorCode ?? null),
+      status: awaitingApproval ? 'needs_user' : status,
+      action: awaitingApproval ? approval.actionKind : (detail.action ?? null),
+      target: awaitingApproval ? null : (detail.target ?? null),
+      message: awaitingApproval ? approval.reason : (detail.message ?? null),
+      errorCode: awaitingApproval ? 'approval_required' : (detail.errorCode ?? null),
       approval: approval ?? null,
       createdAtUnixMs: Date.now(),
     })
@@ -1244,7 +1257,12 @@ export class EmbeddedBrowserManager {
     this.emit('page-state', this.state(entry.label) as unknown as Record<string, unknown>)
   }
 
-  private async load(entry: BrowserEntry, url: string): Promise<void> {
+  private load(entry: BrowserEntry, url: string): Promise<void> {
+    entry.navigationCompletion = this.loadPage(entry, url)
+    return entry.navigationCompletion
+  }
+
+  private async loadPage(entry: BrowserEntry, url: string): Promise<void> {
     try {
       const navigation = await prepareLocalFileNavigation(url)
       if (navigation.kind === 'blocked') {

@@ -15,6 +15,49 @@ afterEach(async () => {
 })
 
 describe('EmbeddedBrowserBridge', () => {
+  test('waits for initial navigation when state already advertises the requested URL', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    browser.state.mockReturnValue({
+      ...browser.state(),
+      url: 'https://example.test/',
+      isLoading: true,
+    })
+    let finishNavigation!: () => void
+    const navigation = new Promise<void>(resolve => {
+      finishNavigation = resolve
+    })
+    browser.waitForNavigation.mockReturnValue(navigation)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    await bridge.start()
+    const env = bridge.environment()
+    let completed = false
+    const response = fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'open', url: 'https://example.test/' }),
+    }).then(result => {
+      completed = true
+      return result
+    })
+    try {
+      await vi.waitFor(() =>
+        expect(browser.waitForNavigation).toHaveBeenCalledWith('workspace-browser')
+      )
+      expect(completed).toBe(false)
+    } finally {
+      finishNavigation()
+      await response
+    }
+    await expect((await response).json()).resolves.toMatchObject({ ok: true, data: { ok: true } })
+    expect(browser.navigate).not.toHaveBeenCalled()
+  })
+
   test('limits viewport screenshots to macOS', () => {
     expect(embeddedBrowserScreenshotAvailable('darwin')).toBe(true)
     expect(embeddedBrowserScreenshotAvailable('linux')).toBe(false)
@@ -531,6 +574,7 @@ function fakeBrowser() {
     navigationError: null,
   }))
   const navigate = vi.fn(async () => undefined)
+  const waitForNavigation = vi.fn(async () => undefined)
   const evaluate = vi.fn()
   const clickAt = vi.fn()
   const uploadFiles = vi.fn(async () => ({ selector: 'input[type="file"]' }))
@@ -544,6 +588,7 @@ function fakeBrowser() {
     requestOpen,
     state,
     navigate,
+    waitForNavigation,
     reload: vi.fn(),
     requestClose: vi.fn(),
     goBack: vi.fn(),
@@ -569,6 +614,7 @@ function fakeBrowser() {
     hideAgentCursor,
     manager,
     navigate,
+    waitForNavigation,
     requestOpen,
     showAgentCursor,
     state,

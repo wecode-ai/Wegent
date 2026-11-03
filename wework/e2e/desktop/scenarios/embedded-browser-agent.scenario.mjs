@@ -286,7 +286,8 @@ async function verifyPendingApprovalTakeover(bridgeCall, control, label, timeout
   })
   await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs })
   await bridgeCall({ action: 'inspect' })
-  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { stableMs: 500, timeoutMs })
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs })
   await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
 }
@@ -301,10 +302,10 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
 
   const inspected = await bridgeCall({ action: 'inspect' })
   assert.ok(inspected.inspectText.includes('Code editor'))
-  // Observe persistence across event delivery, rather than accepting the previous DOM render.
+  // Receive the post-inspect events before checking the approval controls.
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, {
     visible: true,
-    stableMs: 500,
     timeoutMs,
   })
   console.log('[browser-approval] Approval controls remain visible after inspect')

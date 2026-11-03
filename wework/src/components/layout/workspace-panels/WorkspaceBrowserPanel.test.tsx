@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { resetEmbeddedBrowserDownloadStoreForTests } from '@/lib/embedded-browser-download-store'
 import type { BrowserAnnotationState } from '@/types/browser-annotation'
+import type { EmbeddedBrowserAgentStateEvent } from '@/lib/embedded-browser'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 
 const deviceSurfaceExtensionMock = vi.hoisted(() => ({
@@ -1286,6 +1287,39 @@ describe('WorkspaceBrowserPanel', () => {
       false,
       'workspace-browser'
     )
+  })
+
+  test('shows browser failures without removing pending approval controls', () => {
+    let handleAgentState!: (event: EmbeddedBrowserAgentStateEvent) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+    render(<WorkspaceBrowserPanel active />)
+    act(() => {
+      handleAgentState({
+        label: 'workspace-browser',
+        status: 'error',
+        action: 'inspect',
+        target: null,
+        message: 'Inspection failed',
+        errorCode: 'operation_failed',
+        createdAtUnixMs: Date.now(),
+        approval: {
+          approvalId: 'pending-editor',
+          risk: 'high',
+          actionKind: 'fill',
+          reason: 'Confirm editing this field.',
+          target: null,
+          expiresAtUnixMs: Date.now() + 60_000,
+        },
+      })
+    })
+    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent(
+      'AI 浏览器操作遇到问题'
+    )
+    expect(screen.getByTestId('workspace-browser-agent-approval-approve-button')).toBeVisible()
+    expect(screen.getByTestId('workspace-browser-agent-approval-reject-button')).toBeVisible()
   })
 
   test('ignores agent browser state from a different label', () => {

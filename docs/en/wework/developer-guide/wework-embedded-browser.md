@@ -30,6 +30,8 @@ When a high-risk action returns `approval_required`, the browser panel shows app
 
 User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
 
+Failures from other operations retain their error status, message, and code while pending approve/reject controls remain available. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
+
 ### Multi-tab navigation connection graph
 
 ```mermaid
@@ -166,6 +168,8 @@ This binding keeps the browser the user sees and the browser the agent controls 
 Each pane/task label currently maps to one browser host. Wework can keep multiple top-level task tabs and their independent browsers alive, but there is no browser-internal multi-tab model inside one task. Adding browser-internal tabs must extend bridge routing identity, lifecycle ownership, and the Agent tool protocol instead of reusing another task's host.
 
 A programmatic first open must treat "the panel was requested" and "the native WebView is ready for navigation" as separate phases. The bridge stores pending navigation with a request ID and executes it only after the browser host for that task has nonzero visible bounds and reaches the ready state. If the frontend listener registers after the request, it recovers the event from the pending-request snapshot. The tool may report success only after the native WebView has navigated to the requested URL, not merely because the right panel or a blank WebView was created.
+
+`state().url` includes navigation intent during loading and cannot prove completion. The Electron manager tracks the current `navigationCompletion`; bridge `open` must await it and check navigation failure before tools inspect the page, preventing script execution from being lost while the initial blank document is replaced.
 
 Close requests triggered by task switching or component unmounting must include the expected native label. A stale pane may close only the WebView it created; it must not close an instance that was relabeled or adopted by a replacement pane. An inactive task may prepare a hidden ready browser, but it cannot display that browser over the active task.
 

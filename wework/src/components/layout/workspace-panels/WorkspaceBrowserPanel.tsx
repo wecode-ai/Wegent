@@ -2099,6 +2099,9 @@ export function WorkspaceBrowserTabPanel({
   }
 
   const agentStatusText = (state: BrowserAgentState) => {
+    if (state.status === 'error') {
+      return t('workbench.browser_agent_error')
+    }
     if (state.approval) {
       return t('workbench.browser_agent_approval_required', {
         action: agentActionLabel(state.action || state.approval.actionKind),
@@ -2112,9 +2115,6 @@ export function WorkspaceBrowserTabPanel({
     }
     if (state.status === 'needs_user') {
       return t('workbench.browser_agent_needs_user')
-    }
-    if (state.status === 'error') {
-      return t('workbench.browser_agent_error')
     }
     return t('workbench.browser_agent_ready')
   }
