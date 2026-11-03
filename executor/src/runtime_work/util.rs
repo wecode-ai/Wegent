@@ -20,6 +20,44 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if payload["automaticStandIn"] == true {
+        request.extra.insert("standInAutomatic".into(), json!(true));
+    } else {
+        request.extra.remove("standInAutomatic");
+        request.extra.remove("standInAutomaticVersion");
+    }
+    if let Some(command_id) = payload.get("commandId") {
+        request
+            .extra
+            .insert("runtime_command_id".to_owned(), command_id.clone());
+    } else {
+        request.extra.remove("runtime_command_id");
+    }
+    if payload.get("commandId").is_some() {
+        let mut model = request.model_config.clone();
+        if let Some(values) = model.as_object_mut() {
+            values.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "model_id" | "model_provider" | "model" | "reasoning_effort"
+                )
+            });
+        }
+        let origin = payload
+            .get("origin")
+            .or_else(|| request.extra.get("origin"))
+            .cloned();
+        let input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
+            "message":payload.get("message"), "attachments":payload.get("attachments"),
+            "workspace":payload.get("workspacePath"), "model":model,
+            "origin":origin, "permissionProfile":request.extra.get("runtime_permission_profile"),
+            "threadId":payload.get("threadId"), "runtimeSessionId":payload.get("runtimeSessionId")});
+        request
+            .extra
+            .insert("runtime_command_input".to_owned(), input);
+    } else {
+        request.extra.remove("runtime_command_input");
+    }
     if let Some(title) = string_field(payload, "title") {
         set_runtime_task_title(request, &title);
     }
@@ -252,12 +290,17 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
 }
 
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if let Some(delegation) = runtime_handle.pointer("/executionRequest/standInDelegation") {
+        request
+            .extra
+            .insert("standInDelegation".into(), delegation.clone());
+    }
     if runtime_handle["origin"]["initiatedBy"] == "stand_in"
         || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
         || runtime_handle["origin"]["type"] == "issue_dispatch"
         || matches!(
             runtime_handle["origin"]["type"].as_str(),
-            Some("dingtalk_work" | "connection_work")
+            Some("dingtalk_work" | "connection_work" | "stand_in_coordinator")
         )
     {
         let mut origin = runtime_handle["origin"].clone();
@@ -290,10 +333,13 @@ pub(crate) enum ExternalWorkKind {
 }
 
 pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
+    if request.extra.contains_key("standInDelegation") {
+        return Some(ExternalWorkKind::Message);
+    }
     let origin = request.extra.get("origin")?;
     if matches!(
         origin["type"].as_str(),
-        Some("dingtalk_work" | "connection_work")
+        Some("dingtalk_work" | "connection_work" | "stand_in_coordinator" | "stand_in_task")
     ) {
         Some(ExternalWorkKind::Message)
     } else if origin["type"] == "issue_dispatch" {
@@ -304,10 +350,17 @@ pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalW
 }
 
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
+    if request
+        .extra
+        .get("standInDelegation")
+        .is_some_and(|value| value["askBeforeAct"] == true)
+    {
+        return true;
+    }
     request.extra.get("origin").is_some_and(|origin| {
         matches!(
             origin["initiatedBy"].as_str(),
-            Some("stand_in" | "stand_in_identity")
+            Some("stand_in" | "stand_in_identity" | "stand_in_coordinator")
         ) && origin["askBeforeAct"] == true
     })
 }
@@ -645,6 +698,9 @@ pub(crate) fn workspace_label(path: &str) -> String {
 
 pub(crate) fn workspace_group_path(path: &str) -> String {
     let normalized = normalize_workspace_path(path);
+    if let Some(root) = super::restored_workspaces::workspace_root(&normalized) {
+        return root;
+    }
     git_common_workspace_root(&normalized)
         .or_else(|| codex_worktree_fallback_root(&normalized))
         .unwrap_or(normalized)
@@ -652,6 +708,9 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
+    if let Some(root) = super::restored_workspaces::workspace_root(&normalized) {
+        return root;
+    }
     if infer_workspace_kind(&normalized) == "chat" {
         return normalized;
     }
@@ -666,6 +725,9 @@ pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
 }
 
 pub(crate) fn infer_workspace_kind(path: &str) -> &'static str {
+    if super::restored_workspaces::workspace_root(path).is_some() {
+        return "workspace";
+    }
     if path.contains("/Codex/") || path.contains("\\Codex\\") {
         "chat"
     } else if infer_worktree_id(path).is_some() {
@@ -743,7 +805,16 @@ fn git_common_workspace_root(path: &str) -> Option<String> {
 }
 
 pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let mut current = path.to_path_buf();
+    let restore_root =
+        super::restored_workspaces::workspace_root(&path.to_string_lossy()).map(PathBuf::from);
+    git_metadata_directories_with_boundary(path, restore_root.as_deref())
+}
+
+fn git_metadata_directories_with_boundary(
+    path: &Path,
+    boundary: Option<&Path>,
+) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let mut current = PathBuf::from(normalize_workspace_path(&path.to_string_lossy()));
     loop {
         let git_marker = current.join(".git");
         if git_marker.is_dir() {
@@ -754,11 +825,15 @@ pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf,
             let common_dir = read_common_git_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
             return Some((current, git_dir, common_dir));
         }
-        if !current.pop() {
+        if boundary == Some(current.as_path()) || !current.pop() {
             return None;
         }
     }
 }
+
+#[cfg(test)]
+#[path = "util/restored_boundaries_tests.rs"]
+mod restored_boundaries_tests;
 
 fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     let (workspace, git_dir, _) = git_metadata_directories(Path::new(path))?;
@@ -769,14 +844,8 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     Some((workspace.to_string_lossy().into_owned(), worktree_id))
 }
 
-pub(crate) fn is_managed_restored_workspace(path: &str) -> bool {
-    let restored_root = crate::config::paths::executor_home().join("restored-workspaces");
-    Path::new(path).starts_with(restored_root)
-}
-
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
-    // Restored workspaces own their execution directory, even inside a worktree.
-    if is_managed_restored_workspace(path) {
+    if super::restored_workspaces::workspace_root(path).is_some() {
         return None;
     }
     if !Path::new(path).exists() {
@@ -1102,6 +1171,18 @@ mod tests {
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
         );
+    }
+
+    #[test]
+    fn stand_in_project_coordinator_retains_host_refreshed_leader_versions() {
+        let old = json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator","userId":7,"cloudProjectId":"project","projectStore":"local","groupId":"group","leaderId":"old","agentVersion":1}});
+        let mut request = ExecutionRequest::default();
+        let mut current = old["origin"].clone();
+        current["leaderId"] = json!("new");
+        current["agentVersion"] = json!(2);
+        request.extra.insert("origin".into(), current.clone());
+        restore_origin(&mut request, &old);
+        assert_eq!(request.extra["origin"], current);
     }
 
     #[test]

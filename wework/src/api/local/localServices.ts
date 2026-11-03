@@ -1,3 +1,4 @@
+import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
@@ -344,6 +345,7 @@ type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  connectionDependencyPlugins?: ConnectionDependencyPluginApi
   listCloudModels?: () => Promise<UnifiedModel[]>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
@@ -743,10 +745,34 @@ function runtimeHandleDebug(value: Record<string, unknown>): Record<string, unkn
   }
 }
 
-function runtimeTranscriptMessageCount(response: unknown): number | null {
+function runtimeTranscriptSummary(response: unknown): Record<string, unknown> {
   const responseRecord = recordValue(response)
   const messages = responseRecord.messages
-  return Array.isArray(messages) ? messages.length : null
+  return {
+    messageCount: Array.isArray(messages) ? messages.length : null,
+    threadId: stringValue(responseRecord.threadId),
+    running: typeof responseRecord.running === 'boolean' ? responseRecord.running : null,
+    turns: Array.isArray(responseRecord.turns)
+      ? responseRecord.turns.map(value => {
+          const turn = recordValue(value)
+          return {
+            id: stringValue(turn.id),
+            status: stringValue(turn.status),
+            clientUserMessageId: stringValue(turn.clientUserMessageId),
+            items: Array.isArray(turn.items)
+              ? turn.items.map(value => {
+                  const item = recordValue(value)
+                  return {
+                    id: stringValue(item.id),
+                    type: stringValue(item.type),
+                    blockType: stringValue(recordValue(item.block).type),
+                  }
+                })
+              : null,
+          }
+        })
+      : null,
+  }
 }
 
 function workspaceLabel(workspacePath: string, label: unknown): string {
@@ -2500,7 +2526,7 @@ export function createRuntimeWorkApiFromIpc(
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
-          messageCount: runtimeTranscriptMessageCount(response),
+          ...runtimeTranscriptSummary(response),
         })
       }
       return response
@@ -3502,6 +3528,24 @@ export function createAutomationApiFromIpc(
       schemaVersion: 2,
       deviceId: localDeviceId,
     }
+    if (taskRequest.standInOwner) {
+      const continuation = data.continuationPayload as RuntimeSendRequest | null | undefined
+      return {
+        id: data.id ?? '',
+        version: data.version ?? 0,
+        name: data.name,
+        description: data.description ?? '',
+        prompt: data.prompt,
+        schedule: serializeLocalAutomationSchedule(data.schedule),
+        timezone: data.timezone,
+        enabled: data.enabled,
+        conversationMode: data.conversationMode,
+        notificationPolicy: data.notificationPolicy,
+        taskRequest,
+        taskPayload: { runtime: 'codex', standaloneChatWorkspace: true },
+        continuationPayload: continuation ? { taskId: continuation.address.taskId } : null,
+      }
+    }
     const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
       taskRequest,
       localDeviceId,
@@ -3877,7 +3921,16 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
-    (method, params) => request(method, params),
+    async (method, params) => {
+      if (
+        (method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search') &&
+        (!params?.runtime || params.runtime === 'codex')
+      ) {
+        // Restored sessions may read Codex before model discovery initializes its proxy/catalog.
+        await ensureStatus()
+      }
+      return request(method, params)
+    },
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
@@ -4634,7 +4687,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload) => request(method, payload)),
+    standInApi: createStandInExecutorApi(
+      (method, payload) => request(method, payload),
+      deps.connectionDependencyPlugins
+    ),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

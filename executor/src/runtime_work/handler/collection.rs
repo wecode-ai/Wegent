@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::runtime_work::util::is_managed_restored_workspace;
 
 const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -44,7 +43,10 @@ impl RuntimeWorkRpcHandler {
                     &thread,
                     &link,
                 );
-                if link.ephemeral {
+                if link.ephemeral
+                    || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                        && link.interaction_status.is_none())
+                {
                     continue;
                 }
                 if self.archived_link_is_deleted(&link) {
@@ -132,7 +134,10 @@ impl RuntimeWorkRpcHandler {
             if self.archived_link_is_deleted(&link) {
                 continue;
             }
-            if link.ephemeral {
+            if link.ephemeral
+                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
+                    && link.interaction_status.is_none())
+            {
                 continue;
             }
             let link_archived = link.status == "archived";
@@ -305,10 +310,9 @@ impl RuntimeWorkRpcHandler {
                     .as_deref()
                     .and_then(|key| project_index.project_for_key(key))
                     .or_else(|| project_index.project_for_path(&link.workspace_path));
-                link.preserve_execution_path = is_managed_restored_workspace(&link.workspace_path)
-                    || source_project
-                        .map(|source| source.key != project.key)
-                        .unwrap_or(true);
+                link.preserve_execution_path = source_project
+                    .map(|source| source.key != project.key)
+                    .unwrap_or(true);
                 link.group_workspace_path = Some(project.workspace_path.clone());
                 link.group_project_key = Some(project.key.clone());
                 kept_project += 1;

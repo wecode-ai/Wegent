@@ -6,7 +6,12 @@ import {
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_CHECKPOINT_GROUP,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+} from './upgrade-suite.mjs'
 
 test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
   assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
@@ -23,17 +28,37 @@ test('upgrade verification has one maintained group for all supported operating 
   for (const checkpoint of UPGRADE_CHECKPOINTS) assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint))
 })
 
+test('the refresh diagnostic uses the shared package runner without certifying an upgrade edge', () => {
+  assert.ok(DESKTOP_CHECKPOINTS.includes('app-update-refresh'))
+  assert.ok(UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes('app-update-refresh'))
+  assert.equal(UPGRADE_PACKAGE_CHECKPOINTS.includes('app-update-refresh'), false)
+})
+
 test('the existing CI profile checkpoint includes the original and model catalog regressions', () => {
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
     'stand-in-model-catalog',
+    'stand-in-processing',
+    'coordination-runtime',
+    'coordination-arrangements',
+    'project-coordinator-publication',
+    'project-coordination',
   ])
 })
 
 test('group expansion preserves ordering and runs each checkpoint once', () => {
   assert.deepEqual(
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
-    ['stand-in-profile-settings', 'stand-in-model-catalog', 'stand-in-controls']
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'coordination-runtime',
+      'coordination-arrangements',
+      'project-coordinator-publication',
+      'project-coordination',
+      'stand-in-controls',
+    ]
   )
 })
 

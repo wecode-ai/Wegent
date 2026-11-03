@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { UPGRADE_PACKAGE_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
+import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from "../../wework/e2e/desktop/upgrade-suite.mjs";
+import { compareVersions } from "../../wework/electron/src/runtime/upgrade-policy.mjs";
 
 export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const publishedReleaseTag = environment.PUBLISHED_RELEASE_TAG || "";
@@ -12,10 +13,19 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
   const requestedCheckpoint = environment.VERIFICATION_CHECKPOINT || "all";
   const diagnosticCheckpoint =
     requestedCheckpoint === "all" ? "" : requestedCheckpoint;
+  const sourceRunId = environment.VERIFICATION_SOURCE_RUN_ID || "";
+  if (
+    (sourceRunId && diagnosticCheckpoint !== "app-update-refresh") ||
+    (diagnosticCheckpoint === "app-update-refresh" && !sourceRunId) ||
+    (sourceRunId && environment.PUBLISH_RELEASE === "true")
+  )
+    throw new Error(
+      "A prebuilt source requires a non-publishing app-update-refresh diagnostic",
+    );
   if (
     diagnosticCheckpoint &&
-    (environment.REPLAY !== "true" ||
-      !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+    ((!sourceRunId && environment.REPLAY !== "true") ||
+      !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint))
   )
     throw new Error(
       "A diagnostic checkpoint requires an existing build replay",
@@ -95,7 +105,7 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     throw new Error(
       "The published target must match the input artifact version",
     );
-  return {
+  const outputs = {
     run_id: runId,
     version,
     channel: version.includes("-beta.") ? "beta" : "stable",
@@ -104,6 +114,27 @@ export function resolveUpgradeInputs(environment, execute = execFileSync) {
     diagnostic_checkpoint: diagnosticCheckpoint,
     published_release_tag: publishedReleaseTag,
   };
+  if (sourceRunId) {
+    const source = resolveUpgradeInputs(
+      {
+        ...environment,
+        SOURCE_RUN_ID: sourceRunId,
+        VERIFICATION_SOURCE_RUN_ID: "",
+        EXPECTED_VERSION: "",
+        VERIFICATION_CHECKPOINT: "all",
+        PUBLISHED_RELEASE_TAG: "",
+        REPLAY: "true",
+      },
+      execute,
+    );
+    if (compareVersions(version, source.version) <= 0)
+      throw new Error(
+        "The diagnostic target must be newer than its immutable source",
+      );
+    outputs.source_run_id = source.run_id;
+    outputs.source_version = source.version;
+  }
+  return outputs;
 }
 
 if (

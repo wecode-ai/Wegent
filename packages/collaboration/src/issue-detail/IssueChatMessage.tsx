@@ -309,12 +309,10 @@ export function IssueChatMessage({
     !isManagerStatusComment &&
     !message.replyToMessageId
   ) {
-    const failed = displayStatus === "failed";
-    const completed = displayStatus === "succeeded";
     const presentation = managerActivityPresentation(
       t,
       message.metadata,
-      failed ? "failed" : completed ? "completed" : "running",
+      displayStatus ?? "unknown",
     );
     return (
       <div

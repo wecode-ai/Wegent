@@ -31,6 +31,7 @@ import {
   upsertReasoningChunk,
   upsertBlocks,
   upsertRuntimeBlock,
+  replaceAssistantTextWithBlock,
   resolveRuntimeStreamingThinkingContent,
   boundVisibleRuntimeProcessingBlocks,
   settleProcessingBlocks,
@@ -89,10 +90,11 @@ export function hydrateRuntimeConversationTurns(
     }
   }
   const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
+  const classifiedSnapshot = preserveLiveClassifications(snapshot, observedByTurn, actions)
   const reconciledSnapshot =
     recoveringTurnIds.size === 0
-      ? snapshot
-      : snapshot.map((turn) =>
+      ? classifiedSnapshot
+      : classifiedSnapshot.map((turn) =>
           preserveLiveRecovery(
             turn,
             observedByTurn.get(turn.id),
@@ -127,6 +129,38 @@ export function hydrateRuntimeConversationTurns(
         }),
       };
     });
+}
+
+function preserveLiveClassifications(
+  snapshot: RuntimeConversationTurn[],
+  observedByTurn: ReadonlyMap<string | null, RuntimeConversationTurn>,
+  actions: RuntimePaneMessageAction[]
+): RuntimeConversationTurn[] {
+  const replacements = actions.filter(
+    (action): action is Extract<RuntimePaneMessageAction, { type: 'block_created' }> =>
+      action.type === 'block_created' && Boolean(action.replaceAssistantTextItemId)
+  )
+  if (replacements.length === 0) return snapshot
+  return snapshot.map(turn => {
+    let items = turn.items
+    for (const action of replacements) {
+      if (action.subtaskId !== turn.id) continue
+      const previousId = action.replaceAssistantTextItemId
+      const live = observedByTurn.get(turn.id)?.items.find(item => item.id === action.block.id)
+      if (
+        live?.type !== 'block' ||
+        !items.some(item => item.type === 'assistant_text' && item.id === previousId)
+      )
+        continue
+      // The explicit native classification arrived during this historical read.
+      // Use its latest observed block, including any subsequent live updates.
+      items =
+        live.id !== previousId && items.some(item => item.id === live.id)
+          ? items.filter(item => item.id !== previousId)
+          : replaceAssistantTextWithBlock(items, previousId, live.block)
+    }
+    return items === turn.items ? turn : { ...turn, items }
+  })
 }
 
 function preserveLiveRecovery(

@@ -77,7 +77,8 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let Some(subtasks) = read_status(
         mysql
             .fetch_all(sql::assistant_subtasks(ctx.tables), (task_id,))
-            .await,
+            .await
+            .and_then(crate::task_store_listing::order_assistant_subtasks),
         task_id,
         "assistant_subtasks",
     ) else {

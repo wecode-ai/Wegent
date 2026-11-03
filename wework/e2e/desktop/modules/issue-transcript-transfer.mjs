@@ -115,13 +115,11 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  // Cached text can render while another reader is still hydrating this page.
-  // Let that read finish so reopening cannot reuse a pre-fault request.
+  // Cached messages can appear before the shared initial history read settles.
   await control.command(
     'waitFor',
     `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
   )
-  const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   // The closing drawer retains its conversation until the exit animation ends.
   // Inject the next read failure only after that previous reader is unmounted.
@@ -130,6 +128,8 @@ async function verifyCachedInitialRecovery({
     snapshot => !snapshot.testIds.includes('ai-chat-modal'),
     'The previous Issue conversation did not unmount before testing its next history read'
   )
+  const start = proxy.requests.length
+  console.log('[issue-history-fault] installing rule', { at: new Date().toISOString(), start })
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -148,6 +148,20 @@ async function verifyCachedInitialRecovery({
     )
     updateFixtureReply(sqliteHome, threadId)
   } finally {
+    console.log('[issue-history-fault] releasing rule', {
+      at: new Date().toISOString(),
+      requests: proxy.requests
+        .slice(start)
+        .map(({ method, path, receivedAt, completedAt, fault, status, dropped }) => ({
+          method,
+          path,
+          receivedAt,
+          completedAt,
+          fault,
+          status,
+          dropped,
+        })),
+    })
     proxy.rule = () => null
   }
   await control.command('clickWhenEnabled', `${modal} [data-testid="runtime-transcript-retry"]`)

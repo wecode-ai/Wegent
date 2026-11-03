@@ -26,13 +26,12 @@ async fn restored_tasks_keep_their_directory_when_assigned_to_an_ancestor_projec
     link.thread_id = Some("thread-1".to_owned());
 
     let projected = handler.visible_links_for_projects(vec![link], &index);
-    let response = workspace_response(projected.clone(), vec![]);
+    let response = workspace_response(projected, vec![]);
 
     match previous {
         Some(value) => std::env::set_var("WEGENT_EXECUTOR_HOME", value),
         None => std::env::remove_var("WEGENT_EXECUTOR_HOME"),
     }
-    assert!(projected[0].preserve_execution_path);
     assert_eq!(response[0]["workspacePath"], project_path);
     assert_eq!(response[0]["tasks"][0]["workspacePath"], restored_path);
 }

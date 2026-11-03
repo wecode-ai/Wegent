@@ -69,13 +69,7 @@ export function synchronizeRuntimeConversation(
   ])
   const existing = requests.get(requestKey)
   if (existing) {
-    logRuntimeTaskCreateStage('runtime-transcript-read-reused', {
-      taskId: address.taskId,
-      projectScoped: Boolean(address.projectSession),
-      limit: options.limit ?? null,
-      refresh: options.refresh === true,
-      olderPage: Boolean(options.beforeCursor),
-    })
+    diagnoseRead('join', address, options)
     return existing
   }
   const previous = writer.pending
@@ -87,7 +81,9 @@ export function synchronizeRuntimeConversation(
     if (!options.navigationOnly) adoptRuntimeConversationThread(address, address.threadId)
     const token = options.navigationOnly ? null : beginRuntimeConversationHydration(address)
     try {
+      diagnoseRead('start', address, options)
       const transcript = await readRuntimeConversation(read, address, options)
+      diagnoseRead('resolved', address, options)
       if (writer.generation !== generation) throw new SupersededConversationRead()
       if (token && operation.isCurrent()) {
         completeRuntimeConversationHydration(
@@ -102,6 +98,7 @@ export function synchronizeRuntimeConversation(
       }
       return transcript
     } catch (error) {
+      diagnoseRead('rejected', address, options)
       if (token) abortRuntimeConversationHydration(address, token)
       throw error
     }
@@ -113,6 +110,17 @@ export function synchronizeRuntimeConversation(
   requests.set(requestKey, pending)
   writer.pending = pending
   return pending
+}
+
+function diagnoseRead(action: string, address: RuntimeTaskAddress, options: ReadOptions): void {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  logRuntimeTaskCreateStage('conversation-read', {
+    action,
+    taskId: address.taskId,
+    projectSession: Boolean(address.projectSession),
+    limit: options.limit ?? null,
+    navigationOnly: options.navigationOnly === true,
+  })
 }
 
 /** Viewing a child thread does not adopt it as the task's current conversation. */

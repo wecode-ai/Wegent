@@ -48,6 +48,7 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
+import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -293,7 +294,10 @@ export function DesktopWorkbenchLayout({
     ownedWorkspaceTab?.kind === 'board'
       ? ownedWorkspaceTab.contentRoute
       : `${currentPath}${window.location.search}`
-  const taskBoardOpen = taskView === 'default-work-items'
+  const standInContentRoute =
+    ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
+  const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const taskBoardOpen = !standInOpen && taskView === 'default-work-items'
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
   const workItemSurfaceOpen = routeWorkItemsOpen || taskBoardOpen
@@ -463,7 +467,7 @@ export function DesktopWorkbenchLayout({
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
   }, [loadLocalHarnessSessions, workItemSurfaceOpen])
-  const activeItem = 'chat'
+  const activeItem = standInOpen ? 'stand-in' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const toggleMyWork = useCallback(() => {
     setTaskView(currentView =>
@@ -1018,6 +1022,7 @@ export function DesktopWorkbenchLayout({
       onPointerLeave={onPointerLeave}
       onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
       onNewChat={startNewChatOutsideHarness}
+      onOpenStandIn={() => navigateTo('/stand-in')}
       onStartStandaloneChat={startStandaloneChatOutsideHarness}
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
@@ -1120,6 +1125,17 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+          {standInOpen && (
+            <PersonalStandInWorkspace
+              contentRoute={standInContentRoute}
+              services={services}
+              user={state.user ?? LOCAL_USER}
+              devices={state.devices}
+              active={routeActive && !settingsOpen}
+              onClose={() => navigateTo('/')}
+              onOpenTask={openRuntimeTaskOutsideHarness}
+            />
+          )}
           {taskBoardOpen && routeActive && !settingsOpen ? (
             <>
               <TitlebarActionsPortal>
@@ -1407,11 +1423,11 @@ export function DesktopWorkbenchLayout({
             ))}
           {!routeWorkItemsOpen ? (
             <div
-              style={{ display: taskBoardOpen ? 'none' : 'contents' }}
-              aria-hidden={taskBoardOpen}
+              style={{ display: taskBoardOpen || standInOpen ? 'none' : 'contents' }}
+              aria-hidden={taskBoardOpen || standInOpen}
             >
               <DesktopWorkbenchMain
-                visible={routeActive && !settingsOpen && !taskBoardOpen}
+                visible={routeActive && !settingsOpen && !taskBoardOpen && !standInOpen}
                 sidebarCollapsed={effectiveSidebarCollapsed}
                 sidebarResizing={sidebarResizing}
                 onSidebarCollapsedChange={updateSidebarCollapsed}
