@@ -109,6 +109,7 @@ export async function prepareReleaseEnvironment(
       // This stable program store is outside prunable release slots. Each slot
       // keeps its own mutable catalog and profile, including during rollback.
       reuseRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh'),
+      immutableRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh', '.prepared'),
     })
   )
   const preparationHome = join(store.slot(release.id), 'preparation')

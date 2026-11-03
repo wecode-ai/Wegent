@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  stat,
+  writeFile,
+  rename,
+  lstat,
+  realpath,
+  rm,
+  symlink,
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
@@ -377,6 +387,17 @@ export async function createDesktopScenario(options) {
           electronUserDataDirectory
         )
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
+      if (pair.immutableRuntimeCache && !options.preparationOnly) {
+        // This store contains immutable programs only. Source/target catalogs,
+        // profile state and all release slots remain private to this checkpoint.
+        await mkdir(pair.immutableRuntimeCache, { recursive: true })
+        const shared = join(sourceRuntimeRoot, '.prepared')
+        await symlink(
+          pair.immutableRuntimeCache,
+          shared,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      }
     },
     async prepareUserDataLaunch() {
       if (usesDefaultUserData) {

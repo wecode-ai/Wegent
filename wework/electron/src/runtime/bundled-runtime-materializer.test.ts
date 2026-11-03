@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as tar from 'tar'
@@ -212,6 +222,97 @@ async function downloadableRuntimeFixture() {
 }
 
 describe('installed immutable runtime reuse', () => {
+  test('checkpoint directory junction cleanup cannot delete the shared prepared programs', async () => {
+    const f = await downloadableRuntimeFixture()
+    const shared = join(f.root, 'shared-programs')
+    await mkdir(shared)
+    const cases = [join(f.root, 'checkpoint-one'), join(f.root, 'checkpoint-two')]
+    for (const checkpoint of cases) {
+      await mkdir(checkpoint)
+      const immutableRoot = join(checkpoint, '.prepared')
+      await symlink(shared, immutableRoot, process.platform === 'win32' ? 'junction' : 'dir')
+      await materializeBundledRuntimes(
+        f.resources,
+        join(checkpoint, 'slot'),
+        ['core', 'workbench'],
+        { immutableRoot }
+      )
+    }
+    const secondProgram = join(cases[1], 'slot', f.core.sourceFingerprint, 'runtime.json')
+    const original = await realpath(secondProgram)
+    expect(await realpath(join(cases[0], 'slot', f.core.sourceFingerprint, 'runtime.json'))).toBe(
+      original
+    )
+    await rm(cases[0], { recursive: true, force: true })
+    expect(await realpath(secondProgram)).toBe(original)
+    expect(JSON.parse(await readFile(secondProgram, 'utf8')).sourceFingerprint).toBe(
+      f.core.sourceFingerprint
+    )
+  })
+
+  test('shares target programs across preparations without publishing future roles in the source catalog', async () => {
+    const f = await downloadableRuntimeFixture()
+    await mkdir(f.cache)
+    const sourceCatalog = '{"runtimes":[{"role":"core","dshVersion":"source"}]}'
+    await writeFile(join(f.cache, 'runtimes.json'), sourceCatalog)
+    const immutableRoot = join(f.cache, '.prepared')
+    const first = join(f.root, 'first-target')
+    const second = join(f.root, 'second-target')
+    await materializeBundledRuntimes(f.resources, first, ['core', 'workbench'], { immutableRoot })
+    const original = await realpath(join(first, f.core.sourceFingerprint))
+    const inode = (await stat(join(original, 'runtime.json'))).ino
+    await materializeBundledRuntimes(f.resources, second, ['core', 'workbench'], { immutableRoot })
+    expect(await realpath(join(second, f.core.sourceFingerprint))).toBe(original)
+    expect((await stat(join(second, f.core.sourceFingerprint, 'runtime.json'))).ino).toBe(inode)
+    await writeFile(join(first, 'runtimes.json'), '{"runtimes":[]}')
+    expect(await readFile(join(f.cache, 'runtimes.json'), 'utf8')).toBe(sourceCatalog)
+    expect(JSON.parse(await readFile(join(second, 'runtimes.json'), 'utf8')).runtimes).toEqual([
+      ...f.catalog.runtimes,
+      ...f.catalog.downloadableRuntimes,
+    ])
+    await rm(first, { recursive: true, force: true })
+    await stat(join(original, 'runtime.json'))
+  })
+
+  test('a published target cache cannot bypass verification of each delivered archive', async () => {
+    const f = await downloadableRuntimeFixture()
+    const immutableRoot = join(f.root, 'prepared')
+    await materializeBundledRuntimes(f.resources, join(f.root, 'first'), ['core'], {
+      immutableRoot,
+    })
+    const archive = join(f.resources, f.core.assetName)
+    const bytes = await readFile(archive)
+    bytes[0] ^= 1
+    await writeFile(archive, bytes)
+    await expect(
+      materializeBundledRuntimes(f.resources, join(f.root, 'second'), ['core'], { immutableRoot })
+    ).rejects.toThrow('integrity mismatch')
+  })
+
+  test('different delivered archive hashes never reuse published content with the same fingerprint', async () => {
+    const f = await downloadableRuntimeFixture()
+    const immutableRoot = join(f.root, 'prepared')
+    const first = join(f.root, 'first')
+    await materializeBundledRuntimes(f.resources, first, ['core'], { immutableRoot })
+    const original = await realpath(join(first, f.core.sourceFingerprint))
+    const archive = join(f.resources, f.core.assetName)
+    await tar.c({ cwd: original, file: archive, gzip: true, mtime: new Date(0) }, ['.'])
+    const bytes = await readFile(archive)
+    const changed = {
+      ...f.core,
+      archiveSha256: createHash('sha256').update(bytes).digest('hex'),
+      archiveBytes: bytes.length,
+    }
+    expect(changed.archiveSha256).not.toBe(f.core.archiveSha256)
+    await writeFile(
+      join(f.resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [changed, { ...changed, role: 'workbench' }] })
+    )
+    const second = join(f.root, 'second')
+    await materializeBundledRuntimes(f.resources, second, ['core'], { immutableRoot })
+    expect(await realpath(join(second, f.core.sourceFingerprint))).not.toBe(original)
+  })
+
   test('shares verified program files while keeping catalogs and release cleanup independent', async () => {
     const f = await downloadableRuntimeFixture()
     await materializeBundledRuntimes(f.resources, f.cache)

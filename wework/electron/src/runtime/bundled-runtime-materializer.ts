@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import semver from 'semver'
@@ -29,6 +29,7 @@ interface MaterializeRuntimeOptions {
   versionRequirement?: string
   fetch?: typeof fetch
   reuseRoot?: string
+  immutableRoot?: string
 }
 
 export async function materializeBundledRuntimes(
@@ -132,10 +133,31 @@ async function materializeRuntime(
       return
     }
   }
+  // Prepared future runtimes must not enter the running source's role catalog.
+  // Publish only immutable programs; each release retains its private catalog.
+  const publication = options.immutableRoot
+    ? join(
+        options.immutableRoot,
+        createHash('sha256')
+          .update(
+            JSON.stringify([
+              runtime.sourceFingerprint,
+              runtime.dshVersion,
+              runtime.archiveSha256,
+              runtime.archiveBytes,
+            ])
+          )
+          .digest('hex')
+      )
+    : target
+  const checkedArchive = options.immutableRoot
+    ? await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
+    : undefined
   await publishImmutableDirectory(
-    target,
+    publication,
     async content => {
-      const archive = await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
+      const archive =
+        checkedArchive ?? (await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl))
       await extractArchive(archive, content)
       if (!(await runtimeMatches(content, runtime))) {
         throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
@@ -143,6 +165,8 @@ async function materializeRuntime(
     },
     path => runtimeMatches(path, runtime)
   )
+  if (publication !== target)
+    await linkImmutableDirectory(target, publication, path => runtimeMatches(path, runtime))
 }
 
 async function reusableRuntime(root: string, runtime: RuntimeDescriptor): Promise<string | null> {

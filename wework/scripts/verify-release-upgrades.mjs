@@ -255,6 +255,7 @@ async function verifySource(source, targetChannel, previous) {
       applicationId: 'io.wecode.wework',
       suiteVersion: UPGRADE_SUITE_VERSION,
       channel: targetChannel,
+      immutableRuntimeCache: join(temporary, 'prepared-runtimes', release.sha256),
       from,
       to: { ...release, path: join(assets, release.name) },
     })
