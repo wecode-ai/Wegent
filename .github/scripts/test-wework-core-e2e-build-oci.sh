@@ -133,4 +133,32 @@ printf 'transport deduplication\n' >"$repo/.github/scripts/wework-core-e2e-trans
 (cd "$repo" && git add .github/scripts/wework-core-e2e-transport.mjs)
 test "$reference_before_transport" != "$(resolve_reference)"
 
+source_inputs=(
+  packages/process-explorer/src/contract.ts
+  patches/@xterm__xterm@6.0.0.patch
+  shared/assets/codex-models/kimi.json
+  shared/data/collaboration-templates.json
+  LICENSES/Apache-2.0.txt
+)
+source_input_status=0
+for source_input in "${source_inputs[@]}"; do
+  reference_before_input="$(resolve_reference)"
+  mkdir -p "$(dirname "$repo/$source_input")"
+  printf 'source input\n' >"$repo/$source_input"
+  (cd "$repo" && git add "$source_input")
+  reference_after_input="$(resolve_reference)"
+  if [[ "$reference_before_input" == "$reference_after_input" ]]; then
+    echo "New compiled input did not invalidate the shared build: $source_input" >&2
+    source_input_status=1
+  fi
+
+  printf 'changed source input\n' >"$repo/$source_input"
+  (cd "$repo" && git add "$source_input")
+  if [[ "$reference_after_input" == "$(resolve_reference)" ]]; then
+    echo "Changed compiled input did not invalidate the shared build: $source_input" >&2
+    source_input_status=1
+  fi
+done
+test "$source_input_status" = 0
+
 echo "Wework Core E2E OCI build tests passed"

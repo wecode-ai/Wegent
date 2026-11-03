@@ -27,6 +27,11 @@ git -c "safe.directory=$PWD" ls-files -s -- \
   package.json \
   packages/chat-core \
   packages/collaboration \
+  packages/process-explorer \
+  patches \
+  shared/assets \
+  shared/data \
+  LICENSES \
   pnpm-lock.yaml \
   pnpm-workspace.yaml \
   wework \
