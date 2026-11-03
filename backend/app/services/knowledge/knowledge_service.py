@@ -93,6 +93,14 @@ from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
     can_manage_accessible_knowledge_document,
 )
+from app.services.knowledge.wiki_reporting import binding_fact
+from shared.event_reporting.catalogs.knowledge import (
+    emit_document_created,
+    emit_document_deleted,
+    emit_knowledge_base_deleted,
+    loaded_scalar,
+    observe,
+)
 from shared.knowledge_module import normalize_document_extension
 
 batch_logger = logging.getLogger(__name__)
@@ -1115,6 +1123,18 @@ class KnowledgeService:
                 raise RuntimeError("Code Wiki remote purge did not complete")
 
         for document in documents:
+            from app.services.knowledge.event_logging import after_commit_fact
+            from shared.event_reporting.catalogs.knowledge import loaded_scalar
+
+            after_commit_fact(
+                db,
+                "knowledge.document.deleted",
+                {
+                    "kb_id": knowledge_base_id,
+                    "document_id": loaded_scalar(document, "id"),
+                    "data": {"delete_mode": "code_wiki"},
+                },
+            )
             db.delete(document)
 
         # Delete all folders belonging to this knowledge base to prevent orphaned records.
@@ -1156,6 +1176,10 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
+        emit_knowledge_base_deleted(
+            kb_id=knowledge_base_id,
+            delete_mode="physical",
+        )
         KnowledgeService._cleanup_deleted_code_wiki_resources(db, attachment_refs)
         return True
 
@@ -1602,6 +1626,7 @@ class KnowledgeService:
         knowledge_base_id: int,
         user_id: int,
         data: KnowledgeDocumentCreate,
+        trigger: str = "upload",
     ) -> KnowledgeDocument:
         """
         Create a new document in a knowledge base.
@@ -1693,6 +1718,14 @@ class KnowledgeService:
 
         db.commit()
         db.refresh(document)
+        emit_document_created(
+            kb_id=knowledge_base_id,
+            document_id=loaded_scalar(document, "id"),
+            source_type=loaded_scalar(document, "source_type"),
+            trigger=trigger,
+            file_extension=loaded_scalar(document, "file_extension"),
+            content_bytes=loaded_scalar(document, "file_size"),
+        )
         return document
 
     @staticmethod
@@ -1773,11 +1806,20 @@ class KnowledgeService:
             db.add(document)
             db.flush()
             KnowledgeService._update_document_count_cache(db, knowledge_base_id)
+            binding_fact(db, document, "created", committed=True)
             db.commit()
         except IntegrityError:
             db.rollback()
             raise
         db.refresh(document)
+        emit_document_created(
+            kb_id=knowledge_base_id,
+            document_id=loaded_scalar(document, "id"),
+            source_type=loaded_scalar(document, "source_type"),
+            trigger="external_import",
+            file_extension=loaded_scalar(document, "file_extension"),
+            content_bytes=loaded_scalar(document, "file_size"),
+        )
         return document
 
     @staticmethod
@@ -2083,6 +2125,7 @@ class KnowledgeService:
         db: Session,
         document_id: int,
         user_id: int,
+        trigger: str = "openapi",
     ) -> DocumentDeleteResult:
         """
         Physically delete a document, its RAG index, and associated attachment.
@@ -2151,6 +2194,8 @@ class KnowledgeService:
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.
         context_owner_user_id = doc.user_id
+        source_type = loaded_scalar(doc, "source_type")
+        had_active_index = loaded_scalar(doc, "is_active")
 
         # Delete the RAG index first, while the document still identifies the
         # reference to remove. The row is the only thing that says which chunks
@@ -2193,6 +2238,19 @@ class KnowledgeService:
                     rag_gateway.delete_document_index(delete_runtime_spec, db=db)
                 )
                 delete_status = result.get("status")
+                observe(
+                    "knowledge.document.index_cleanup.finished",
+                    lambda: {
+                        "kb_id": kind_id,
+                        "document_id": document_id,
+                        "status": "completed",
+                        "data": {
+                            "result_status": delete_status,
+                            "deleted_chunks": loaded_scalar(result, "deleted_chunks"),
+                            "trigger": trigger,
+                        },
+                    },
+                )
                 if delete_status in {"success", "deleted"}:
                     logger.info(
                         "Deleted RAG index for doc_ref '%s' in knowledge base %s "
@@ -2217,12 +2275,20 @@ class KnowledgeService:
                     )
 
         # Physically delete document from database
+        binding_fact(db, doc, "deleted", committed=True)
         db.delete(doc)
 
         # Update cached document count in knowledge base spec
         KnowledgeService._update_document_count_cache(db, kind_id)
 
         db.commit()
+        emit_document_deleted(
+            kb_id=kind_id,
+            document_id=document_id,
+            source_type=source_type,
+            trigger=trigger,
+            had_active_index=had_active_index,
+        )
 
         # Delete associated attachment (context) if exists
         if attachment_id:

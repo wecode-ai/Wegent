@@ -488,6 +488,7 @@ async def create_document_open(
         "trigger_indexing": True,
         "trigger_summary": True,
         "splitter_config": splitter_config_dict,
+        "trigger": "openapi",
     }
 
     # Add source-specific parameters
@@ -572,6 +573,8 @@ async def search_documents_open(
             reserved_output_tokens=data.reserved_output_tokens,
             context_buffer_ratio=data.context_buffer_ratio,
             max_direct_chunks=data.max_direct_chunks,
+            entrypoint="openapi",
+            client_surface="external_api",
         )
         return {"records": result.get("records", [])}
     except RemoteRagGatewayError as exc:

@@ -212,7 +212,7 @@ async fn document_detail(
     let mut content_length = None;
     let mut truncated = None;
     if include_content {
-        let paged = read_document_content(state, user_id, doc_id, offset, limit)
+        let paged = read_document_content(state, user_id, doc_id, offset, limit, "knowledge_api")
             .await
             .map_err(|error| DetailError(error.into_fastapi_error()))?;
         let (page_content, total_length, is_truncated) = paged.into_detail_parts();

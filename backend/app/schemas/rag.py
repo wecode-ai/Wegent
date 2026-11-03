@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -64,6 +64,13 @@ class RetrieveRequest(BaseModel):
     """Document retrieval request."""
 
     query: str = Field(..., min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
+    client_surface: Literal["knowledge_web"] | None = Field(
+        None,
+        description=(
+            "Optional product surface for telemetry. The Web knowledge workbench "
+            "uses 'knowledge_web'; omitted public API requests are external_api."
+        ),
+    )
     search_hints: Optional[SearchHints] = Field(
         None,
         description="Optional retrieval hints for dense rewrite and sparse planning",

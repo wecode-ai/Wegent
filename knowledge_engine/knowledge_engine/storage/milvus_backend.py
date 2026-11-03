@@ -51,6 +51,7 @@ from knowledge_engine.storage.milvus_dimension import (
     read_collection_snapshot,
 )
 from knowledge_engine.storage.milvus_readiness import load_for_document_cleanup
+from shared.event_reporting.operations import storage_fact
 from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ class MilvusBackend(BaseStorageBackend):
         STORAGE_BACKEND_SPECS["milvus"].retrieval_methods
     )
     supports_retrieval_scope: ClassVar[bool] = True
+    event_storage_type: ClassVar[str] = "milvus"
 
     # Override INDEX_PREFIX for Milvus collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -393,6 +395,7 @@ class MilvusBackend(BaseStorageBackend):
             hybrid_ranker_params=hybrid_ranker_params,
         )
 
+    @storage_fact("milvus", "index")
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
@@ -653,6 +656,7 @@ class MilvusBackend(BaseStorageBackend):
             doc_ref,
         )
 
+    @storage_fact("milvus", "retrieve")
     def retrieve(
         self,
         knowledge_id: str,
@@ -921,6 +925,7 @@ class MilvusBackend(BaseStorageBackend):
 
         return {"records": results}
 
+    @storage_fact("milvus", "delete_document")
     def delete_document(
         self,
         knowledge_id: str,

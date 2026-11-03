@@ -302,11 +302,18 @@ class TestKnowledgeTool:
         mock_session.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_passes_raw_scope(self):
+    @pytest.mark.parametrize(
+        "surface", ["knowledge_web", "chat_shell", "external_api", None]
+    )
+    async def test_search_knowledge_base_passes_raw_scope(self, surface):
         """search_knowledge_base should delegate raw scope to the orchestrator."""
         module = get_knowledge_module()
         token_info = TaskTokenInfo(
-            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+            knowledge_client_surface=surface,
         )
 
         async def fake_retrieve(**kwargs):
@@ -336,6 +343,8 @@ class TestKnowledgeTool:
 
         mock_retrieve.assert_called_once()
         assert mock_retrieve.call_args.kwargs["user_id"] == 3
+        assert mock_retrieve.call_args.kwargs["entrypoint"] == "mcp"
+        assert mock_retrieve.call_args.kwargs["client_surface"] == (surface or "mcp")
         assert mock_retrieve.call_args.kwargs["task_id"] == 1
         assert mock_retrieve.call_args.kwargs["document_ids"] == [11]
         assert mock_retrieve.call_args.kwargs["folder_ids"] == [5]
@@ -408,6 +417,7 @@ class TestKnowledgeTool:
             document_id=9,
             offset=0,
             limit=4,
+            entrypoint="mcp",
         )
         mock_session.close.assert_called_once()
 

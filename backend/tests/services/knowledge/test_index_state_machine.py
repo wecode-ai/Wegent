@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -80,6 +80,61 @@ def _create_document(
     test_db.commit()
     test_db.refresh(document)
     return document
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_terminal_reporting_does_not_query_after_commit(
+    test_db, test_user, monkeypatch, outcome
+):
+    kb = _create_knowledge_base(test_db, test_user)
+    doc = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=1,
+    )
+    document_id = doc.id
+    previous_expiration = test_db.expire_on_commit
+    test_db.expire_on_commit = True
+    committed = False
+    facts = []
+
+    def mark_committed(session):
+        nonlocal committed
+        committed = True
+
+    def forbid_sql(*args):
+        if committed:
+            raise AssertionError("terminal reporting issued SQL after commit")
+
+    monkeypatch.setattr(
+        "shared.event_reporting.catalogs.knowledge.emit_index_event",
+        lambda *args, **kwargs: facts.append(kwargs),
+    )
+    event.listen(test_db, "after_commit", mark_committed)
+    event.listen(test_db.bind, "before_cursor_execute", forbid_sql)
+    try:
+        if outcome == "success":
+            assert mark_document_index_succeeded(test_db, document_id, 1)
+        else:
+            assert mark_document_index_failed(
+                test_db,
+                document_id,
+                1,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.INDEXING,
+                    code="test_failure",
+                    message="failed",
+                    retryable=False,
+                    generation=1,
+                ),
+            )
+        assert facts[0]["status"] == outcome
+    finally:
+        event.remove(test_db, "after_commit", mark_committed)
+        event.remove(test_db.bind, "before_cursor_execute", forbid_sql)
+        test_db.expire_on_commit = previous_expiration
 
 
 def test_prepare_document_index_enqueue_schedules_new_generation(

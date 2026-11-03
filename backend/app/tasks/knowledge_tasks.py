@@ -232,6 +232,20 @@ def import_external_document_task(self, document_id: int, expected_generation: i
     with SessionLocal() as db:
         attempt = begin_external_import_attempt(db, document_id, expected_generation)
         if not attempt.should_execute:
+            from shared.event_reporting.catalogs.knowledge import observe
+
+            observe(
+                "knowledge.external.import.attempt.finished",
+                lambda: {
+                    "document_id": document_id,
+                    "status": "skipped",
+                    "data": {
+                        "generation": expected_generation,
+                        "reason": attempt.reason,
+                        "task_id": self.request.id,
+                    },
+                },
+            )
             logger.info(
                 "[Celery External Import] Skipping document_id=%s "
                 "generation=%s reason=%s",
@@ -246,6 +260,20 @@ def import_external_document_task(self, document_id: int, expected_generation: i
             .first()
         )
         if document is None:
+            from shared.event_reporting.catalogs.knowledge import observe
+
+            observe(
+                "knowledge.external.import.attempt.finished",
+                lambda: {
+                    "document_id": document_id,
+                    "status": "skipped",
+                    "data": {
+                        "generation": expected_generation,
+                        "reason": "document_missing",
+                        "task_id": self.request.id,
+                    },
+                },
+            )
             # Deleted between the claim and this read; nothing to revive.
             logger.info(
                 "[Celery External Import] Document %s no longer exists; skipping",
@@ -284,6 +312,7 @@ def index_document_task(
     splitter_config_dict: Optional[dict] = None,
     trigger_summary: bool = True,
     caller_user_id: int | None = None,
+    trigger: str = "upload",
 ):
     """
     Celery task for RAG document indexing.
@@ -329,20 +358,28 @@ def index_document_task(
     )
 
     if document_id is None:
-        result = run_document_indexing(
-            knowledge_base_id=knowledge_base_id,
-            attachment_id=attachment_id,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-            user_id=user_id,
-            user_name=user_name,
-            caller_user_id=caller_user_id,
-            splitter_config_dict=splitter_config_dict,
-            document_id=document_id,
-            trigger_summary=trigger_summary,
-        )
+        from app.services.rag.reporting import index_execution_context
+
+        with index_execution_context(
+            trigger=trigger,
+            generation=index_generation,
+            attempt=retry_count,
+            retry_scheduled=False,
+        ):
+            result = run_document_indexing(
+                knowledge_base_id=knowledge_base_id,
+                attachment_id=attachment_id,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=user_id,
+                user_name=user_name,
+                caller_user_id=caller_user_id,
+                splitter_config_dict=splitter_config_dict,
+                document_id=document_id,
+                trigger_summary=trigger_summary,
+            )
         logger.info(
             f"[Celery RAG Indexing] Completed without document guard: task_id={task_id}, "
             f"attachment_id={attachment_id}, result={result}"
@@ -455,20 +492,28 @@ def index_document_task(
             }
 
         try:
-            result = run_document_indexing(
-                knowledge_base_id=knowledge_base_id,
-                attachment_id=attachment_id,
-                retriever_name=retriever_name,
-                retriever_namespace=retriever_namespace,
-                embedding_model_name=embedding_model_name,
-                embedding_model_namespace=embedding_model_namespace,
-                user_id=user_id,
-                user_name=user_name,
-                caller_user_id=caller_user_id,
-                splitter_config_dict=splitter_config_dict,
-                document_id=document_id,
-                trigger_summary=trigger_summary,
-            )
+            from app.services.rag.reporting import index_execution_context
+
+            with index_execution_context(
+                trigger=trigger,
+                generation=index_generation,
+                attempt=retry_count,
+                retry_scheduled=False,
+            ):
+                result = run_document_indexing(
+                    knowledge_base_id=knowledge_base_id,
+                    attachment_id=attachment_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=user_id,
+                    user_name=user_name,
+                    caller_user_id=caller_user_id,
+                    splitter_config_dict=splitter_config_dict,
+                    document_id=document_id,
+                    trigger_summary=trigger_summary,
+                )
 
             if result.get("status") == "skipped":
                 with SessionLocal() as finalize_db:

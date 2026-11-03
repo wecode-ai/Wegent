@@ -11,10 +11,7 @@ import pytest
 from app.api.dependencies import get_db
 from app.api.endpoints.internal.rag import RetrieveRecord
 from app.core.config import settings
-from app.services.rag.runtime_specs import (
-    DirectInjectionBudget,
-    QueryRuntimeSpec,
-)
+from app.services.rag.runtime_specs import DirectInjectionBudget, QueryRuntimeSpec
 from app.services.rag.sources import (
     ExternalKnowledgeDocument,
     ExternalKnowledgeDocumentListResult,
@@ -22,10 +19,7 @@ from app.services.rag.sources import (
     RetrievalSourceSummary,
     retrieval_source_registry,
 )
-from shared.models import (
-    RemoteAuthorizedRetrievalResources,
-    RetrievalScope,
-)
+from shared.models import RemoteAuthorizedRetrievalResources, RetrievalScope
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +156,10 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
                 "total_estimated_tokens": 33,
             },
         ) as mock_transform,
+        patch(
+            "app.services.rag.reporting.observe",
+            side_effect=lambda name, factory: factory(),
+        ) as mock_report,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -176,6 +174,12 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     assert "source_summaries" not in body
     mock_persist.assert_called_once()
     mock_transform.assert_awaited_once()
+    fields = mock_report.call_args.args[1]()
+    assert fields["data"]["entrypoint"] == "chat"
+    assert fields["data"]["client_surface"] == "chat_shell"
+    assert fields["data"]["route_mode"] == "restricted_safe_summary"
+    assert fields["data"]["restricted_mode"] is True
+    assert fields["data"]["result_count"] == 1
 
 
 @contextmanager
@@ -619,7 +623,12 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
                 "provider": "fake",
                 "mode": "explicit",
                 "id": "external-kb-1",
-            }
+            },
+            {
+                "provider": "fake",
+                "mode": "explicit",
+                "id": "external-kb-2",
+            },
         ],
         "route_mode": "direct_injection",
         "persistence_context": {
@@ -674,11 +683,15 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
                     RetrievalSourceSummary(
                         provider="fake",
                         searched_source_ids=["external-kb-1"],
-                        ignored_source_ids=[],
+                        ignored_source_ids=["external-kb-2"],
                     )
                 ],
             ),
         ) as mock_external_retrieve,
+        patch(
+            "app.services.rag.reporting.observe",
+            side_effect=lambda name, factory: factory(),
+        ) as mock_report,
         patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
@@ -703,6 +716,10 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
     mock_persist.assert_called_once()
     assert mock_persist.call_args.kwargs["mode"] == "direct_injection"
     assert mock_persist.call_args.kwargs["records"] == internal_records
+    fields = mock_report.call_args.args[1]()
+    assert fields["data"]["route_mode"] == "rag_retrieval"
+    assert fields["data"]["result_count"] == 2
+    assert fields["status"] == "success"
 
 
 def test_internal_retrieve_requires_user_id_for_external_refs(test_client):
@@ -1180,6 +1197,7 @@ def test_read_docs_preserves_scope_and_reader_identity(test_client, persist):
         knowledge_base_ids=[1],
         user_id=7,
         user_subtask_id=11 if persist else None,
+        entrypoint="kb_head",
     )
 
 

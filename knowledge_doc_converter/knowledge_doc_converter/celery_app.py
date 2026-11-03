@@ -7,7 +7,13 @@ applies request_id-aware log formatting with optional file output.
 import logging
 
 from celery import Celery
-from celery.signals import after_setup_logger, after_setup_task_logger, worker_init
+from celery.signals import (
+    after_setup_logger,
+    after_setup_task_logger,
+    worker_init,
+    worker_process_init,
+    worker_process_shutdown,
+)
 
 from knowledge_doc_converter.config import settings
 from knowledge_doc_converter.core.logging import apply_celery_format, setup_logging
@@ -81,3 +87,27 @@ def _start_metrics_server(**kwargs):
         from knowledge_doc_converter.core.metrics import start_metrics_server
 
         start_metrics_server(settings.PROMETHEUS_PORT, settings.PROMETHEUS_PATH)
+
+
+@worker_process_init.connect
+def _initialize_event_reporter(**kwargs):
+    """Create the reporter in the converter child process after fork."""
+    from shared.event_reporting import init_event_reporter
+
+    init_event_reporter(
+        "knowledge_doc_converter",
+        config=settings.event_reporter_config("knowledge_doc_converter"),
+    )
+
+
+@worker_process_shutdown.connect
+def _shutdown_event_reporter(**kwargs):
+    """Flush the converter reporter within its configured shutdown limit."""
+    from shared.event_reporting import shutdown_event_reporter
+
+    shutdown_event_reporter()
+
+
+from shared.event_reporting.celery import install_task_logging
+
+install_task_logging()

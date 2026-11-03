@@ -24,12 +24,42 @@ from app.services.knowledge.external_document_providers import (
 )
 from app.services.knowledge.index_state_machine import ACTIVE_INDEX_STATUSES
 from app.services.knowledge.knowledge_service import KnowledgeService
+from shared.event_reporting.catalogs.knowledge import emit_external_event
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
 SCAN_EXPIRES_SECONDS = 24 * 60 * 60
 SYNC_CHECK_FAILED_CODE = "external_sync_check_failed"
+
+
+def _emit_copy_check(
+    *,
+    context: "_CopyContext",
+    document_id: int,
+    generation: int,
+    decision: str,
+    status: str,
+    error_code: str | None = None,
+) -> None:
+    emit_external_event(
+        "knowledge.external.document.checked",
+        kb_id=(
+            context.document.__dict__.get("kind_id")
+            if context.document is not None
+            else None
+        ),
+        document_id=document_id,
+        status=status,
+        operation_id=generation,
+        data={
+            "provider": "dingtalk",
+            "trigger": "dingtalk_auto_sync",
+            "generation": generation,
+            "decision": decision,
+        },
+        error_code=error_code,
+    )
 
 
 def is_copy_sync_enabled(knowledge_base: Kind) -> bool:
@@ -233,6 +263,13 @@ def refresh_dingtalk_copy(
     context = _resolve_copy_context(db, document_id, expected_generation)
     if not context.eligible:
         _log_skipped_copy(context, document_id, expected_generation, "precheck")
+        _emit_copy_check(
+            context=context,
+            document_id=document_id,
+            generation=expected_generation,
+            decision=context.reason,
+            status="skipped",
+        )
         return False
     document, user = context.document, context.user
     provider = get_external_document_provider("dingtalk")
@@ -254,6 +291,13 @@ def refresh_dingtalk_copy(
     if not context.eligible:
         db.rollback()
         _log_skipped_copy(context, document_id, expected_generation, "recheck")
+        _emit_copy_check(
+            context=context,
+            document_id=document_id,
+            generation=expected_generation,
+            decision=context.reason,
+            status="skipped",
+        )
         return False
     document = context.document
 
@@ -267,6 +311,14 @@ def refresh_dingtalk_copy(
             probe_error.error_code,
             probe_error,
         )
+        _emit_copy_check(
+            context=context,
+            document_id=document_id,
+            generation=expected_generation,
+            decision="source_unavailable",
+            status="failure",
+            error_code=probe_error.error_code,
+        )
         return False
     if probe_error is not None:
         _mark_sync_check_failed(db, document, str(probe_error))
@@ -275,6 +327,14 @@ def refresh_dingtalk_copy(
             document_id,
             expected_generation,
             probe_error,
+        )
+        _emit_copy_check(
+            context=context,
+            document_id=document_id,
+            generation=expected_generation,
+            decision="check_failed",
+            status="failure",
+            error_code=SYNC_CHECK_FAILED_CODE,
         )
         return False
     baseline = document.external_source_config.get("source_update_time")
@@ -289,5 +349,21 @@ def refresh_dingtalk_copy(
             baseline,
             update_time,
         )
+        _emit_copy_check(
+            context=context,
+            document_id=document_id,
+            generation=expected_generation,
+            decision="unchanged",
+            status="success",
+        )
         return False
-    return _queue_refresh(db, document, expected_generation)
+    queued = _queue_refresh(db, document, expected_generation)
+    _emit_copy_check(
+        context=context,
+        document_id=document_id,
+        generation=expected_generation,
+        decision="refresh_queued" if queued else "dispatch_failed",
+        status="success" if queued else "failure",
+        error_code=None if queued else "external_import_dispatch_failed",
+    )
+    return queued

@@ -16,6 +16,7 @@ from app.tasks.knowledge_tasks import (
     LateIndexCleanupError,
     _build_stale_processing_error,
     _delete_late_index_if_document_was_deleted,
+    generate_document_summary_task,
     index_document_task,
 )
 
@@ -381,6 +382,28 @@ def test_index_document_task_enqueues_summary_after_finalize(
     )
     assert result["status"] == "success"
     assert result["index_generation"] == 5
+
+
+def test_disabled_summary_does_not_query_for_reporting_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "SUMMARY_ENABLED", False)
+    db = MagicMock()
+
+    with (patch("app.tasks.knowledge_tasks.SessionLocal", return_value=db),):
+        result = generate_document_summary_task.run(
+            document_id=4,
+            user_id=3,
+            user_name="tester",
+        )
+
+    assert result == {
+        "status": "skipped",
+        "reason": "global_summary_disabled",
+        "document_id": 4,
+    }
+    db.close.assert_called_once()
+    db.query.assert_not_called()
 
 
 def test_index_document_task_deletes_late_index_after_document_deletion():

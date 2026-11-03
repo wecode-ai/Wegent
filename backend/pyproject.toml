@@ -125,7 +125,7 @@ dependencies = [
     # Knowledge Engine (monorepo workspace dependency)
     "wegent-knowledge-engine",
     # Shared utilities (monorepo workspace dependency)
-    "wegent-shared",
+    "wegent-shared[event-reporting]",
     "minio>=7.2.20",
     "boto3>=1.42.97",
     "zstandard>=0.25.0",

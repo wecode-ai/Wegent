@@ -385,6 +385,9 @@ def finish_generation(
         The publish outcome, or ``None`` when the run failed.
     """
     finished = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    from .reporting import generation_snapshot, report_generation
+
+    event_snapshot = generation_snapshot(generation)
 
     if not succeeded:
         generation.status = WikiGenerationStatus.FAILED
@@ -396,6 +399,15 @@ def finish_generation(
             generation.id,
             knowledge_base.id,
             error_message or "no reason given",
+        )
+        report_generation(
+            event_snapshot,
+            (
+                "cancelled"
+                if failure_code == FailureCode.CANCELLED_BY_USER
+                else "failure"
+            ),
+            error_code=failure_code or "generation_failed",
         )
         return None
 
@@ -430,6 +442,11 @@ def finish_generation(
             result.reason,
         )
 
+    report_generation(
+        event_snapshot,
+        "success" if result.published else "failure",
+        error_code=None if result.published else FailureCode.PUBLISH_REFUSED,
+    )
     _collect_old_versions(db, knowledge_base)
     return result
 

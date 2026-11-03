@@ -13,7 +13,7 @@ use crate::{attachments, config, oidc_callback};
 use anyhow::{Context as _, Result};
 use std::sync::Arc;
 
-pub async fn build() -> Result<AppState> {
+pub async fn build(event_reporter: crate::event_reporting::ReporterHandle) -> Result<AppState> {
     // `Settings.LOCAL_DEVICE_COMMANDS` is validated while the source process
     // starts; an invalid value fails startup instead of the first command.
     crate::device_commands::init_from_env().context("failed to load LOCAL_DEVICE_COMMANDS")?;
@@ -94,6 +94,7 @@ pub async fn build() -> Result<AppState> {
         completion_app: std::sync::OnceLock::new(),
         background_jobs: crate::background_jobs::BackgroundJobsClient::from_env()?,
         video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
+        event_reporter,
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),

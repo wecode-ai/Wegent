@@ -529,7 +529,7 @@ async fn read_document_call(
         return CallReply::Result(super::tools::text_result(json_error("User not found")));
     };
 
-    match read_document_content(state, user_id, document_id, offset, limit).await {
+    match read_document_content(state, user_id, document_id, offset, limit, "mcp").await {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(value) => CallReply::Result(super::tools::text_result(python_json(&value))),
             Err(error) => {

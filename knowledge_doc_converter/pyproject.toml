@@ -20,7 +20,7 @@ dependencies = [
     # The converter only calls the kernel's conversion module (MinerU/S3/zip),
     # which needs no retrieval dependency, so it installs the plain kernel.
     "wegent-knowledge-engine",
-    "wegent-shared",
+    "wegent-shared[event-reporting]",
 ]
 
 [tool.uv.sources]

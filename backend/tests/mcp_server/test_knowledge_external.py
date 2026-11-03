@@ -2033,9 +2033,15 @@ async def test_search_content_rejects_missing_knowledge_base_ids(test_user):
 
 @pytest.mark.asyncio
 async def test_search_content_applies_search_rate_limit(test_user):
+    observed = []
     token = _set_external_user(test_user)
     try:
         with (
+            patch(
+                "app.services.rag.reporting.observe",
+                side_effect=lambda _, snapshot: observed.append(snapshot()),
+            ),
+            patch("app.services.rag.reporting.report_kb_usage") as usage,
             patch.object(
                 knowledge_external,
                 "_search_rate_limit_status",
@@ -2055,6 +2061,11 @@ async def test_search_content_applies_search_rate_limit(test_user):
         "code": "rate_limited",
     }
     query_content.assert_not_called()
+    usage.assert_not_called()
+    assert len(observed) == 1
+    assert observed[0]["status"] == "failure"
+    assert observed[0]["error_code"] == "rate_limited"
+    assert observed[0]["data"]["client_surface"] == "mcp"
 
 
 @pytest.mark.asyncio

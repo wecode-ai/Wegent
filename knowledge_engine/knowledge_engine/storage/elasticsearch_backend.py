@@ -40,6 +40,7 @@ from knowledge_engine.retrieval.search_hints import (
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from shared.event_reporting.operations import storage_fact
 from shared.knowledge_contracts import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
@@ -60,6 +61,7 @@ class ElasticsearchBackend(BaseStorageBackend):
     """
 
     # Class-level constant defining supported retrieval methods
+    event_storage_type: ClassVar[str] = "elasticsearch"
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
         STORAGE_BACKEND_SPECS["elasticsearch"].retrieval_methods
     )
@@ -129,6 +131,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             **self.llama_es_kwargs,
         )
 
+    @storage_fact("elasticsearch", "index")
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
@@ -211,6 +214,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             "status": "success",
         }
 
+    @storage_fact("elasticsearch", "retrieve")
     def retrieve(
         self,
         knowledge_id: str,
@@ -529,6 +533,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         return {"records": results}
 
+    @storage_fact("elasticsearch", "delete_document")
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Delete document from Elasticsearch using LlamaIndex API.

@@ -36,9 +36,7 @@ from app.schemas.knowledge_external import (
     ExternalSearchContentRecord,
     ExternalSearchContentResponse,
 )
-from app.services.knowledge.document_download_policy import (
-    is_original_download_allowed,
-)
+from app.services.knowledge.document_download_policy import is_original_download_allowed
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_ACCESS_DENIED,
     DOCUMENT_READ_ERROR_NOT_FOUND,
@@ -73,6 +71,7 @@ from app.services.knowledge.namespace_utils import (
 from app.services.knowledge.orchestrator import MAX_DOCUMENT_READ_LIMIT
 from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.gateway_factory import get_rag_gateway
+from app.services.rag.reporting import report_retrieval_request
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 
@@ -437,6 +436,7 @@ def _get_document_content_sync(
             offset=offset,
             limit=limit,
             knowledge_base_ids=[access.knowledge_base_id],
+            entrypoint="mcp",
             searchable_only=False,
         )
         result = results[0] if results else None
@@ -519,6 +519,12 @@ def _get_document_download_sync(
         db.close()
 
 
+class SearchPreparationError(Exception):
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def _prepare_search_content_sync(
     *,
     user_id: int,
@@ -526,12 +532,12 @@ def _prepare_search_content_sync(
     query: str,
     requested_ids: list[int],
     max_results: int,
-) -> SearchPreparation | str:
+) -> SearchPreparation:
     search_rate_limit_status = _search_rate_limit_status(user_id)
     if search_rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
-        return _json_error("Rate limit exceeded", "rate_limited")
+        raise SearchPreparationError("Rate limit exceeded", "rate_limited")
     if search_rate_limit_status == ExternalMcpRateLimitStatus.UNAVAILABLE:
-        return _json_error(
+        raise SearchPreparationError(
             "Rate limit service unavailable",
             "rate_limit_unavailable",
         )
@@ -561,7 +567,9 @@ def _prepare_search_content_sync(
             warnings.append(IGNORED_KNOWLEDGE_BASES_WARNING)
 
         if not target_ids:
-            return _json_error("No accessible knowledge bases found", "not_found")
+            raise SearchPreparationError(
+                "No accessible knowledge bases found", "not_found"
+            )
 
         runtime_resolver = RagRuntimeResolver()
         runtime_spec = runtime_resolver.build_query_runtime_spec(
@@ -580,9 +588,6 @@ def _prepare_search_content_sync(
             warnings=warnings,
             kb_name_map=kb_name_map,
         )
-    except Exception as exc:
-        logger.exception("wegent_kb_search_content preparation failed: %s", exc)
-        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
     finally:
         db.close()
 
@@ -775,20 +780,22 @@ async def wegent_kb_search_content(
             f"knowledge_base_ids must contain at most {MAX_SEARCH_KNOWLEDGE_BASE_IDS} items"
         )
 
-    preparation = await run_in_threadpool(
-        partial(
-            _prepare_search_content_sync,
-            user_id=user.id,
-            user_name=user.user_name,
-            query=normalized_query,
-            requested_ids=requested_ids,
-            max_results=max_results,
-        )
-    )
-    if isinstance(preparation, str):
-        return preparation
+    effective_ids: list[int] = []
+    response_json: str
 
-    try:
+    async def execute_search() -> dict:
+        nonlocal response_json
+        preparation = await run_in_threadpool(
+            partial(
+                _prepare_search_content_sync,
+                user_id=user.id,
+                user_name=user.user_name,
+                query=normalized_query,
+                requested_ids=requested_ids,
+                max_results=max_results,
+            )
+        )
+        effective_ids.extend(preparation.target_ids)
         result = await _query_content(preparation.runtime_spec)
 
         records = []
@@ -809,7 +816,7 @@ async def wegent_kb_search_content(
                 )
             )
 
-        return ExternalSearchContentResponse(
+        response_json = ExternalSearchContentResponse(
             query=normalized_query,
             total=result.get("total", len(records)),
             total_estimated_tokens=result.get("total_estimated_tokens", 0),
@@ -818,6 +825,21 @@ async def wegent_kb_search_content(
             warnings=preparation.warnings,
             records=records,
         ).model_dump_json()
+        return result
+
+    try:
+        await report_retrieval_request(
+            entrypoint="mcp",
+            client_surface="mcp",
+            requested_kb_ids=requested_ids,
+            effective_kb_ids=effective_ids,
+            route_mode="rag_retrieval",
+            actor_user_id=user.id,
+            execute=execute_search,
+        )
+        return response_json
+    except SearchPreparationError as exc:
+        return _json_error(str(exc), exc.code)
     except Exception as exc:
         logger.exception("wegent_kb_search_content failed: %s", exc)
         return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")

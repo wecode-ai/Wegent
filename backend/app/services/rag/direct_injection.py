@@ -253,6 +253,21 @@ async def try_direct_injection(
             "source": "original_documents",
         },
     )
+    from app.services.rag.reporting import current_usage_context
+    from shared.event_reporting.catalogs.knowledge.usage import report_document_usage
+
+    usage = current_usage_context()
+    if usage is not None:
+        report_document_usage(
+            direct_records,
+            invocation_id=usage.invocation_id,
+            actor_user_id=usage.actor_user_id,
+            actor_type=usage.actor_type,
+            entrypoint=usage.entrypoint,
+            client_surface=usage.client_surface,
+            task_id=usage.task_id,
+            subtask_id=usage.subtask_id,
+        )
     return {
         "mode": "direct_injection",
         "records": direct_records,
@@ -442,6 +457,7 @@ async def get_original_documents_from_knowledge_base(
             offset=0,
             limit=10_000_000,
             knowledge_base_ids=knowledge_base_ids,
+            entrypoint="direct_injection",
         )
         records = build_document_records(results, knowledge_base_ids)
         logger.info(
@@ -495,6 +511,7 @@ async def get_original_documents_from_knowledge_base(
             offset=0,
             limit=10_000_000,
             knowledge_base_ids=[kb_id],
+            entrypoint="direct_injection",
         )
         records.extend(build_document_records(results, [kb_id]))
 
