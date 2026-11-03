@@ -194,6 +194,7 @@ impl DeviceCommandHandler for CommandHandler {
 impl CommandHandler {
     pub async fn execute(&self, mut request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
+        log_directory_command_phase(&request, "execute_enter", started_at);
         let current_branch_query = prepare_git_branch_query(&mut request);
         if request.command_key.as_deref() == Some("project_workspace_root") {
             return CommandResult::ok(
@@ -225,9 +226,11 @@ impl CommandHandler {
             return result;
         }
 
+        log_directory_command_phase(&request, "prepare_environment", started_at);
         let mut command = process_command(&request);
         command.env_clear();
         command.envs(build_env(&request.env));
+        log_directory_command_phase(&request, "environment_ready", started_at);
         if let Some(cwd) = request.cwd.as_deref() {
             command.current_dir(cwd);
         }
@@ -242,6 +245,7 @@ impl CommandHandler {
                 return CommandResult::error(error.to_string(), elapsed_seconds(started_at), false);
             }
         };
+        log_directory_command_phase(&request, "spawned", started_at);
 
         let timeout = Duration::from_secs_f64(request.timeout_seconds.max(0.001));
         let output = match time::timeout(timeout, child.wait_with_output()).await {
@@ -260,6 +264,7 @@ impl CommandHandler {
                 );
             }
         };
+        log_directory_command_phase(&request, "exited", started_at);
 
         let (stdout, stdout_truncated) =
             decode_and_truncate(&output.stdout, request.max_output_bytes);
@@ -290,6 +295,20 @@ impl CommandHandler {
             error: None,
         }
     }
+}
+
+fn log_directory_command_phase(request: &CommandRequest, phase: &str, started_at: Instant) {
+    let Some(command_key @ ("home_dir" | "ls_dirs")) = request.command_key.as_deref() else {
+        return;
+    };
+    crate::logging::log_executor_event(
+        "device directory command phase",
+        &[
+            ("command_key", command_key.to_owned()),
+            ("phase", phase.to_owned()),
+            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+        ],
+    );
 }
 
 pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {

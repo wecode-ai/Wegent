@@ -169,6 +169,7 @@ export function createStandInCoordinatorVerification({
       })
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
       await control.command('click', '[data-testid="stand-in-time-connections"]')
+      const savedSchedules = (await rpc('runtime.automations.list', {})).items
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: '不保存的日历草稿',
@@ -182,6 +183,12 @@ export function createStandInCoordinatorVerification({
         await control.command('getElementCount', '[data-testid="automation-name-input"]'),
         '0'
       )
+      const remainingSchedules = (await rpc('runtime.automations.list', {})).items
+      assert.deepEqual(
+        remainingSchedules.map(({ id, name }) => ({ id, name })),
+        savedSchedules.map(({ id, name }) => ({ id, name }))
+      )
+      assert.ok(!remainingSchedules.some(row => row.name === '不保存的日历草稿'))
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
       assert.equal(

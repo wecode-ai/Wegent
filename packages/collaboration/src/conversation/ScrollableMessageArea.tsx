@@ -72,6 +72,7 @@ function ScrollableMessagePaneContent({
   onAskSelectionInSidebar,
   autoScrollSuspended = false,
   searchTarget,
+  messageTarget,
   searchNavigationPaused = false,
   onSearchNavigationFailure,
   onLoadMoreBefore,
@@ -344,6 +345,7 @@ function ScrollableMessagePaneContent({
         ) : null}
       </div>
       <MessageTurnNavigation
+        messageTarget={messageTarget}
         key={currentScrollKey ?? 'keyless-conversation'}
         translate={translate}
         messages={messages}
