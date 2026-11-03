@@ -278,12 +278,11 @@ pub(super) fn validate(value: &Value) -> Result<(), FastApiError> {
     for group in array(&collaboration["groups"], "groups", 10)? {
         let (key, name) = validate_group(group)?;
         for role in group["roles"].as_array().unwrap() {
-            if let Some(agent_key) = role.get("agentKey") {
-                if role["defaultKind"] == "human"
-                    || !agent_keys.contains(&identity(agent_key, "role.agentKey")?)
-                {
-                    return Err(invalid("role.agentKey"));
-                }
+            if let Some(agent_key) = role.get("agentKey")
+                && (role["defaultKind"] == "human"
+                    || !agent_keys.contains(&identity(agent_key, "role.agentKey")?))
+            {
+                return Err(invalid("role.agentKey"));
             }
         }
         if !keys.insert(key) || !names.insert(name) {
