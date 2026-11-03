@@ -146,6 +146,56 @@ it.each([
   }
 )
 
+it.each([
+  { code: 'connector_auth_required', localDeviceId: 'device', canAuthorize: true },
+  { code: 'connector_auth_required', localDeviceId: 'other-device', canAuthorize: false },
+  { code: 'permission_denied', localDeviceId: 'device', canAuthorize: false },
+])(
+  'recovers an all-scope failure using its error code: $code / $localDeviceId',
+  async ({ code, localDeviceId, canAuthorize }) => {
+    const onChange = vi.fn()
+    const searchConnectionResources = vi.fn().mockRejectedValue({ code, message: 'Private error' })
+    render(
+      <StandInSourceConnections
+        provider={{
+          id: 'example',
+          displayName: 'Example',
+          resourceKinds: ['group'],
+          allResourceKinds: ['group'],
+          dependencies: [],
+          availability: { status: 'ready' },
+          authTarget: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+        }}
+        role={newStandInRole('device')}
+        api={{ searchConnectionResources } as unknown as StandInExecutorApi}
+        deviceId="device"
+        localDeviceId={localDeviceId}
+        disabled={false}
+        onChange={onChange}
+      />
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('stand-in-connection-example-add-all'))
+    expect(await screen.findByRole('alert')).not.toHaveTextContent('Private error')
+    expect(onChange).not.toHaveBeenCalled()
+    if (code === 'connector_auth_required')
+      expect(screen.getByTestId('stand-in-connection-example-authorization')).toBeVisible()
+    else
+      expect(
+        screen.queryByTestId('stand-in-connection-example-authorization')
+      ).not.toBeInTheDocument()
+    if (canAuthorize) {
+      await user.click(screen.getByTestId('stand-in-connection-example-connect'))
+      expect(screen.getByTestId('source-auth-dialog')).toHaveTextContent(
+        'example-plugin:work-account'
+      )
+      expect(screen.queryByTestId('stand-in-connection-example-add-all')).not.toBeInTheDocument()
+    } else {
+      expect(screen.queryByTestId('stand-in-connection-example-connect')).not.toBeInTheDocument()
+    }
+  }
+)
+
 it('batches selected resources across searches and only updates the role when adding', async () => {
   const { useState } = await import('react')
   const onChange = vi.fn()

@@ -69,6 +69,13 @@ export function StandInSourceConnections({
       connections: [...allRows.filter(row => row.providerId !== provider.id), ...next],
     })
   const searchSequence = useRef(0)
+  const failSearch = (sequence: number, cause: unknown) => {
+    if (sequence === searchSequence.current)
+      setError({
+        message: getStandInErrorMessage(cause),
+        code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
+      })
+  }
   const search = async (cursor?: string) => {
     if (busy || !query.trim()) return
     const sequence = ++searchSequence.current
@@ -103,12 +110,7 @@ export function StandInSourceConnections({
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
     } catch (cause) {
-      if (sequence === searchSequence.current) {
-        setError({
-          message: getStandInErrorMessage(cause),
-          code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
-        })
-      }
+      failSearch(sequence, cause)
     } finally {
       setBusy(false)
     }
@@ -183,7 +185,7 @@ export function StandInSourceConnections({
         })
       add(items)
     } catch (cause) {
-      if (sequence === searchSequence.current) setError({ message: getStandInErrorMessage(cause) })
+      failSearch(sequence, cause)
     } finally {
       setBusy(false)
     }
