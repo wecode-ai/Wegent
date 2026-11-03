@@ -3825,11 +3825,28 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       timeout_seconds?: number
       max_output_bytes?: number
     }
-  ) =>
-    request<DeviceCommandResponse>(
-      'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
-    )
+  ) => {
+    const startedAt = performance.now()
+    const tracePhase = (phase: string) => {
+      if (data.command_key !== 'home_dir' && data.command_key !== 'ls_dirs') return
+      console.debug('[Wework] Device directory command phase', {
+        commandKey: data.command_key,
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+    }
+    try {
+      tracePhase('resolve_device')
+      const localDeviceId = await getDeviceCommandLocalDeviceId()
+      tracePhase('dispatch')
+      return await request<DeviceCommandResponse>(
+        'device.execute_command',
+        normalizeLocalDeviceRecord({ deviceId, ...data }, localDeviceId)
+      )
+    } finally {
+      tracePhase('settled')
+    }
+  }
 
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {

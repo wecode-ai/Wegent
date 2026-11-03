@@ -137,14 +137,25 @@ def create_scenario(
     )
     test_db.add(root)
     test_db.commit()
-    compiler = MagicMock(
-        return_value=SimpleNamespace(
+
+    def compile_request(_db=None, *, request, **_kwargs):
+        return SimpleNamespace(
             payload={
-                "executionRequest": {"user": {"id": owner.id}, "model_config": {}}
+                "executionRequest": {
+                    "user": {"id": owner.id},
+                    "model_config": {},
+                    "client_user_message_id": request.client_user_message_id,
+                },
+                **(
+                    {"clientUserMessageId": request.client_user_message_id}
+                    if request.client_user_message_id
+                    else {}
+                ),
             },
             target=SimpleNamespace(device_id="admin-cloud"),
         )
-    )
+
+    compiler = MagicMock(side_effect=compile_request)
     rpc = AsyncMock(return_value={"accepted": True})
     monkeypatch.setattr(
         "app.services.runtime_work_service.compile_runtime_task_create", compiler

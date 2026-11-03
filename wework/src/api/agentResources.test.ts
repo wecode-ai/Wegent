@@ -166,6 +166,7 @@ describe('createAgentResourceApi', () => {
     const api = createAgentResourceApi(client)
 
     await expect(api.getAgent(52)).resolves.toEqual({
+      botCount: 2,
       teamId: 52,
       botId: 71,
       name: 'review-agent',

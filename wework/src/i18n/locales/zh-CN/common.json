@@ -4216,7 +4216,8 @@
     "diagram_preview": "图表预览",
     "diagram_loading": "正在渲染图表…",
     "diagram_render_failed": "图表渲染失败，源码如下",
-    "diagram_retry": "重试"
+    "diagram_retry": "重试",
+    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。"
   },
   "delivery": {
     "action": "交付",
@@ -5791,7 +5792,7 @@
     "loading": "正在加载待处理事项…",
     "empty": "暂无待处理事项",
     "load_failed": "部分事项加载失败，请刷新重试。",
-    "open_original": "打开原会话",
+    "open_original": "在原界面中打开",
     "context": "判断依据",
     "back_to_list": "返回列表",
     "your_reply": "你的判断",
@@ -5803,6 +5804,7 @@
     "pending_count": "{{count}} 项待处理",
     "needs_action": "请打开原上下文完成此操作。",
     "title_with_count": "待你处理，{{count}} 项",
-    "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。"
+    "cached": "这是上次待处理的问题，正在同步最新状态；设备恢复连接后可以继续回应。",
+    "entity_unavailable": "暂时无法显示此对象，请打开原位置查看。"
   }
 }

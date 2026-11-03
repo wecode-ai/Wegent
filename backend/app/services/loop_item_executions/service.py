@@ -47,6 +47,7 @@ from app.services.loop_item_executions.profile import (
     validate_wework_execution_target,
 )
 from app.services.loop_item_executions.runtime_identity import (
+    bind_comment_user_identity,
     execution_actor_options,
     execution_conversation_task_id,
     execution_runtime_task_id,
@@ -3575,6 +3576,7 @@ class LoopItemExecutionService:
             )
             from app.services.runtime_work_service import compile_runtime_task_create
 
+            request = bind_comment_user_identity(request, execution)
             manager_request = compile_runtime_task_create(
                 db=db,
                 user_id=execution.executor_owner_user_id,
@@ -3604,6 +3606,7 @@ class LoopItemExecutionService:
                     execution=execution,
                 )
             )
+            request = bind_comment_user_identity(request, execution)
             if execution_target_id:
                 if not _same_runtime_device(
                     db,
@@ -3699,9 +3702,6 @@ class LoopItemExecutionService:
                     {
                         "runtimeAction": "send",
                         "queueIfBusy": True,
-                        "clientUserMessageId": execution.runtime_origin_context[
-                            "comment_trigger_message_id"
-                        ],
                     }
                 )
                 if execution.runtime_origin_context.get("dispatch_role") == "manager":

@@ -1279,6 +1279,16 @@ impl AppIpcServer {
                     }
                     let (request_id, method, command_key) =
                         app_ipc_request_metadata(&request_line);
+                    if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
+                        log_app_ipc_request(
+                            "app IPC request received",
+                            request_id.as_deref(),
+                            method.as_deref(),
+                            command_key.as_deref(),
+                            None,
+                            None,
+                        );
+                    }
                     let admission = if is_cancellable_read(method.as_deref()) {
                         request_id.as_deref().map(|id| read_requests.admit(id))
                     } else {

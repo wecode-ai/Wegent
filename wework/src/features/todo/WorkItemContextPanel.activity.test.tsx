@@ -129,4 +129,25 @@ describe('task-page Issue activity', () => {
     })
     expect(cloud.projectChatAgentApi?.list).not.toHaveBeenCalled()
   })
+
+  it('passes embedded execution navigation through the original Issue editor to activity', async () => {
+    const local = createServices()
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <WorkItemContextPanel
+        api={local.deliveryApi}
+        services={{ projectSpaceDetailServices: { local } }}
+        project={project}
+        item={item}
+        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        onOpenTask={vi.fn()}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+    await screen.findByTestId('issue-activity')
+    expect(screen.queryByTestId('work-item-open-board')).not.toBeInTheDocument()
+    const address = { deviceId: 'other-device', taskId: 'actual-execution' }
+    renderActivity.mock.lastCall?.[0].onOpenRuntimeTask(address)
+    expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address)
+  })
 })

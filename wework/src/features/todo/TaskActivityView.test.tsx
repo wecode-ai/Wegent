@@ -15,6 +15,16 @@ import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import { NotificationEntityContext } from '@/features/notifications/NotificationEntityContext'
+import {
+  RuntimeInteractionsContext,
+  type RuntimeInteractionsValue,
+} from '@/features/notifications/RuntimeInteractionsContext'
+import {
+  interactionTask,
+  interactionQuestion,
+} from '@/features/notifications/runtimeInteractions.fixtures'
+import type { RuntimeInteraction } from '@/features/notifications/runtimeInteractions'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -230,6 +240,159 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('opens a notification at its own AI message without focusing the reply composer', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, 100, 800, 100)
+    )
+    const onFocusedMessage = vi.fn()
+    const address = { deviceId: 'device-1', taskId: 'own-execution' }
+    const response = {
+      ...agentMessage,
+      triggerMessageId: userMessage.messageId,
+      rootMessageId: userMessage.messageId,
+      runtimeAddress: address,
+      status: 'completed' as const,
+      content: 'Original decision context',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [userMessage, response], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <NotificationEntityContext.Provider
+        value={{
+          id: 'exact-question',
+          projectId: '11',
+          issueId: 'WEG-1',
+          store: 'backend',
+          rootCommentId: userMessage.messageId,
+          address,
+          sourceMessageIds: [userMessage.messageId],
+          onFocusedMessage,
+        }}
+      >
+        <TaskActivityView
+          client={client}
+          project={{ id: '11', name: 'Wework', project_store: 'backend' } as never}
+          task={{ id: 'WEG-1', title: 'Review', status: 'inbox', version: 1 } as never}
+          focusedCommentId={userMessage.messageId}
+          linear
+          issueTimeline
+        />
+      </NotificationEntityContext.Provider>
+    )
+    const original = await screen.findByTestId('cloud-task-activity-message-message-2')
+    await waitFor(() => expect(original).toHaveAttribute('data-flash', 'true'))
+    expect(screen.getByTestId('cloud-task-activity-message-message-1')).not.toHaveAttribute(
+      'data-flash'
+    )
+    expect(screen.getByTestId('cloud-task-activity-composer')).not.toHaveFocus()
+    expect(onFocusedMessage).toHaveBeenCalledWith('message-2')
+    await userEvent.click(
+      screen.getByTestId(`cloud-task-activity-reply-toggle-${userMessage.messageId}`)
+    )
+    expect(screen.getByTestId('cloud-task-activity-composer')).toHaveFocus()
+  })
+
+  it('keeps a notification unaccepted until the real queued comment send succeeds', async () => {
+    const user = userEvent.setup()
+    const root = { ...userMessage, rootMessageId: null }
+    let failSend!: (error: Error) => void
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [root], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(
+        () =>
+          new Promise<ProjectChatMessage>((_resolve, reject) => {
+            failSend = reject
+          })
+      ),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    let accepted = false
+    const item: RuntimeInteraction = {
+      id: 'notice',
+      requestKey: 'question',
+      task: interactionTask,
+      payload: interactionQuestion,
+      question: 'Continue?',
+      createdAt: 0,
+      answered: false,
+      project: {
+        projectId: '11',
+        issueId: 'WEG-1',
+        store: 'backend',
+        rootCommentId: root.messageId,
+      },
+    }
+    const setDraft = vi.fn()
+    const respond = vi.fn(async (_item, _text, options) => {
+      accepted = await options.send()
+      return accepted
+    })
+    const interactions = {
+      history: [],
+      pending: [item],
+      drafts: { notice: 'Saved answer' },
+      errors: {},
+      busy: new Set(),
+      respond,
+      setDraft,
+    } as unknown as RuntimeInteractionsValue
+    render(
+      <RuntimeInteractionsContext.Provider value={interactions}>
+        <NotificationEntityContext.Provider
+          value={{
+            id: 'notice',
+            projectId: '11',
+            issueId: 'WEG-1',
+            store: 'backend',
+            rootCommentId: root.messageId,
+          }}
+        >
+          <TaskActivityView
+            client={client}
+            currentUserId={1}
+            project={{ id: '11', name: 'Wework', project_store: 'backend' } as never}
+            task={{ id: 'WEG-1', title: 'Review', status: 'inbox', version: 1 } as never}
+            linear
+            issueTimeline
+          />
+        </NotificationEntityContext.Provider>
+      </RuntimeInteractionsContext.Provider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-task-activity-composer')).toHaveValue('Saved answer')
+    )
+    await user.click(
+      within(screen.getByTestId('task-comment-form')).getByTestId('send-message-button')
+    )
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(respond).toHaveBeenCalledOnce()
+    expect(accepted).toBe(false)
+    expect(setDraft).not.toHaveBeenCalledWith('notice', '')
+    await act(async () => failSend(new Error('Comment persistence failed')))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`cloud-task-activity-card-queue-${root.messageId}`)
+      ).toHaveTextContent('Comment persistence failed')
+    )
+    expect(accepted).toBe(false)
+    expect(interactions.drafts.notice).toBe('Saved answer')
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({ replyToMessageId: root.messageId, text: 'Saved answer' })
+    )
+  })
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = vi.fn()
     paneExecution.running = false
@@ -3955,6 +4118,54 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
   })
 
+  it.each([
+    { linear: false, issueTimeline: false },
+    { linear: true, issueTimeline: false },
+    { linear: true, issueTimeline: true },
+  ])(
+    'returns embedded execution actions to their original task (linear=$linear, timeline=$issueTimeline)',
+    async ({ linear, issueTimeline }) => {
+      const user = userEvent.setup()
+      const onOpenRuntimeTask = vi.fn()
+      const address = { deviceId: 'device-1', taskId: 'original-execution' }
+      const message: ProjectChatMessage = {
+        ...agentMessage,
+        status: 'completed',
+        runtimeAddress: address,
+      }
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: { messages: [message], latestSequence: 2, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: 'Inspect', status: 'in_progress', version: 1 } as never}
+          linear={linear}
+          issueTimeline={issueTimeline}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+        />
+      )
+      await user.click(
+        await screen.findByTestId(
+          linear
+            ? 'cloud-task-activity-execution-badge-message-2'
+            : 'cloud-task-activity-open-execution-message-2'
+        )
+      )
+      expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address)
+      expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
+    }
+  )
+
   it('shows the stop action for a running AI run inside the floating panel', async () => {
     paneExecution.running = true
     runtimeWorkMock.value = {
@@ -5267,6 +5478,9 @@ describe('TaskActivityView', () => {
   })
 
   it('flashes the comment a notification opened', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, 100, 800, 100)
+    )
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const client = {

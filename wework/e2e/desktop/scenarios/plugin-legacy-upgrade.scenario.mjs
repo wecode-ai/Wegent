@@ -278,6 +278,10 @@ export async function createDesktopScenario({
     }
     await control.command('click', testId('new-chat-button'))
     await selectE2EModel(control)
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} ${testId('composer-plugin-picker-button')}`
+    )
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
       value: `[$${fixture.slug}](plugin://${fixture.slug}@wegent) ${active.prompt}`,
     })
@@ -290,6 +294,11 @@ export async function createDesktopScenario({
     assert.ok(
       active.output?.includes(active.expected),
       'The real native consumer did not execute the migrated plugin'
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} ${testId('composer-plugin-picker-button')}`,
+      { visible: false }
     )
     evidence.push({
       sourceVersion: current.release.version,
