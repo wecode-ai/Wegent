@@ -91,6 +91,7 @@ function fixtureHtml() {
     <button id="agent-submit" type="button">Run agent form</button>
     <button id="agent-delete" type="button">Delete agent record</button>
     <button id="agent-hover" type="button">Hover target</button>
+    <textarea id="script-editor" aria-label="Code editor"></textarea>
     <label for="agent-kind">Agent kind</label>
     <select id="agent-kind">
       <option value="general">General</option>
@@ -277,6 +278,49 @@ async function waitForControlValue(control, selector, expected, timeoutMs, messa
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
+}
+
+async function verifyEditorApprovalPersistence(bridgeCall, control, timeoutMs) {
+  const edit = { action: 'fill', selector: '#script-editor', text: 'pipeline regression fixture' }
+  const blocked = await bridgeCall(edit)
+  assert.equal(blocked.error?.code, 'approval_required', JSON.stringify(blocked))
+  assert.ok(blocked.approval?.approvalId)
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+  console.log('[browser-approval] Editor fill blocked; approval controls visible before inspect')
+
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  // Observe persistence across event delivery, rather than accepting the previous DOM render.
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs,
+  })
+  console.log('[browser-approval] Approval controls remain visible after inspect')
+  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  const edited = await bridgeCall(edit)
+  assert.equal(edited.ok, true, JSON.stringify(edited))
+  const readEditor = async () => {
+    const result = await bridgeCall({
+      action: 'evaluate',
+      expression: 'document.querySelector("#script-editor").value',
+    })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.value
+  }
+  assert.equal(await readEditor(), edit.text)
+
+  const blockedAgain = await bridgeCall({ ...edit, text: 'rejected change' })
+  assert.equal(blockedAgain.error?.code, 'approval_required', JSON.stringify(blockedAgain))
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
+  )
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.equal(await readEditor(), edit.text, 'Rejected edit must not change the editor')
+  console.log('[browser-approval] Approved retry succeeded; subsequent edit required new approval')
 }
 
 async function waitForElementCount(control, selector, expected, timeoutMs, message) {
@@ -1440,6 +1484,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         )
         screenshotResult = screenshotResponse
       }
+
+      await verifyEditorApprovalPersistence(bridgeCall, control, uiTimeoutMs)
 
       // file:// local file support: the bridge renders a local HTML page, and
       // an un-previewable local file surfaces a notice instead of downloading.

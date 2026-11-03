@@ -205,10 +205,9 @@ export class EmbeddedBrowserBridge {
         result && typeof result === 'object' && !Array.isArray(result)
           ? (result as Record<string, unknown>)
           : null
-      const approval =
-        mutating && object
-          ? this.browser.registerAgentApproval(label, signature, action, object)
-          : null
+      if (mutating && object) {
+        this.browser.registerAgentApproval(label, signature, action, object)
+      }
       if (observable) {
         const error = object?.error as { code?: unknown; message?: unknown } | undefined
         this.browser.emitAgentState(label, object?.ok === false ? 'needs_user' : 'idle', {
@@ -216,7 +215,6 @@ export class EmbeddedBrowserBridge {
           target,
           message: typeof error?.message === 'string' ? error.message : null,
           errorCode: typeof error?.code === 'string' ? error.code : null,
-          approval,
         })
       }
       return result

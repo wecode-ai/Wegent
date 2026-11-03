@@ -15,6 +15,69 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  test.each([true, false])(
+    'keeps approval visible until resolved (approved=%s)',
+    async approved => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+      const events: BrowserHostEvent[] = []
+      const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+      try {
+        const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+          ok: false,
+          error: { code: 'approval_required' },
+          approval: { reason: 'Confirm editing this field.' },
+        })!
+        for (const status of ['running', 'idle', 'error'] as const) {
+          manager.emitAgentState('workspace-browser', status, { action: 'inspect' })
+          expect(events.at(-1)?.payload).toMatchObject({
+            status: 'needs_user',
+            action: 'fill',
+            errorCode: 'approval_required',
+            approval,
+          })
+        }
+        manager.emitAgentState('other-browser', 'idle', { action: 'inspect' })
+        expect(events.at(-1)?.payload.approval).toBeNull()
+        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
+
+        manager.resolveAgentApproval('workspace-browser', approval.approvalId, approved)
+        expect(events.at(-1)?.payload.approval).toBeNull()
+        manager.emitAgentState('workspace-browser', 'idle', { action: 'inspect' })
+        expect(events.at(-1)?.payload.approval).toBeNull()
+        expect(manager.consumeApprovedAgentRisk('other-browser', 'fill:editor')).toBe(false)
+        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:editor')).toBe(false)
+        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(approved)
+        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  test('does not display or consume expired browser approvals', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    try {
+      const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+        error: { code: 'approval_required' },
+      })!
+      const now = vi.spyOn(Date, 'now').mockReturnValue(approval.expiresAtUnixMs)
+      try {
+        manager.emitAgentState('workspace-browser', 'idle', { action: 'inspect' })
+        expect(events.at(-1)?.payload.approval).toBeNull()
+        expect(() =>
+          manager.resolveAgentApproval('workspace-browser', approval.approvalId, true)
+        ).toThrow('expired')
+        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
+      } finally {
+        now.mockRestore()
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('authenticates a Smart app browser session before navigating to the runtime', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-auth-'))
     const manager = new EmbeddedBrowserManager(directory)

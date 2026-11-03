@@ -24,6 +24,10 @@ bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的
 
 bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、`fill` 或 `inspect` 请求；超出并发上限时返回明确的忙碌错误，而不是让调用无限等待。
 
+### Agent 操作审批
+
+高风险操作返回 `approval_required` 后，浏览器面板显示批准和拒绝按钮。Electron 主进程按 logical label 保存待审批请求；后续 `inspect`、等待或其他操作的状态事件必须携带仍有效的待审批请求，不能让运行状态覆盖审批入口。批准或拒绝后移除入口；批准只允许同一浏览器、同一操作签名重试一次，过期审批不得执行。`embedded-browser` 桌面 checkpoint 覆盖触发审批、再次 inspect、批准和重试的完整链路。
+
 ### 多标签导航连线图
 
 ```mermaid

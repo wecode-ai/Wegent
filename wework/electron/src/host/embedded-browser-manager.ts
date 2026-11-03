@@ -841,10 +841,15 @@ export class EmbeddedBrowserManager {
       target?: string | null
       message?: string | null
       errorCode?: string | null
-      approval?: BrowserAgentApproval['payload'] | null
     } = {}
   ): void {
     const normalizedLabel = requiredLabel(label)
+    const approval = [...this.agentApprovals.values()].find(
+      candidate =>
+        candidate.label === normalizedLabel &&
+        !candidate.approved &&
+        candidate.payload.expiresAtUnixMs > Date.now()
+    )?.payload
     if (status === 'running') {
       this.agentActive.add(normalizedLabel)
       this.clearAgentCursorHide(normalizedLabel)
@@ -855,12 +860,12 @@ export class EmbeddedBrowserManager {
     }
     this.emit('agent-state', {
       label: normalizedLabel,
-      status,
-      action: detail.action ?? null,
-      target: detail.target ?? null,
-      message: detail.message ?? null,
-      errorCode: detail.errorCode ?? null,
-      approval: detail.approval ?? null,
+      status: approval && status !== 'paused' ? 'needs_user' : status,
+      action: approval?.actionKind ?? detail.action ?? null,
+      target: approval ? null : (detail.target ?? null),
+      message: approval?.reason ?? detail.message ?? null,
+      errorCode: approval ? 'approval_required' : (detail.errorCode ?? null),
+      approval: approval ?? null,
       createdAtUnixMs: Date.now(),
     })
   }
