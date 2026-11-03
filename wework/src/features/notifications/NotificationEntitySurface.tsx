@@ -1,12 +1,13 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { NotificationIssueEntity } from './NotificationIssueEntity'
 import { NotificationEntityContext } from './NotificationEntityContext'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { parseWeworkScheme, weworkTaskScheme } from './scheme'
+import { parseWeworkScheme, weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 
 /** Notification destinations reuse the owning entity's existing UI and actions. */
 export function NotificationEntitySurface({
@@ -14,15 +15,33 @@ export function NotificationEntitySurface({
   address,
   active,
   interactionId,
+  sourceMessageIds,
+  onOriginalUrlChange,
+  focusedRequest,
 }: {
   url: string
   address: RuntimeTaskAddress
   active: boolean
   interactionId?: string
+  sourceMessageIds?: string[]
+  onOriginalUrlChange?: (interactionId: string, url: string) => void
+  focusedRequest?: RequestUserInputPayload | null
 }) {
   const { state } = useWorkbench()
   const { t } = useTranslation('common')
   const destination = useMemo(() => parseWeworkScheme(url), [url])
+  const onFocusedMessage = useCallback(
+    (messageId: string) => {
+      if (!interactionId || destination?.kind !== 'board' || !destination.itemId) return
+      const original = weworkIssueScheme(
+        destination.projectId,
+        destination.itemId,
+        destination.projectStore ?? 'backend'
+      )
+      onOriginalUrlChange?.(interactionId, `${original}/comments/${encodeURIComponent(messageId)}`)
+    },
+    [destination, interactionId, onOriginalUrlChange]
+  )
   const openTask = (task: RuntimeTaskAddress) => {
     openWeworkScheme(weworkTaskScheme(task))
   }
@@ -46,6 +65,9 @@ export function NotificationEntitySurface({
         testId="notification-task-entity"
         sendEphemeral={false}
         coordinateUserInput
+        focusedRequest={focusedRequest}
+        sourceMessageIds={sourceMessageIds}
+        focusRequestKey={interactionId}
         expanded
         active={active}
         initialScrollPosition="latest"
@@ -64,6 +86,9 @@ export function NotificationEntitySurface({
                 issueId: destination.itemId,
                 store: destination.projectStore ?? 'backend',
                 rootCommentId: destination.commentId,
+                address,
+                sourceMessageIds,
+                onFocusedMessage,
               }
             : null
         }

@@ -104,6 +104,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore,
     transcriptError,
     onRetryTranscript,
+    messageTarget,
   }: {
     messages: Array<{
       id: string
@@ -127,8 +128,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore?: () => void
     transcriptError?: string | null
     onRetryTranscript?: () => void
+    messageTarget?: { messageId: string; requestKey: string }
   }) => (
-    <div data-testid="mock-message-list">
+    <div data-testid="mock-message-list" data-target-message={messageTarget?.messageId}>
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
@@ -1251,6 +1253,56 @@ describe('TemporaryChatPanel', () => {
 
     await userEvent.click(screen.getByTestId('mock-ignore-input'))
     expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+  })
+
+  it('shows the selected older question and targets its original turn instead of the latest request', async () => {
+    const older = {
+      kind: 'request_user_input' as const,
+      itemId: 'older',
+      questions: [{ id: 'old', question: 'Older decision?', is_other: true }],
+    }
+    mocks.conversationMessages = [
+      { id: 'original-source', role: 'user', content: 'Earlier context', status: 'done' },
+      {
+        id: 'later',
+        role: 'assistant',
+        content: 'Unrelated later work',
+        status: 'done',
+        blocks: [
+          {
+            id: 'latest-block',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: {
+              kind: 'request_user_input',
+              itemId: 'latest',
+              questions: [{ id: 'new', question: 'Later decision?', is_other: true }],
+            },
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="selected-question"
+        focusedRequest={older}
+        sourceMessageIds={['original-source']}
+        focusRequestKey="older-notification"
+      />
+    )
+    expect(screen.getByText('Older decision?')).toBeInTheDocument()
+    expect(screen.queryByText('Later decision?')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-target-message',
+      'original-source'
+    )
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+    expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+    expect(screen.queryByText('Older decision?')).not.toBeInTheDocument()
   })
 
   it('returns task-page actions to the current runtime task', async () => {

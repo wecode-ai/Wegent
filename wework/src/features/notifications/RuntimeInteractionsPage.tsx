@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ArrowLeft, ArrowUpRight, RefreshCw } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
@@ -20,6 +20,14 @@ export function RuntimeInteractionsPage({
   const interactions = useRuntimeInteractions()
   const { t } = useTranslation('common')
   const [history, setHistory] = useState(false)
+  const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
+    null
+  )
+  const onOriginalUrlChange = useCallback((id: string, url: string) => {
+    setOriginalNavigation(current =>
+      current?.id === id && current.url === url ? current : { id, url }
+    )
+  }, [])
   const [selected, setSelected] = useState<string | null>(selectedId ?? null)
   const [showList, setShowList] = useState(!selectedId)
   const twoPanes = useIsDesktop()
@@ -72,6 +80,7 @@ export function RuntimeInteractionsPage({
         question: item.question,
         address: item.task.address,
         originalUrl: interactionOriginalScheme(item),
+        sourceMessageIds: item.sourceMessageIds,
       }))
   const row = selected
     ? (rows.find(item => item.id === selected) ??
@@ -204,7 +213,13 @@ export function RuntimeInteractionsPage({
                 type="button"
                 data-testid="interaction-open-original"
                 className="flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-7"
-                onClick={() => openWeworkScheme(row.originalUrl || weworkTaskScheme(row.address))}
+                onClick={() =>
+                  openWeworkScheme(
+                    originalNavigation?.id === row.id
+                      ? originalNavigation.url
+                      : row.originalUrl || weworkTaskScheme(row.address)
+                  )
+                }
               >
                 {t('interactions.open_original')}
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -217,6 +232,12 @@ export function RuntimeInteractionsPage({
               <WorkbenchErrorBoundary key={row.originalUrl || weworkTaskScheme(row.address)}>
                 <NotificationEntitySurface
                   interactionId={row.id}
+                  sourceMessageIds={row.sourceMessageIds}
+                  focusedRequest={
+                    interactions.pending.find(item => item.id === row.id && !item.cached)
+                      ?.payload ?? null
+                  }
+                  onOriginalUrlChange={onOriginalUrlChange}
                   url={row.originalUrl || weworkTaskScheme(row.address)}
                   address={row.address}
                   active={active}

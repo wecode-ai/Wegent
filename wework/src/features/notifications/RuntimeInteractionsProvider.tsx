@@ -175,6 +175,7 @@ function RuntimeInteractionsState({
           question: item.question,
           address: item.task.address,
           originalUrl: interactionOriginalScheme(item),
+          sourceMessageIds: item.sourceMessageIds,
           answeredAt,
         })
         saveInteractionState(historyKey, next)

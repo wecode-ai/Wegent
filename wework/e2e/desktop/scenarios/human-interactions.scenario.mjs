@@ -320,6 +320,16 @@ export function createDesktopScenario({
         : `${page} [data-testid="request-user-input-submit-button"]`
       await control.command('waitFor', page, { text: QUESTION })
       await control.command('waitFor', page, { text: CONTEXT })
+      if (issueFixture) {
+        const execution = issueDiagnostics.find(
+          message => message.senderType === 'agent' && message.runtimeAddress
+        )
+        assert.ok(execution, 'The notification must identify its original execution')
+        await control.command('waitFor', `${page} [data-message-id="${execution.id}"]`, {
+          text: CONTEXT,
+          visible: true,
+        })
+      }
       assert.equal(await control.command('getValue', input), ANSWER)
       assert.equal(
         Number(
@@ -388,7 +398,6 @@ export function createDesktopScenario({
         )
         assert.ok(execution, 'The Issue must contain its original AI message')
         const originalMessage = `${page} [data-message-id="${execution.id}"]`
-        await control.command('scrollIntoView', originalMessage)
         await control.command('waitFor', originalMessage, { text: CONTEXT, visible: true })
         const [detail] = JSON.parse(
           await control.command('getElementMetrics', `${page} [data-testid="cloud-todo-detail"]`)

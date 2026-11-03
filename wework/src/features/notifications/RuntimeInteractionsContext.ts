@@ -7,6 +7,7 @@ export interface InteractionHistory {
   question: string
   address: RuntimeInteraction['task']['address']
   originalUrl?: string
+  sourceMessageIds?: string[]
   answeredAt: number
 }
 

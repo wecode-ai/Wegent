@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { RuntimeTaskAddress } from '@/types/api'
 
 export const NotificationEntityContext = createContext<{
   id: string
@@ -6,6 +7,9 @@ export const NotificationEntityContext = createContext<{
   issueId: string
   store: 'local' | 'backend'
   rootCommentId?: string
+  address?: RuntimeTaskAddress
+  sourceMessageIds?: string[]
+  onFocusedMessage?: (messageId: string) => void
 } | null>(null)
 
 export function useNotificationEntity() {

@@ -26,6 +26,7 @@ export interface RuntimeInteraction {
   running?: boolean
   cached?: boolean
   originalUrl?: string
+  sourceMessageIds?: string[]
   project?: {
     projectId: string
     issueId: string
@@ -101,6 +102,7 @@ export async function readRuntimeInteractions(
   api: NonNullable<WorkbenchServices['runtimeWorkApi']>
 ): Promise<RuntimeInteraction[]> {
   const pages: WorkbenchMessage[][] = []
+  const sourceMessageIdsByTurn = new Map<string, string[]>()
   const cursors = new Set<string>()
   let beforeCursor: string | undefined
   let origin = task.task.runtimeHandle?.origin
@@ -117,7 +119,18 @@ export async function readRuntimeInteractions(
     if (response.historyUnavailable || response.parseError) {
       throw new Error(response.parseError || 'Runtime history is unavailable')
     }
-    pages.unshift(projectRuntimePaneTranscript(response).messages)
+    const transcript = projectRuntimePaneTranscript(response)
+    pages.unshift(transcript.messages)
+    for (const turn of transcript.turns) {
+      if (!turn.id) continue
+      sourceMessageIdsByTurn.set(turn.id, [
+        ...new Set([
+          ...(sourceMessageIdsByTurn.get(turn.id) ?? []),
+          ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+          ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+        ]),
+      ])
+    }
     if (!response.hasMoreBefore) break
     const cursor = response.beforeCursor
     if (!cursor || cursors.has(cursor)) throw new Error('Incomplete runtime interaction history')
@@ -186,6 +199,7 @@ export async function readRuntimeInteractions(
         answered,
         running,
         project,
+        sourceMessageIds: message.turnId ? sourceMessageIdsByTurn.get(message.turnId) : undefined,
       })
     }
   }

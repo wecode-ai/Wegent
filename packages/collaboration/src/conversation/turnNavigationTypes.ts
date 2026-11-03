@@ -9,7 +9,13 @@ export type NavigationMessage = Pick<WorkbenchMessage, 'id' | 'role' | 'content'
   runtimeMessageIndex?: number | null
 }
 
+export interface ConversationMessageTarget {
+  messageId: string
+  requestKey: string
+}
+
 export interface MessageTurnNavigationProps {
+  messageTarget?: ConversationMessageTarget
   translate: CollaborationTranslate
   messages: NavigationMessage[]
   turnNavigation?: RuntimeTurnNavigationItem[]

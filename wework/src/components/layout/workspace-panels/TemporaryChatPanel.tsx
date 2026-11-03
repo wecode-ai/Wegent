@@ -116,6 +116,9 @@ interface TemporaryChatPanelProps {
   initialScrollPosition?: 'restore' | 'latest'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   coordinateUserInput?: boolean
+  focusedRequest?: RequestUserInputPayload | null
+  sourceMessageIds?: string[]
+  focusRequestKey?: string
 }
 
 export function TemporaryChatPanel({
@@ -148,6 +151,9 @@ export function TemporaryChatPanel({
   initialScrollPosition = 'restore',
   onOpenRuntimeTask,
   coordinateUserInput = false,
+  focusedRequest,
+  sourceMessageIds,
+  focusRequestKey,
   active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
@@ -870,7 +876,49 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
-  const pendingRequest = pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+  const sourceMessageId = messages.find(message => sourceMessageIds?.includes(message.id))?.id
+  const messageTarget = useMemo(
+    () =>
+      sourceMessageId && focusRequestKey
+        ? { messageId: sourceMessageId, requestKey: focusRequestKey }
+        : undefined,
+    [sourceMessageId, focusRequestKey]
+  )
+  useEffect(() => {
+    if (
+      active &&
+      focusRequestKey &&
+      sourceMessageIds?.length &&
+      !sourceMessageId &&
+      !historyLoading &&
+      !historyLoadingMoreBefore &&
+      historyBeforeCursor &&
+      !historyError
+    ) {
+      let current = true
+      void Promise.resolve().then(() => (current ? loadMoreHistory() : undefined))
+      return () => {
+        current = false
+      }
+    }
+  }, [
+    active,
+    focusRequestKey,
+    sourceMessageIds,
+    sourceMessageId,
+    historyLoading,
+    historyLoadingMoreBefore,
+    historyBeforeCursor,
+    historyError,
+    loadMoreHistory,
+  ])
+  const pendingRequest =
+    focusedRequest === undefined
+      ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+      : focusedRequest &&
+          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
+        ? focusedRequest
+        : null
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
@@ -949,6 +997,7 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
+        messageTarget={messageTarget}
         messages={messages}
         turns={turns}
         loading={historyLoading || historyLoadingMoreBefore}

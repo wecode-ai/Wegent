@@ -1,8 +1,14 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
+import { useNotificationEntity } from './NotificationEntityContext'
 
-const hosts = vi.hoisted(() => ({ task: vi.fn(), issue: vi.fn(), bootstrapping: false }))
+const hosts = vi.hoisted(() => ({
+  task: vi.fn(),
+  issue: vi.fn(),
+  context: vi.fn(),
+  bootstrapping: false,
+}))
 beforeEach(() => {
   vi.clearAllMocks()
   hosts.bootstrapping = false
@@ -31,6 +37,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
 vi.mock('./NotificationIssueEntity', () => ({
   NotificationIssueEntity: (props: unknown) => {
     hosts.issue(props)
+    hosts.context(useNotificationEntity())
     return <div data-testid="original-issue" />
   },
 }))
@@ -46,6 +53,27 @@ it('opens the persistent original task with its existing conversation controls',
       sendEphemeral: false,
       active: true,
     })
+  )
+})
+
+it('updates original navigation to the message identified by the native Issue view', () => {
+  const onOriginalUrlChange = vi.fn()
+  render(
+    <NotificationEntitySurface
+      url="wework://boards/local/project/issues/ISSUE-1/comments/root"
+      address={{ deviceId: 'device', taskId: 'task' }}
+      interactionId="question-1"
+      sourceMessageIds={['source-comment']}
+      onOriginalUrlChange={onOriginalUrlChange}
+      active
+    />
+  )
+  const scope = hosts.context.mock.lastCall?.[0]
+  expect(scope.sourceMessageIds).toEqual(['source-comment'])
+  scope.onFocusedMessage('native-ai-message')
+  expect(onOriginalUrlChange).toHaveBeenCalledExactlyOnceWith(
+    'question-1',
+    'wework://boards/local/project/issues/ISSUE-1/comments/native-ai-message'
   )
 })
 

@@ -240,6 +240,63 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('opens a notification at its own AI message without focusing the reply composer', async () => {
+    const onFocusedMessage = vi.fn()
+    const address = { deviceId: 'device-1', taskId: 'own-execution' }
+    const response = {
+      ...agentMessage,
+      triggerMessageId: userMessage.messageId,
+      rootMessageId: userMessage.messageId,
+      runtimeAddress: address,
+      status: 'completed' as const,
+      content: 'Original decision context',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [userMessage, response], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <NotificationEntityContext.Provider
+        value={{
+          id: 'exact-question',
+          projectId: '11',
+          issueId: 'WEG-1',
+          store: 'backend',
+          rootCommentId: userMessage.messageId,
+          address,
+          sourceMessageIds: [userMessage.messageId],
+          onFocusedMessage,
+        }}
+      >
+        <TaskActivityView
+          client={client}
+          project={{ id: '11', name: 'Wework', project_store: 'backend' } as never}
+          task={{ id: 'WEG-1', title: 'Review', status: 'inbox', version: 1 } as never}
+          focusedCommentId={userMessage.messageId}
+          linear
+          issueTimeline
+        />
+      </NotificationEntityContext.Provider>
+    )
+    const original = await screen.findByTestId('cloud-task-activity-message-message-2')
+    await waitFor(() => expect(original).toHaveAttribute('data-flash', 'true'))
+    expect(screen.getByTestId('cloud-task-activity-message-message-1')).not.toHaveAttribute(
+      'data-flash'
+    )
+    expect(screen.getByTestId('cloud-task-activity-composer')).not.toHaveFocus()
+    expect(onFocusedMessage).toHaveBeenCalledWith('message-2')
+    await userEvent.click(
+      screen.getByTestId(`cloud-task-activity-reply-toggle-${userMessage.messageId}`)
+    )
+    expect(screen.getByTestId('cloud-task-activity-composer')).toHaveFocus()
+  })
+
   it('keeps a notification unaccepted until the real queued comment send succeeds', async () => {
     const user = userEvent.setup()
     const root = { ...userMessage, rootMessageId: null }

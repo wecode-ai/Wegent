@@ -73,8 +73,29 @@ function view(
 }
 
 vi.mock('./NotificationEntitySurface', () => ({
-  NotificationEntitySurface: ({ url }: { url: string }) => (
-    <div data-testid="test-original-entity">{url}</div>
+  NotificationEntitySurface: ({
+    url,
+    interactionId,
+    onOriginalUrlChange,
+  }: {
+    url: string
+    interactionId: string
+    onOriginalUrlChange: (id: string, url: string) => void
+  }) => (
+    <div data-testid="test-original-entity">
+      {url}
+      <button
+        data-testid="test-native-focus-resolved"
+        onClick={() =>
+          onOriginalUrlChange(
+            interactionId,
+            'wework://boards/local/12/issues/ISSUE-1/comments/native-ai'
+          )
+        }
+      >
+        Locate
+      </button>
+    </div>
   ),
 }))
 
@@ -85,6 +106,27 @@ it('hosts the original entity instead of building a separate approval or reply f
   )
   expect(screen.queryByTestId('interaction-reply')).not.toBeInTheDocument()
   expect(screen.queryByTestId('interaction-evidence')).not.toBeInTheDocument()
+})
+
+it('opens the original view at the AI message resolved inside the current entity', () => {
+  vi.mocked(openWeworkScheme).mockClear()
+  view(
+    undefined,
+    {},
+    {
+      pending: [
+        {
+          ...approval,
+          project: { projectId: '12', issueId: 'ISSUE-1', rootCommentId: 'root', store: 'local' },
+        },
+      ],
+    }
+  )
+  fireEvent.click(screen.getByTestId('test-native-focus-resolved'))
+  fireEvent.click(screen.getByTestId('interaction-open-original'))
+  expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith(
+    'wework://boards/local/12/issues/ISSUE-1/comments/native-ai'
+  )
 })
 
 it('hosts an Issue destination including its owning comment', () => {

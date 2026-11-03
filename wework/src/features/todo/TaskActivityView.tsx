@@ -8,6 +8,8 @@ import { issueActivityTimeline } from './issueActivityTimeline'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
+import { useNotificationEntity } from '@/features/notifications/NotificationEntityContext'
+import { notificationCommentFocus } from '@/features/notifications/notificationCommentFocus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import { useFocusedComment } from './useFocusedComment'
@@ -431,13 +433,25 @@ export function TaskActivityView({
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [newCommentDraft, setNewCommentDraft] = useState('')
   const [replyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
+  const skipReplyFocus = useRef(false)
   const replyComposerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!replyTarget) return
+  const focusReplyComposer = useCallback(() => {
     replyComposerRef.current
       ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
       ?.focus()
-  }, [replyTarget])
+  }, [])
+  useEffect(() => {
+    if (!replyTarget) return
+    if (skipReplyFocus.current) {
+      skipReplyFocus.current = false
+      return
+    }
+    focusReplyComposer()
+  }, [focusReplyComposer, replyTarget])
+  const beginReply = (card: TaskReplyCard) => {
+    if (card === replyTarget) focusReplyComposer()
+    else setReplyTarget(card)
+  }
   // A reply on a thread with no execution to continue only lands as a comment.
   // When a manager assigned this member a human work item, the reply also opens
   // that work item's task composer.
@@ -550,11 +564,28 @@ export function TaskActivityView({
     })
 
   // Land once per notification, then leave scrolling under the reader's control.
+  const notificationEntity = useNotificationEntity()
+  const ownsNotification =
+    notificationEntity?.projectId === project.id &&
+    notificationEntity?.issueId === task.id &&
+    notificationEntity?.store === project.project_store
+  const notificationCommentId = ownsNotification
+    ? notificationCommentFocus(
+        threadMessages,
+        notificationEntity?.address,
+        notificationEntity?.sourceMessageIds,
+        state.devices
+      )
+    : undefined
+  const onFocusedMessage = notificationEntity?.onFocusedMessage
+  useEffect(() => {
+    if (ownsNotification && notificationCommentId) onFocusedMessage?.(notificationCommentId)
+  }, [notificationCommentId, onFocusedMessage, ownsNotification])
   const flashedCommentId = useFocusedComment(
     listRef,
     threadMessages,
-    focusedCommentId,
-    focusedCommentRequestKey
+    notificationCommentId !== undefined ? notificationCommentId : focusedCommentId,
+    ownsNotification ? (notificationEntity?.id ?? null) : focusedCommentRequestKey
   )
 
   useEffect(() => {
@@ -696,7 +727,10 @@ export function TaskActivityView({
     store: project.project_store,
     cards: commentCards,
     target: replyTarget,
-    selectTarget: setReplyTarget,
+    selectTarget: card => {
+      if (card !== replyTarget) skipReplyFocus.current = true
+      setReplyTarget(card)
+    },
   })
   const notificationComposer = notificationReply?.composing ? notificationReply : null
   const coordinateCommentDispatch = useNotificationCommentDispatch({
@@ -1397,7 +1431,7 @@ export function TaskActivityView({
                         createdAt={issueThreadActivityTimestamp(card)}
                         replyLabel={cardReplyLabel(card)}
                         active={replyTarget?.root.messageId === rootId}
-                        onReply={() => setReplyTarget(card)}
+                        onReply={() => beginReply(card)}
                       />
                     ) : null}
                   </div>
@@ -1435,7 +1469,7 @@ export function TaskActivityView({
                           createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
-                          onReply={() => setReplyTarget(card)}
+                          onReply={() => beginReply(card)}
                         />
                       ) : (
                         <CardCommentComposer

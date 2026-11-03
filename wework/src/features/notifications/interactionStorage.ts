@@ -63,6 +63,11 @@ export function readPendingInteractionCache(key: string): RuntimeInteraction[] {
         payload: { kind: 'request_user_input' },
         answered: false,
         cached: true,
+        sourceMessageIds:
+          Array.isArray(row.sourceMessageIds) &&
+          row.sourceMessageIds.every(id => typeof id === 'string')
+            ? row.sourceMessageIds
+            : undefined,
         originalUrl:
           typeof row.originalUrl === 'string' && parseWeworkScheme(row.originalUrl)
             ? row.originalUrl
@@ -82,6 +87,7 @@ export function pendingInteractionCache(items: RuntimeInteraction[]) {
     question: item.question,
     createdAt: item.createdAt,
     originalUrl: interactionOriginalScheme(item),
+    sourceMessageIds: item.sourceMessageIds,
   }))
 }
 
@@ -100,6 +106,9 @@ export function readInteractionHistory(key: string): InteractionHistory[] {
         record(row.address) &&
         typeof row.address.deviceId === 'string' &&
         typeof row.address.taskId === 'string' &&
+        (row.sourceMessageIds === undefined ||
+          (Array.isArray(row.sourceMessageIds) &&
+            row.sourceMessageIds.every(id => typeof id === 'string'))) &&
         (row.originalUrl === undefined || typeof row.originalUrl === 'string')
     )
     .sort((a, b) => b.answeredAt - a.answeredAt)
