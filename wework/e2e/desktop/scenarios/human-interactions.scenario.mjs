@@ -406,6 +406,40 @@ export function createDesktopScenario({
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
       await captureScreenshot(control, '06-draft-survives-reload.png')
+      if (issueFixture) {
+        const execution = issueDiagnostics.find(
+          message => message.senderType === 'agent' && message.runtimeAddress
+        )
+        assert.ok(execution, 'The Issue must expose its actual execution address')
+        const executionAction = `${page} [data-testid="cloud-task-activity-execution-badge-${execution.id}"]`
+        await control.command('waitFor', `${executionAction}:not(:disabled)`, { visible: true })
+        await control.command('click', executionAction)
+        await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
+          text: CONTEXT,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+        assert.equal(destination.searchParams.get('taskId'), execution.runtimeAddress.taskId)
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `${ACTIVE} [data-testid="runtime-execution-detail-overlay"]`
+            )
+          ),
+          0,
+          'Embedded execution actions must leave the container for the original task page'
+        )
+        await captureScreenshot(control, '06a-original-execution-workspace.png')
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command('waitFor', '[data-testid="wework-notifications-pending"]', {
+          text: QUESTION,
+        })
+        await control.command('click', '[data-testid="wework-notifications-pending"]')
+        await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
+        assert.equal(await control.command('getValue', input), ANSWER)
+        await captureScreenshot(control, '06b-return-to-container-with-draft.png')
+      }
       if (checkpoint === 'human-interactions') {
         await verifyHumanInteractionAcrossWindows({
           control,
