@@ -35,6 +35,9 @@ const PROMPT = 'HUMAN_INTERACTIONS_REVIEW'
 const QUESTION = '旧客户是否继续保留原来的订单校验规则？'
 const ANSWER = '保留旧规则，新客户使用新规则。'
 const COMPLETION = '已收到你的判断，继续完成 review。'
+const FOLLOWUP = `${PROMPT}_FOLLOWUP：继续检查兼容性实现，保持刚才确认的策略。`
+const FOLLOWUP_COMPLETION = '原任务的后续会话已继续。'
+const HIDDEN_TASK_TITLE = '隐藏执行的订单规则 Review'
 const CONTEXT =
   '已检查现有订单校验实现：旧规则保留客户自定义阈值，新规则改用统一阈值。直接切换会改变存量客户的校验结果。当前尚未修改代码，需要先明确兼容性要求。'
 
@@ -55,6 +58,7 @@ export function createDesktopScenario({
   let focusDiagnostics
   let contextItemId
   let originalTaskId
+  let originalWorkspacePath
   let toolRequested = false
   const callId = 'human-interactions-business-question'
   const responseId = 'human-interactions-review'
@@ -95,6 +99,16 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(PROMPT), 'Unexpected model request')
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (JSON.stringify(body.input).includes(FOLLOWUP)) {
+        response.end(
+          createSse([
+            responseCreated(responseId),
+            assistantMessage(FOLLOWUP_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       const output = toolOutputText(body, callId)
       if (output !== null) {
         assert.deepEqual(JSON.parse(output), { accepted: true })
@@ -143,6 +157,7 @@ export function createDesktopScenario({
         })
       } else if (checkpoint === 'human-interactions-hidden') {
         const hiddenPath = join(dirname(workspacePath), 'unlisted-question-workspace')
+        originalWorkspacePath = hiddenPath
         await mkdir(hiddenPath, { recursive: true })
         const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
         const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
@@ -152,7 +167,7 @@ export function createDesktopScenario({
           'runtime.tasks.create',
           {
             taskId: 'unlisted-review',
-            title: '隐藏执行的订单规则 Review',
+            title: HIDDEN_TASK_TITLE,
             runtime: 'codex',
             workspacePath: hiddenPath,
             message: 'Review 订单规则，遇到兼容性判断时交给我。',
@@ -775,7 +790,59 @@ export function createDesktopScenario({
           'Two windows must persist exactly one human answer in the original runtime'
         )
       }
-      await captureScreenshot(control, '09-original-task-resumes.png')
+      if (checkpoint === 'human-interactions-hidden') {
+        await control.command('waitFor', `${ORIGINAL} [data-testid="workbench-pane-task-title"]`, {
+          text: HIDDEN_TASK_TITLE,
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        const restored = await waitForWorkbenchDebugState(
+          control,
+          value =>
+            value.workbench?.currentRuntimeTask?.taskId === originalTaskId &&
+            value.workbench.currentRuntimeTask.workspacePath === originalWorkspacePath,
+          'The unlisted original task must restore its actual workspace'
+        )
+        const listed = await requestExecutor(
+          control,
+          'runtime.tasks.list',
+          { preferCached: true },
+          uiTimeoutMs
+        )
+        assert.ok(
+          !JSON.stringify(listed).includes(originalTaskId),
+          'Opening the original task must preserve the sidebar inventory filter'
+        )
+        await control.command('fill', COMPOSER, { value: FOLLOWUP })
+        const send = `${ORIGINAL} [data-testid="send-message-button"]:not(:disabled)`
+        await control.command('waitFor', send, { visible: true, timeoutMs: uiTimeoutMs })
+        await captureScreenshot(control, '09-original-task-resumes.png')
+        await control.command('click', send)
+        await control.command('waitFor', `${ORIGINAL} [data-testid="message-assistant"]`, {
+          text: FOLLOWUP_COMPLETION,
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          {
+            taskId: originalTaskId,
+            workspacePath: restored.workbench.currentRuntimeTask.workspacePath,
+            includeFullContent: true,
+            limit: 100,
+          },
+          uiTimeoutMs
+        )
+        assert.equal(
+          transcript.messages.filter(
+            message => message.role === 'user' && JSON.stringify(message).includes(FOLLOWUP)
+          ).length,
+          1,
+          'The follow-up must persist exactly once in the original unlisted task'
+        )
+        await captureScreenshot(control, '10-original-task-followup.png')
+      } else await captureScreenshot(control, '09-original-task-resumes.png')
     },
   }
 }

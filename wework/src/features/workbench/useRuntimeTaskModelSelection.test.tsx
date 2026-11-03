@@ -36,7 +36,7 @@ describe('bound remote task model selection', () => {
   it('uses the persisted model before the remote task list and model catalog are available', () => {
     const store = modelStore([])
     const { result } = renderHook(() =>
-      useRuntimeTaskModelSelection({ userId: 7, runtimeWork: null, modelStore: store })
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
     )
 
     expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
@@ -57,7 +57,7 @@ describe('bound remote task model selection', () => {
       { name: 'gpt-6-astra', displayName: 'GPT-6 Astra', type: 'runtime', provider: 'local' },
     ])
     const { result } = renderHook(() =>
-      useRuntimeTaskModelSelection({ userId: 7, runtimeWork: null, modelStore: store })
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
     )
 
     result.current.setRuntimeTaskSelectedModelOption(address, 'reasoning', 'high')

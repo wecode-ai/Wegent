@@ -4212,7 +4212,8 @@
     "diagram_preview": "图表预览",
     "diagram_loading": "正在渲染图表…",
     "diagram_render_failed": "图表渲染失败，源码如下",
-    "diagram_retry": "重试"
+    "diagram_retry": "重试",
+    "runtime_task_load_failed": "无法加载该任务，请刷新后重试。"
   },
   "delivery": {
     "action": "交付",

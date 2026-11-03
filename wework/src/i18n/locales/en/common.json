@@ -4217,7 +4217,8 @@
     "diagram_preview": "Diagram preview",
     "diagram_loading": "Rendering diagram…",
     "diagram_render_failed": "Could not render the diagram. Source shown below.",
-    "diagram_retry": "Retry"
+    "diagram_retry": "Retry",
+    "runtime_task_load_failed": "Unable to load this task. Refresh and try again."
   },
   "delivery": {
     "action": "Deliver",
