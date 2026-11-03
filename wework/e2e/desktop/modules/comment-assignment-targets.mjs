@@ -20,7 +20,9 @@ export async function verifyCommentAssignmentTargets(
   await control.command('openWeworkScheme', 'body', {
     value: `wework://boards/${project.id}/issues/${issue.id}`,
   })
-  const form = scoped('[data-testid="task-comment-form"]')
+  const form = scoped(
+    `[data-testid="cloud-task-activity-${issue.id}"] [data-testid="task-comment-form"]`
+  )
   const picker = `${form} [data-testid="task-comment-form-assignee"]`
   const send = `${form} [data-testid="send-message-button"]`
   await control.command('waitFor', picker)
@@ -30,19 +32,6 @@ export async function verifyCommentAssignmentTargets(
     { value: String(owner.id), name: owner.user_name, field: 'assignee_user_id', id: owner.id },
   ]) {
     const before = await request(`/api/v1/loop-items/${issue.id}`)
-    if (target.field === 'assignee_user_id') {
-      await control.command('fill', `${form} [data-testid="cloud-task-activity-composer"]`, {
-        value: `[$@${owner.user_name}](wework-member://${owner.id}) 请确认接手`,
-      })
-      await control.command('clickWhenEnabled', send)
-      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
-        text: '请确认接手',
-      })
-      const mentioned = await request(`/api/v1/loop-items/${issue.id}`)
-      assert.equal(mentioned.assignee_group_id, before.assignee_group_id)
-      assert.equal(mentioned.assignee_user_id ?? null, before.assignee_user_id ?? null)
-      await control.command('waitFor', `${picker}[data-value="${owner.id}"]`)
-    }
     await control.command('click', picker)
     if (target.field === 'assignee_agent_id') {
       await capture(control, 'collaboration-comment-assignment-targets.png')
@@ -65,7 +54,7 @@ export async function verifyCommentAssignmentTargets(
         'Selecting a target must not transfer ownership'
       )
     }
-    await control.command('clickWhenEnabled', '[data-testid="task-comment-form-assignee-confirm"]')
+    await control.command('clickWhenEnabled', send)
     // The reset follows the persisted assignment, rather than only the click.
     await control.command('waitFor', `${picker}[data-value=""]`)
     const saved = await request(`/api/v1/loop-items/${issue.id}`)
@@ -82,8 +71,7 @@ export async function verifyCommentAssignmentTargets(
   const comments = await request(
     `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
   )
-  assert.equal(comments.length, 1, 'Assignment-only actions must not create comments')
-  assert.ok(comments[0].body.includes('请确认接手'))
+  assert.equal(comments.length, 0, 'Assignment-only actions must not create comments')
   await control.command('openWeworkScheme', 'body', {
     value: `wework://boards/${project.id}/issues/${originalIssue.id}`,
   })

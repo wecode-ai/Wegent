@@ -2605,11 +2605,6 @@
   color: rgb(var(--color-text-primary));
 }
 
-.task-detail-comment-assignee > span:first-child {
-  flex-shrink: 0;
-  color: rgb(var(--color-text-muted));
-}
-
 .task-detail-comment-settings {
   flex-wrap: wrap;
   margin-top: 8px;

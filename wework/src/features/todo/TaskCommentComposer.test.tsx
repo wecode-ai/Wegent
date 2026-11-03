@@ -67,7 +67,9 @@ describe('TaskCommentComposer', () => {
     })
     const select = screen.getByTestId('task-comment-form-assignee')
     const send = screen.getByTestId('send-message-button')
-    expect(select).toHaveAttribute('data-value', '1')
+    expect(select).toHaveAttribute('data-value', '')
+    expect(screen.getByRole('group', { name: '转派建议：User 1' })).toBeInTheDocument()
+    expect(screen.queryByText(/\{\{name\}\}/)).not.toBeInTheDocument()
     expect(select.nextElementSibling).toBe(send)
     expect(send).toHaveTextContent('发送消息')
     await user.click(send)
@@ -75,12 +77,15 @@ describe('TaskCommentComposer', () => {
     expect(assign).not.toHaveBeenCalled()
     rerender(<TaskCommentComposer {...props} value="" />)
     expect(send).toBeDisabled()
-    expect(select).toHaveAttribute('data-value', '1')
-    await user.click(select)
-    await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
+    expect(select).toHaveAttribute('data-value', '')
+    expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
     expect(assign).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('2'))
+    expect(select).toHaveAttribute('data-value', '1')
+    expect(assign).not.toHaveBeenCalled()
+    expect(send).toHaveTextContent('转派')
+    await user.click(send)
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('1'))
     expect(props.onSubmit).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
   })
@@ -98,9 +103,9 @@ describe('TaskCommentComposer', () => {
     await user.click(picker)
     await user.click(screen.getByTestId('task-comment-form-assignee-option-' + value))
     expect(picker).toHaveTextContent(label)
-    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
     expect(assign).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    await user.click(screen.getByTestId('send-message-button'))
     await waitFor(() => expect(assign).toHaveBeenCalledWith(value))
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
@@ -110,29 +115,68 @@ describe('TaskCommentComposer', () => {
     expect(screen.queryByTestId('task-comment-form-assignee')).not.toBeInTheDocument()
   })
 
-  it('shows a failed confirmation inside the picker and retries without sending the draft', async () => {
+  it('retains a failed selected target and retries without creating an empty comment', async () => {
     const user = userEvent.setup()
     const assign = vi
       .fn()
       .mockRejectedValueOnce(new Error('Version conflict'))
       .mockResolvedValue(undefined)
     const { props, input } = setup({
+      value: '',
       assignment: { options: [{ value: '2', label: 'User 2' }], assign },
     })
     await user.click(screen.getByTestId('task-comment-form-assignee'))
     await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
-    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    await user.click(screen.getByTestId('send-message-button'))
     expect(await screen.findByRole('alert')).toHaveTextContent('Version conflict')
-    expect(screen.getByTestId('task-comment-form-assignee-menu')).toContainElement(
-      screen.getByRole('alert')
-    )
-    expect(input).toHaveValue('Review this')
-    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    expect(screen.getByTestId('task-comment-form')).toContainElement(screen.getByRole('alert'))
+    expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
+    expect(input).toHaveValue('')
+    await user.click(screen.getByTestId('send-message-button'))
     await waitFor(() =>
-      expect(screen.queryByTestId('task-comment-form-assignee-menu')).not.toBeInTheDocument()
+      expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
     )
     expect(props.onSubmit).not.toHaveBeenCalled()
     expect(assign).toHaveBeenCalledTimes(2)
+  })
+
+  it('dismisses a mention suggestion without changing the selected target', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn()
+    setup({
+      value: '[$@User 2](wework-member://2)',
+      assignment: { options: [{ value: '2', label: 'User 2' }], assign },
+    })
+    await user.click(screen.getByTestId('task-comment-form-assignee-dismiss'))
+    expect(screen.queryByRole('group', { name: '转派建议：User 2' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('switches the suggestion by clicking a blue mention chip without filling the selector', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn()
+    const { container } = setup({
+      value: '[$@User 1](wework-member://1) [$@User 2](wework-member://2)',
+      assignment: {
+        options: [
+          { value: '1', label: 'User 1' },
+          { value: '2', label: 'User 2' },
+        ],
+        assign,
+      },
+    })
+    const second = container.querySelector<HTMLElement>(
+      '[data-composer-reference-kind="member"][data-composer-skill-reference*="wework-member://2"]'
+    )!
+    await user.click(second)
+    expect(screen.getByRole('group', { name: '转派建议：User 2' })).toBeInTheDocument()
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
+    expect(assign).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('task-comment-form-assignee-confirm'))
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '2')
+    expect(screen.getByTestId('send-message-button')).toHaveTextContent('发送并转派')
+    expect(assign).not.toHaveBeenCalled()
   })
 
   it('keeps execution settings collapsed without replacing the draft when toggled', async () => {

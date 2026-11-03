@@ -110,6 +110,7 @@ export interface ComposerProseMirrorEditorProps {
   onDrop: (event: DragEvent) => boolean;
   onOpenMentionFile?: (path: string) => void;
   onOpenMentionPlugin?: (reference: PluginReference) => void;
+  onActivateMention?: (reference: string) => boolean;
   onEditComposerLink?: (
     payload: ComposerLinkPayload,
     anchor?: HTMLElement,
@@ -343,6 +344,10 @@ export const ComposerProseMirrorEditor = forwardRef<
               callbacksRef.current.onOpenMentionPlugin?.(reference),
             (href) =>
               callbacksRef.current.services.resolveMentionIcon?.(href) ?? null,
+            initialProps.onActivateMention
+              ? (reference) =>
+                  callbacksRef.current.onActivateMention?.(reference) ?? false
+              : undefined,
           );
         },
         composer_link(node, view, getPos) {

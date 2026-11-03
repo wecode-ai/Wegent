@@ -127,9 +127,6 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
   contentClassName?: string;
   groupLimit?: number;
   showAllLabel?(group: string, count: number): string;
-  open?: boolean;
-  onOpenChange?(open: boolean): void;
-  closeOnSelect?: boolean;
   onChange(value: TValue): void;
 }
 
@@ -176,19 +173,11 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   contentClassName,
   groupLimit,
   showAllLabel,
-  open: controlledOpen,
-  onOpenChange,
-  closeOnSelect = true,
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme();
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
-  const open = controlledOpen ?? uncontrolledOpen;
-  function setOpen(nextOpen: boolean) {
-    if (controlledOpen === undefined) setUncontrolledOpen(nextOpen);
-    onOpenChange?.(nextOpen);
-  }
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
@@ -298,12 +287,11 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                   <button
                     type="button"
                     role="option"
-                    disabled={disabled}
                     aria-selected={option.value === value}
                     data-testid={`${testId}-option-${option.value || "empty"}`}
                     onClick={() => {
                       onChange(option.value);
-                      if (closeOnSelect) setOpen(false);
+                      setOpen(false);
                     }}
                     className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${option.section ? "pl-7" : ""} ${
                       option.value === value ? "bg-muted font-medium" : ""

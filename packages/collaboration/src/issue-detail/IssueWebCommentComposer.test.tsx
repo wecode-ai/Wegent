@@ -133,7 +133,7 @@ describe("Web adapter for the desktop main composer", () => {
     await act(async () =>
       document
         .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-form-assignee-confirm"]',
+          '[data-testid="collaboration-issue-comment-submit"]',
         )!
         .click(),
     );
