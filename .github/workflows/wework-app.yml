@@ -61,9 +61,13 @@ permissions:
 
 jobs:
   profile-runtime:
-    name: Profile Windows runtime extraction
+    name: Profile Windows runtime extraction (${{ matrix.runner }})
     if: inputs.verification_checkpoint == 'runtime-extraction'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-2022]
     timeout-minutes: 10
     permissions:
       contents: read
