@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import {
@@ -277,6 +277,13 @@ export function createDesktopScenario({
       const [confirm] = JSON.parse(
         await control.command('getElementMetrics', selector('collaboration-project-create-confirm'))
       )
+      const layout = JSON.stringify({ error, footer, dialog, confirm }, null, 2)
+      await writeFile(join(resultDir, 'template-agents-error-layout.json'), `${layout}\n`)
+      await captureScreenshot(
+        control,
+        'template-agents-05b-model-required-before-creation.png',
+        CONTENT
+      )
       assert.ok(
         error.height > 0 && error.top >= footer.top && error.bottom <= footer.bottom,
         'The complete error message must stay in the non-scrolling footer'
@@ -287,7 +294,7 @@ export function createDesktopScenario({
       )
       assert.ok(
         error.bottom <= confirm.top && confirm.bottom <= dialog.bottom,
-        'The error and create action must be readable together without scrolling'
+        `The error and create action must be readable together without scrolling: ${layout}`
       )
       const after = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       assert.equal(
@@ -298,11 +305,6 @@ export function createDesktopScenario({
       assert.equal(
         after.some(project => project.name === copiedName),
         false
-      )
-      await captureScreenshot(
-        control,
-        'template-agents-05b-model-required-before-creation.png',
-        CONTENT
       )
       await control.command('click', selector('project-create-choose-template'))
       await control.command('click', pickerSelector('template-tab-mine'))

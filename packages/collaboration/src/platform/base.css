@@ -1542,7 +1542,7 @@
   resize: vertical;
 }
 
-.collaboration-dialog footer,
+.collaboration-dialog footer:where(:not(.collaboration-project-create-footer)),
 .collaboration-issue-detail footer {
   display: flex;
   justify-content: flex-end;
