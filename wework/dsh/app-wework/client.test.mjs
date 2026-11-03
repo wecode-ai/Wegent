@@ -138,6 +138,11 @@ test('registers telemetry sinks with Cordis lifecycle cleanup', async () => {
     () => runtime.service.telemetry.sinks.register(owner, { ...sink, accept: undefined }),
     /requires accept\(\)/
   )
+  assert.throws(
+    () =>
+      runtime.service.telemetry.sinks.register(owner, { ...sink, protocol: 'telemetry-sink/v0' }),
+    /protocol/
+  )
 
   for (const cleanup of cleanups.reverse()) cleanup()
   assert.equal(runtime.service.telemetry.sinks.list().length, 0)

@@ -10,6 +10,7 @@ window.__ModuleLoader__.load({
     const { createPortal } = require('react-dom')
 
     const APP_RUNTIME_READY_EVENT = 'wework:app-runtime-ready'
+    const EXTENSION_HOST_CHANGE_EVENT = 'wework-dsh-extension-host-change'
     const PLUGIN_BACKEND_PATH = '/wework/plugins/v1/rpc'
     // Plugin clients call their backend as soon as they mount, which can race the
     // backend's own registration. Retry only calls that provably never ran.
@@ -758,6 +759,9 @@ window.__ModuleLoader__.load({
           sinks: Object.freeze({
             register(owner, sink) {
               assertActive()
+              if (sink?.protocol !== 'telemetry-sink/v1') {
+                throw new Error('Telemetry sink protocol must be "telemetry-sink/v1"')
+              }
               return telemetrySinks.register(owner, sink)
             },
             get(id) {
@@ -958,6 +962,16 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function notifyExtensionHostChange(hostWindow) {
+      if (
+        typeof hostWindow.dispatchEvent !== 'function' ||
+        typeof hostWindow.CustomEvent !== 'function'
+      ) {
+        return
+      }
+      hostWindow.dispatchEvent(new hostWindow.CustomEvent(EXTENSION_HOST_CHANGE_EVENT))
+    }
+
     function createWeworkRoot(
       context,
       hostWindow = window,
@@ -982,6 +996,7 @@ window.__ModuleLoader__.load({
           hostWindow.__WEWORK_DSH_UI__ = slotRuntime
           hostWindow.__WEWORK_DSH_EXTENSIONS__ = extensionRuntime.host
           hostWindow.__WEWORK_DSH_APP_BRIDGE__ = appBridge
+          notifyExtensionHostChange(hostWindow)
           const unsubscribeContributions = extensionRuntime.host.subscribe(() => {
             for (const slotName of Object.keys(SLOT_DECLARATIONS)) slotRuntime.refresh(slotName)
           })
@@ -1024,6 +1039,7 @@ window.__ModuleLoader__.load({
             }
             if (hostWindow.__WEWORK_DSH_EXTENSIONS__ === extensionRuntime.host) {
               delete hostWindow.__WEWORK_DSH_EXTENSIONS__
+              notifyExtensionHostChange(hostWindow)
             }
             if (hostWindow.__WEWORK_DSH_APP_BRIDGE__ === appBridge) {
               delete hostWindow.__WEWORK_DSH_APP_BRIDGE__
