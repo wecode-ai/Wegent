@@ -26,6 +26,44 @@ function smartAppFact(name: WeworkTelemetryFact['name']): WeworkTelemetryFact {
   } as WeworkTelemetryFact
 }
 
+type SmartAppSinkEnvelope = {
+  readonly context?: {
+    readonly smartApp?: Readonly<Record<string, unknown>>
+  }
+}
+
+async function deliverSmartAppFact(
+  contextFields: readonly string[],
+  delivery: 'immediate' | 'queued',
+  smartAppOverrides: Readonly<Record<string, unknown>> = {}
+): Promise<ReturnType<typeof vi.fn>> {
+  if (contextFields.length > 0) {
+    vi.stubEnv('VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS', JSON.stringify(contextFields))
+  }
+  const internalAccept = vi.fn()
+  const sink = { id: 'internal', accept: internalAccept }
+  let sinks = delivery === 'immediate' ? [sink] : []
+  const dispatcher = createTelemetryDispatcher(vi.fn(), {
+    internalSinks: () => sinks,
+    isInternalDeliveryEnabled: () => true,
+  })
+
+  const fact = smartAppFact('smart_app_opened')
+  dispatcher.publish({
+    ...fact,
+    context: {
+      ...fact.context,
+      smartApp: { ...fact.context?.smartApp, ...smartAppOverrides },
+    },
+  } as WeworkTelemetryFact)
+  if (delivery === 'queued') {
+    sinks = [sink]
+    dispatcher.flushInternalSinks()
+  }
+  await flushPromises()
+  return internalAccept
+}
+
 function pluginInvocationFact(durationMs: number | undefined): WeworkTelemetryFact {
   return {
     name: 'plugin_invocation_succeeded',
@@ -237,6 +275,71 @@ describe('telemetry dispatcher', () => {
       })
     )
   })
+
+  const smartAppPolicyCases = [
+    ['no fields', [], undefined],
+    ['only the name', ['smart_app_name'], { name: 'Research' }],
+    ['only the key', ['smart_app_key'], { key: 'research' }],
+    [
+      'a partial combination',
+      ['smart_app_key', 'smart_app_source'],
+      { key: 'research', source: 'market' },
+    ],
+    [
+      'all fields',
+      ['smart_app_key', 'smart_app_name', 'smart_app_version', 'smart_app_source'],
+      { key: 'research', name: 'Research', version: '1.0.0', source: 'market' },
+    ],
+  ] as const
+
+  for (const delivery of ['immediate', 'queued'] as const) {
+    test.each(smartAppPolicyCases)(
+      `delivers %s to ${delivery} sinks`,
+      async (_label, contextFields, expectedSmartApp) => {
+        const internalAccept = await deliverSmartAppFact(contextFields, delivery)
+
+        expect(internalAccept).toHaveBeenCalledOnce()
+        const envelope = internalAccept.mock.calls[0]?.[0] as SmartAppSinkEnvelope
+        if (expectedSmartApp === undefined) {
+          expect(envelope).not.toHaveProperty('context')
+        } else {
+          expect(envelope.context).toEqual({ smartApp: expectedSmartApp })
+        }
+      }
+    )
+  }
+
+  const invalidSmartAppValueCases = [
+    ['a blank name', { name: '   ' }, { key: 'research', version: '1.0.0', source: 'market' }],
+    [
+      'an oversized version',
+      { version: 'v'.repeat(257) },
+      { key: 'research', name: 'Research', source: 'market' },
+    ],
+    [
+      'an unknown source',
+      { source: 'private' },
+      { key: 'research', name: 'Research', version: '1.0.0' },
+    ],
+  ] as const
+
+  for (const delivery of ['immediate', 'queued'] as const) {
+    test.each(invalidSmartAppValueCases)(
+      `omits %s while keeping valid fields for ${delivery} sinks`,
+      async (_label, smartAppOverrides, expectedSmartApp) => {
+        const internalAccept = await deliverSmartAppFact(
+          ['smart_app_key', 'smart_app_name', 'smart_app_version', 'smart_app_source'],
+          delivery,
+          smartAppOverrides
+        )
+
+        expect(internalAccept).toHaveBeenCalledOnce()
+        expect((internalAccept.mock.calls[0]?.[0] as SmartAppSinkEnvelope).context).toEqual({
+          smartApp: expectedSmartApp,
+        })
+      }
+    )
+  }
 
   test('does not buffer internal facts while unified telemetry is disabled', async () => {
     const internalAccept = vi.fn()

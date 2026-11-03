@@ -1,11 +1,15 @@
 import type { AnalyticsEvent } from './events'
 import { ANALYTICS_EVENT_PROPERTY_KEYS } from './events'
 import { sanitizeAnalyticsProperties } from './client'
-import type {
-  WeworkTelemetryContext,
-  WeworkTelemetryEnvelope,
-  WeworkTelemetryFact,
-  WeworkTelemetrySink,
+import {
+  parseSmartAppSource,
+  type PluginInvocationIdentityContext,
+  type SmartAppIdentityContext,
+  type WeworkTelemetryContext,
+  type WeworkTelemetryEnvelope,
+  type WeworkTelemetryFact,
+  type WeworkTelemetrySink,
+  type WeworkTelemetrySinkContext,
 } from './facts'
 import { telemetryContextProperties } from './identity'
 
@@ -94,24 +98,21 @@ function acceptInternal(sinks: readonly WeworkTelemetrySink[], fact: WeworkTelem
   }
 }
 
-const SMART_APP_POLICY_FIELDS = [
-  'smart_app_key',
-  'smart_app_name',
-  'smart_app_version',
-  'smart_app_source',
-] as const
-
 /**
  * Sinks receive the same collection policy as the public transport. Rebuild the
  * nested context from the projected fields so raw identities never cross the
- * receiver boundary, and omit objects that the policy only partially allows.
+ * receiver boundary. Each field is projected independently because a deployment
+ * may allow only part of an identity.
  */
 function projectInternalContext(
   context?: WeworkTelemetryContext
-): WeworkTelemetryContext | undefined {
+): WeworkTelemetrySinkContext | undefined {
   if (!context) return undefined
   const allowed = telemetryContextProperties(context)
-  const projected: { pluginInvocation?: unknown; smartApp?: unknown } = {}
+  const projected: {
+    pluginInvocation?: Partial<PluginInvocationIdentityContext>
+    smartApp?: Partial<SmartAppIdentityContext>
+  } = {}
 
   if (context.pluginInvocation) {
     const pluginInvocation = {
@@ -128,17 +129,18 @@ function projectInternalContext(
     if (Object.keys(pluginInvocation).length > 0) projected.pluginInvocation = pluginInvocation
   }
 
-  if (
-    context.smartApp &&
-    SMART_APP_POLICY_FIELDS.every(field => typeof allowed[field] === 'string')
-  ) {
-    projected.smartApp = {
-      key: allowed.smart_app_key,
-      name: allowed.smart_app_name,
-      version: allowed.smart_app_version,
-      source: allowed.smart_app_source,
+  if (context.smartApp) {
+    const source = parseSmartAppSource(allowed.smart_app_source)
+    const smartApp = {
+      ...(typeof allowed.smart_app_key === 'string' ? { key: allowed.smart_app_key } : {}),
+      ...(typeof allowed.smart_app_name === 'string' ? { name: allowed.smart_app_name } : {}),
+      ...(typeof allowed.smart_app_version === 'string'
+        ? { version: allowed.smart_app_version }
+        : {}),
+      ...(source ? { source } : {}),
     }
+    if (Object.keys(smartApp).length > 0) projected.smartApp = smartApp
   }
 
-  return Object.keys(projected).length > 0 ? (projected as WeworkTelemetryContext) : undefined
+  return Object.keys(projected).length > 0 ? projected : undefined
 }
