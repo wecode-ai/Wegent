@@ -533,6 +533,16 @@ jobs:
       source_version: ${{ steps.inputs.outputs.source_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.verification_run_id != '' && github.sha || needs.prepare-release.outputs.release_sha }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/scripts/
+            /wework/scripts/lib/
+            /wework/e2e/desktop/upgrade-suite.mjs
+            /wework/electron/src/runtime/upgrade-policy.mjs
+            /wework/electron/src/runtime/release-preparation-progress.mjs
+            /wework/upgrade-policy.json
       - name: Resolve completed release build artifacts
         id: inputs
         env:
@@ -546,12 +556,6 @@ jobs:
           PUBLISHED_RELEASE_TAG: ${{ inputs.verification_release_tag }}
           VERIFICATION_SOURCE_RUN_ID: ${{ inputs.verification_source_run_id }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
-
-      - name: Checkout pinned verification source
-        if: steps.inputs.outputs.diagnostic_checkpoint == ''
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.inputs.outputs.verification_sha }}
 
       - name: Freeze complete source upgrade matrix
         if: steps.inputs.outputs.diagnostic_checkpoint == ''

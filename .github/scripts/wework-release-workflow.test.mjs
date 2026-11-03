@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const workflow = JSON.parse(
@@ -17,6 +19,39 @@ const workflow = JSON.parse(
   ),
 );
 const { jobs } = workflow;
+
+test("input resolution pins its source once and its sparse checkout contains all imports", (t) => {
+  const steps = jobs["prepare-upgrade-inputs"].steps;
+  const checkouts = steps.filter((step) => step.uses === "actions/checkout@v4");
+  assert.equal(checkouts.length, 1);
+  const resolveInputs = steps.find((step) => step.id === "inputs");
+  const checkout = checkouts[0].with;
+  assert.equal(checkout.ref, resolveInputs.env.VERIFICATION_SHA);
+  assert.equal(checkout["sparse-checkout-cone-mode"], false);
+  const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new URL("../../", import.meta.url);
+  for (const selection of checkout["sparse-checkout"].trim().split("\n")) {
+    const path = selection.replace(/^\//, "").replace(/\/$/, "");
+    const destination = join(root, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    cpSync(new URL(path, repository), destination, { recursive: true });
+  }
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const resolver = await import('./.github/scripts/resolve-wework-upgrade-inputs.mjs');
+    if (resolver.upgradeVerificationMatrix('stable').include.length !== 4) throw new Error('Invalid matrix');
+    await import('./wework/scripts/lib/upgrade-verification-shards.mjs');
+    await import('./wework/scripts/lib/published-upgrade-policies.mjs');
+  `,
+    ],
+    { cwd: root, stdio: "pipe" },
+  );
+});
 
 test("build-only inputs cannot publish or start the serial upgrade verifier", () => {
   assert.match(jobs["prepare-upgrade-inputs"].if, /!inputs.build_only/);

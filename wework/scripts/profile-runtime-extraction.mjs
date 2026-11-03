@@ -2,14 +2,20 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, parse } from 'node:path'
+import { dirname, isAbsolute, join, parse } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
 import { resolveUpgradeInputs } from '../../.github/scripts/resolve-wework-upgrade-inputs.mjs'
-import { readDesktopReleaseInstallation } from './lib/published-desktop-release.mjs'
+import {
+  downloadPublishedDesktopRelease,
+  readDesktopReleaseInstallation,
+} from './lib/published-desktop-release.mjs'
+import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
+import { releaseUpgradePlan } from './lib/upgrade-evidence.mjs'
 import { upgradeUserEnvironment } from '../e2e/desktop/modules/upgrade-user-environment.mjs'
 
 const execute = promisify(execFile)
@@ -26,6 +32,62 @@ async function measure(phase, operation) {
   const result = await operation()
   console.log(JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started) }))
   return result
+}
+
+async function profileHistoricalSource(target, release) {
+  const repository = process.env.GITHUB_REPOSITORY
+  const catalogs = publishedUpgradePolicies({ repository, platform: 'windows', arch: 'x64' })
+  const policy = JSON.parse(await readFile(new URL('../upgrade-policy.json', import.meta.url)))
+  const plan = releaseUpgradePlan(
+    Object.values(catalogs),
+    { ...release, minSourceVersion: policy.minSourceVersion },
+    'stable'
+  )
+  assert.ok(plan?.previous, 'The diagnostic needs the published previous stable source')
+  const source = await measure('historical-source-download-extract', () =>
+    downloadPublishedDesktopRelease({
+      repository,
+      version: plan.previous.version,
+      platform: 'windows',
+      arch: 'x64',
+      directory: join(directory, 'historical-source'),
+      expected: plan.previous,
+    })
+  )
+  console.log(
+    JSON.stringify({
+      historicalSource: source.version,
+      sha256: source.sha256,
+      sourceSha: source.sourceSha,
+    })
+  )
+  const moduleUrl = name =>
+    pathToFileURL(join(source.resources, 'app.asar/dist/runtime', name)).href
+  const script = join(directory, 'profile-historical-source.mjs')
+  const copiedHost = join(directory, 'historical-host-copy')
+  await writeFile(
+    script,
+    `
+import { copyPhysicalRelease } from ${JSON.stringify(moduleUrl('physical-release-files.js'))}
+import { verifyReleaseSignature } from ${JSON.stringify(moduleUrl('release-signature.js'))}
+let started = performance.now()
+await copyPhysicalRelease(${JSON.stringify(dirname(source.executable))}, ${JSON.stringify(copiedHost)})
+console.log(JSON.stringify({phase:'historical-host-copy',elapsedMs:Math.round(performance.now()-started)}))
+started = performance.now()
+await verifyReleaseSignature(${JSON.stringify(source.executable)}, ${JSON.stringify(target.executable)})
+console.log(JSON.stringify({phase:'historical-signature-pair',elapsedMs:Math.round(performance.now()-started)}))
+`
+  )
+  const { stdout } = await execute(source.executable, [script], {
+    env: { ...upgradeUserEnvironment(process.env, directory), ELECTRON_RUN_AS_NODE: '1' },
+    timeout: 300_000,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  })
+  console.log(stdout.trim())
+  await measure('historical-host-copy-cleanup', () =>
+    rm(copiedHost, { recursive: true, force: true })
+  )
 }
 
 async function deliveredHostRuntime() {
@@ -123,26 +185,7 @@ async function deliveredHostRuntime() {
     assert.ok(['Valid', 'NotSigned'].includes(status), `Unexpected signature status: ${status}`)
     console.log(JSON.stringify({ phase, status }))
   }
-  // A pwsh runner exports its own module search path to Windows PowerShell.
-  // Load the requested system module explicitly instead of importing a module
-  // from another PowerShell edition into this diagnostic process.
-  const systemSignature = await measure('signature-explicit-system-module', () =>
-    execute(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; (Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
-      ],
-      {
-        env: upgradeUserEnvironment(process.env, directory),
-        windowsHide: true,
-        timeout: 120_000,
-      }
-    )
-  )
-  assert.ok(['Valid', 'NotSigned'].includes(systemSignature.stdout.replace(/^\uFEFF/, '').trim()))
+  await profileHistoricalSource(installation, release)
   const resources = join(installation.resources, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resources, 'runtimes.json'), 'utf8'))
   const runtime = catalog.runtimes.find(item => item.role === 'core')
