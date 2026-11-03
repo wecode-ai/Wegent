@@ -12,6 +12,14 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  createTemplateAgent?(
+    agent: import("../templates/types").TemplateAgent,
+    namespace: string,
+  ): Promise<{ id: string; name: string }>;
+  readTemplateAgent?(
+    teamId: number,
+  ): Promise<Omit<import("../templates/types").TemplateAgent, "key">>;
+
   /**
    * Whether the host lets the user pick an already existing Agent resource.
    * Defaults to true; hosts that only manage Agents through their own resource

@@ -1026,6 +1026,7 @@ export function CollaborationApp({
                               testId: "collaboration-project-settings-sharing",
                               content: (
                                 <ProjectTemplateSettings
+                                  agentConfiguration={host.projectAgentConfiguration}
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}

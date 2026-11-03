@@ -8,6 +8,18 @@ export interface TemplateRole {
   name: string
   responsibility: string
   defaultKind?: 'human' | 'agent'
+  agentKey?: string
+}
+
+export interface TemplateAgent {
+  key: string
+  name: string
+  runtime: 'codex' | 'claude_code'
+  systemPrompt: string
+  capabilityDescription: string
+  executionMode?: 'auto' | 'manual_approval'
+  workspacePolicy?: 'project' | 'git_worktree'
+  maxConcurrentExecutions?: number
 }
 
 export interface TemplateStage {
@@ -53,6 +65,7 @@ export interface CollaborationTemplate {
           }
           board?: { name: string; tags: string[] }
         }
+        agents?: TemplateAgent[]
         groups: TemplateGroup[]
       }
     }

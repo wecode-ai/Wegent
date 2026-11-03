@@ -45,10 +45,22 @@ downloads, while existing projects retain independent group configurations.
 ## Portable configuration
 
 The document is an `agent.wecode.io/v1` `Template` whose
-`spec.resources.collaboration` contains `project` and `groups`. Groups define
-logical roles, a coordinator role, workflow stages, deliverables, acceptance
-criteria, and execution tags. Users explicitly bind roles to members or agents;
-the coordinator cannot also execute stages.
+`spec.resources.collaboration` contains `project`, `groups` and optional `agents`.
+Agent definitions contain a logical `key`, name, `codex` / `claude_code` runtime,
+`systemPrompt`, `capabilityDescription` and optional approval, workspace and concurrency policies. Roles reference definitions through
+`agentKey`. Applying creates each referenced Agent once in the destination project
+or workspace and replaces coordinator, member and stage references with new IDs.
+The coordinator cannot also execute member roles.
+
+Built-ins include all Agent definitions. The default form shows a compact roster;
+"Customize members (optional)" allows existing members to replace them. Legacy
+templates without definitions still allow manual assignment. Saving YAML into the
+template library alone does not create project Agents; applying it does.
+
+Models, devices, workspaces and tools follow the recipient's execution environment.
+Source account model, plugin and device IDs and credentials are excluded. Project
+and group exports load real Agent definitions, preserving prompts with portable
+references that can be imported by another account. Multi-Bot resources that cannot be represented are rejected explicitly. Cloud workspaces reject approval policies they cannot preserve and direct users to apply those templates to a project.
 
 YAML validation rejects unknown fields, duplicate keys, aliases, invalid
 references, and files larger than 1 MB. Exports include current configuration,
@@ -56,8 +68,8 @@ without account identities, tasks, comments, execution history, or credentials.
 Export actions belong to project configuration sharing and group management.
 
 Applying to an existing project adds groups and preserves existing groups and
-tasks. Name conflicts require renaming. Partial creation failures require users
-to inspect added groups before continuing, preventing duplicate writes.
+tasks. Name conflicts require renaming. Partial Agent or group creation prevents
+direct reapplication and asks users to inspect persisted configuration first.
 
 ## Local availability
 
@@ -90,3 +102,5 @@ Roles may set `defaultKind`; built-in coordinators default to an agent and canno
 `project.board` defines a view name and stage tags. Import appends a default tag view while preserving existing views and business tags. The coordinator updates stage tags as work progresses and submits the result for human acceptance; defining columns alone does not advance an issue. Project snapshots export these settings with portable group references instead of live group IDs.
 
 The CI-registered `collaboration-template-lifecycle` desktop checkpoint covers import, automatic group assignment, six workflow rounds, tag columns, shell deliverables and human acceptance. Electron, Executor, MCP and persistence are real; only the model service uses deterministic responses.
+
+The CI-registered `collaboration-template-agents` checkpoint covers applying without precreated role Agents, prompt preservation, role and stage bindings, and the save entry. Shared tests additionally cover cross-account round trips and partial persistence.

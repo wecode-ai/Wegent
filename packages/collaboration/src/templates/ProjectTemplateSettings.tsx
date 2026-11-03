@@ -6,17 +6,19 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
-import { exportTemplate, templateFromProject } from './document'
-import { templateMessages } from './messages'
+import { downloadTemplate, templateFromProject } from './document'
+import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
+import { readTemplateAgents } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
 
 export function ProjectTemplateSettings({
   api,
+  agentConfiguration,
   project,
   locale,
   currentUserId,
@@ -24,6 +26,7 @@ export function ProjectTemplateSettings({
   onChange,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   project: CollaborationProject
   locale: CollaborationLocale
   currentUserId?: number
@@ -73,8 +76,18 @@ export function ProjectTemplateSettings({
     }
   }, [reload])
   if (!store) return null
-  const snapshot = () =>
-    templateFromProject(configurationProject, groups, `template-${crypto.randomUUID()}`, locale)
+  const snapshot = async () =>
+    templateFromProject(
+      configurationProject,
+      groups,
+      `template-${crypto.randomUUID()}`,
+      locale,
+      await readTemplateAgents(
+        await api.agents.list(project.id, { forceRefresh: true }),
+        groups,
+        agentConfiguration?.readTemplateAgent
+      )
+    )
   return (
     <section className="collaboration-template-settings" data-testid="project-template-settings">
       <h2>{m.configuration}</h2>
@@ -141,7 +154,17 @@ export function ProjectTemplateSettings({
           className="collaboration-template-choice"
           data-testid="project-template-save"
           disabled={loading || !!error}
-          onClick={() => setSaving(snapshot())}
+          onClick={async () => {
+            setLoading(true)
+            setError(null)
+            try {
+              setSaving(await snapshot())
+            } catch (error) {
+              setError(templateFailureMessage(error, locale))
+            } finally {
+              setLoading(false)
+            }
+          }}
         >
           {m.saveTitle}
         </button>
@@ -154,17 +177,16 @@ export function ProjectTemplateSettings({
           className="collaboration-template-choice"
           data-testid="project-template-export"
           disabled={loading || !!error}
-          onClick={() => {
-            const url = URL.createObjectURL(
-              new Blob([exportTemplate(snapshot())], {
-                type: 'application/yaml;charset=utf-8',
-              })
-            )
-            const link = document.createElement('a')
-            link.href = url
-            link.download = 'collaboration-template.yaml'
-            link.click()
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+          onClick={async () => {
+            setLoading(true)
+            setError(null)
+            try {
+              downloadTemplate(await snapshot(), 'collaboration-template.yaml')
+            } catch (error) {
+              setError(templateFailureMessage(error, locale))
+            } finally {
+              setLoading(false)
+            }
           }}
         >
           {m.export}

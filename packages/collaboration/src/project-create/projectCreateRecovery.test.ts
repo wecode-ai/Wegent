@@ -43,3 +43,34 @@ it('opens the persisted project after setup fails instead of creating another pr
   expect(onCreated).toHaveBeenCalledWith(project, 'local')
   act(() => root.unmount())
 })
+
+it('opens the configured project so template board defaults are visible immediately', async () => {
+  const project = { id: 'created-project', name: 'Product' }
+  const configured = {
+    ...project,
+    version: 2,
+    board_views: { default_view_id: 'stages', views: [{ id: 'stages', name: '项目阶段' }] },
+  }
+  const onCreated = vi.fn()
+  const props = {
+    targets: [{ location: 'local', create: async () => project }],
+    defaultLocation: 'local',
+    allowDingTalkAITable: false,
+    labels: projectCreateLabels['zh-CN'],
+    onCreated,
+    resourceSetup: { configure: async () => configured },
+    onClose: vi.fn(),
+  } as unknown as ProjectCreateDialogProps
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const result = { current: null as unknown as ReturnType<typeof useProjectCreateController> }
+  function Harness() {
+    result.current = useProjectCreateController(props)
+    return null
+  }
+  const root = createRoot(document.createElement('div'))
+  await act(async () => root.render(createElement(Harness)))
+  act(() => result.current.commands.setName('Product'))
+  await act(async () => result.current.commands.submit())
+  expect(onCreated).toHaveBeenCalledWith(configured, 'local')
+  act(() => root.unmount())
+})

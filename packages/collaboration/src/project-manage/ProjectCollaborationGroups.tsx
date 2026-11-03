@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
+import { readTemplateAgents } from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
 
@@ -265,6 +266,13 @@ function ScopedProjectCollaborationGroups({
         canManage={canManage}
         agentActions={agentActions}
         commands={{
+          async loadTemplateAgents(group) {
+            return readTemplateAgents(
+              await api.agents.list(projectId, { forceRefresh: true }),
+              [group],
+              agentConfiguration?.readTemplateAgent,
+            );
+          },
           async createTemplateGroups(document, drafts) {
             requireActive();
             const created = await applyProjectTemplate(

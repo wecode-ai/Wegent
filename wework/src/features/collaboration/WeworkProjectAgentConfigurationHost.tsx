@@ -27,6 +27,35 @@ export function createWeworkProjectAgentConfigurationHost(
     ...(agentResourceApi
       ? {
           supportsExistingAgentSelection: true,
+          async createTemplateAgent(agent, namespace) {
+            const created = await agentResourceApi.createAgent({
+              name: `template-${crypto.randomUUID()}`,
+              displayName: agent.name,
+              namespace,
+              runtime: agent.runtime === 'codex' ? 'Codex' : 'ClaudeCode',
+              systemPrompt: agent.systemPrompt,
+              capabilityMode: 'follow_device',
+              model: { name: '' },
+              skills: [],
+              plugins: [],
+              mcpServers: {},
+            })
+            return { id: String(created.id), name: agent.name }
+          },
+          async readTemplateAgent(teamId) {
+            const agent = await agentResourceApi.getAgent(teamId)
+            if (agent.botCount && agent.botCount > 1)
+              throw new Error(
+                'Multi-Bot Agents cannot be represented by a native template definition'
+              )
+            if (!agent.runtime) throw new Error('template_agent_runtime_unsupported')
+            return {
+              name: agent.displayName || agent.name,
+              runtime: agent.runtime === 'Codex' ? 'codex' : 'claude_code',
+              systemPrompt: agent.systemPrompt,
+              capabilityDescription: '',
+            }
+          },
           renderAgentCreator({
             projectId,
             namespace,

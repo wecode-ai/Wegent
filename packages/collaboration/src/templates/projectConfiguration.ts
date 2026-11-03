@@ -7,6 +7,7 @@ import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate } from './types'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import { normalizeCollaborationGroupDraftForPersistence } from '../project-create/collaborationGroupDraft'
+import { materializeTemplateAgents } from './agents'
 import { applyTemplateGroups, PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 export async function prepareTemplateProject(
@@ -117,15 +118,22 @@ export async function applyProjectTemplate(
 ) {
   if (!api.projects.createCollaborationGroup) throw new Error('template_group_unavailable')
   await prepareTemplateProject(api, projectId, document, locale)
-  const groups = await applyTemplateGroups(
-    drafts,
-    raw =>
-      api.projects.createCollaborationGroup!(projectId, {
-        ...normalizeCollaborationGroupDraftForPersistence(raw),
-        coordinationMode: 'manager',
-      }),
-    partialMessage
-  )
+  const resolved = await materializeTemplateAgents(api, projectId, document, drafts, partialMessage)
+  let groups: CollaborationGroup[]
+  try {
+    groups = await applyTemplateGroups(
+      resolved.drafts,
+      raw =>
+        api.projects.createCollaborationGroup!(projectId, {
+          ...normalizeCollaborationGroupDraftForPersistence(raw),
+          coordinationMode: 'manager',
+        }),
+      partialMessage
+    )
+  } catch (cause) {
+    if (resolved.agentIds.size) throw new PartialTemplateApplyError(partialMessage, { cause })
+    throw cause
+  }
   try {
     await configureTemplateProject(api, projectId, document, groups, locale)
   } catch (error) {

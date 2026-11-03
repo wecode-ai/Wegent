@@ -965,3 +965,44 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
   })
 })
+
+it('creates portable template resources without carrying source identity or credentials', async () => {
+  const createAgent = vi.fn(async () => ({ id: 98, name: 'new-agent' }))
+  const getAgent = vi.fn(async () => ({
+    runtime: 'Codex',
+    displayName: 'Reviewer',
+    name: 'reviewer',
+    systemPrompt: 'Check acceptance with evidence.',
+  }))
+  const host = createWeworkProjectAgentConfigurationHost({
+    createAgent,
+    getAgent,
+  } as unknown as ReturnType<typeof createAgentResourceApi>)
+  const created = await host.createTemplateAgent!(
+    {
+      key: 'review',
+      name: 'Reviewer',
+      runtime: 'codex',
+      systemPrompt: 'Check acceptance with evidence.',
+      capabilityDescription: 'Review',
+    },
+    'destination'
+  )
+  expect(created).toEqual({ id: '98', name: 'Reviewer' })
+  expect(createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      namespace: 'destination',
+      runtime: 'Codex',
+      systemPrompt: 'Check acceptance with evidence.',
+      capabilityMode: 'follow_device',
+      model: { name: '' },
+      plugins: [],
+      mcpServers: {},
+    })
+  )
+  expect(await host.readTemplateAgent!(98)).toMatchObject({
+    name: 'Reviewer',
+    runtime: 'codex',
+    systemPrompt: 'Check acceptance with evidence.',
+  })
+})

@@ -1,3 +1,6 @@
+import { applyWorkspaceTemplate } from '../templates/workspaceConfiguration'
+import { readTemplateAgents } from '../templates/agents'
+import { templateMessages } from '../templates/messages'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,6 +24,7 @@ export function WorkspaceMembersPanel({
   translate,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   workspace: CollaborationWorkspace
   commands: WorkspaceResourceCommands
   locale: 'zh-CN' | 'en'
@@ -70,6 +74,7 @@ export function WorkspaceMembersPanel({
 }
 
 export function WorkspaceGroupsPanel({
+  agentConfiguration,
   api,
   workspace,
   commands,
@@ -80,6 +85,7 @@ export function WorkspaceGroupsPanel({
   onCreateOpenChange,
 }: {
   api: SharedWorkspaceApi
+  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost
   workspace: CollaborationWorkspace
   commands: WorkspaceResourceCommands
   locale: 'zh-CN' | 'en'
@@ -104,6 +110,23 @@ export function WorkspaceGroupsPanel({
   const groupCommands = useMemo<WorkspaceResourceCommands>(
     () => ({
       ...commands,
+      loadTemplateAgents: async group =>
+        readTemplateAgents(
+          await api.workspaces!.listAgents(workspace.id, { forceRefresh: true }),
+          [group],
+          agentConfiguration?.readTemplateAgent
+        ),
+      createTemplateGroups: (document, drafts) =>
+        applyWorkspaceTemplate(
+          api,
+          workspace,
+          document,
+          drafts,
+          agentConfiguration,
+          templateMessages[locale].partial,
+          group => setData(data => data && [...data, group]),
+          templateMessages[locale].unsupportedPolicy
+        ),
       createCollaborationGroup: async input => {
         const group = await commands.createCollaborationGroup(input)
         setData(data => data && [...data, group])
@@ -121,7 +144,7 @@ export function WorkspaceGroupsPanel({
         setData(data => data?.filter(row => row.id !== id))
       },
     }),
-    [commands, setData]
+    [commands, setData, api, workspace, agentConfiguration, locale]
   )
   return (
     <>

@@ -369,6 +369,8 @@ export function createLocalWorkspaceApi(
       version: agent.version,
       capability_description: agent.capabilityDescription,
       system_prompt: agent.systemPrompt,
+      systemPrompt: agent.systemPrompt,
+      capabilityDescription: agent.capabilityDescription,
       runtime: agent.runtime,
       owner_type: 'workspace' as const,
       owner_id: LOCAL_WORKSPACE_ID,
@@ -675,6 +677,21 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
+      createTemplateAgent: async (_workspaceId, agent) => {
+        if (!projectAgentApi) return unavailable()
+        return toProjectAgent(
+          await projectAgentApi.create(DEFAULT_WORK_ITEM_PROJECT_ID, {
+            name: agent.name,
+            runtime: agent.runtime,
+            systemPrompt: agent.systemPrompt,
+            capabilityDescription: agent.capabilityDescription,
+            capabilityMode: 'follow_device',
+            workspacePolicy: agent.workspacePolicy ?? 'project',
+            executionMode: agent.executionMode,
+            maxConcurrentExecutions: agent.maxConcurrentExecutions,
+          })
+        )
+      },
       listAgents: localAgentResources,
       addAgent: unavailable,
       removeAgent: unavailable,
