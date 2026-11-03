@@ -77,6 +77,7 @@ const node = {
   revoked: false,
 }
 const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
+const downloadedSources = new Map()
 try {
   const catalogs = publishedUpgradePolicies({ repository, platform, arch })
   const published = Object.values(catalogs)
@@ -182,7 +183,13 @@ async function verifyChannel(catalogs, targetChannel) {
   }
 }
 
-async function downloadSource(source, targetChannel) {
+function downloadSource(source, targetChannel) {
+  const key = `${targetChannel}/${source.version}/${source.sha256 ?? 'prebuilt'}`
+  if (!downloadedSources.has(key)) downloadedSources.set(key, loadSource(source, targetChannel))
+  return downloadedSources.get(key)
+}
+
+async function loadSource(source, targetChannel) {
   const downloaded = sourceAssets
     ? await readPrebuiltDesktopRelease({
         directory: resolve(sourceAssets),

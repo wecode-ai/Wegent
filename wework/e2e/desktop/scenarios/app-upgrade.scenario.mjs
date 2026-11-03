@@ -310,7 +310,8 @@ export async function createDesktopScenario(options) {
           : join(dirname(pair.from.executable), 'resources')
       // An installed source already has its immutable runtime cache. Install
       // those exact checked bytes once; its shipped entry still prepares all
-      // components and mutable profile state. The update target stays cold.
+      // components and mutable profile state. The target still validates its
+      // delivered archives and prepares its own isolated profile.
       const cacheStarted = performance.now()
       console.log(`[upgrade-e2e] Installing the delivered source runtime ${pair.from.version}`)
       const runtimeCache =
