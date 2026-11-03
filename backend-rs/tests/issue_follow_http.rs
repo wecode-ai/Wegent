@@ -22,7 +22,7 @@ async fn follower_events_appear_in_collaboration_inbox_and_unread_count() {
     let fixture = fixture::Fixture::new().await;
     data::seed(&fixture.mysql).await;
     seed_follow_inbox(&fixture.mysql).await;
-    let server = http_e2e::Server::start(fixture.mysql.clone()).await;
+    let (server, _) = http_e2e::Server::start(fixture.mysql.clone()).await;
     let client = brz_http::Client::new();
     for (query, expected_ids) in [
         (
@@ -91,7 +91,7 @@ async fn follow_requires_current_issue_access_and_never_changes_assignment() {
     let fixture = fixture::Fixture::new().await;
     data::seed(&fixture.mysql).await;
     fixture.mysql.execute("UPDATE loop_items SET metadata=JSON_OBJECT('reporter_user_id',7,'tags',JSON_ARRAY('retained')) WHERE id='issue-1'", ()).await.unwrap();
-    let server = http_e2e::Server::start(fixture.mysql.clone()).await;
+    let (server, _) = http_e2e::Server::start(fixture.mysql.clone()).await;
     let viewer = http_e2e::token(8, 300);
     let outsider = http_e2e::token(9, 300);
     let owner = http_e2e::token(7, 300);

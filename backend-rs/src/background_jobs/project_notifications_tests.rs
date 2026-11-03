@@ -3,15 +3,9 @@
 
 //! A notification target must use its caller's transaction, even with one connection.
 
+use super::super::{test_data as data, test_fixture as fixture};
 use super::*;
 use std::time::Duration;
-
-#[path = "../../tests/support/assignments_fixture.rs"]
-#[allow(dead_code)]
-mod data;
-#[path = "../../tests/support/responses_mysql.rs"]
-#[allow(dead_code)]
-mod fixture;
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL; explicitly run by Backend Rust CI"]

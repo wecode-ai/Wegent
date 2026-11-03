@@ -19,7 +19,6 @@ const SIGNING_KEY: &str = "assignment-e2e-signing-key";
 pub struct Server {
     pub base: String,
     pub mysql: MysqlService,
-    pub state: Arc<AppState>,
     api_stop: oneshot::Sender<()>,
     gateway_stop: oneshot::Sender<()>,
     api_task: JoinHandle<()>,
@@ -27,7 +26,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn start(mysql: MysqlService) -> Self {
+    pub async fn start(mysql: MysqlService) -> (Self, Arc<AppState>) {
         let state = application_state(mysql).await;
         // Expose the actual application pool for the database negative controls.
         let mysql = state.mysql.clone();
@@ -73,15 +72,17 @@ impl Server {
             .await
             .unwrap()
         });
-        Self {
-            base,
-            mysql,
+        (
+            Self {
+                base,
+                mysql,
+                api_stop,
+                gateway_stop,
+                api_task,
+                gateway_task,
+            },
             state,
-            api_stop,
-            gateway_stop,
-            api_task,
-            gateway_task,
-        }
+        )
     }
 
     pub async fn close(self) {

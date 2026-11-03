@@ -49,6 +49,14 @@ mod mysql_tests;
 pub(crate) mod notifications;
 #[path = "project_polling.rs"]
 mod polling;
+#[cfg(test)]
+#[path = "../../tests/support/assignments_fixture.rs"]
+#[allow(dead_code)]
+mod test_data;
+#[cfg(test)]
+#[path = "../../tests/support/responses_mysql.rs"]
+#[allow(dead_code)]
+mod test_fixture;
 
 #[path = "issue_follow_polling.rs"]
 pub(crate) mod issue_follow_polling;

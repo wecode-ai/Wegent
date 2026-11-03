@@ -4,18 +4,13 @@
 //! Real gateway, subscription transaction, polling and MySQL delivery;
 //! only the external provider boundary is simulated.
 
-#[path = "../../tests/support/assignments_fixture.rs"]
-#[allow(dead_code)]
-mod data;
-#[path = "../../tests/support/responses_mysql.rs"]
-#[allow(dead_code)]
-mod fixture;
 #[path = "../../tests/support/assignments_http.rs"]
 #[allow(dead_code)]
 mod http;
 #[path = "../../../shared/issue_follow_test_provider.rs"]
 mod provider;
 
+use super::super::{test_data as data, test_fixture as fixture};
 use super::*;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use base64::Engine;
@@ -97,15 +92,15 @@ async fn verify(source: &'static str) {
     for _ in 0..101 {
         provider.state.lock().unwrap().push("comment");
     }
-    let server = http::Server::start(fixture.mysql.clone()).await;
+    let (server, state) = http::Server::start(fixture.mysql.clone()).await;
     fixture
         .mysql
         .execute("UPDATE loop_items SET id='EXT-7' WHERE id='issue-1'", ())
         .await
         .unwrap();
-    fixture.mysql.execute("UPDATE loop_items SET project_key='EXT',metadata=JSON_SET(metadata,'$.task_provider',?,'$.provider_config',CAST(? AS JSON)) WHERE id='1001'",(source,config(source,&provider.base,&server.state.auth.jwt_key).to_string())).await.unwrap();
+    fixture.mysql.execute("UPDATE loop_items SET project_key='EXT',metadata=JSON_SET(metadata,'$.task_provider',?,'$.provider_config',CAST(? AS JSON)) WHERE id='1001'",(source,config(source,&provider.base,&state.auth.jwt_key).to_string())).await.unwrap();
     following(&server, true).await;
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     assert!(
         inbox(&server).await.is_empty(),
         "all baseline pages must be suppressed"
@@ -116,12 +111,13 @@ async fn verify(source: &'static str) {
     provider.state.lock().unwrap().push("status");
     provider.state.lock().unwrap().push("assignee");
     due(&fixture.mysql).await;
-    assert_eq!(check(&server.state).await.unwrap(), 699);
+    assert_eq!(check(&state).await.unwrap(), 699);
     assert_eq!(count(&fixture.mysql).await, 699);
     server.close().await;
-    let server = http::Server::start(fixture.mysql.clone()).await;
+    drop(state);
+    let (server, state) = http::Server::start(fixture.mysql.clone()).await;
     assert_eq!(
-        check(&server.state).await.unwrap(),
+        check(&state).await.unwrap(),
         108,
         "a new application must resume after the eight-page budget"
     );
@@ -143,19 +139,20 @@ async fn verify(source: &'static str) {
             .any(|path| path.ends_with("page=10"))
     );
     server.close().await;
-    let server = http::Server::start(fixture.mysql.clone()).await;
+    drop(state);
+    let (server, state) = http::Server::start(fixture.mysql.clone()).await;
     due(&fixture.mysql).await;
     assert_eq!(
-        check(&server.state).await.unwrap(),
+        check(&state).await.unwrap(),
         0,
         "new application must retain event receipts"
     );
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     assert_eq!(count(&fixture.mysql).await, 807);
     provider.state.lock().unwrap().push("comment");
     provider.state.lock().unwrap().allowed = false;
     due(&fixture.mysql).await;
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     assert_eq!(
         count(&fixture.mysql).await,
         807,
@@ -171,8 +168,8 @@ async fn verify(source: &'static str) {
         .await
         .unwrap();
     due(&fixture.mysql).await;
-    assert_eq!(check(&server.state).await.unwrap(), 0);
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     assert_eq!(
         count(&fixture.mysql).await,
         807,
@@ -189,20 +186,20 @@ async fn verify(source: &'static str) {
     following(&server, false).await;
     due(&fixture.mysql).await;
     let requests = provider.state.lock().unwrap().requests.len();
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     assert_eq!(provider.state.lock().unwrap().requests.len(), requests);
     following(&server, true).await;
     due(&fixture.mysql).await;
     assert_eq!(
-        check(&server.state).await.unwrap(),
+        check(&state).await.unwrap(),
         0,
         "refollowing must not replay intervening events"
     );
-    assert_eq!(check(&server.state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 0);
     provider.state.lock().unwrap().push("comment");
     due(&fixture.mysql).await;
-    assert_eq!(check(&server.state).await.unwrap(), 0);
-    assert_eq!(check(&server.state).await.unwrap(), 1);
+    assert_eq!(check(&state).await.unwrap(), 0);
+    assert_eq!(check(&state).await.unwrap(), 1);
     assert_eq!(count(&fixture.mysql).await, 808);
     let unexpected: i64 = fixture
         .mysql
@@ -214,6 +211,7 @@ async fn verify(source: &'static str) {
         .unwrap();
     assert_eq!(unexpected, 0);
     server.close().await;
+    drop(state);
     fixture.close().await;
 }
 
