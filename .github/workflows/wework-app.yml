@@ -35,6 +35,7 @@ on:
           - app-rollback-recovery
           - app-upgrade-recovery
           - app-update-full
+          - runtime-extraction
         default: all
       verification_release_tag:
         description: "Replay using the matching published release archive instead of the original candidate"
@@ -50,6 +51,31 @@ permissions:
   contents: write
 
 jobs:
+  profile-runtime:
+    name: Profile Windows runtime extraction
+    if: inputs.verification_checkpoint == 'runtime-extraction'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject publication
+        shell: bash
+        env:
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: test "$PUBLISH_RELEASE" != true
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - name: Install locked archive reader
+        run: pnpm --dir wework/electron install --frozen-lockfile --ignore-scripts
+      - name: Measure the delivered runtime archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node wework/scripts/profile-runtime-extraction.mjs
+
   prepare-release:
     name: Prepare build
     if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''
@@ -438,7 +464,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && inputs.verification_checkpoint != 'runtime-extraction' && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
