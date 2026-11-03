@@ -20,6 +20,8 @@ import {
   prepareBundledRuntimeCache,
 } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
+import { withTemporaryBuildDirectory } from './lib/temporary-build-directory.mjs'
+import { preparePackagedRuntimeCache } from './lib/packaged-runtime-preparation.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
@@ -230,10 +232,7 @@ async function downloadSource(source, targetChannel) {
   }
 }
 
-async function verifySource(source, targetChannel, previous) {
-  console.log(
-    `Verifying ${source.version} -> ${release.version} (${targetChannel}/${platform}/${arch})`
-  )
+async function prepareSourceInputs(source, targetChannel, previous) {
   const from = await downloadSource(source, targetChannel)
   // Only the broken legacy selector can leave a newer, unstarted activation
   // while continuing to run A. Modern selectors correctly start that package.
@@ -243,6 +242,28 @@ async function verifySource(source, targetChannel, previous) {
   // catalogs, profiles and release slots still belong to individual checkpoints.
   for (const installed of [from, from.installedSource].filter(Boolean))
     await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache)
+  return from
+}
+
+async function verifySource(source, targetChannel, previous) {
+  console.log(
+    `Verifying ${source.version} -> ${release.version} (${targetChannel}/${platform}/${arch})`
+  )
+  const immutableRuntimeCache = join(temporary, 'prepared-runtimes', release.sha256)
+  const from = await withTemporaryBuildDirectory({
+    prefix: 'wework-upgrade-inputs-',
+    builds: [
+      directory =>
+        preparePackagedRuntimeCache({
+          assetsDirectory: assets,
+          release,
+          directory,
+          immutableRoot: immutableRuntimeCache,
+        }),
+      () => prepareSourceInputs(source, targetChannel, previous),
+    ],
+    consume: ([, prepared]) => prepared,
+  })
   const directory = dirname(from.path)
   const pairPath = join(directory, 'pair.json')
   const evidenceFile = join(directory, 'evidence.json')
@@ -255,7 +276,7 @@ async function verifySource(source, targetChannel, previous) {
       applicationId: 'io.wecode.wework',
       suiteVersion: UPGRADE_SUITE_VERSION,
       channel: targetChannel,
-      immutableRuntimeCache: join(temporary, 'prepared-runtimes', release.sha256),
+      immutableRuntimeCache,
       from,
       to: { ...release, path: join(assets, release.name) },
     })

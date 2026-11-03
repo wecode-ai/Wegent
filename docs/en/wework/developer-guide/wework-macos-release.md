@@ -122,6 +122,14 @@ Regression coverage cleans up the first caller before preparing again and
 requires reuse of the same integrity-checked content. Each target still checks
 its own delivered archive, with profiles and mutable catalogs kept isolated.
 
+Release verification can populate this program cache with the delivered target's
+own Electron binary and preparation module while source inputs load. Checkpoints
+start only after both preparations finish; cleanup waits for every writer before
+removing the temporary host and private catalog. Source catalogs never gain future
+target roles. Real UI upgrades still download, extract, and verify the delivered
+target bytes. Preparation, cleanup, and aggregation all count toward the complete
+execution budget.
+
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new

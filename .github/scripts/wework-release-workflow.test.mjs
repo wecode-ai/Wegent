@@ -20,14 +20,7 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
-test("input resolution pins its source once and its sparse checkout contains all imports", (t) => {
-  const steps = jobs["prepare-upgrade-inputs"].steps;
-  const checkouts = steps.filter((step) => step.uses === "actions/checkout@v4");
-  assert.equal(checkouts.length, 1);
-  const resolveInputs = steps.find((step) => step.id === "inputs");
-  const checkout = checkouts[0].with;
-  assert.equal(checkout.ref, resolveInputs.env.VERIFICATION_SHA);
-  assert.equal(checkout["sparse-checkout-cone-mode"], false);
+function sparseCheckout(t, checkout) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repository = new URL("../../", import.meta.url);
@@ -37,6 +30,18 @@ test("input resolution pins its source once and its sparse checkout contains all
     mkdirSync(dirname(destination), { recursive: true });
     cpSync(new URL(path, repository), destination, { recursive: true });
   }
+  return root;
+}
+
+test("input resolution pins its source once and its sparse checkout contains all imports", (t) => {
+  const steps = jobs["prepare-upgrade-inputs"].steps;
+  const checkouts = steps.filter((step) => step.uses === "actions/checkout@v4");
+  assert.equal(checkouts.length, 1);
+  const resolveInputs = steps.find((step) => step.id === "inputs");
+  const checkout = checkouts[0].with;
+  assert.equal(checkout.ref, resolveInputs.env.VERIFICATION_SHA);
+  assert.equal(checkout["sparse-checkout-cone-mode"], false);
+  const root = sparseCheckout(t, checkout);
   execFileSync(
     process.execPath,
     [
@@ -50,6 +55,34 @@ test("input resolution pins its source once and its sparse checkout contains all
   `,
     ],
     { cwd: root, stdio: "pipe" },
+  );
+});
+
+test("sparse aggregation loads its policy and rejects missing independent platform evidence", (t) => {
+  const checkout = jobs["aggregate-upgrades"].steps.find(
+    (step) => step.uses === "actions/checkout@v4",
+  ).with;
+  const root = sparseCheckout(t, checkout);
+  for (const directory of ["plans", "shards"]) mkdirSync(join(root, directory));
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          "wework/scripts/aggregate-release-upgrades.mjs",
+          "plans",
+          "shards",
+          "policies",
+        ],
+        { cwd: root, stdio: "pipe" },
+      ),
+    (error) => {
+      assert.match(
+        error.stderr.toString(),
+        /Both independent package platforms require frozen upgrade plans/,
+      );
+      return true;
+    },
   );
 });
 
