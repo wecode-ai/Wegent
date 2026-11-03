@@ -1,8 +1,48 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Database, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ActionMenu } from './ActionMenu'
+import { ActionMenu, type MenuPosition } from './ActionMenu'
+
+function ContextMenuFixture() {
+  const [position, setPosition] = useState<MenuPosition | null>(null)
+  return (
+    <>
+      <input data-testid="previous-focus" />
+      <div
+        data-testid="context-target"
+        onContextMenu={event => {
+          event.preventDefault()
+          setPosition({ left: event.clientX, top: event.clientY })
+        }}
+      />
+      <ActionMenu
+        ariaLabel="Conversation actions"
+        testId="conversation-actions"
+        contextMenuPosition={position}
+        onContextMenuClose={() => setPosition(null)}
+        triggerClassName="hidden"
+        showTriggerTooltip={false}
+        items={[
+          { label: 'Rename', testId: 'rename', onSelect: vi.fn() },
+          {
+            label: 'Move to project',
+            testId: 'move',
+            children: [{ label: 'Project', testId: 'project', onSelect: vi.fn() }],
+          },
+        ]}
+      />
+      <button
+        type="button"
+        data-testid="outside-action"
+        onPointerDown={event => event.stopPropagation()}
+      >
+        Outside
+      </button>
+    </>
+  )
+}
 
 function mockMenuBounds() {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
@@ -26,6 +66,62 @@ describe('ActionMenu', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  test('dismisses a context menu on outside click and preserves the clicked focus', async () => {
+    const user = userEvent.setup()
+    render(<ContextMenuFixture />)
+    await user.click(screen.getByTestId('previous-focus'))
+    fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
+    await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
+
+    const outsideAction = screen.getByTestId('outside-action')
+    await user.click(outsideAction)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await act(() => new Promise(resolve => requestAnimationFrame(resolve)))
+    expect(outsideAction).toHaveFocus()
+  })
+
+  test('dismisses a context menu with Escape and restores the previous focus', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<ContextMenuFixture />)
+    const previousFocus = screen.getByTestId('previous-focus')
+    await user.click(previousFocus)
+    fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
+    await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
+    rerender(<ContextMenuFixture />)
+    await act(() => new Promise(resolve => requestAnimationFrame(resolve)))
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await waitFor(() => expect(previousFocus).toHaveFocus())
+  })
+
+  test('dismisses a context menu when its window loses focus', async () => {
+    const user = userEvent.setup()
+    render(<ContextMenuFixture />)
+    fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
+    await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
+    await user.hover(screen.getByTestId('move'))
+    expect(screen.getByTestId('move-submenu')).toBeInTheDocument()
+
+    fireEvent(window, new Event('blur'))
+
+    expect(screen.queryAllByRole('menu')).toHaveLength(0)
+  })
+
+  test('preserves focus restoration when selecting a context menu action', async () => {
+    const user = userEvent.setup()
+    render(<ContextMenuFixture />)
+    const previousFocus = screen.getByTestId('previous-focus')
+    await user.click(previousFocus)
+    fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
+    await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
+
+    await user.click(screen.getByTestId('rename'))
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await waitFor(() => expect(previousFocus).toHaveFocus())
   })
 
   test('mouse opening does not focus an action or return focus to the icon after Escape', async () => {

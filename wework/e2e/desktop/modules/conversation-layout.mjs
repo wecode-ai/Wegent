@@ -87,6 +87,11 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     taskRowsBeforeConversation,
     'WEWORK_DESKTOP_E2E_FRESH_CHAT'
   )
+  await verifyConversationContextMenuDismissal(
+    control,
+    shortConversationTaskRowTestId,
+    composerSelector
+  )
   await verifyConversationRenameSpaceDoesNotDrag(control, shortConversationTaskRowTestId)
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -354,6 +359,36 @@ async function waitForComposerFocus(control, timeoutMs, failureMessage) {
     `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
       `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
   )
+}
+
+async function verifyConversationContextMenuDismissal(control, taskRowTestId, composerSelector) {
+  const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
+  const taskRow = `[data-testid="${taskRowTestId}"]`
+  const menu = `[data-testid="runtime-local-task-menu-${taskId}-menu"]`
+  const openMenu = async () => {
+    await control.command('contextMenu', taskRow)
+    await control.command('waitFor', `${menu}:focus`, { visible: true })
+  }
+
+  await control.command('press', taskRow, { key: 'ArrowLeft' })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    taskRowTestId,
+    'The outside-click regression must start with focus outside the composer'
+  )
+  await openMenu()
+  await control.command('click', composerSelector)
+  await control.command('waitFor', menu, { visible: false })
+  await control.command('waitFor', `${composerSelector}:focus`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+  })
+
+  await openMenu()
+  await control.command('nativePress', menu, { key: 'Escape' })
+  await control.command('waitFor', menu, { visible: false })
+  await control.command('waitFor', `${composerSelector}:focus`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+  })
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {

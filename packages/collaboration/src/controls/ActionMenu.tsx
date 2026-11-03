@@ -173,14 +173,16 @@ export function ActionMenu({
       cancelSubmenuClose();
       onContextMenuClose?.();
       onOpenChange?.(false);
+      const previousFocus = contextMenuPreviousFocusRef.current;
+      contextMenuPreviousFocusRef.current = null;
       if (restoreFocus) {
-        window.requestAnimationFrame(() => triggerRef.current?.focus());
-      } else if (contextMenuPosition) {
+        const focusTarget = contextMenuPosition
+          ? previousFocus
+          : triggerRef.current;
         window.requestAnimationFrame(() => {
-          if (contextMenuPreviousFocusRef.current?.isConnected) {
-            contextMenuPreviousFocusRef.current.focus();
+          if (focusTarget?.isConnected) {
+            focusTarget.focus();
           }
-          contextMenuPreviousFocusRef.current = null;
         });
       }
     },
@@ -221,7 +223,7 @@ export function ActionMenu({
 
   const handleItemSelect = async (item: ActionMenuItem) => {
     if (item.disabled || item.children?.length || !item.onSelect) return;
-    closeMenu();
+    closeMenu(Boolean(contextMenuPosition));
     await item.onSelect();
   };
 
@@ -414,17 +416,17 @@ export function ActionMenu({
     if (!menuOpen) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
+      if (
+        menuRef.current?.contains(document.activeElement) ||
+        submenuRef.current?.contains(document.activeElement)
+      )
+        return;
       if (contextMenuPosition) {
         contextMenuPreviousFocusRef.current =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
       }
-      if (
-        menuRef.current?.contains(document.activeElement) ||
-        submenuRef.current?.contains(document.activeElement)
-      )
-        return;
       const items = menuRef.current?.querySelectorAll<HTMLButtonElement>(
         '[role^="menuitem"]:not(:disabled)',
       );
@@ -445,11 +447,14 @@ export function ActionMenu({
         closeMenu();
       }
     };
+    const handleWindowBlur = () => closeMenu();
 
     document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("blur", handleWindowBlur);
     return () => {
       window.cancelAnimationFrame(animationFrame);
       document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("blur", handleWindowBlur);
     };
   }, [closeMenu, contextMenuPosition, menuOpen]);
 
@@ -461,7 +466,9 @@ export function ActionMenu({
         itemRefs.current[openSubmenuId]?.focus();
         return;
       }
-      closeMenu(initialItemFocusRef.current !== null && !contextMenuPosition);
+      closeMenu(
+        Boolean(contextMenuPosition) || initialItemFocusRef.current !== null,
+      );
     },
     menuOpen,
     menuRef,
