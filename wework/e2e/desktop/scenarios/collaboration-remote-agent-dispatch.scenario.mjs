@@ -539,28 +539,26 @@ async function verifyAutomaticProcessingControls(
   await control.command('waitFor', ruleSelector, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-automatic-processing-01-created.png', CONTENT)
   const enabledSelector = scoped(`[data-testid="automatic-processing-enabled-${rule.id}"]`)
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === false),
     'The automatic processing rule did not pause',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'false',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="false"]`, {
+    enabled: true,
     timeoutMs,
   })
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === true),
     'The automatic processing rule did not resume',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'true',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="true"]`, {
+    enabled: true,
     timeoutMs,
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
