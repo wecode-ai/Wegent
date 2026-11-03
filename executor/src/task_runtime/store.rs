@@ -5511,6 +5511,12 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
+        if let Some(instructions) = stored
+            .get("projectInstructions")
+            .filter(|_| stored.get("dispatch_role").and_then(Value::as_str) == Some("manager"))
+        {
+            request.insert("system_prompt".to_owned(), instructions.clone());
+        }
         if stored.contains_key("project_coordination") {
             request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
         }
@@ -6971,6 +6977,7 @@ mod tests {
                             "executionRequest": {
                                 "task_id": "manager-template",
                                 "subtask_id": "manager-template-initial",
+                                "system_prompt": "Stale manager request instructions.",
                                 "bot": [{
                                     "id": leader.id,
                                     "name": "Manager",
@@ -7104,6 +7111,13 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Do not execute member work yourself"));
+        let request: crate::protocol::ExecutionRequest =
+            serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+        assert_eq!(
+            request.system_prompt,
+            payload["projectInstructions"].as_str().unwrap(),
+            "The Runtime consumes the nested request, including the leader prompt and manager rules"
+        );
         let runtime_task_id = claimed
             .runtime_task_id
             .as_deref()
@@ -7417,6 +7431,11 @@ mod tests {
             .unwrap();
         let resumed_manager = resumed_manager.expect("manager must restart after the batch");
         assert_eq!(resumed_manager.agent_id, leader.id);
+        let resumed_request: crate::protocol::ExecutionRequest = serde_json::from_value(
+            resumed_manager.execution_payload.as_ref().unwrap()["executionRequest"].clone(),
+        )
+        .unwrap();
+        assert_eq!(resumed_request.system_prompt, request.system_prompt);
         assert_eq!(
             resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
             "manager"

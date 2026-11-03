@@ -3906,6 +3906,45 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(leader?.textContent).toBe(agent.name);
   });
 
+  it.each([
+    ["template_model_default_unavailable", "请先为当前执行环境设置默认模型"],
+    ["template_environment_unavailable", "当前执行设备暂不可用"],
+  ])(
+    "validates template routing before project creation (%s)",
+    async (code, message) => {
+      const { api } = createApi({ initialProjects: [] });
+      const resolveTemplateAgentRouting = vi.fn(async () => {
+        throw new Error(code);
+      });
+      const templateStore = new CollaborationTemplateStore({
+        scope: "preflight",
+        ownerId: 7,
+        persistence: { read: async () => [], write: async () => {} },
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          templateStore={templateStore}
+          projectAgentConfiguration={{ resolveTemplateAgentRouting }}
+          start={{ ...initialLocation, rootView: "templates" }}
+        />,
+      );
+      await click(byTestId("template-details-product-lifecycle"));
+      await click(byTestId("template-use"));
+      await click(byTestId("collaboration-project-create-confirm"));
+      expect(resolveTemplateAgentRouting).toHaveBeenCalledWith(
+        "codex",
+        "cloud",
+        undefined,
+      );
+      expect(api.projects.create).not.toHaveBeenCalled();
+      expect(api.agents.create).not.toHaveBeenCalled();
+      expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+      expect(container.textContent).toContain(message);
+      expect(container.textContent).not.toContain("项目已创建");
+    },
+  );
+
   it.each([true, false])(
     "preserves available templates through navigation refresh (failure: %s)",
     async (failNavigation) => {
@@ -4040,7 +4079,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       document.spec.resources.collaboration.project.taskAssignment!.groupKey =
         "group-0";
       for (const group of document.spec.resources.collaboration.groups) {
-        const leader = group.roles.find((role) => role.key === group.leaderRole)!;
+        const leader = group.roles.find(
+          (role) => role.key === group.leaderRole,
+        )!;
         leader.defaultKind = "human";
         delete leader.agentKey;
       }

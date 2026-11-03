@@ -71,6 +71,7 @@ export const templateMessages = {
     environmentHint: '模型和工具使用当前执行环境的配置。',
     defaultModelRequired: '请先为当前执行环境设置默认模型，再应用此模板。',
     destinationEnvironmentRequired: '当前设备尚未授权给此项目，请先在项目的执行环境设置中添加。',
+    destinationDeviceRequired: '当前执行设备暂不可用，请先连接设备并确认账号可访问，再重试。',
     unsupportedAgent: '此智能体的运行时或多机器人配置无法完整保存为模板，请先调整智能体配置。',
     unavailableAgent: '无法读取小组中的智能体配置，请检查智能体是否可用及访问权限。',
     unsupportedPolicy: '云端空间无法保留模板中的执行策略，请在项目中直接应用此模板。',
@@ -161,6 +162,8 @@ export const templateMessages = {
       'Configure a default model in the current execution environment before applying this template.',
     destinationEnvironmentRequired:
       'Authorize the current device in the project execution environment settings before applying this template.',
+    destinationDeviceRequired:
+      'The execution device is unavailable. Connect it and confirm that your account can access it, then try again.',
     unsupportedAgent:
       'This Agent runtime or multi-Bot configuration cannot be fully represented in a template. Adjust the Agent configuration first.',
     unavailableAgent:

@@ -11,11 +11,35 @@ import type {
   CollaborationTemplate,
   TemplateRoleAssignments,
 } from './types'
-import { templateFailureMessage } from './messages'
+import { templateFailureMessage, templateMessages } from './messages'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 const prefix = 'template-agent:'
 export const templateAgentId = (key: string) => `${prefix}${key}`
+
+function referencedTemplateAgents(
+  document: CollaborationTemplate,
+  drafts: ProjectCreateCollaborationGroupDraft[]
+): TemplateAgent[] {
+  const referenced = templateAgentReferences(drafts)
+  return (document.spec.resources.collaboration.agents ?? []).filter(agent =>
+    referenced.has(templateAgentId(agent.key))
+  )
+}
+
+export async function validateTemplateAgentRouting(
+  document: CollaborationTemplate,
+  drafts: ProjectCreateCollaborationGroupDraft[],
+  resolveRouting: TemplateRoutingResolver
+) {
+  return new Map(
+    await Promise.all(
+      [...new Set(referencedTemplateAgents(document, drafts).map(agent => agent.runtime))].map(
+        async runtime => [runtime, await resolveRouting(runtime)] as const
+      )
+    )
+  )
+}
 
 export function templateAgentBindings(document: CollaborationTemplate): TemplateRoleAssignments {
   const agents = document.spec.resources.collaboration.agents ?? []
@@ -62,17 +86,8 @@ export async function materializeTemplateAgents(
   drafts: ProjectCreateCollaborationGroupDraft[]
   agentIds: Set<string>
 }> {
-  const referenced = templateAgentReferences(drafts)
-  const definitions = (document.spec.resources.collaboration.agents ?? []).filter(agent =>
-    referenced.has(templateAgentId(agent.key))
-  )
-  const routings = new Map(
-    await Promise.all(
-      [...new Set(definitions.map(agent => agent.runtime))].map(
-        async runtime => [runtime, await resolveRouting(runtime)] as const
-      )
-    )
-  )
+  const definitions = referencedTemplateAgents(document, drafts)
+  const routings = await validateTemplateAgentRouting(document, drafts, resolveRouting)
   const bindings = new Map<string, string>()
   try {
     for (const agent of definitions) {
@@ -175,7 +190,12 @@ export function templateRoutingResolver(
           cause.message
         )
       )
-        throw new TemplateConfigurationError(templateFailureMessage(cause, locale), { cause })
+        throw new TemplateConfigurationError(
+          cause.message === 'template_environment_unavailable' && !projectId
+            ? templateMessages[locale].destinationDeviceRequired
+            : templateFailureMessage(cause, locale),
+          { cause }
+        )
       throw cause
     }
   }

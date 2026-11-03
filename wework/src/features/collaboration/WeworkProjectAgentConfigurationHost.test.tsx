@@ -1087,6 +1087,10 @@ it('does not authorize a current device that the destination cloud project has n
     { listEnvironments, createAgent } as unknown as ReturnType<typeof createAgentResourceApi>,
     local
   )
+  await expect(host.resolveTemplateAgentRouting!('codex', 'cloud')).resolves.toMatchObject({
+    executionPolicy: { mode: 'fixed', environment_id: '73' },
+  })
+  expect(listEnvironments).toHaveBeenCalledWith(undefined)
   await expect(
     host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
   ).rejects.toThrow('template_environment_unavailable')

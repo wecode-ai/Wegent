@@ -59,6 +59,7 @@ template library alone does not create project Agents; applying it does.
 
 Models, devices, workspaces and tools follow the recipient's execution environment.
 Before creating agents, all required runtimes are checked against the current device's unique default models. Missing defaults or a device not authorized for the destination project block import before any agent is created; import never grants device access.
+When creating a project from a template, device and default-model readiness is checked before project creation. A failed preflight preserves the form without creating an empty project, allowing users to switch templates or complete configuration and retry. Project-specific device authorization is still checked after creation. Later persistence failures retain the created project and direct users to inspect its configuration, preventing duplicate creation.
 Source account model, plugin and device IDs and credentials are excluded. Project
 and group exports load real Agent definitions, preserving prompts with portable
 references that can be imported by another account. Multi-Bot resources that cannot be represented are rejected explicitly. Cloud workspaces cannot represent manual approval, explicit workspace policies or concurrency limits. Import rejects these settings before creating resources and directs users to apply the template to a project. Local workspaces and direct project imports preserve them.
@@ -104,4 +105,4 @@ Roles may set `defaultKind`; built-in coordinators default to an agent and canno
 
 The CI-registered `collaboration-template-lifecycle` desktop checkpoint covers import, automatic group assignment, six workflow rounds, tag columns, shell deliverables and human acceptance. Electron, Executor, MCP and persistence are real; only the model service uses deterministic responses.
 
-The CI-registered `collaboration-template-agents` checkpoint covers applying without precreated role Agents, prompt preservation, role and stage bindings, and the save entry. Shared tests additionally cover cross-account round trips and partial persistence.
+The CI-registered `collaboration-template-agents` checkpoint covers cross-account application, prompt preservation, role and stage bindings, saving and reuse, and zero project creation when a default model is missing followed by recovery with a configured template. Shared tests additionally cover device preflight and partial persistence. Executor tests verify the actual initial and resumed execution requests contain both the leader prompt and manager constraints.

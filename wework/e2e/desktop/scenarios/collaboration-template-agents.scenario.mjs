@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import {
   assistantMessage,
@@ -19,14 +20,24 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = name => `${CONTENT} [data-testid="${name}"]`
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  resultDir,
+}) {
   const executionMarker = `IMPORTED_TEMPLATE_EXECUTION_${process.pid}`
   let modelExecuted = false
   let executionActive = false
   let importedTemplateId
+  let unavailableTemplateId
   let authorId
   return {
     requiresCloudEnvironment: true,
+    async prepareApp({ appEnvironment }) {
+      // This isolated fixture deliberately has no Claude model configured.
+      appEnvironment.WEGENT_CLAUDE_HOME = join(resultDir, 'unconfigured-claude')
+    },
     async handleHttp(request, response, url) {
       if (
         !executionActive ||
@@ -106,6 +117,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await request(`/api/resource-library/listings/${saved.id}/install`, 'POST', {
         target_namespace: 'default',
       })
+      const unavailable = structuredClone(document)
+      unavailable.metadata.name = `unconfigured-agent-${process.pid}`
+      unavailable.spec.displayName = `待配置模型模板-${process.pid}`
+      unavailable.spec.resources.collaboration.agents[0].runtime = 'claude_code'
+      unavailableTemplateId = (
+        await request(`/api/v1/collaboration-templates/${unavailable.metadata.name}`, 'PUT', {
+          document: unavailable,
+          expectedRevision: null,
+        })
+      ).id
     },
     async verify(control) {
       const name = `模板内置智能体-${process.pid}`
@@ -219,12 +240,57 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('fill', selector('collaboration-project-name-input'), {
         value: copiedName,
       })
+      await control.command('click', selector('project-create-choose-template'))
+      await control.command('click', selector('template-tab-mine'))
+      await control.command('waitFor', selector(`template-details-${unavailableTemplateId}`))
+      await control.command('click', selector(`template-details-${unavailableTemplateId}`))
+      await control.command('click', selector('template-use'))
+      const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+      assert.equal(
+        catalog.models.some(model => model.runtime === 'claude_code' && model.is_default),
+        false
+      )
+      const before = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
+      await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
+        text: '请先为当前执行环境设置默认模型',
+      })
+      const after = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      assert.equal(
+        after.length,
+        before.length,
+        'A failed preflight must not persist an empty project'
+      )
+      assert.equal(
+        after.some(project => project.name === copiedName),
+        false
+      )
+      await captureScreenshot(
+        control,
+        'template-agents-05b-model-required-before-creation.png',
+        CONTENT
+      )
+      await control.command('click', selector('project-create-choose-template'))
+      await control.command('click', selector('template-tab-mine'))
+      await control.command(
+        'waitFor',
+        selector(card.replace('template-card-', 'template-details-'))
+      )
+      await control.command('click', selector(card.replace('template-card-', 'template-details-')))
+      await control.command('click', selector('template-use'))
+      assert.equal(
+        await control.command('getValue', selector('collaboration-project-name-input')),
+        copiedName
+      )
+      await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
+        visible: false,
+      })
       await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
       await control.command('waitFor', selector('cloud-project-header-title'), { text: copiedName })
       await control.command('waitFor', selector('board-view-picker'), { text: '项目阶段' })
-      const copied = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
-        project => project.name === copiedName
-      )
+      const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      assert.equal(projects.filter(project => project.name === copiedName).length, 1)
+      const copied = projects.find(project => project.name === copiedName)
       const copiedAgents = await requestExecutor(
         control,
         'chat_agents.list',

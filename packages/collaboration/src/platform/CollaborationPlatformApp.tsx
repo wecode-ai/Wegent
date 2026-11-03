@@ -8,6 +8,7 @@ import {
   readTemplateAgents,
   templateRoutingResolver,
   materializeTemplateAgents,
+  validateTemplateAgentRouting,
 } from "../templates/agents";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -3319,6 +3320,19 @@ function CollaborationPlatformAppContent({
                     host.loadProjectCollaborationGroupGenerationModels,
                   generateCollaborationGroupDraft:
                     host.generateProjectCollaborationGroupDraft,
+                  validate: async (selection) => {
+                    if (!selection.template) return;
+                    await validateTemplateAgentRouting(
+                      selection.template,
+                      selection.collaborationGroupDrafts,
+                      templateRoutingResolver(
+                        host.projectAgentConfiguration,
+                        projectWorkspace.location,
+                        undefined,
+                        locale,
+                      ),
+                    );
+                  },
                   configure: async (project, selection) => {
                     if (selection.template) {
                       await prepareTemplateProject(
@@ -3413,7 +3427,12 @@ function CollaborationPlatformAppContent({
                           selection.collaborationGroupDrafts,
                           templateMessages[locale].partial,
                           undefined,
-                          templateRoutingResolver(host.projectAgentConfiguration, projectWorkspace.location, project.id, locale),
+                          templateRoutingResolver(
+                            host.projectAgentConfiguration,
+                            projectWorkspace.location,
+                            project.id,
+                            locale,
+                          ),
                         )
                       : {
                           drafts: selection.collaborationGroupDrafts,

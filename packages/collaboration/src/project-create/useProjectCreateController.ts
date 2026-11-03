@@ -181,6 +181,14 @@ export function useProjectCreateController({
               ...(token.trim() ? { token: token.trim() } : {}),
             }
           : {};
+      const selection = {
+        memberUserIds,
+        agentResourceIds,
+        executionEnvironmentDeviceIds,
+        collaborationGroupDrafts,
+        ...(templateDocument ? { template: templateDocument } : {}),
+      };
+      await resourceSetup?.validate?.(selection);
       let project = await target.create({
         name: name.trim(),
         description: description.trim(),
@@ -205,13 +213,10 @@ export function useProjectCreateController({
       });
       if (resourceSetup) {
         try {
-          const configuredProject = await resourceSetup.configure(project, {
-            memberUserIds,
-            agentResourceIds,
-            executionEnvironmentDeviceIds,
-            collaborationGroupDrafts,
-            ...(templateDocument ? { template: templateDocument } : {}),
-          });
+          const configuredProject = await resourceSetup.configure(
+            project,
+            selection,
+          );
           if (configuredProject) project = configuredProject;
         } catch (cause) {
           createdProjectLocation.current = location;

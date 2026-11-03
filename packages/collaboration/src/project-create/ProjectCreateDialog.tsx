@@ -930,6 +930,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               initialTemplate={props.initialTemplate}
               disabled={state.saving}
               onSelect={(document) => {
+                commands.clearError();
                 commands.setTemplateDocument(document);
                 setTemplateSelected(Boolean(document));
                 if (document) {
