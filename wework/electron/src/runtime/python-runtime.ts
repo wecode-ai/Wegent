@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
-import extractZip from 'extract-zip'
 import * as tar from 'tar'
+import { extractPythonBootstrapZip } from './python-runtime-zip.js'
 import {
   findCompatibleSystemPython,
   type PluginPythonInterpreter,
@@ -380,7 +380,7 @@ export class PythonRuntimeManager {
       stage = 'extract'
       this.log({ event: 'python-runtime-uv-extract-started', archive: artifact.archiveName })
       if (artifact.archiveName.endsWith('.zip')) {
-        await extractZip(archivePath, { dir: stagingDirectory })
+        await extractPythonBootstrapZip(archivePath, stagingDirectory)
       } else {
         await tar.x({ file: archivePath, cwd: stagingDirectory })
       }

@@ -7,7 +7,9 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import ts from 'typescript'
 import { afterEach, expect, test } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -15,11 +17,11 @@ const execute = promisify(execFile)
 const roots = []
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
-test('ships the Python bootstrap extractor with the maintained ZIP reader', async () => {
+test('reuses the existing maintained ZIP reader without another extractor dependency', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  expect(manifest.dependencies['extract-zip']).toBe(require('extract-zip/package.json').version)
-  const extractorRequire = createRequire(require.resolve('extract-zip/package.json'))
-  expect(extractorRequire('yauzl/package.json').version).toBe('3.4.0')
+  expect(manifest.dependencies['extract-zip']).toBeUndefined()
+  expect(manifest.dependencies.yauzl).toBe('3.4.0')
+  expect(require('yauzl/package.json').version).toBe('3.4.0')
 })
 
 afterEach(async () => {
@@ -35,19 +37,32 @@ async function directory() {
 async function archive(path, entries) {
   const zip = new ZipArchive({ zlib: { level: 6 } })
   const complete = pipeline(zip, createWriteStream(path))
-  for (const entry of entries) zip.append(entry.bytes, { name: entry.name })
+  for (const entry of entries) {
+    if (entry.link !== undefined) zip.symlink(entry.name, entry.link)
+    else zip.append(entry.bytes, { name: entry.name })
+  }
   await zip.finalize()
   await complete
 }
 
 async function extractInElectron(path, destination) {
+  const source = await readFile(
+    new URL('../src/runtime/python-runtime-zip.ts', import.meta.url),
+    'utf8'
+  )
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText
   const script = `
-    const extract = require(${JSON.stringify(require.resolve('extract-zip'))})
+    const {createRequire} = require('node:module')
+    const localRequire = createRequire(${JSON.stringify(fileURLToPath(new URL('../package.json', import.meta.url)))})
+    const implementation = {}
+    new Function('require', 'exports', ${JSON.stringify(compiled)})(localRequire, implementation)
     let settled = false
     process.once('beforeExit', () => {
       if (!settled) {console.error('ZIP extraction did not settle before Electron became idle'); process.exitCode = 1}
     })
-    extract(${JSON.stringify(path)}, {dir:${JSON.stringify(destination)}}).then(
+    implementation.extractPythonBootstrapZip(${JSON.stringify(path)}, ${JSON.stringify(destination)}).then(
       () => {settled = true; console.log(JSON.stringify({electron:process.versions.electron, completed:true}))},
       error => {settled = true; console.error(error.message); process.exitCode = 1}
     )
@@ -119,4 +134,40 @@ test('rejects an existing directory link that escapes the extraction root', asyn
   await expect(extractInElectron(path, destination)).rejects.toThrow(/Out of bound path/)
 
   await expect(readFile(join(outside, 'escape.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test.each([false, true])(
+  'rejects an archive symlink before a later write: duplicate=%s',
+  async duplicate => {
+    const root = await directory()
+    const path = join(root, 'symlink.zip')
+    const outside = join(root, 'outside.txt')
+    await writeFile(outside, 'unchanged')
+    await archive(path, [
+      { name: 'uv.exe', link: '../outside.txt' },
+      ...(duplicate ? [{ name: 'uv.exe', bytes: Buffer.from('overwrite') }] : []),
+    ])
+
+    await expect(extractInElectron(path, join(root, 'extracted'))).rejects.toThrow(
+      /link or special file/
+    )
+    expect(await readFile(outside, 'utf8')).toBe('unchanged')
+    await expect(readFile(join(root, 'extracted', 'uv.exe'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  }
+)
+
+test('does not write through an existing final-component symlink', async () => {
+  const root = await directory()
+  const path = join(root, 'existing-link.zip')
+  const destination = join(root, 'extracted')
+  const outside = join(root, 'outside.txt')
+  await mkdir(destination)
+  await writeFile(outside, 'unchanged')
+  await symlink(outside, join(destination, 'uv.exe'), 'file')
+  await archive(path, [{ name: 'uv.exe', bytes: Buffer.from('overwrite') }])
+
+  await expect(extractInElectron(path, destination)).rejects.toThrow(/EEXIST/)
+  expect(await readFile(outside, 'utf8')).toBe('unchanged')
 })
