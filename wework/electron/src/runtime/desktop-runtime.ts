@@ -180,6 +180,7 @@ export class DesktopRuntime {
 
   private enrichWorkbenchLaunch(launch: WorkbenchRuntimeLaunch): WorkbenchRuntimeLaunch {
     if (launch.hostPipe) return launch
+    if (launch.environment?.WEWORK_DSH_BROWSER_AUTH !== '1') return launch
     const host = this.options.createWorkbenchHostPipe?.(launch.tabId)
     if (!host) return launch
     return {
