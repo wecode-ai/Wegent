@@ -1,8 +1,12 @@
-import { accountCommandEvents, accountCommandResult } from '../modules/account-auth-command.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import {
+  shellCommandResponse,
+  shellCommandPollResponse,
+} from '../modules/shell-command-response.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -148,7 +152,7 @@ export function createDesktopScenario({
           respond(
             response,
             id,
-            accountCommandEvents(body, commandResult.pollId, { sessionId: commandResult.sessionId })
+            shellCommandPollResponse(body, commandResult.pollId, commandResult.sessionId)
           )
           return true
         }
@@ -188,10 +192,7 @@ export function createDesktopScenario({
         respond(
           response,
           id,
-          accountCommandEvents(body, callId, {
-            command: `node ${scriptName}`,
-            workspacePath: nativeWorkspace,
-          })
+          shellCommandResponse(body, callId, `node ${scriptName}`, nativeWorkspace)
         )
         return true
       }

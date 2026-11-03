@@ -1935,6 +1935,9 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
+      if [[ "$path" == packages/collaboration/src/project-agent-config/* ]]; then
+        select_target "core:collaboration-template-agents"
+      fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
         select_target "core:collaboration-deliveries"
