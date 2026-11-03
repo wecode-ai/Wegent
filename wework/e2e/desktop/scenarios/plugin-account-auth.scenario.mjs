@@ -530,7 +530,11 @@ export async function createDesktopScenario({
             await verifyNativeAccountRuntimeIsolation({
               api,
               requestPython: async () => {
-                await control.command('navigate', 'body', { value: '/plugins' })
+                // Controller reconnection precedes DSH navigation readiness after restart.
+                await control.command('waitFor', '[data-testid="plugins-button"]', {
+                  timeoutMs: workbenchReadyTimeoutMs,
+                })
+                await control.command('click', '[data-testid="plugins-button"]')
                 await control.command(
                   'clickWhenEnabled',
                   `[data-testid="plugins-installed-strip-item-${installedId}"]`,
