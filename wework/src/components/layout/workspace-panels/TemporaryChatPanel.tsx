@@ -896,7 +896,10 @@ export function TemporaryChatPanel({
                   predictionAddress={address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
-                  onChange={setInput}
+                  onChange={value => {
+                    setInput(value)
+                    return { appliedSynchronously: true }
+                  }}
                   onDraftEdit={() => setError(null)}
                   onSubmit={send}
                   disabled={taskModelIdentityPending}

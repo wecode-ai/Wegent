@@ -8,6 +8,7 @@ import {
 } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
+import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -132,6 +133,514 @@ describe('BufferedChatInput', () => {
 
     act(() => acknowledgeDrafts[1]?.())
     expect(input).toHaveValue('ab')
+  })
+
+  test('restores an earlier draft after synchronous publications are batched', () => {
+    vi.useFakeTimers()
+    const publications: string[] = []
+    function Harness() {
+      const { inputs, setInput } = useScopedDraftInput(() => ({}))
+      return (
+        <>
+          <button onClick={() => setInput('scope', 'first')}>Restore first draft</button>
+          <span data-testid="parent-draft">{inputs.scope ?? ''}</span>
+          <BufferedChatInput
+            variant="desktop"
+            projectChat={createProjectChat('scope')}
+            value={inputs.scope ?? ''}
+            onChange={next => {
+              publications.push(next)
+              setInput('scope', next)
+              return { appliedSynchronously: true }
+            }}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      for (const value of ['first', 'second']) {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      }
+    })
+    expect(publications).toEqual(['first', 'second'])
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('second')
+    expect(input).toHaveValue('second')
+    act(() => {
+      input.value = 'third'
+      vi.advanceTimersByTime(300)
+    })
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('third')
+    expect(input).toHaveValue('third')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore first draft' }))
+
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('first')
+    expect(input).toHaveValue('first')
+  })
+
+  test('retires batched publications when the final value equals the committed value', () => {
+    vi.useFakeTimers()
+    function Harness() {
+      const { inputs, setInput } = useScopedDraftInput(() => ({ scope: 'first' }))
+      return (
+        <>
+          <button onClick={() => setInput('scope', 'second')}>Restore second draft</button>
+          <span data-testid="parent-draft">{inputs.scope}</span>
+          <BufferedChatInput
+            variant="desktop"
+            value={inputs.scope!}
+            onChange={next => {
+              setInput('scope', next)
+              return { appliedSynchronously: true }
+            }}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      for (const value of ['second', 'first']) {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      }
+    })
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('first')
+    expect(input).toHaveValue('first')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore second draft' }))
+
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('second')
+    expect(input).toHaveValue('second')
+  })
+
+  test('retires synchronous publications superseded by an explicit draft replacement', () => {
+    vi.useFakeTimers()
+    function Harness() {
+      const { inputs, setInput } = useScopedDraftInput(() => ({}))
+      const [replaceDraftKey, setReplaceDraftKey] = useState(0)
+      return (
+        <>
+          <button
+            onClick={() => {
+              setInput('scope', 'restored')
+              setReplaceDraftKey(current => current + 1)
+            }}
+          >
+            Replace draft
+          </button>
+          <button onClick={() => setInput('scope', 'first')}>Restore first draft</button>
+          <BufferedChatInput
+            variant="desktop"
+            value={inputs.scope ?? ''}
+            replaceDraftKey={replaceDraftKey}
+            onChange={next => {
+              setInput('scope', next)
+              return { appliedSynchronously: true }
+            }}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      input.value = 'first'
+      vi.advanceTimersByTime(300)
+      fireEvent.click(screen.getByRole('button', { name: 'Replace draft' }))
+    })
+    expect(input).toHaveValue('restored')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore first draft' }))
+
+    expect(input).toHaveValue('first')
+  })
+
+  test('keeps a deferred acknowledgement protected after newer synchronous publications batch', () => {
+    vi.useFakeTimers()
+    let acknowledgeFirst = () => {}
+    function Harness() {
+      const { inputs, setInput } = useScopedDraftInput(() => ({}))
+      return (
+        <>
+          <button onClick={() => setInput('scope', 'first')}>Restore first draft</button>
+          <span data-testid="parent-draft">{inputs.scope ?? ''}</span>
+          <BufferedChatInput
+            variant="desktop"
+            value={inputs.scope ?? ''}
+            onChange={next => {
+              if (next === 'first') {
+                acknowledgeFirst = () => setInput('scope', next)
+                return
+              }
+              setInput('scope', next)
+              return { appliedSynchronously: true }
+            }}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      input.value = 'first'
+      vi.advanceTimersByTime(300)
+    })
+    act(() => {
+      for (const value of ['second', 'third']) {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      }
+    })
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('third')
+    act(acknowledgeFirst)
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('first')
+    expect(input).toHaveValue('third')
+    act(() => {
+      input.value = 'fourth'
+      vi.advanceTimersByTime(300)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore first draft' }))
+
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('first')
+    expect(input).toHaveValue('first')
+  })
+
+  test.each(['before', 'after'] as const)(
+    'restores an earlier draft after duplicate blur publication %s acknowledgement',
+    blurTiming => {
+      vi.useFakeTimers()
+      const acknowledgements: Array<() => void> = []
+      function Harness() {
+        const [value, setValue] = useState('')
+        return (
+          <>
+            <button onClick={() => setValue('first')}>Restore first draft</button>
+            <BufferedChatInput
+              variant="desktop"
+              value={value}
+              onChange={next => acknowledgements.push(() => setValue(next))}
+              onSubmit={vi.fn()}
+              disabled={false}
+            />
+          </>
+        )
+      }
+      render(<Harness />)
+      const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+      act(() => {
+        input.value = 'first'
+        vi.advanceTimersByTime(300)
+      })
+      if (blurTiming === 'after') act(() => acknowledgements[0]!())
+      fireEvent.blur(input)
+      act(() => vi.advanceTimersToNextFrame())
+      act(() => acknowledgements.forEach(acknowledge => acknowledge()))
+      expect(input).toHaveValue('first')
+      act(() => {
+        input.value = 'second'
+        vi.advanceTimersByTime(300)
+      })
+      act(() => acknowledgements.at(-1)!())
+      expect(input).toHaveValue('second')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Restore first draft' }))
+      expect(input).toHaveValue('first')
+    }
+  )
+
+  test('restores a draft after a newer acknowledgement and a duplicate blur', () => {
+    vi.useFakeTimers()
+    const acknowledgements: Array<() => void> = []
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <>
+          <button onClick={() => setValue('second')}>Restore second draft</button>
+          <BufferedChatInput
+            variant="desktop"
+            value={value}
+            onChange={next => acknowledgements.push(() => setValue(next))}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    for (const value of ['first', 'second']) {
+      act(() => {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      })
+    }
+    act(() => acknowledgements[1]!())
+    fireEvent.blur(input)
+    act(() => vi.advanceTimersToNextFrame())
+    act(() => acknowledgements.slice(2).forEach(acknowledge => acknowledge()))
+    act(() => acknowledgements[0]!())
+    expect(input).toHaveValue('second')
+    act(() => {
+      input.value = 'third'
+      vi.advanceTimersByTime(300)
+    })
+    act(() => acknowledgements.at(-1)!())
+    expect(input).toHaveValue('third')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore second draft' }))
+    expect(input).toHaveValue('second')
+  })
+
+  test('resynchronizes the parent on blur after a late acknowledgement changes its value', () => {
+    vi.useFakeTimers()
+    const acknowledgements: Array<() => void> = []
+    let deferAcknowledgements = true
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <>
+          <span data-testid="parent-draft">{value}</span>
+          <BufferedChatInput
+            variant="desktop"
+            value={value}
+            onChange={next => {
+              if (deferAcknowledgements) acknowledgements.push(() => setValue(next))
+              else setValue(next)
+            }}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    for (const value of ['first', 'second']) {
+      act(() => {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      })
+    }
+    act(() => acknowledgements[1]!())
+    act(() => acknowledgements[0]!())
+    expect(input).toHaveValue('second')
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('first')
+    deferAcknowledgements = false
+
+    fireEvent.blur(input)
+    act(() => vi.advanceTimersToNextFrame())
+
+    expect(screen.getByTestId('parent-draft')).toHaveTextContent('second')
+    expect(input).toHaveValue('second')
+  })
+
+  test('publishes a return to the committed value while another draft is pending', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    render(
+      <BufferedChatInput
+        variant="desktop"
+        value="first"
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    for (const value of ['second', 'first']) {
+      act(() => {
+        input.value = value
+        vi.advanceTimersByTime(300)
+      })
+    }
+    expect(onChange.mock.calls.map(([value]) => value)).toEqual(['second', 'first'])
+  })
+
+  test.each(['**bold**', '# Heading', '> Quote'])(
+    'keeps Shift+Enter through draft acknowledgement after Markdown: %s',
+    markdown => {
+      vi.useFakeTimers()
+      function Harness() {
+        const [value, setValue] = useState('')
+        return (
+          <BufferedChatInput
+            variant="desktop"
+            value={value}
+            onChange={setValue}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        )
+      }
+      render(<Harness />)
+      const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+      act(() => {
+        input.value = markdown
+        input.focus()
+        vi.advanceTimersByTime(300)
+      })
+      fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+      const afterBreak = input.value
+      expect(afterBreak).toMatch(/\n$/)
+      const selectedParagraph = window.getSelection()?.anchorNode?.parentElement
+      expect(selectedParagraph).toBeInstanceOf(HTMLElement)
+      act(() => vi.advanceTimersByTime(300))
+      expect(input.value).toBe(afterBreak)
+      expect(window.getSelection()?.anchorNode?.parentElement).toBe(selectedParagraph)
+    }
+  )
+
+  test.each(['in-order', 'reverse-order'])(
+    'keeps a Markdown line break with %s draft acknowledgements',
+    order => {
+      vi.useFakeTimers()
+      const acknowledgeDrafts: Array<() => void> = []
+      function Harness() {
+        const [value, setValue] = useState('')
+        return (
+          <BufferedChatInput
+            variant="desktop"
+            value={value}
+            onChange={next => acknowledgeDrafts.push(() => setValue(next))}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        )
+      }
+      render(<Harness />)
+      const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+      act(() => {
+        input.value = '**bold**'
+        input.focus()
+        vi.advanceTimersByTime(300)
+      })
+      fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+      const afterBreak = input.value
+      expect(afterBreak).toBe('**bold**\n\n')
+      act(() => vi.advanceTimersByTime(300))
+      expect(acknowledgeDrafts).toHaveLength(2)
+      const caret = window.getSelection()?.anchorNode
+      const caretOffset = window.getSelection()?.anchorOffset
+      expect(caret).toBeInstanceOf(Node)
+      act(() => acknowledgeDrafts[order === 'in-order' ? 0 : 1]?.())
+      expect(input.value).toBe(afterBreak)
+      expect(window.getSelection()?.anchorNode).toBe(caret)
+      expect(window.getSelection()?.anchorOffset).toBe(caretOffset)
+      act(() => acknowledgeDrafts[order === 'in-order' ? 1 : 0]?.())
+      expect(input.value).toBe(afterBreak)
+      expect(window.getSelection()?.anchorNode).toBe(caret)
+      expect(window.getSelection()?.anchorOffset).toBe(caretOffset)
+    }
+  )
+
+  test.each(['before', 'after', 'cell', 'tail'] as const)(
+    'keeps a table Markdown line break at %s through acknowledgement without further typing',
+    position => {
+      vi.useFakeTimers()
+      function Harness() {
+        const [value, setValue] = useState('')
+        return (
+          <BufferedChatInput
+            variant="desktop"
+            value={value}
+            onChange={setValue}
+            onSubmit={vi.fn()}
+            disabled={false}
+          />
+        )
+      }
+      render(<Harness />)
+      const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+      const table = '| 项目 | 内容 |\n| --- | --- |\n| A | 甲 |'
+      act(() => {
+        input.value = position === 'tail' ? table : `表格前的说明\n\n${table}\n\n**表格后的说明**`
+        input.focus()
+        vi.advanceTimersByTime(300)
+      })
+      expect(input.querySelector('table')).not.toBeNull()
+      const target =
+        position === 'cell'
+          ? input.querySelector('td p')!
+          : position === 'before'
+            ? input.querySelector(':scope > p')!
+            : input.querySelector(':scope > p:last-child')!
+      expect(target).toBeInstanceOf(HTMLElement)
+      act(() => {
+        const range = document.createRange()
+        range.selectNodeContents(target)
+        range.collapse(false)
+        window.getSelection()!.removeAllRanges()
+        window.getSelection()!.addRange(range)
+        fireEvent(document, new Event('selectionchange'))
+      })
+      const paragraphsBefore = input.querySelectorAll(':scope > p').length
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', shiftKey: true })
+      if (position === 'cell') {
+        expect(target.querySelector('br:not(.ProseMirror-trailingBreak)')).not.toBeNull()
+        expect(input.value).toContain('A<br>')
+      } else {
+        expect(input.querySelectorAll(':scope > p')).toHaveLength(paragraphsBefore + 1)
+      }
+      const afterBreak = input.value
+      const caret = window.getSelection()?.anchorNode
+      const caretOffset = window.getSelection()?.anchorOffset
+      expect(caret).toBeInstanceOf(Node)
+      act(() => vi.advanceTimersByTime(300))
+      expect(input.value).toBe(afterBreak)
+      expect(window.getSelection()?.anchorNode).toBe(caret)
+      expect(window.getSelection()?.anchorOffset).toBe(caretOffset)
+    }
+  )
+
+  test('does not carry another scope draft into a pending acknowledgement on return', () => {
+    vi.useFakeTimers()
+    const { rerender } = render(
+      <BufferedChatInput
+        value=""
+        projectChat={createProjectChat('scope-a')}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      input.value = '**draft A**'
+      vi.advanceTimersByTime(300)
+    })
+    rerender(
+      <BufferedChatInput
+        value="draft B"
+        projectChat={createProjectChat('scope-b')}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+    expect(input.value).toBe('draft B')
+    rerender(
+      <BufferedChatInput
+        value="**draft A**"
+        projectChat={createProjectChat('scope-a')}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+    expect(input.value).toBe('**draft A**')
   })
 
   test('restores submitted text when it is externally returned for editing', async () => {

@@ -340,6 +340,7 @@ export function useWorkbenchPaneSession({
       inputRevisionRef.current += 1
       setInputRevision(inputRevisionRef.current)
       setInputForScope(inputScopeKey, value)
+      return { appliedSynchronously: true } as const
     },
     [inputScopeKey, setInputForScope]
   )

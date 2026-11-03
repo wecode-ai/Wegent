@@ -29,6 +29,8 @@ export interface BufferedChatInputInsertion {
 }
 
 interface BufferedChatInputProps extends ChatInputProps {
+  // Return { appliedSynchronously: true } when the owner queues the value before returning.
+  onChange: (value: string) => unknown
   inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
   clearOnSubmit?: boolean
@@ -60,8 +62,26 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     draft: value,
   }))
   const draftRef = useRef(draftState.draft)
+  const [synchronousPublicationRevision, setSynchronousPublicationRevision] = useState(0)
+  const publishedDraftsRef = useRef(
+    new Map<
+      string | undefined,
+      Array<{ revision: number; value: string; appliedSynchronously: boolean }>
+    >()
+  )
+  const lastPublishedDraftRef = useRef({ scopeKey, value })
+  const lastReplaceDraftKeyRef = useRef(replaceDraftKey)
+  // An acknowledgement must never reach the editor as an older replacement,
+  // even before the effect below commits the acknowledged source value.
+  const acknowledgesDraft = publishedDraftsRef.current
+    .get(scopeKey)
+    ?.some(publication => publication.value === value)
   const draft =
-    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftRef.current : value
+    draftState.scopeKey === scopeKey &&
+    lastReplaceDraftKeyRef.current === replaceDraftKey &&
+    (draftState.sourceValue === value || acknowledgesDraft)
+      ? draftRef.current
+      : value
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
@@ -81,11 +101,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   )
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
+  const committedScopeKeyRef = useRef(scopeKey)
   const publishedDraftRevisionRef = useRef(0)
-  const publishedDraftsRef = useRef(
-    new Map<string | undefined, Array<{ revision: number; value: string }>>()
-  )
-  const lastReplaceDraftKeyRef = useRef(replaceDraftKey)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -180,11 +197,38 @@ export const BufferedChatInput = memo(function BufferedChatInput({
 
   const publishDraft = useCallback(
     (nextDraft: string) => {
-      publishedDraftRevisionRef.current += 1
       const publications = publishedDraftsRef.current.get(scopeKey) ?? []
-      publications.push({ revision: publishedDraftRevisionRef.current, value: nextDraft })
+      const lastPublished = lastPublishedDraftRef.current
+      const alreadyCommitted =
+        committedScopeKeyRef.current === scopeKey && committedValueRef.current === nextDraft
+      // A late acknowledgement can require publishing the latest draft again.
+      if (
+        lastPublished.scopeKey === scopeKey &&
+        lastPublished.value === nextDraft &&
+        (alreadyCommitted || publications.at(-1)?.value === nextDraft)
+      ) {
+        return
+      }
+      lastPublishedDraftRef.current = { scopeKey, value: nextDraft }
+      publishedDraftRevisionRef.current += 1
+      const publication = {
+        revision: publishedDraftRevisionRef.current,
+        value: nextDraft,
+        appliedSynchronously: false,
+      }
+      publications.push(publication)
       publishedDraftsRef.current.set(scopeKey, publications)
-      onChange(nextDraft)
+      const receipt = onChange(nextDraft)
+      if (
+        typeof receipt === 'object' &&
+        receipt !== null &&
+        'appliedSynchronously' in receipt &&
+        receipt.appliedSynchronously === true
+      ) {
+        publication.appliedSynchronously = true
+        // React may batch a return to the current value without changing the prop.
+        setSynchronousPublicationRevision(publication.revision)
+      }
     },
     [onChange, scopeKey]
   )
@@ -222,11 +266,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   useEffect(() => {
     const publications = publishedDraftsRef.current.get(scopeKey) ?? []
     const replacingDraft = lastReplaceDraftKeyRef.current !== replaceDraftKey
+    const changingScope = committedScopeKeyRef.current !== scopeKey
     lastReplaceDraftKeyRef.current = replaceDraftKey
+    committedScopeKeyRef.current = scopeKey
     const acknowledgedPublicationIndex = publications.findLastIndex(
       publication => publication.value === value
     )
-    const acknowledgesPublishedDraft = !replacingDraft && acknowledgedPublicationIndex >= 0
+    const acknowledgesPublishedDraft =
+      !replacingDraft && !changingScope && acknowledgedPublicationIndex >= 0
     const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       scopeKey: scopeKey ?? null,
@@ -239,22 +286,37 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       shouldSetComposer,
     })
     committedValueRef.current = value
+    // Restoring a draft must still ignore acknowledgements already in flight.
     if (replacingDraft) {
-      draftRef.current = value
-      setDraftState({ scopeKey, sourceValue: value, draft: value })
-    } else if (acknowledgesPublishedDraft) {
-      publications.splice(0, acknowledgedPublicationIndex + 1)
+      const pendingPublications = publications.filter(
+        publication => !publication.appliedSynchronously
+      )
+      if (pendingPublications.length > 0) {
+        publishedDraftsRef.current.set(scopeKey, pendingPublications)
+      } else {
+        publishedDraftsRef.current.delete(scopeKey)
+      }
+    } else if (acknowledgedPublicationIndex >= 0) {
+      // Synchronous writes before this acknowledgement were superseded or batched.
+      // Keep deferred publications, which can still arrive out of order.
+      for (let index = acknowledgedPublicationIndex; index >= 0; index -= 1) {
+        if (index === acknowledgedPublicationIndex || publications[index]!.appliedSynchronously) {
+          publications.splice(index, 1)
+        }
+      }
       if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
-      setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
     } else {
       publishedDraftsRef.current.delete(scopeKey)
-      draftRef.current = value
-      setDraftState({ scopeKey, sourceValue: value, draft: value })
     }
+    if (!acknowledgesPublishedDraft) {
+      draftRef.current = value
+      lastPublishedDraftRef.current = { scopeKey, value }
+    }
+    setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
-  }, [replaceDraftKey, scopeKey, setComposerValue, value])
+  }, [replaceDraftKey, scopeKey, setComposerValue, synchronousPublicationRevision, value])
 
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
