@@ -156,6 +156,8 @@ Suite v11 removes `app-update-full`, which duplicated the `app-upgrade` scenario
 
 Physical host and runtime extraction share an isolated child process. Windows uses `%SystemRoot%/System32/tar.exe`; other platforms use locked `node-tar`. Package size, SHA-256, runtime identity, and signing checks remain independent. Source retention, pruning, download, host extraction, signature verification, and target preparation each record their elapsed time; total preparation time must not be reported as extraction time.
 
+Installed-source prerequisites reuse the shared runner's runtime installer. It verifies size and SHA-256 from the original package, installs immutable cache content, and then invokes the source's shipped entry to prepare components and mutable profiles. Cache installation counts toward verification time. Historical packages, signatures, and entry points remain intact, and targets receive no warmed cache. Core/Workbench roles sharing a fingerprint extract once while validating both role identities.
+
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
