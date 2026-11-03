@@ -25,6 +25,10 @@ import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import { installPreparedSource } from '../modules/installed-source-preparation.mjs'
+import {
+  restoreInstalledSourceSnapshot,
+  saveInstalledSourceSnapshot,
+} from '../modules/installed-source-snapshot.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   linkBundledRuntimeCache,
@@ -331,55 +335,72 @@ export async function createDesktopScenario(options) {
       console.log(
         `[upgrade-e2e] Source runtime installed: durationMs=${Math.round(performance.now() - cacheStarted)}`
       )
-      const request = join(resultDir, 'prepare-source.json')
-      await writeFile(
-        request,
-        JSON.stringify({
-          storeRoot: root,
-          sourceProfile: profile,
-          release: {
-            schemaVersion: 1,
-            id: 'source-preparation',
-            version: pair.from.version,
-            executable: pair.from.executable,
-            resources,
-            runtimeRoot: sourceRuntimeRoot,
-            profileRoot: join(root, 'slots/source-preparation/profile'),
-            dataSchema: pair.from.dataSchema,
-            readableDataSchemas: pair.from.readableDataSchemas,
-          },
-        })
-      )
-      console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = prepareReleaseProcess(
-        pair.from.executable,
-        [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
-        {
-          env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          progress: { logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log') },
-          version: pair.from.version,
-          releaseId: 'source-preparation',
-          stop: stopProcessGroup,
-        }
-      )
-      try {
-        await preparation
-      } catch (error) {
+      const snapshot =
+        !options.preparationOnly && pair.from.preparationCache
+          ? {
+              cache: pair.from.preparationCache,
+              slot: join(root, 'slots/source-preparation'),
+              dataDirectory: electronUserDataDirectory,
+              identity: { sha256: pair.from.sha256, disabled: [OPTIONAL_PLUGIN] },
+            }
+          : null
+      const restored = snapshot && (await restoreInstalledSourceSnapshot(snapshot))
+      if (restored)
+        console.log(`[upgrade-e2e] Restored private source preparation: sha256=${pair.from.sha256}`)
+      if (!restored) {
+        const request = join(resultDir, 'prepare-source.json')
         await writeFile(
-          join(resultDir, 'source-preparation.log'),
-          `${error.stdout ?? ''}\n${error.stderr ?? ''}`
-        )
-        await writeFile(
-          join(resultDir, 'source-preparation-result.json'),
+          request,
           JSON.stringify({
-            pid: preparation.child?.pid,
-            code: error.code,
-            signal: error.signal,
-            killed: error.killed,
-            error: { name: error.name, message: error.message },
+            storeRoot: root,
+            sourceProfile: profile,
+            release: {
+              schemaVersion: 1,
+              id: 'source-preparation',
+              version: pair.from.version,
+              executable: pair.from.executable,
+              resources,
+              runtimeRoot: sourceRuntimeRoot,
+              profileRoot: join(root, 'slots/source-preparation/profile'),
+              dataSchema: pair.from.dataSchema,
+              readableDataSchemas: pair.from.readableDataSchemas,
+            },
           })
         )
-        throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
+        console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
+        const preparation = prepareReleaseProcess(
+          pair.from.executable,
+          [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
+          {
+            env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
+            progress: {
+              logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log'),
+            },
+            version: pair.from.version,
+            releaseId: 'source-preparation',
+            stop: stopProcessGroup,
+          }
+        )
+        try {
+          await preparation
+        } catch (error) {
+          await writeFile(
+            join(resultDir, 'source-preparation.log'),
+            `${error.stdout ?? ''}\n${error.stderr ?? ''}`
+          )
+          await writeFile(
+            join(resultDir, 'source-preparation-result.json'),
+            JSON.stringify({
+              pid: preparation.child?.pid,
+              code: error.code,
+              signal: error.signal,
+              killed: error.killed,
+              error: { name: error.name, message: error.message },
+            })
+          )
+          throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
+        }
+        if (snapshot) await saveInstalledSourceSnapshot(snapshot)
       }
       if (!options.preparationOnly)
         await installPreparedSource(

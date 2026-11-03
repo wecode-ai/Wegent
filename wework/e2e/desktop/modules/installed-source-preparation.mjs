@@ -17,7 +17,7 @@ function relocated(path, source, target) {
   return join(target, suffix)
 }
 
-function relocatePath(path, moves) {
+export function relocatePath(path, moves) {
   for (const [source, target] of moves) {
     const replacement = relocated(path, source, target)
     if (replacement !== path) return replacement
@@ -25,7 +25,7 @@ function relocatePath(path, moves) {
   return path
 }
 
-async function relocateLinks(directory, moves) {
+export async function relocateLinks(directory, moves) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isSymbolicLink()) {

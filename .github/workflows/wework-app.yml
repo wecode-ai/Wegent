@@ -84,7 +84,7 @@ jobs:
       - name: Verify extraction boundaries on Windows
         run: |
           pnpm --dir wework/electron exec vitest run src/runtime/physical-release-files.test.ts src/runtime/immutable-directory.test.ts src/runtime/bundled-runtime-materializer.test.ts src/runtime/bundled-component-archive.test.ts src/runtime/legacy-prepared-source.test.ts src/runtime/release-layout-recovery.test.ts
-          pnpm --dir wework/electron exec node --test ../scripts/retained-source-ownership.test.mjs ../scripts/bundled-runtime-cache.test.mjs
+          pnpm --dir wework/electron exec node --test ../scripts/retained-source-ownership.test.mjs ../scripts/bundled-runtime-cache.test.mjs ../scripts/installed-source-preparation.test.mjs ../scripts/installed-source-snapshot.test.mjs ../scripts/upgrade-source-prefetch.test.mjs
       - name: Measure the delivered runtime archive
         env:
           GH_TOKEN: ${{ github.token }}
@@ -609,6 +609,24 @@ jobs:
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
           UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
         run: node .github/scripts/verify-wework-upgrade-duration.mjs
+      - name: Download frozen source upgrade plans
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-upgrade-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/upgrade-plan
+
+      - name: Prefetch historical inputs alongside the target artifact
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFETCH_DIRECTORY: ${{ runner.temp }}/upgrade-prefetch
+          PREFETCH_PLAN_DIRECTORY: ${{ runner.temp }}/upgrade-plan
+          PREFETCH_OPTIONS: >-
+            {"platform":"${{ matrix.platform }}","arch":"${{ matrix.arch }}","version":"${{ needs.prepare-upgrade-inputs.outputs.version }}","releaseChannel":"${{ needs.prepare-upgrade-inputs.outputs.channel }}","repository":"${{ github.repository }}","channel":"${{ matrix.channel }}","sourceVersion":"${{ matrix.source_version }}"}
+        run: |
+          node --input-type=module -e 'import { startUpgradeSourcePrefetch } from "./wework/scripts/lib/upgrade-source-prefetch.mjs"; await startUpgradeSourcePrefetch({ ...JSON.parse(process.env.PREFETCH_OPTIONS), directory: process.env.PREFETCH_DIRECTORY, planDirectory: process.env.PREFETCH_PLAN_DIRECTORY })'
+
       - name: Download prebuilt signed release inputs
         uses: actions/download-artifact@v6
         with:
@@ -616,13 +634,6 @@ jobs:
           path: ${{ runner.temp }}/upgrade-input
           run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
           github-token: ${{ github.token }}
-
-      - name: Download frozen source upgrade plans
-        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
-        uses: actions/download-artifact@v4
-        with:
-          name: wework-upgrade-plan-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/upgrade-plan
 
       - name: Download immutable diagnostic source
         if: needs.prepare-upgrade-inputs.outputs.source_run_id != ''
@@ -648,6 +659,7 @@ jobs:
           WEWORK_UPGRADE_SOURCE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.source_version }}
           WEWORK_UPGRADE_PLAN_DIRECTORY: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && format('{0}/upgrade-plan', runner.temp) || '' }}
           WEWORK_UPGRADE_VERIFY_SOURCE: ${{ matrix.source_version }}
+          WEWORK_UPGRADE_PREFETCH_DIRECTORY: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && format('{0}/upgrade-prefetch', runner.temp) || '' }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \

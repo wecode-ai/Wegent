@@ -22,6 +22,7 @@ import {
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
 import { withTemporaryBuildDirectory } from './lib/temporary-build-directory.mjs'
 import { preparePackagedRuntimeCache } from './lib/packaged-runtime-preparation.mjs'
+import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
@@ -97,8 +98,10 @@ const frozen = planDirectory
       { version: node.version, channel, policy, platform, arch }
     )
   : null
+const prefetchDirectory = process.env.WEWORK_UPGRADE_PREFETCH_DIRECTORY || ''
 const temporary = await realpath(await mkdtemp(join(tmpdir(), 'wework-release-upgrades-')))
 try {
+  if (prefetchDirectory) await waitForUpgradeSourcePrefetch(prefetchDirectory)
   const catalogs = frozen?.catalogs ?? publishedUpgradePolicies({ repository, platform, arch })
   const published = Object.values(catalogs)
   if (
@@ -109,6 +112,7 @@ try {
   for (const targetChannel of releaseChannels) await verifyChannel(catalogs, targetChannel)
 } finally {
   await rm(temporary, { recursive: true, force: true })
+  if (prefetchDirectory) await rm(prefetchDirectory, { recursive: true, force: true })
   console.log(
     `[upgrade-verification] ${JSON.stringify({
       event: 'finished',
@@ -220,11 +224,14 @@ async function downloadSource(source, targetChannel) {
         version: source.version,
         platform,
         arch,
-        directory: join(temporary, `${targetChannel}-${source.version}`),
+        directory: prefetchDirectory
+          ? join(prefetchDirectory, source.version)
+          : join(temporary, `${targetChannel}-${source.version}`),
         expected: source,
       })
   return {
     ...downloaded,
+    preparationCache: join(temporary, 'installed-source-snapshots', downloaded.sha256),
     runtimeCache: join(
       temporary,
       'installed-runtimes',

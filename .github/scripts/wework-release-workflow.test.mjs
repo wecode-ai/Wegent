@@ -58,6 +58,7 @@ test("source sparse checkout imports the actual desktop entry graph and release 
     await import('./wework/e2e/desktop/modules/task-flow-main.mjs');
     await import('./wework/e2e/desktop/scenarios/retained-upgrade-baseline.scenario.mjs');
     await import('./wework/scripts/lib/packaged-runtime-preparation.mjs');
+    await import('./wework/scripts/lib/upgrade-source-prefetch.mjs');
   `,
     ],
     { cwd: root, stdio: "pipe" },
