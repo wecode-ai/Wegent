@@ -60,6 +60,7 @@ def test_create_execution_appends_group_notification_instruction(
     assert "除非任务或用户明确要求本次不通知群聊" in execution.prompt
     assert "不得根据消息是否例行、是否测试、是否成功、是否有异常" in execution.prompt
     assert "【静默】或【silent】" in execution.prompt
+    assert "需要 @ 用户时，在最终回答最后单独一行输出" in execution.prompt
     assert "只能使用明确指定或可确定的实际 staffId" in execution.prompt
     assert "不输出任何控制标记" in execution.prompt
     assert "不得写进正文或做解释" in execution.prompt

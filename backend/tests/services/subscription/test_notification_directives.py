@@ -193,6 +193,7 @@ def test_parse_notification_directives_ignores_controls_inside_body() -> None:
 
 
 def test_append_group_notification_instruction_requires_bound_group() -> None:
+    """Append routing rules only for bound groups, including trailing controls."""
     prompt = "Check the service."
 
     assert append_group_notification_instruction(prompt, {}) == prompt
@@ -234,6 +235,7 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
     assert "除非任务或用户明确要求本次不通知群聊" in appended
     assert "不得根据消息是否例行、是否测试、是否成功、是否有异常" in appended
     assert "【静默】或【silent】" in appended
+    assert "需要 @ 用户时，在最终回答最后单独一行输出" in appended
     assert "只能使用明确指定或可确定的实际 staffId" in appended
     assert "不输出任何控制标记" in appended
     assert "不得写进正文或做解释" in appended

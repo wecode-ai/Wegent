@@ -63,7 +63,7 @@ pub(crate) const GROUP_NOTIFICATION_CONTROL_INSTRUCTION: &str = concat!(
     "除非任务或用户明确要求本次不通知群聊，否则一律正常发送。\n",
     "不得根据消息是否例行、是否测试、是否成功、是否有异常等自行决定静默。\n",
     "只有明确要求群聊静默时，才在最终回答最后单独一行输出【静默】或【silent】。\n",
-    "需要 @ 用户时，输出【@列表:1234,1235】或【mention:1234,1235】，",
+    "需要 @ 用户时，在最终回答最后单独一行输出【@列表:1234,1235】或【mention:1234,1235】，",
     "只能使用明确指定或可确定的实际 staffId。\n",
     "正常发送且不需要 @ 时，不输出任何控制标记。\n",
     "控制标记仅用于通知路由，不得写进正文或做解释。"
@@ -210,6 +210,7 @@ mod tests {
         assert!(prompt.contains("除非任务或用户明确要求本次不通知群聊"));
         assert!(prompt.contains("不得根据消息是否例行、是否测试、是否成功、是否有异常"));
         assert!(prompt.contains("【静默】或【silent】"));
+        assert!(prompt.contains("需要 @ 用户时，在最终回答最后单独一行输出"));
         assert!(prompt.contains("只能使用明确指定或可确定的实际 staffId"));
         assert!(prompt.contains("不输出任何控制标记"));
         assert!(prompt.contains("不得写进正文或做解释"));
