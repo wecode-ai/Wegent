@@ -165,6 +165,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
+  'stand-in-email': './scenarios/stand-in-email.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
   'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
@@ -320,6 +321,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
+  'stand-in-email',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
   'stand-in-telemetry',

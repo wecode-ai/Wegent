@@ -254,6 +254,10 @@ impl RuntimeWorkRpcHandler {
                     state["observedSince"]
                         .as_i64()
                         .is_some_and(|since| link.created_at >= since)
+                        && (link.turn_status.is_some()
+                            || link.interaction_status.is_some()
+                            || link.completed_at.is_some()
+                            || matches!(link.status.as_str(), "done" | "failed" | "cancelled"))
                 },
                 |previous| *previous != signature,
             );
@@ -546,13 +550,7 @@ impl RuntimeWorkRpcHandler {
         }
         if event["kind"] == "connection" {
             let source = stand_in_connection(role, &event["source"]).unwrap();
-            let enabled = source["enabledAfter"]
-                .as_str()
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
-            if enabled.is_some_and(|at| {
-                super::stand_in_ingress::message_time(&event["message"]["at"])
-                    .map_or(true, |received| received < at.timestamp_millis())
-            }) {
+            if !super::stand_in_ingress::source_accepts_message(source, &event["message"]) {
                 return Err(AppIpcError::new(
                     "source_removed",
                     "Event predates the current source connection",

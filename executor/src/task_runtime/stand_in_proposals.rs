@@ -81,6 +81,7 @@ impl LocalTaskStore {
         device: &str,
         id: &str,
         accept: bool,
+        prepared: Option<Value>,
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -96,7 +97,12 @@ impl LocalTaskStore {
             ));
         }
         let saved = if accept {
-            self.save_personal_stand_in_on(&connection, user, device, proposal["settings"].clone())?
+            self.save_personal_stand_in_on(
+                &connection,
+                user,
+                device,
+                prepared.unwrap_or_else(|| proposal["settings"].clone()),
+            )?
         } else {
             read_personal(&connection, user, device)?
         };
@@ -107,6 +113,21 @@ impl LocalTaskStore {
         )?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    pub fn stand_in_proposal_settings(
+        &self,
+        user: i64,
+        id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let raw: String = connection.query_row(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_proposal' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.id')=?2",
+            params![user, id], |row| row.get(0),
+        )?;
+        let proposal: Value = serde_json::from_str(&raw)
+            .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        Ok(proposal["settings"].clone())
     }
 }
 
