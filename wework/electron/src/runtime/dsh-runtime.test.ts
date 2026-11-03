@@ -13,6 +13,7 @@ const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -24,6 +25,47 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test.each(['inherited', 'overridden', 'omitted'] as const)(
+    'preserves %s child environment semantics',
+    async mode => {
+      vi.stubEnv('WEWORK_DSH_TEST_ENVIRONMENT', 'parent-value')
+      const explicitEnvironment = { ...process.env }
+      if (mode === 'overridden') explicitEnvironment.WEWORK_DSH_TEST_ENVIRONMENT = 'child-value'
+      else delete explicitEnvironment.WEWORK_DSH_TEST_ENVIRONMENT
+      const env = mode === 'inherited' ? undefined : explicitEnvironment
+      const expected =
+        mode === 'inherited' ? 'parent-value' : mode === 'overridden' ? 'child-value' : ''
+      const runtime = new DshRuntime({
+        url: 'http://127.0.0.1:0',
+        command: process.execPath,
+        args: [
+          '-e',
+          `
+          const http = require('node:http')
+          const server = http.createServer((request, response) => {
+            if (request.url === '/observe') response.once('finish', () => server.close())
+            response.end(process.env.WEWORK_DSH_TEST_ENVIRONMENT || '')
+          })
+          server.listen(0, '127.0.0.1', () => {
+            console.log('dsh web: http://127.0.0.1:' + server.address().port)
+          })
+        `,
+        ],
+        env,
+        startTimeoutMs: 2_000,
+      })
+      let observed
+      try {
+        await runtime.start()
+        observed = await (await fetch(`${runtime.url()}/observe`)).text()
+        await vi.waitFor(() => expect(runtime.pid()).toBeNull())
+      } finally {
+        await runtime.stop()
+      }
+      expect(observed).toBe(expected)
+    }
+  )
+
   test.each(['before', 'after'])(
     'authenticates a dynamically bound port with credentials sent %s its announcement',
     async order => {

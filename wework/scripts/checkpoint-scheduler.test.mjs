@@ -1,9 +1,66 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { test } from 'vitest'
 
 import { runWithCheckpointResources } from '../e2e/desktop/checkpoint-scheduler.mjs'
+import {
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  rejectFailedReleaseCheckpoint,
+} from '../e2e/desktop/upgrade-suite.mjs'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
+
+const checkpointExit = code =>
+  new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', `process.exit(${code})`], { stdio: 'ignore' })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+  })
+
+test('a failed real child rejects the release pair before another checkpoint starts', async () => {
+  const started = []
+  await assert.rejects(
+    runWithCheckpointResources({
+      checkpoints: UPGRADE_PACKAGE_CHECKPOINTS,
+      workerCount: 1,
+      resourceFor: () => [],
+      run: async checkpoint => {
+        started.push(checkpoint)
+        rejectFailedReleaseCheckpoint(checkpoint, await checkpointExit(1))
+      },
+    }),
+    /Release package checkpoint failed: app-upgrade/
+  )
+  assert.deepEqual(started, ['app-upgrade'])
+})
+
+test('a successful release pair still executes every required checkpoint', async () => {
+  const completed = []
+  await runWithCheckpointResources({
+    checkpoints: UPGRADE_PACKAGE_CHECKPOINTS,
+    workerCount: 1,
+    resourceFor: () => [],
+    run: async checkpoint => {
+      rejectFailedReleaseCheckpoint(checkpoint, await checkpointExit(0))
+      completed.push(checkpoint)
+    },
+  })
+  assert.deepEqual(completed, UPGRADE_PACKAGE_CHECKPOINTS)
+})
+
+test('ordinary checkpoint failures retain the full diagnostic collection policy', async () => {
+  const completed = []
+  await runWithCheckpointResources({
+    checkpoints: ['ordinary-a', 'ordinary-b'],
+    workerCount: 1,
+    resourceFor: () => [],
+    run: async checkpoint => {
+      rejectFailedReleaseCheckpoint(checkpoint, await checkpointExit(1))
+      completed.push(checkpoint)
+    },
+  })
+  assert.deepEqual(completed, ['ordinary-a', 'ordinary-b'])
+})
 
 test('terminal native input runs alone before ordinary checkpoints regain parallelism', async () => {
   const started = []

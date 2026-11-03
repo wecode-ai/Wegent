@@ -104,12 +104,14 @@ impl ExecutorEventHub {
                                 {
                                     hub.flush_pending(&mut pending, None);
                                 }
-                                if let Some((_, pending_event)) = pending
+                                let merged = pending
                                     .iter_mut()
                                     .find(|(pending_key, _)| pending_key == &key)
-                                {
-                                    merge_coalesced_event(pending_event, event);
-                                } else {
+                                    .map(|(_, pending_event)| merge_coalesced_event(pending_event, &event));
+                                if merged == Some(false) {
+                                    hub.flush_pending(&mut pending, event_task_id(&event).as_deref());
+                                }
+                                if merged != Some(true) {
                                     pending.push_back((key, event));
                                 }
                             } else {
@@ -325,16 +327,17 @@ fn coalescing_key(event: &Value) -> Option<String> {
     Some(format!("{event_name}\0{task_id}\0{subtask_id}\0{block_id}"))
 }
 
-fn merge_coalesced_event(pending: &mut Value, next: Value) {
-    if merge_block_content_delta(pending, &next) {
-        return;
+fn merge_coalesced_event(pending: &mut Value, next: &Value) -> bool {
+    if pending.get("event").and_then(Value::as_str) == Some("response.block.updated") {
+        return merge_block_updates(pending, next);
     }
-    *pending = next;
+    *pending = next.clone();
+    true
 }
 
-fn merge_block_content_delta(pending: &mut Value, next: &Value) -> bool {
-    if pending.get("event").and_then(Value::as_str) != Some("response.block.updated")
-        || next.get("event").and_then(Value::as_str) != Some("response.block.updated")
+fn merge_block_updates(pending: &mut Value, next: &Value) -> bool {
+    if pending.pointer("/payload/data/block").is_some()
+        || next.pointer("/payload/data/block").is_some()
     {
         return false;
     }
@@ -350,26 +353,37 @@ fn merge_block_content_delta(pending: &mut Value, next: &Value) -> bool {
     else {
         return false;
     };
-    let Some(current_delta) = current_updates
-        .get("content_delta")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    else {
-        return false;
-    };
-    if next_updates.contains_key("content") {
-        return false;
+    for (delta, snapshot) in [
+        ("content_delta", "content"),
+        ("tool_output_delta", "tool_output"),
+    ] {
+        if (current_updates.contains_key(delta) && next_updates.contains_key(snapshot))
+            || (current_updates.contains_key(snapshot) && next_updates.contains_key(delta))
+            || [current_updates, next_updates]
+                .iter()
+                .any(|updates| updates.get(delta).is_some_and(|value| !value.is_string()))
+        {
+            return false;
+        }
     }
-    if let Some(next_delta) = next_updates.get("content_delta").and_then(Value::as_str) {
-        current_updates.insert(
-            "content_delta".to_owned(),
-            Value::String(format!("{current_delta}{next_delta}")),
-        );
+    if next_updates.iter().any(|(key, next_value)| {
+        current_updates.get(key).is_some_and(|current_value| {
+            (current_value.is_object() || next_value.is_object()) && current_value != next_value
+        })
+    }) {
+        return false;
     }
     for (key, value) in next_updates {
-        if key != "content_delta" {
-            current_updates.insert(key.clone(), value.clone());
-        }
+        let value = match (
+            key.as_str(),
+            current_updates.get(key).and_then(Value::as_str),
+        ) {
+            ("content_delta" | "tool_output_delta", Some(current)) => {
+                Value::String(format!("{current}{}", value.as_str().unwrap()))
+            }
+            _ => value.clone(),
+        };
+        current_updates.insert(key.clone(), value);
     }
     true
 }
@@ -457,8 +471,8 @@ fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        coalescing_key, event_sequence, EventJournal, ExecutorEventHub, EVENT_ENVELOPE_MAX_BYTES,
-        EVENT_JOURNAL_MAX_EVENTS,
+        coalescing_key, event_sequence, merge_coalesced_event, EventJournal, ExecutorEventHub,
+        EVENT_ENVELOPE_MAX_BYTES, EVENT_JOURNAL_MAX_EVENTS,
     };
     use serde_json::json;
     use tokio::sync::broadcast;
@@ -666,5 +680,137 @@ mod tests {
             "last chunk"
         );
         assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[tokio::test]
+    async fn terminal_output_deltas_survive_coalescing_and_status_updates() {
+        let (raw_tx, _) = broadcast::channel(8);
+        let hub = ExecutorEventHub::new(raw_tx.clone());
+        hub.ensure_started();
+        let mut events = hub.subscribe_live();
+        for updates in [
+            json!({"tool_output_delta": "tick-5\n", "status": "streaming"}),
+            json!({"tool_output_delta": "tick-6\n", "status": "streaming"}),
+            json!({"tool_output_delta": "tick-7\n", "status": "streaming"}),
+            json!({"status": "done"}),
+        ] {
+            raw_tx
+                .send(json!({
+                    "event": "response.block.updated",
+                    "payload": {"taskId": "task-1", "subtaskId": "turn-1",
+                        "data": {"block_id": "command-1", "updates": updates}}
+                }))
+                .unwrap();
+        }
+        raw_tx
+            .send(json!({
+                "event": "response.completed", "payload": {"taskId": "task-1"}
+            }))
+            .unwrap();
+
+        let update = events.recv().await.unwrap();
+        let terminal = events.recv().await.unwrap();
+
+        assert_eq!(
+            update["payload"]["data"]["updates"]["tool_output_delta"],
+            "tick-5\ntick-6\ntick-7\n"
+        );
+        assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
+        assert_eq!(terminal["event"], "response.completed");
+    }
+
+    #[tokio::test]
+    async fn output_snapshot_and_delta_boundaries_keep_their_original_order() {
+        for (first, second) in [
+            (
+                json!({"tool_output_delta": "tick-6\n"}),
+                json!({"tool_output": "snapshot\n"}),
+            ),
+            (
+                json!({"tool_output": "snapshot\n"}),
+                json!({"tool_output_delta": "tick-6\n"}),
+            ),
+            (
+                json!({"content_delta": "live"}),
+                json!({"content": "snapshot"}),
+            ),
+            (
+                json!({"content": "snapshot"}),
+                json!({"content_delta": "live"}),
+            ),
+            (
+                json!({"render_payload": {"first": true}}),
+                json!({"render_payload": {"second": true}}),
+            ),
+            (
+                json!({"tool_output_delta": "live"}),
+                json!({"tool_output_delta": null}),
+            ),
+        ] {
+            let (raw_tx, _) = broadcast::channel(8);
+            let hub = ExecutorEventHub::new(raw_tx.clone());
+            hub.ensure_started();
+            let mut events = hub.subscribe_live();
+            for updates in [&first, &second] {
+                raw_tx
+                    .send(json!({
+                        "event": "response.block.updated",
+                        "payload": {"taskId": "task-1", "subtaskId": "turn-1",
+                            "data": {"block_id": "command-1", "updates": updates}}
+                    }))
+                    .unwrap();
+            }
+            raw_tx
+                .send(json!({
+                    "event": "response.completed", "payload": {"taskId": "task-1"}
+                }))
+                .unwrap();
+
+            let first_event = events.recv().await.unwrap();
+            let second_event = events.recv().await.unwrap();
+
+            assert_eq!(first_event["payload"]["data"]["updates"], first);
+            assert_eq!(second_event["payload"]["data"]["updates"], second);
+            assert!(event_sequence(&first_event).unwrap() < event_sequence(&second_event).unwrap());
+        }
+    }
+
+    #[test]
+    fn block_updates_preserve_metadata_before_a_delta() {
+        let mut pending = json!({
+            "event": "response.block.updated",
+            "payload": {"data": {"updates": {"status": "streaming", "tool_name": "exec"}}}
+        });
+        let next = json!({
+            "event": "response.block.updated",
+            "payload": {"data": {"updates": {"tool_output_delta": "tick-6\n"}}}
+        });
+
+        assert!(merge_coalesced_event(&mut pending, &next));
+        assert_eq!(
+            pending["payload"]["data"]["updates"],
+            json!({
+                "status": "streaming", "tool_name": "exec", "tool_output_delta": "tick-6\n"
+            })
+        );
+    }
+
+    #[test]
+    fn full_block_snapshots_are_not_collapsed_with_partial_updates() {
+        let mut pending = json!({
+            "event": "response.block.updated",
+            "payload": {"data": {"updates": {"tool_output_delta": "tick-6\n"}}}
+        });
+        let original = pending.clone();
+        let next = json!({
+            "event": "response.block.updated",
+            "payload": {"data": {"block": {"tool_output": "snapshot"}}}
+        });
+
+        assert!(!merge_coalesced_event(&mut pending, &next));
+        assert_eq!(pending, original);
+        let mut snapshot = next.clone();
+        assert!(!merge_coalesced_event(&mut snapshot, &pending));
+        assert_eq!(snapshot, next);
     }
 }
