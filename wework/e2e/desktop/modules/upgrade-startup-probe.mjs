@@ -47,7 +47,14 @@ async function createProbeApp(root, index) {
   return { profile, appPath, tracePath, path }
 }
 
-export async function verifyUpgradeStartup({ binary, root, origin, index, signal }) {
+export async function verifyUpgradeStartup({
+  binary,
+  root,
+  origin,
+  index,
+  signal,
+  recordTransportLog,
+}) {
   signal.throwIfAborted()
   const { profile, appPath, tracePath, path } = await createProbeApp(root, index)
   const env = { ...process.env }
@@ -67,7 +74,11 @@ export async function verifyUpgradeStartup({ binary, root, origin, index, signal
       once(child, 'close', {
         signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
       }),
-      routeUpgradeRequests(child, origin, join(profile, 'transport.log')),
+      routeUpgradeRequests(
+        child,
+        origin,
+        recordTransportLog ? join(profile, 'transport.log') : undefined
+      ),
     ])
     assert.deepEqual(exited, [0, null], stderr)
     assert.ok(stdout.includes('PROBE_RESULT=real loopback transport'), stdout)
@@ -75,10 +86,11 @@ export async function verifyUpgradeStartup({ binary, root, origin, index, signal
     assert.equal(state.pauseArgument, false)
     assert.equal(state.pauseSwitch, false)
     assert.equal(state.phase, 'fetch-complete')
-    return { path, phases: state.events }
+    return { path, phases: state.events, recordTransportLog }
   } catch (error) {
     console.error('Isolated startup probe diagnostics:', {
       index,
+      recordTransportLog,
       exitCode: child.exitCode,
       signalCode: child.signalCode,
       stdout,
