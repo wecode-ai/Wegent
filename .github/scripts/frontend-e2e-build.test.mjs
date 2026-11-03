@@ -383,14 +383,22 @@ test('promotion accepts only the exact successful upstream producer and validate
   }
   let downloaded = 0
   const options = (sourceRun = run, producer = job) => ({
+    checkoutRoot: source,
     json: async (path) =>
       path.endsWith('/jobs?per_page=100') ? { jobs: [producer] } : sourceRun,
     download: () => {
       downloaded++
     },
   })
-  const result = await restoreFrontendFromCi(12, source, metadata, options())
-  assert.deepEqual(result.origin, identity)
+  const publisherContext = { ...context, glibc: '2.43' }
+  assert.notEqual(
+    frontendBuild(source, 'example', publisherContext).sourceKey,
+    metadata.sourceKey,
+  )
+  const result = await restoreFrontendFromCi(12, source, 'example', options())
+  assert.deepEqual(result.manifest.origin, identity)
+  assert.deepEqual(result.metadata.context, context)
+  assert.equal(result.metadata.sourceKey, metadata.sourceKey)
   assert.equal(downloaded, 1)
   for (const changed of [
     { ...run, id: 13 },
@@ -400,7 +408,7 @@ test('promotion accepts only the exact successful upstream producer and validate
     { ...run, conclusion: 'cancelled' },
   ])
     await assert.rejects(
-      restoreFrontendFromCi(12, source, metadata, options(changed)),
+      restoreFrontendFromCi(12, source, 'example', options(changed)),
     )
   for (const changed of [
     { ...job, head_sha: current.headSha },
@@ -409,21 +417,30 @@ test('promotion accepts only the exact successful upstream producer and validate
     { ...job, conclusion: 'failure' },
   ])
     await assert.rejects(
-      restoreFrontendFromCi(12, source, metadata, options(run, changed)),
+      restoreFrontendFromCi(12, source, 'example', options(run, changed)),
     )
   assert.equal(downloaded, 1)
+  const originalManifest = readFileSync(join(source, manifestName))
+  put(
+    source,
+    manifestName,
+    JSON.stringify({ ...result.manifest, context: publisherContext }),
+  )
   await assert.rejects(
-    restoreFrontendFromCi(
-      12,
-      source,
-      { ...metadata, sourceKey: 'c'.repeat(64) },
-      options(),
-    ),
+    restoreFrontendFromCi(12, source, 'example', options()),
     /input mismatch/,
   )
+  put(source, manifestName, originalManifest)
+  const page = readFileSync(join(source, 'frontend/src/page.tsx'))
+  put(source, 'frontend/src/page.tsx', 'changed checkout must fail promotion')
+  await assert.rejects(
+    restoreFrontendFromCi(12, source, 'example', options()),
+    /input mismatch/,
+  )
+  put(source, 'frontend/src/page.tsx', page)
   attestBuild(source, metadata, current)
   await assert.rejects(
-    restoreFrontendFromCi(12, source, metadata, options()),
+    restoreFrontendFromCi(12, source, 'example', options()),
     /current producer identity/,
   )
 })

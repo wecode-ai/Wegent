@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { verifyBuild } from './frontend-e2e-build.mjs'
+import { frontendBuild, verifyBuild } from './frontend-e2e-build.mjs'
 
 const repository = 'wecode-ai/Wegent'
 const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -50,8 +50,8 @@ function downloadArtifact(run, directory) {
 export async function restoreFrontendFromCi(
   runId,
   directory,
-  metadata,
-  { json = githubJson, download = downloadArtifact } = {},
+  owner,
+  { json = githubJson, download = downloadArtifact, checkoutRoot = root } = {},
 ) {
   assert.match(
     String(runId),
@@ -84,15 +84,19 @@ export async function restoreFrontendFromCi(
     'Frontend source producer failed',
   )
   download(run, directory)
-  const manifest = verifyBuild(directory, metadata, {
+  const identity = {
     headSha: run.head_sha,
     runId: String(run.id),
     repository,
-  })
+  }
+  const manifest = verifyBuild(directory, undefined, identity)
+  // Publication transfers an existing build; its host did not compile this output.
+  const metadata = frontendBuild(checkoutRoot, owner, manifest.context)
+  verifyBuild(directory, metadata, identity)
   console.log(
     `Verified frontend source producer ${producer.id} at ${run.head_sha}, sourceKey=${manifest.sourceKey}`,
   )
-  return manifest
+  return { manifest, metadata }
 }
 
 if (
@@ -100,9 +104,10 @@ if (
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   const [runId, directory, metadataFile] = process.argv.slice(2)
-  await restoreFrontendFromCi(
+  const { metadata } = await restoreFrontendFromCi(
     runId,
     directory,
-    JSON.parse(readFileSync(metadataFile, 'utf8')),
+    process.env.GITHUB_REPOSITORY_OWNER,
   )
+  writeFileSync(metadataFile, `${JSON.stringify(metadata)}\n`)
 }
