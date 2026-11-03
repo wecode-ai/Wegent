@@ -18,7 +18,9 @@ mod materialization;
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
 mod plan;
-use materialization::{same_fingerprints, same_runtime_contents, tree_fingerprint};
+use materialization::{
+    runtime_tree_fingerprint, same_fingerprints, same_runtime_contents, tree_fingerprint,
+};
 use ownership::*;
 
 #[derive(Debug, Default)]

@@ -97,6 +97,21 @@ pub(super) fn tree_fingerprint(
     Ok(result)
 }
 
+// Ownership compares manifest content; recovery receipts keep raw byte fingerprints.
+pub(super) fn runtime_tree_fingerprint(
+    path: &Path,
+) -> Result<BTreeMap<PathBuf, String>, CapabilitySyncError> {
+    let mut fingerprint = tree_fingerprint(path)?;
+    for relative in [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH] {
+        if let Some(digest) = fingerprint.get_mut(Path::new(relative)) {
+            let mut manifest: Value = serde_json::from_slice(&fs::read(path.join(relative))?)?;
+            manifest.sort_all_objects();
+            *digest = sha256_digest(&serde_json::to_vec(&manifest)?);
+        }
+    }
+    Ok(fingerprint)
+}
+
 pub(super) fn same_runtime_contents(
     left: &Path,
     right: &Path,
@@ -105,8 +120,8 @@ pub(super) fn same_runtime_contents(
         return Ok(false);
     }
     Ok(same_fingerprints(
-        tree_fingerprint(left)?,
-        &tree_fingerprint(right)?,
+        runtime_tree_fingerprint(left)?,
+        &runtime_tree_fingerprint(right)?,
     ))
 }
 

@@ -479,7 +479,7 @@ async fn old_manifest_serialization_can_migrate_without_authorizing_changed_cont
         let mut generated: Value =
             serde_json::from_slice(&fs::read(source.join(CLAUDE_PLUGIN_MANIFEST_PATH)).unwrap())
                 .unwrap();
-        sort_manifest_objects(&mut generated);
+        generated.sort_all_objects();
         write_json(&source.join(CLAUDE_PLUGIN_MANIFEST_PATH), &generated).unwrap();
         copy_dir_atomic(&source, &runtime).unwrap();
         let published = crate::services::workbench::publish_plugin_archive(

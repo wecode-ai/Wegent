@@ -298,28 +298,7 @@ fn normalized_legacy_tree(
     let template = staging.path().join("runtime");
     copy_dir_atomic(path, &template)?;
     ensure_dual_plugin_manifests(&template)?;
-    // Historical serde writers sorted object keys, while current writers retain
-    // insertion order. Canonicalize only native manifests in this comparison;
-    // archive receipts and every other file remain byte-for-byte authenticated.
-    for name in [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH] {
-        let mut value: Value = serde_json::from_slice(&fs::read(template.join(name))?)?;
-        sort_manifest_objects(&mut value);
-        write_json(&template.join(name), &value)?;
-    }
-    Ok(Some(tree_fingerprint(&template)?))
-}
-
-fn sort_manifest_objects(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.sort_keys();
-            for child in map.values_mut() {
-                sort_manifest_objects(child);
-            }
-        }
-        Value::Array(values) => values.iter_mut().for_each(sort_manifest_objects),
-        _ => (),
-    }
+    Ok(Some(runtime_tree_fingerprint(&template)?))
 }
 
 #[cfg(test)]
