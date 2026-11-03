@@ -1551,7 +1551,6 @@ async function holdStartupSplashForDesktopE2e(): Promise<void> {
 async function startupSplashInspection() {
   return {
     ...(await inspectStartupSplash(startupSplashWindow)),
-    progress: startupProgress.currentUpdate(),
     failure: lastStartupFailure,
     logDirectory: app.getPath('logs'),
   }
@@ -1828,6 +1827,8 @@ async function startupDiagnosticsText(): Promise<string> {
 
 function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
+    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
