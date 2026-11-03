@@ -8,6 +8,7 @@ import { projectTest, type Resource } from '../../utils/collaboration-project-fi
 import {
   dragCollaborationIssueToColumn,
   selectCollaborationProjectView,
+  waitForCollaborationIssueDrawer,
   webApi,
 } from '../../utils/collaboration-test-support'
 import { createApiClient } from '../../utils/api-client'
@@ -35,9 +36,18 @@ for (const width of [1280, 390]) {
       await expect(status).toBeVisible()
       await expect(page.getByTestId('cloud-todo-identity-properties')).toHaveCount(0)
       await expect(page.getByTestId('cloud-todo-reporter')).toHaveCount(0)
+      // The entry transition moves the whole panel between sequential box reads.
+      await waitForCollaborationIssueDrawer(page)
       const panelBox = await detail.boundingBox()
       expect(panelBox).not.toBeNull()
-      for (const control of [follow, assignee, schedule]) {
+      for (const control of [
+        status,
+        follow,
+        header.getByTestId('cloud-todo-more-properties'),
+        header.getByTestId('cloud-todo-detail-close'),
+        assignee,
+        schedule,
+      ]) {
         const box = await control.boundingBox()
         expect(box).not.toBeNull()
         expect(box!.x).toBeGreaterThanOrEqual(panelBox!.x)
@@ -71,7 +81,7 @@ for (const width of [1280, 390]) {
 
 projectTest(
   'persists issue identities and follower updates with current access',
-  async ({ page, request, scheduledProject: { path, issueId } }) => {
+  async ({ page, request, scheduledProject: { path, issueId, title } }) => {
     const projectId = path.split('/').at(-1)!
     const project = await webApi<Resource & { current_user_id: number }>(
       page,
@@ -148,15 +158,13 @@ projectTest(
     await page.getByTestId('cloud-todo-detail-close').click()
     await selectCollaborationProjectView(page, 'table')
     await page.getByTestId('collaboration-issue-table-following-filter').click()
-    await expect(page.getByTestId('collaboration-issue-table')).toContainText(initial.id)
-    await page
-      .getByTestId('collaboration-issue-table')
-      .getByRole('button', { name: new RegExp('Scheduled Issue') })
-      .click()
+    const followedRow = page.getByTestId(`collaboration-issue-table-row-${issueId}`)
+    await expect(followedRow).toBeVisible()
+    await followedRow.getByRole('button', { name: title, exact: true }).click()
     await page.getByTestId('cloud-todo-follow').click()
     await expect(page.getByTestId('cloud-todo-follow')).toHaveAttribute('aria-pressed', 'false')
     await page.getByTestId('cloud-todo-detail-close').click()
-    await expect(page.getByTestId('collaboration-issue-table')).not.toContainText(initial.id)
+    await expect(followedRow).toHaveCount(0)
     expect(
       (await memberApi.post(`/api/v1/loop-items/${issueId}/comments`, { body: 'After unfollow' }))
         .status
@@ -978,17 +986,7 @@ for (const view of ['calendar', 'gantt'] as const) {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       // CI traces show a successful click at a stale point during the entry transition.
       // Visibility alone does not mean the Close button has reached its final position.
-      await expect
-        .poll(() =>
-          page
-            .getByTestId('issue-conversation-drawers')
-            .evaluate(element =>
-              element
-                .getAnimations()
-                .every(animation => ['finished', 'idle'].includes(animation.playState))
-            )
-        )
-        .toBe(true)
+      await waitForCollaborationIssueDrawer(page)
       await page.getByTestId('cloud-todo-detail-close').click()
       await expect(page).toHaveURL(`${path}?view=${view}`)
       await expect(page.getByTestId(`collaboration-${view}`)).toBeVisible()

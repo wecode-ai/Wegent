@@ -6,6 +6,7 @@
 
 .issue-detail-header-breadcrumb {
   display: inline-flex;
+  flex: 1;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -33,7 +34,6 @@
 
 .issue-detail-header-controls {
   min-width: 0;
-  flex-shrink: 1;
   gap: 12px;
 }
 

@@ -463,13 +463,15 @@ async function sendProjectAiCheckpointPrompt(
   composerSelector,
   { createsConversation = false } = {}
 ) {
+  const before = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const activeTaskIdBefore = createsConversation
-    ? (JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
-        ?.currentRuntimeTask?.taskId ?? null)
+    ? (before.pane?.currentRuntimeTask?.taskId ?? null)
     : null
+  // Inactive board tabs retain their own assistant nodes. Compare the same
+  // active conversation projection before and after sending, never the whole DOM.
   const assistantCountBefore = createsConversation
     ? 0
-    : Number(await control.command('getElementCount', '[data-testid="message-assistant"]'))
+    : (before.pane?.messageSummary?.byRole?.assistant ?? 0)
   const requestCount = control.scenarioRequests.get('checkpoint_task')?.length ?? 0
   await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
   const request = await control.awaitScenarioRequestCount('checkpoint_task', requestCount + 1)

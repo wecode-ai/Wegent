@@ -4,6 +4,20 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import type { CollaborationView } from '@wegent/collaboration'
 
+export async function waitForCollaborationIssueDrawer(page: Page): Promise<void> {
+  const track = page.getByTestId('issue-conversation-drawers')
+  await expect(track).toBeVisible()
+  await expect
+    .poll(() =>
+      track.evaluate(element =>
+        element
+          .getAnimations()
+          .every(animation => ['finished', 'idle'].includes(animation.playState))
+      )
+    )
+    .toBe(true)
+}
+
 export async function dragCollaborationIssue(
   page: Page,
   issueId: string,
