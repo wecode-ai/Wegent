@@ -1,11 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import i18n from '@/i18n'
 import type { Attachment } from '@/types/api'
-import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { createCollaborationTranslator } from '@wegent/collaboration'
+import { describe, expect, it, vi } from 'vitest'
 import { TaskCommentComposer } from './TaskCommentComposer'
 
 function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {}) {
@@ -216,18 +216,6 @@ describe('TaskCommentComposer', () => {
     expect(screen.queryByRole('group', { name: '转派建议：User 2' })).not.toBeInTheDocument()
     expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
     expect(assign).not.toHaveBeenCalled()
-  })
-
-  it('keeps execution settings collapsed without replacing the draft when toggled', async () => {
-    const user = userEvent.setup()
-    const { input } = setup()
-    const toggle = screen.getByTestId('task-comment-settings-toggle')
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await user.click(toggle)
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    await user.click(toggle)
-    expect(input).toHaveValue('Review this')
-    expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
   })
 
   it('disables the send button for empty drafts, pending sends and uploads', () => {

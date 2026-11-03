@@ -1,7 +1,3 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   newStandInRole,
   publishPersonalStandIn,
@@ -9,12 +5,16 @@ import {
   type StandInRole,
 } from '@/api/personalStandIn'
 import type { StandInInboxWork } from '@/api/standIn'
+import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import '@/i18n'
 import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
+import { expect, it, vi } from 'vitest'
 import { StandInOverviewPage } from './StandInOverviewPage'
 const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
 vi.mock('@/features/automations/AutomationsPage', async () => {

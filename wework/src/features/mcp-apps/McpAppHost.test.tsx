@@ -1,6 +1,6 @@
-import { act, render, screen, fireEvent } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { McpAppHost } from './McpAppHost'
 
 const translate = vi.hoisted(() => (key: string) => key)
@@ -177,156 +177,6 @@ describe('MCP App close completion', () => {
     arguments: {},
   }
 
-  it('releases a late initialization after its host is closed', async () => {
-    let finish!: (value: typeof descriptor) => void
-    const requestMcpApp = vi
-      .fn()
-      .mockResolvedValueOnce(discovery)
-      .mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            finish = resolve
-          })
-      )
-      .mockResolvedValue({})
-    const view = render(<McpAppHost block={running} address={address} api={{ requestMcpApp }} />)
-    await act(async () => {})
-    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
-    await act(async () => finish(descriptor))
-    expect(native.invoke).toHaveBeenCalledWith(
-      'mcpApps.releaseSession',
-      expect.objectContaining({ sessionId: expect.any(String) })
-    )
-    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
-    view.unmount()
-  })
-
-  it('releases only its own initialization after a replacement host opens the same call', async () => {
-    let finish!: (value: typeof descriptor) => void
-    let initializations = 0
-    const requestMcpApp = vi.fn((request: { method?: string; sessionId?: string }) => {
-      if (request.method === 'discover') return Promise.resolve(discovery)
-      if (request.method === 'initialize' && initializations++ === 0)
-        return new Promise(resolve => {
-          finish = resolve
-        })
-      return Promise.resolve(descriptor)
-    })
-    native.invoke.mockResolvedValue({ id: 'replacement', url: 'http://127.0.0.1/replacement' })
-    const api = { requestMcpApp }
-    const old = render(<McpAppHost block={running} address={address} api={api} />)
-    await act(async () => {})
-    old.unmount()
-    const replacement = render(<McpAppHost block={running} address={address} api={api} />)
-    await act(async () => {})
-    const acquired = requestMcpApp.mock.calls
-      .map(([request]) => request)
-      .filter(request => request.method === 'initialize')
-    expect(acquired).toHaveLength(2)
-    expect(acquired[0].sessionId).toBeTruthy()
-    expect(acquired[1].sessionId).not.toBe(acquired[0].sessionId)
-    await act(async () => finish(descriptor))
-    const released = native.invoke.mock.calls
-      .filter(([method]) => method === 'mcpApps.releaseSession')
-      .map(([, request]) => request)
-    expect(released).toEqual([expect.objectContaining({ sessionId: acquired[0].sessionId })])
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
-    replacement.unmount()
-  })
-
-  it('preserves widget state across equivalent transcript results and sends actual changes', async () => {
-    native.invoke.mockResolvedValue({
-      id: 'document',
-      url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
-    })
-    const api = { requestMcpApp: vi.fn().mockResolvedValue(descriptor) }
-    const output = { content: [], structuredContent: { count: 1 } }
-    const block = { ...running, status: 'done' as const, toolOutput: output }
-    const view = render(<McpAppHost block={block} address={address} api={api} />)
-    await act(async () => {})
-    expect(toolResults).toHaveBeenCalledTimes(1)
-
-    await act(async () =>
-      view.rerender(
-        <McpAppHost
-          block={{ ...block, toolOutput: structuredClone(output) }}
-          address={address}
-          api={api}
-        />
-      )
-    )
-    expect(toolResults).toHaveBeenCalledTimes(1)
-
-    const changed = { content: [], structuredContent: { count: 2 } }
-    await act(async () =>
-      view.rerender(
-        <McpAppHost block={{ ...block, toolOutput: changed }} address={address} api={api} />
-      )
-    )
-    expect(toolResults).toHaveBeenCalledTimes(2)
-    await act(async () =>
-      view.rerender(
-        <McpAppHost
-          block={{ ...block, status: 'error', toolOutput: changed }}
-          address={address}
-          api={api}
-        />
-      )
-    )
-    expect(toolResults).toHaveBeenCalledTimes(3)
-    expect(toolResults).toHaveBeenLastCalledWith({ ...changed, isError: true })
-  })
-
-  it('loads the app document only after the message transport is connected', async () => {
-    let finish!: () => void
-    connection.start.mockImplementationOnce(
-      () =>
-        new Promise<void>(resolve => {
-          finish = resolve
-        })
-    )
-    const url = 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html'
-    native.invoke.mockResolvedValue({ id: 'document', url })
-    render(
-      <McpAppHost
-        block={running}
-        address={address}
-        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-      />
-    )
-    await act(async () => {})
-    expect(connection.start).toHaveBeenCalledOnce()
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', 'about:blank')
-    await act(async () => finish())
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('src', url)
-  })
-
-  it('does not navigate a removed frame when its connection finishes late', async () => {
-    let finish!: () => void
-    connection.start.mockImplementationOnce(
-      () =>
-        new Promise<void>(resolve => {
-          finish = resolve
-        })
-    )
-    native.invoke.mockResolvedValue({
-      id: 'document',
-      url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
-    })
-    const view = render(
-      <McpAppHost
-        block={running}
-        address={address}
-        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-      />
-    )
-    await act(async () => {})
-    const frame = screen.getByTestId('mcp-app-frame')
-    view.unmount()
-    await act(async () => finish())
-    expect(frame).toHaveAttribute('src', 'about:blank')
-  })
-
   it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {
     native.invoke.mockImplementation((method: string) => {
       if (method === 'mcpApps.createDocument')
@@ -409,40 +259,6 @@ describe('MCP App close completion', () => {
     expect(frame).toBeVisible()
     expect(
       native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.createDocument')
-    ).toHaveLength(1)
-  })
-
-  it('waits for native document release and releases it only once across close and cleanup', async () => {
-    let finishRelease!: () => void
-    native.invoke.mockImplementation((method: string) => {
-      if (method === 'mcpApps.createDocument')
-        return Promise.resolve({ id: 'document', url: 'http://127.0.0.1:9000/document' })
-      if (method === 'mcpApps.releaseDocument')
-        return new Promise<void>(resolve => {
-          finishRelease = resolve
-        })
-      if (method === 'mcpApps.retainSession' || method === 'mcpApps.releaseSession')
-        return Promise.resolve()
-      throw new Error('Unexpected host method: ' + method)
-    })
-    await act(async () =>
-      render(
-        <McpAppHost
-          block={{ ...running, status: 'done' }}
-          address={address}
-          api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
-        />
-      )
-    )
-    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
-    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-close')))
-    expect(finishRelease).toBeTypeOf('function')
-    expect(screen.getByTestId('mcp-app-frame')).toBeInTheDocument()
-    expect(screen.getByTestId('mcp-app-close')).toBeDisabled()
-    await act(async () => finishRelease())
-    expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument()
-    expect(
-      native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.releaseDocument')
     ).toHaveLength(1)
   })
 

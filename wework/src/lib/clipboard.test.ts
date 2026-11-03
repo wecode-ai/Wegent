@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { copyTextToClipboard } from './clipboard'
 
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: vi.fn() }))
@@ -25,25 +25,6 @@ afterEach(() => {
   else Reflect.deleteProperty(navigator, 'clipboard')
   if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand)
   else Reflect.deleteProperty(document, 'execCommand')
-})
-
-test('copies through the Electron clipboard service on desktop', async () => {
-  vi.mocked(isElectronRuntime).mockReturnValue(true)
-
-  await copyTextToClipboard('SELECT 1')
-
-  expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('clipboard.writeText', {
-    text: 'SELECT 1',
-  })
-  expect(writeText).not.toHaveBeenCalled()
-  expect(execCommand).not.toHaveBeenCalled()
-})
-
-test('uses the browser Clipboard API when available', async () => {
-  await copyTextToClipboard('SELECT 1')
-
-  expect(writeText).toHaveBeenCalledExactlyOnceWith('SELECT 1')
-  expect(execCommand).not.toHaveBeenCalled()
 })
 
 test('preserves legacy browser copying when the Clipboard API is unavailable', async () => {

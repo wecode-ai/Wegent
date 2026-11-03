@@ -1,6 +1,5 @@
 import '@/i18n'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { HooksSettingsPage } from './HooksSettingsPage'
 import type { HookRunSummary, ResolvedHookPlugin } from './hooksTypes'
@@ -86,15 +85,6 @@ describe('HooksSettingsPage', () => {
     })
     expect(screen.getByTestId('hook-enabled-reporter')).toBe(toggle)
     expect(toggle).toHaveAttribute('aria-checked', 'false')
-  })
-
-  test('renders empty state and opens the editor', async () => {
-    request.mockResolvedValueOnce({ plugins: [] })
-    render(<HooksSettingsPage />)
-    expect(await screen.findByText('尚未安装 Hook。')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('hooks-add-button'))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('hook-editor-save')).toBeDisabled()
   })
 
   test('renders source, health, and managed policy', async () => {

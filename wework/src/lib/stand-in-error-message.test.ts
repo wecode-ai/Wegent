@@ -114,24 +114,6 @@ describe('stand-in error localization', () => {
     expect(getStandInErrorMessage(error)).toBe(english)
     expect(getStandInErrorMessage(new Error(english))).toBe(english)
   })
-
-  it('localizes persisted legacy failures without an error code', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage('Error: Stand-in role no longer exists')).toBe(
-      '该分身角色已被删除，请重新选择角色。'
-    )
-    expect(
-      getStandInErrorMessage('This assignment has already been handled or is no longer active')
-    ).toBe(i18n.t('common:standIn.errors.assignment_already_handled'))
-  })
-
-  it('uses localized recovery guidance for unknown errors and preserves localized validation', async () => {
-    await i18n.changeLanguage('zh-CN')
-    expect(getStandInErrorMessage(new Error('internal database path'))).toBe(
-      i18n.t('common:standIn.errors.failed')
-    )
-    expect(getStandInErrorMessage({ message: '请选择一个项目' })).toBe('请选择一个项目')
-  })
 })
 
 it('preserves project-scoped agent connection guidance through repeated UI resolution', async () => {

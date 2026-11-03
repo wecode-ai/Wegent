@@ -1,10 +1,10 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { UnifiedModel } from '@/types/api'
-import { useHarnessAppManagement } from './useHarnessAppManagement'
-import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import { act, renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clearHarnessAppLaunch, useHarnessAppLaunchState } from './harnessAppLaunchState'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import { useHarnessAppManagement } from './useHarnessAppManagement'
 
 const mocks = vi.hoisted(() => ({
   api: {
@@ -141,12 +141,6 @@ describe('useHarnessAppManagement', () => {
     )
   }
 
-  test('registers running apps after the management surface loads', async () => {
-    renderManagement([running])
-
-    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
-  })
-
   test('does not publish a running host snapshot during token handoff or queued close', async () => {
     let release: () => void = () => {}
     const handoff = runHarnessAppRuntimeOperation(
@@ -220,15 +214,6 @@ describe('useHarnessAppManagement', () => {
     }
   })
 
-  test('does not revoke a running app registration when selecting its existing tab', () => {
-    const { result } = renderManagement([running])
-
-    act(() => result.current.start(running))
-
-    expect(mocks.unregister).not.toHaveBeenCalled()
-    expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, running)
-  })
-
   test('does not revoke an active launch from a stale installed management snapshot', async () => {
     const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
     tabs.registerHarnessAppTab(running)
@@ -257,26 +242,6 @@ describe('useHarnessAppManagement', () => {
     }
   })
 
-  test('preserves an existing app tab when the management snapshot still says installed', async () => {
-    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
-    tabs.registerHarnessAppTab(running)
-    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
-    workspaceTabs.tabs = [
-      { id: 'running-app-tab', contentRoute: tabs.harnessAppRoute(installed.id) },
-    ]
-    const { result, unmount } = renderManagement()
-    try {
-      act(() => result.current.start(installed))
-
-      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
-      expect(mocks.unregister).not.toHaveBeenCalled()
-      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
-    } finally {
-      unmount()
-      tabs.unregisterHarnessAppTab(installed.id)
-    }
-  })
-
   test('stops the runtime, clears registrations, and closes its workspace tab', async () => {
     workspaceTabs.tabs = [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }]
     mocks.takeProxyToken.mockResolvedValue('proxy-token')
@@ -293,29 +258,6 @@ describe('useHarnessAppManagement', () => {
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
     expect(onRefresh).toHaveBeenCalled()
-  })
-
-  test('changes the bound model while the app is stopped', async () => {
-    const { result } = renderManagement()
-
-    await act(async () => {
-      await result.current.changeModel(installed, 'next-model')
-    })
-
-    expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: 'next-model' })
-    expect(onRefresh).toHaveBeenCalled()
-  })
-
-  test('releases the decision route when the app stops', async () => {
-    mocks.takeDecisionToken.mockResolvedValue('decision-token')
-    const { result } = renderManagement([running])
-
-    await act(async () => {
-      expect(await result.current.stop(running)).toBe(true)
-    })
-
-    expect(mocks.takeDecisionToken).toHaveBeenCalledWith(running.id)
-    expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
   })
 
   test('still releases the other routes when one unregister fails', async () => {

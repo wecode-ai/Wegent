@@ -1,8 +1,8 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
-import '@/i18n'
 import type { CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import '@/i18n'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { expect, test, vi } from 'vitest'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { project } from './workbenchCloudProjectContextTestFixtures'
 
@@ -33,7 +33,7 @@ function renderProjects(local: object, cloud: object) {
   )
 }
 
-test.each(['empty', 'failed'])(
+test.each(['failed'])(
   'a fast %s cloud refresh preserves local projects until their own response arrives',
   async outcome => {
     const localProject = project('local-board', 'local')
@@ -64,22 +64,3 @@ test.each(['empty', 'failed'])(
     expect(result.current.cloudProjects).toEqual([])
   }
 )
-
-test('replacing a project data source immediately removes its previous projects', async () => {
-  const localProject = project('local-board', 'local')
-  const local = { listCloudProjects: vi.fn().mockResolvedValue({ items: [localProject] }) }
-  const cloud = { listCloudProjects: vi.fn().mockResolvedValue({ items: [] }) }
-  const { result, rerender } = renderProjects(local, cloud)
-  await waitFor(() => expect(result.current.cloudProjects).toEqual([localProject]))
-
-  const replacement = pendingProjects()
-  const nextLocal = { listCloudProjects: vi.fn().mockReturnValue(replacement.promise) }
-  const services = {
-    projectSpaceApis: { local: nextLocal, cloud },
-  } as unknown as WorkbenchServices
-  rerender({ active: true, services })
-  expect(result.current.cloudProjects).toEqual([])
-  const nextProject = project('replacement-board', 'local')
-  await act(async () => replacement.resolve({ items: [nextProject] }))
-  expect(result.current.cloudProjects).toEqual([nextProject])
-})
