@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { createLocalCollaborationProject } from './workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  selectAgentEnvironment,
+  selectAgentFormTab,
+} from './workspace-flows.mjs'
 import { selectE2EModel } from './shared.mjs'
+import { waitForElementWidth } from './layout-metrics.mjs'
 import {
   assistantMessage,
   createSse,
@@ -83,7 +88,7 @@ export function createStandInCoordinatorVerification({
       )
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('click', '[data-testid="automation-save-button"]')
-      await control.command('waitFor', '[data-testid="automation-error"]', {
+      await control.command('waitFor', '[data-testid="automation-draft-error"]', {
         text: '请填写名称和任务说明',
       })
       await captureScreenshot(control, '22b-calendar-invalid-draft-preserved.png')
@@ -93,6 +98,10 @@ export function createStandInCoordinatorVerification({
       })
       assert.equal(
         await control.command('getElementCount', '[data-testid="automation-model-select"]'),
+        '0'
+      )
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="automation-draft-error"]'),
         '0'
       )
       await captureScreenshot(control, '23-schedule-inherits-stand-in.png')
@@ -181,12 +190,31 @@ export function createStandInCoordinatorVerification({
       )
       await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
       await control.command('click', '[data-testid="stand-in-primary-discard"]')
-      await control.command('click', '[data-testid="stand-in-overview-role-default"]')
+      const role = (await rpc('runtime.stand_in.personal.get', { userId: USER })).roles[0]
+      assert.ok(role, 'The preceding lifecycle leaves one recreated role')
+      await control.command('navigate', 'body', { value: '/settings/appearance' })
+      await control.command('waitFor', '[data-testid="appearance-settings-page"]')
+      await control.command('clickWhenEnabled', '[data-testid="appearance-mode-dark"]')
+      await control.command('waitFor', 'html[data-theme="dark"]')
+      await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command('click', `[data-testid="stand-in-overview-role-${role.id}"]`)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('click', '[data-testid="stand-in-connections-open"]')
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 960, height: 720 }),
+        })
+      )
+      const viewport = await waitForElementWidth(
+        control,
+        'body',
+        width => width <= 960 && width >= 800,
+        'compact calendar window'
+      )
+      await captureScreenshot(control, '24c1-role-calendar-dark-compact.png')
       await control.command('click', '[data-testid="create-automation-button"]')
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: '角色的安排草稿',
@@ -199,9 +227,23 @@ export function createStandInCoordinatorVerification({
         '角色的安排草稿'
       )
       await captureScreenshot(control, '24c-role-calendar-draft-kept.png')
+      const panel = JSON.parse(
+        await control.command('getElementMetrics', '[data-testid="automation-detail-panel"]')
+      )[0]
+      assert.ok(
+        panel.left >= viewport.left && panel.right <= viewport.right,
+        'The calendar editor fits the compact window horizontally'
+      )
       await control.command('click', '[data-testid="stand-in-close"]')
       await control.command('click', '[data-testid="automation-discard"]')
       await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify(previousWindowSize),
+      })
+      await control.command('navigate', 'body', { value: '/settings/appearance' })
+      await control.command('waitFor', '[data-testid="appearance-settings-page"]')
+      await control.command('clickWhenEnabled', '[data-testid="appearance-mode-light"]')
+      await control.command('waitFor', 'html[data-theme="light"]')
       await rpc('runtime.automations.delete', { automationId: schedule.id })
 
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -209,26 +251,73 @@ export function createStandInCoordinatorVerification({
       const projects = await rpc('projects.list', {})
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
-      const agent = await rpc('chat_agents.create', {
-        project_id: project.id,
-        agent: {
-          name: '项目负责人',
-          runtime: 'codex',
-          model: 'auto',
-          execution_policy: { mode: 'user_select' },
-          model_policy: { mode: 'user_select' },
-        },
+      // Create through the same UI producer as a user so the group contract is complete.
+      await control.command('clickWhenEnabled', '[data-testid="project-coordinator-open"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="project-coordinator-configure-group"]'
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="collaboration-group-open-create"]`
+      )
+      await control.command('fill', `${CONTENT} [data-testid="collaboration-group-name"]`, {
+        value: '交付小组',
       })
-      const group = {
-        id: 'coordinator-group',
-        name: '交付小组',
-        leader: { kind: 'agent', id: agent.id, name: agent.name },
-        members: [{ kind: 'agent', id: agent.id }],
-      }
-      await rpc('projects.update', {
-        project_id: project.id,
-        project: { version: project.version, collaboration_groups: [group] },
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="collaboration-group-create-add-members"]`
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-group-agent-action-create"]'
+      )
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]')
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        value: '项目负责人',
       })
+      await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', uiTimeoutMs)
+      await selectAgentEnvironment(
+        control,
+        'cloud-project-chat-agent-environment',
+        'policy:user_select',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-model"]:enabled')
+      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
+        value: 'user_select',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+        visible: false,
+      })
+      const agent = (await rpc('chat_agents.list', { project_id: project.id })).find(
+        row => row.display_name === '项目负责人' || row.name === '项目负责人'
+      )
+      assert.ok(agent, 'Creating an agent through the group editor persists the real agent')
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} button[data-testid="collaboration-group-leader-agent-${agent.id}"]`
+      )
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-group-leader"]`, {
+        text: '项目负责人',
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="collaboration-group-create"]`
+      )
+      await control.command('waitFor', `${CONTENT} [data-testid^="collaboration-group-detail-"]`, {
+        text: '交付小组',
+      })
+      const configured = (await rpc('projects.list', {})).find(row => row.id === project.id)
+      const group = configured.metadata.collaboration_groups.find(row => row.name === '交付小组')
+      assert.equal(group.leader.id, agent.id)
+      assert.deepEqual(group.stages, [])
+      await captureScreenshot(control, '25a-existing-leader-created-through-group-settings.png')
+      await control.command(
+        'clickWhenEnabled',
+        `${CONTENT} [data-testid="collaboration-tab-board"]`
+      )
       const other = await rpc('projects.create', { name: '隔离项目' })
       for (const [scope, content] of [
         [{ kind: 'personal' }, 'PERSONAL_MEMORY_MUST_NOT_LEAK'],
@@ -325,6 +414,15 @@ export function createStandInCoordinatorVerification({
         text: PROJECT,
       })
       await captureScreenshot(control, '29-back-to-project-work.png')
+      await control.command('click', '[data-testid="project-coordinator-open"]')
+      await control.command('waitFor', '[data-testid="project-coordinator-dialog"] h2', {
+        text: '交付小组 · 项目负责人',
+      })
+      await control.command('click', '[data-testid="project-coordinator-settings"]')
+      await control.command('waitFor', `[data-testid="collaboration-group-${group.id}"]`, {
+        text: '项目负责人',
+      })
+      await captureScreenshot(control, '30-existing-group-leader-settings.png')
     },
   }
 }

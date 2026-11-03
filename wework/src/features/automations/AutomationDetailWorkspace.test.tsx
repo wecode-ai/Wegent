@@ -15,6 +15,7 @@ function AutomationDetailHarness({
   localDeviceIds = ['local-device'],
   runs = [],
   onOpenRun,
+  validationError,
 }: {
   devices?: React.ComponentProps<typeof AutomationDetailWorkspace>['devices']
   initialDraft?: AutomationDraft
@@ -23,6 +24,7 @@ function AutomationDetailHarness({
   localDeviceIds?: string[]
   runs?: AutomationRun[]
   onOpenRun?(run: AutomationRun): void
+  validationError?: string
 }) {
   const [draft, setDraft] = useState<AutomationDraft>(initialDraft)
   return (
@@ -31,6 +33,7 @@ function AutomationDetailHarness({
       automation={automation}
       runs={runs}
       onOpenRun={onOpenRun}
+      validationError={validationError}
       locale="zh-CN"
       devices={devices}
       projects={[]}
@@ -91,6 +94,14 @@ const savedAutomation: Automation = {
 }
 
 describe('AutomationDetailWorkspace', () => {
+  test('shows invalid draft feedback beside the editor and focuses the missing instructions', () => {
+    const draft = { ...emptyAutomationDraft('local', 'local-device'), name: '每周回顾' }
+    render(<AutomationDetailHarness initialDraft={draft} validationError="请填写名称和任务说明" />)
+    expect(screen.getByTestId('automation-draft-error')).toHaveTextContent('请填写名称和任务说明')
+    expect(screen.getByTestId('automation-prompt-input')).toHaveFocus()
+    expect(screen.getByTestId('automation-prompt-input')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('automation-name-input')).toHaveAttribute('aria-invalid', 'false')
+  })
   test('opens the original work only when its execution has an exact task and device', async () => {
     const onOpenRun = vi.fn()
     const run = {

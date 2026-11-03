@@ -408,6 +408,21 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'project-coordination-07-explicit-takeover-confirmation.png')
       await control.command(
         'clickWhenEnabled',
+        '[data-testid="project-coordination-takeover-confirm-cancel-button"]'
+      )
+      await control.command('waitFor', '[data-testid="project-coordination-takeover-confirm"]', {
+        visible: false,
+      })
+      assert.deepEqual(
+        (await rpc(control, 'runtime.project_coordinator.binding.get', target)).binding,
+        before.binding,
+        'Cancelling takeover must preserve the existing effective binding'
+      )
+      await captureScreenshot(control, 'project-coordination-07b-cancel-preserves-binding.png')
+      await control.command('clickWhenEnabled', '[data-testid="project-coordination-enable"]')
+      await control.command('waitFor', '[data-testid="project-coordination-takeover-confirm"]')
+      await control.command(
+        'clickWhenEnabled',
         '[data-testid="project-coordination-takeover-confirm"]'
       )
       await control.command('waitFor', '[data-testid="project-coordination-check"]')
@@ -418,7 +433,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'project-coordination-08-single-active-binding.png')
       await control.command('clickWhenEnabled', '[data-testid="project-coordination-stop"]')
       await control.command('waitFor', '[data-testid="project-coordination-enable"]', {
-        text: '启用',
+        text: '让负责人自动处理',
       })
       assert.equal(
         (await rpc(control, 'runtime.project_coordinator.binding.get', target)).binding.enabled,

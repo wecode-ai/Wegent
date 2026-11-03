@@ -268,6 +268,15 @@ export function ProcessExplorerView({
         </div>
       ) : null}
 
+      {snapshot?.collectingSystemProcesses ? (
+        <div
+          data-testid="process-explorer-collecting"
+          className="border-b border-border px-3 py-1.5 text-xs text-text-secondary"
+        >
+          {t('process_explorer.collecting_system_processes')}
+        </div>
+      ) : null}
+
       {degradedReasons.length > 0 ? (
         <div
           data-testid="process-explorer-degraded"

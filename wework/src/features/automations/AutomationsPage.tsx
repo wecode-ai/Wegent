@@ -132,6 +132,7 @@ export function AutomationsPage({
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
   const [runningId, setRunningId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [draftError, setDraftError] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -316,6 +317,7 @@ export function AutomationsPage({
     })
 
   const updateDraft = <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => {
+    if (key === 'name' || key === 'prompt') setDraftError(null)
     setDraft(current => (current ? { ...current, [key]: value } : current))
     setDirty(true)
   }
@@ -348,9 +350,6 @@ export function AutomationsPage({
 
   const buildMutation = (): AutomationMutation => {
     if (!draft) throw new Error('Automation draft is missing')
-    if (!draft.name.trim() || !draft.prompt.trim()) {
-      throw new Error(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
-    }
     const initialGoal = initialGoalFromAutomationDraft(draft)
     if (draft.conversationMode === 'continue_thread' && !draft.continuationAddress) {
       throw new Error(t('workbench.automation_target_task_required', '请选择一个可用的已固定任务'))
@@ -418,7 +417,12 @@ export function AutomationsPage({
   }
 
   const saveAutomation = async () => {
-    if (!automationApi) return
+    if (!automationApi || !draft) return
+    if (!draft.name.trim() || !draft.prompt.trim()) {
+      setDraftError(t('workbench.automation_name_prompt_required', '请填写名称和任务说明'))
+      return
+    }
+    setDraftError(null)
     setSaving(true)
     try {
       const mutation = buildMutation()
@@ -544,6 +548,7 @@ export function AutomationsPage({
         onConfirm={() => {
           const action = pendingNavigation
           setPendingNavigation(null)
+          setDraftError(null)
           setDirty(false)
           setDraft(editing ? automationDraftFromAutomation(editing, state.runtimeWork) : null)
           if (!editing) setSelectedAutomationId(null)
@@ -665,6 +670,7 @@ export function AutomationsPage({
             />
             {draft ? (
               <AutomationDetailWorkspace
+                validationError={draftError}
                 draft={draft}
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
                 automation={editing}

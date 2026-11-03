@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ElectronProcessMetric } from '../core/build-snapshot.js'
 import { ProcessExplorerService } from './service.js'
+import type { SystemProcessTableResult } from './system-process-table.js'
 
 function metric(pid: number, type: string): ElectronProcessMetric {
   return {
@@ -35,6 +36,78 @@ function createService(
 }
 
 describe('ProcessExplorerService', () => {
+  it('shows authoritative Electron metrics while external enumeration is pending', async () => {
+    const read = vi.fn(() => new Promise<never>(() => undefined))
+    const { service, advance } = createService({ systemTable: { read } })
+    const snapshot = await service.snapshot()
+    expect(snapshot.processes.map(row => row.pid)).toEqual([10, 20, 30])
+    expect(snapshot.collectingSystemProcesses).toBe(true)
+    advance(2000)
+    expect((await service.snapshot()).processes).toHaveLength(3)
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('supplements metrics with a completed external enumeration', async () => {
+    let complete!: (value: SystemProcessTableResult) => void
+    const { service } = createService({
+      systemTable: {
+        read: () =>
+          new Promise(resolve => {
+            complete = resolve
+          }),
+      },
+    })
+    expect((await service.snapshot()).collectingSystemProcesses).toBe(true)
+    complete({
+      processes: [
+        {
+          pid: 40,
+          parentPid: 10,
+          name: 'Child',
+          command: 'child',
+          cpuPercent: 1,
+          memoryBytes: 4096,
+          startedAt: 1000,
+          identity: 'created',
+        },
+      ],
+      degraded: [],
+    })
+    await vi.waitFor(async () => {
+      const snapshot = await service.snapshot()
+      expect(snapshot.collectingSystemProcesses).toBe(false)
+      expect(snapshot.processes.find(row => row.pid === 40)).toMatchObject({
+        source: 'system',
+        parentPid: 10,
+        name: 'Child',
+        memoryBytes: 4096,
+      })
+    })
+  })
+
+  it('keeps the shared CPU measurement window when external enumeration completes', async () => {
+    let complete!: (value: { processes: []; degraded: [] }) => void
+    const { service, metrics, advance } = createService({
+      systemTable: {
+        read: () =>
+          new Promise(resolve => {
+            complete = resolve
+          }),
+      },
+    })
+    await service.snapshot()
+    advance(100)
+    complete({ processes: [], degraded: [] })
+    await vi.waitFor(async () => {
+      expect((await service.snapshot()).collectingSystemProcesses).toBe(false)
+    })
+    advance(100)
+    await service.snapshot()
+    expect(metrics).toHaveBeenCalledTimes(1)
+    advance(1000)
+    await service.snapshot()
+    expect(metrics).toHaveBeenCalledTimes(2)
+  })
   it('shares one metrics measurement window across consumers', async () => {
     const { service, metrics, advance } = createService()
     const first = await service.snapshot()
@@ -79,10 +152,11 @@ describe('ProcessExplorerService', () => {
         }),
       },
     })
-    const snapshot = await service.snapshot()
-    expect(snapshot.degraded).toEqual([
-      { code: 'system-process-table-unavailable', detail: 'unsupported' },
-    ])
+    await vi.waitFor(async () => {
+      expect((await service.snapshot()).degraded).toEqual([
+        { code: 'system-process-table-unavailable', detail: 'unsupported' },
+      ])
+    })
   })
 
   it('times out a hung system table read instead of wedging the service', async () => {
@@ -94,7 +168,8 @@ describe('ProcessExplorerService', () => {
       })
       const pending = service.snapshot()
       await vi.advanceTimersByTimeAsync(50)
-      const snapshot = await pending
+      await pending
+      const snapshot = await service.snapshot()
       expect(snapshot.degraded).toEqual([
         { code: 'system-process-table-failed', detail: 'System process table read timed out' },
       ])
@@ -119,7 +194,8 @@ describe('ProcessExplorerService', () => {
 
       const second = service.snapshot()
       await vi.advanceTimersByTimeAsync(50)
-      const snapshot = await second
+      await second
+      const snapshot = await service.snapshot()
 
       expect(read).toHaveBeenCalledTimes(1)
       expect(snapshot.degraded).toEqual([

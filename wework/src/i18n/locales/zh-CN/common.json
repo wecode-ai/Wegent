@@ -19,6 +19,7 @@
     "home": "首页"
   },
   "process_explorer": {
+    "collecting_system_processes": "正在收集更多进程信息…",
     "title": "进程查看器",
     "refresh": "刷新",
     "filter_placeholder": "按名称、PID 或启动详情筛选",
@@ -5656,7 +5657,9 @@
       "schedule_inherits_settings": "到时沿用分身当前的设备、模型和工作目录设置。",
       "calendar_help": "给分身安排一次或周期性的工作。到时间后开始处理，执行结果回到原工作。",
       "calendar_create": "安排工作",
-      "calendar_empty": "还没有安排。可以创建一次或周期性的工作。"
+      "calendar_empty": "还没有安排。可以创建一次或周期性的工作。",
+      "calendar_saved_empty": "尚无已保存的安排。",
+      "calendar_no_results": "没有符合条件的安排。"
     },
     "memory": {
       "title": "记忆",

@@ -19,6 +19,7 @@
     "home": "Home"
   },
   "process_explorer": {
+    "collecting_system_processes": "Collecting additional process information…",
     "title": "Process Explorer",
     "refresh": "Refresh",
     "filter_placeholder": "Filter by name, PID, or launch details",
@@ -5661,7 +5662,9 @@
       "schedule_inherits_settings": "Uses the stand-in’s current device, model, and workspace settings when due.",
       "calendar_help": "Arrange one-time or recurring work for your stand-in. Work starts when due, with results in its original conversation.",
       "calendar_create": "Arrange work",
-      "calendar_empty": "No work arranged yet. Create one-time or recurring work."
+      "calendar_empty": "No work arranged yet. Create one-time or recurring work.",
+      "calendar_saved_empty": "No saved arrangements yet.",
+      "calendar_no_results": "No matching arrangements."
     },
     "memory": {
       "title": "Memory",

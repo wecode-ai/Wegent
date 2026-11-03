@@ -177,12 +177,14 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid^="automation-run-status-"]', {
         text: '已完成',
       })
+      await control.command('scrollIntoView', '[data-testid^="automation-run-status-"]')
       await captureScreenshot(control, 'arrangements-02-once-recovered-in-original-history.png')
       await control.command('click', '[data-testid="automation-detail-close"]')
       await control.command('click', '[data-testid="automation-open-arrangement-recurring"]')
       await control.command('waitFor', '[data-testid^="automation-run-status-"]', {
         text: '已完成',
       })
+      await control.command('scrollIntoView', '[data-testid^="automation-run-status-"]')
       await captureScreenshot(
         control,
         'arrangements-03-recurring-recovered-in-original-history.png'
@@ -217,6 +219,7 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid^="automation-run-status-"]', {
         text: '已完成',
       })
+      await control.command('scrollIntoView', '[data-testid^="automation-run-status-"]')
       await captureScreenshot(
         control,
         'arrangements-04-original-receipt-no-duplicate-after-restart.png'

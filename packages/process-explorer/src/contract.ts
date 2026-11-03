@@ -66,6 +66,8 @@ export interface ProcessDegradation {
 }
 
 export interface ProcessSnapshot {
+  /** Electron metrics are available while the first external enumeration runs. */
+  collectingSystemProcesses?: boolean
   capturedAt: number
   platform: string
   applicationPid: number

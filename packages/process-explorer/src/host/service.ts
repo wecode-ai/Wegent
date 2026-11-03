@@ -44,6 +44,10 @@ export class ProcessExplorerService implements ProcessExplorerClient {
   private lastCollectedAt = 0
   private inFlight: Promise<ProcessSnapshot> | null = null
   private pendingSystemTableRead: Promise<SystemProcessTableResult> | null = null
+  private systemTableResult: SystemProcessTableResult | null = null
+  private systemTableRefresh: Promise<void> | null = null
+  private cachedMetrics: readonly ElectronProcessMetric[] | null = null
+  private lastMetricsAt = 0
 
   constructor(private readonly options: ProcessExplorerServiceOptions) {}
 
@@ -68,10 +72,13 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   private async collectNow(now: number): Promise<ProcessSnapshot> {
     const systemTable = this.options.systemTable ?? null
-    const [system, metrics] = await Promise.all([
-      this.readSystemTable(systemTable, this.options.systemTableTimeoutMs ?? 10_000),
-      Promise.resolve().then(() => this.options.metrics()),
-    ])
+    this.refreshSystemTable(systemTable)
+    const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
+    if (!this.cachedMetrics || now - this.lastMetricsAt >= minimumInterval) {
+      this.cachedMetrics = this.options.metrics()
+      this.lastMetricsAt = now
+    }
+    const metrics = this.cachedMetrics
 
     const windows = readOptional(this.options.windows, 'renderer-labels-failed')
     const hostProcesses = await readOptionalAsync(
@@ -79,6 +86,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       'host-process-provider-failed'
     )
 
+    const system = this.systemTableResult ?? { processes: [], degraded: [] }
     const snapshot = buildProcessSnapshot({
       capturedAt: now,
       platform: this.options.platform ?? process.platform,
@@ -90,6 +98,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       hostProcesses: hostProcesses.values,
       degraded: [...system.degraded, ...windows.degraded, ...hostProcesses.degraded],
     })
+    snapshot.collectingSystemProcesses = Boolean(systemTable && !this.systemTableResult)
     this.cached = snapshot
     this.lastCollectedAt = now
     return snapshot
@@ -97,6 +106,23 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   private currentTime(): number {
     return (this.options.now ?? Date.now)()
+  }
+
+  private refreshSystemTable(systemTable: SystemProcessTable | null): void {
+    if (!systemTable || this.systemTableRefresh) return
+    // Electron owns its metrics. External process enumeration supplements them
+    // asynchronously and must not hide the application's available processes.
+    this.systemTableRefresh = this.readSystemTable(
+      systemTable,
+      this.options.systemTableTimeoutMs ?? 10_000
+    )
+      .then(result => {
+        this.systemTableResult = result
+        this.lastCollectedAt = Number.NEGATIVE_INFINITY
+      })
+      .finally(() => {
+        this.systemTableRefresh = null
+      })
   }
 
   private async readSystemTable(

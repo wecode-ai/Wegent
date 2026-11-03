@@ -92,8 +92,12 @@ export function AutomationListPane({
             onClick={() => onCreate()}
             className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-text-primary px-3 text-sm font-medium text-background transition-opacity hover:opacity-85"
           >
-            {t('workbench.automation_create', '创建')}
-            <ChevronDown className="h-3.5 w-3.5" />
+            {t(calendar ? 'standIn.workspace.calendar_create' : 'workbench.automation_create')}
+            {calendar ? (
+              <Plus aria-hidden="true" className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
           </button>
         </div>
         <div className="relative mb-5 mt-5">
@@ -125,7 +129,13 @@ export function AutomationListPane({
           </section>
         ) : (
           <p className="py-12 text-center text-sm text-text-secondary">
-            {t('workbench.automations_no_results', '没有匹配的自动化')}
+            {t(
+              calendar
+                ? query || statusFilter !== 'all'
+                  ? 'standIn.workspace.calendar_no_results'
+                  : 'standIn.workspace.calendar_saved_empty'
+                : 'workbench.automations_no_results'
+            )}
           </p>
         )}
         {!calendar && statusFilter === 'all' && !query && allAutomations.length > 0 ? (
