@@ -1843,7 +1843,7 @@ async function readPluginDetail(
 ): Promise<CodexPluginDetail> {
   const localMarketplace = isLocalMarketplacePath(marketplace.path)
   const response = await codexAppServerRequest<{ plugin: CodexPluginDetail }>('plugin/read', {
-    marketplacePath: localMarketplace ? marketplace.path : null,
+    marketplacePath: localMarketplace ? codexMarketplaceManifestSource(marketplace.path) : null,
     remoteMarketplaceName: localMarketplace ? null : marketplace.id,
     pluginName,
   })

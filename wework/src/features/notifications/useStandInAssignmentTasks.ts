@@ -41,8 +41,8 @@ export function useStandInAssignmentTasks(
   const visibleKeys = JSON.stringify(source?.items.map(item => item.key) ?? [])
   // Inbox and sidebar refreshes revalidate this scope without hiding resolved history.
   const scope = useMemo(
-    () => ({ accountKey, userId, assignments, devices }),
-    [accountKey, userId, assignments, devices]
+    () => ({ accountKey, userId, api, identity, assignments, devices }),
+    [accountKey, userId, api, identity, assignments, devices]
   )
   const [loaded, setLoaded] = useState<{
     scope: typeof scope

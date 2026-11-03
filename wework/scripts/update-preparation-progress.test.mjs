@@ -21,6 +21,13 @@ test('allows independent bounded host, extraction, and runtime preparation', asy
   assert.equal(phases.length, 0)
 })
 
+test('observes the catalog refresh before host transfer without treating it as a regression', async () => {
+  const phases = ['preparing', 'preparing', 'host', 'extracting', 'runtime', 'ready']
+  const progress = await waitForUpdatePreparation(async () => ({ phase: phases.shift() }), clock())
+  assert.equal(progress.phase, 'ready')
+  assert.equal(phases.length, 0)
+})
+
 test('fails a stalled phase without restarting the preparation', async () => {
   let reads = 0
   await assert.rejects(

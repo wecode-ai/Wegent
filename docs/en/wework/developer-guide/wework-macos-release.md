@@ -269,6 +269,18 @@ start successfully. A failed startup, or a process exit before confirmation,
 rolls back to the previous set on the next launch. Packaged resources remain
 the final fallback.
 
+Before a new download or a failed-download retry, the current updater refreshes
+the selected channel's verified upgrade catalog and recalculates the next hop
+and complete path before preparing the target in an isolated slot. A failed
+refresh remains an error and never downloads the old target. A channel with no
+newer release clears the obsolete offer; a missing verified path remains an
+error. Download progress includes the actual target version, path, and release
+notes. The UI uses them for restart confirmation; installation validates that
+version and locks the target until it finishes. Prepared packages remain reusable
+when their identity and source configuration still match. Offers that
+have not been downloaded still refresh on the existing check schedule so an old
+notification cannot permanently suppress automatic checks.
+
 The main process owns one application-update task. Automatic downloads, manual
 downloads, and repeated checks for the same version and channel share that
 task, and a check cannot clear an active download. Missing components download

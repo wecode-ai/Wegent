@@ -6,6 +6,7 @@ import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
+import type { BuiltinReporterOptions } from 'vitest/reporters'
 import { excalidrawAssets } from './vite/excalidrawAssets'
 import {
   parseTelemetryIdentity,
@@ -275,6 +276,33 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    ...(process.env.WEWORK_TEST_REPORT_FILE || process.env.WEWORK_TEST_TIMING_FILE
+      ? {
+          reporters: [
+            'default',
+            ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
+            ...(process.env.WEWORK_TEST_REPORT_FILE
+              ? [
+                  [
+                    'junit',
+                    {
+                      outputFile: process.env.WEWORK_TEST_REPORT_FILE,
+                      includeConsoleOutput: false,
+                    },
+                  ] satisfies ['junit', Partial<BuiltinReporterOptions['junit']>],
+                ]
+              : []),
+            ...(process.env.WEWORK_TEST_TIMING_FILE
+              ? [
+                  ['json', { outputFile: process.env.WEWORK_TEST_TIMING_FILE }] satisfies [
+                    'json',
+                    Partial<BuiltinReporterOptions['json']>,
+                  ],
+                ]
+              : []),
+          ],
+        }
+      : {}),
     server: {
       deps: {
         inline: [/@file-viewer/, /@panzoom/, /mermaid/],
