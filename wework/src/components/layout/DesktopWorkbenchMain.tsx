@@ -20,6 +20,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -37,6 +38,7 @@ import {
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
@@ -288,7 +290,12 @@ import type {
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
-import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import {
+  openFeedbackDialog,
+  useRegisteredFeedbackDialogContext,
+  withLatestFeedbackDialogContext,
+  type FeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import {
   WORKSPACE_TABS_CLOSED_EVENT,
@@ -736,6 +743,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
+  const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const isDesktop = isDesktopRuntime()
   const splitGroups = props.splitGroups
   const splitMode = splitGroups?.splitMode ?? false
@@ -1060,6 +1068,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
+      showWorkbenchBackground={hasMainBackground}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
       activeTestId={props.visible === false ? null : 'desktop-workbench-main'}
@@ -1346,6 +1355,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const runtimeTaskDescription =
     paneSession.messages.find(message => message.role === 'user')?.content ?? ''
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
+  const feedbackDialogRequest: FeedbackDialogRequest = {
+    hasActiveTask: Boolean(currentRuntimeTask),
+    deviceId: currentRuntimeTask?.deviceId ?? null,
+    taskId: currentRuntimeTask?.taskId ?? null,
+    feedbackApi: services?.feedbackApi,
+    getTaskContext: async () => {
+      if (!currentRuntimeTask) {
+        return {
+          task: { state: 'new-conversation' },
+          runtime: {
+            status: paneSession.status,
+            goal: paneSession.goal,
+          },
+        }
+      }
+      const messages = await paneSession.loadFullTranscriptForExport()
+      return {
+        task: {
+          taskId: currentRuntimeTask.taskId ?? null,
+          deviceId: currentRuntimeTask.deviceId ?? null,
+          threadId: currentRuntimeTask.threadId ?? null,
+          workspacePath: currentRuntimeTask.workspacePath ?? null,
+          title: runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+          status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+        },
+        conversation: {
+          messages,
+          queuedMessages: paneSession.queuedMessages,
+          guidanceMessages: paneSession.guidanceMessages,
+          turnNavigation: paneSession.turnNavigation,
+        },
+        runtime: {
+          status: paneSession.status,
+          goal: paneSession.goal,
+          taskPlan: paneSession.taskPlan,
+          subagentStatuses: paneSession.subagentStatuses,
+        },
+      }
+    },
+  }
+  const feedbackDialogRequestRef = useRef(feedbackDialogRequest)
+  useLayoutEffect(() => {
+    // The request is rebuilt from current pane state on every render.
+    feedbackDialogRequestRef.current = feedbackDialogRequest
+  })
+  useRegisteredFeedbackDialogContext(workbenchVisible && paneActive, feedbackDialogRequest)
   const {
     activeDeliveryItem,
     associateRuntimeTaskWithExistingItem,
@@ -1932,7 +1987,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
-  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
@@ -2983,6 +3037,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneSession.answeredRequestUserInputIds
   )
   useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
+  const interactions = useRuntimeInteractions()
+  const interactionViewOwner = useId()
+  const registerInteractionView = interactions?.registerView
+  const pendingRequestUserInputKey = requestUserInputPayloadKey(pendingRequestUserInput)
+  const viewedInteraction = interactions?.pending
+    .filter(
+      item =>
+        pendingRequestUserInputKey !== null &&
+        item.task.address.deviceId === currentRuntimeTask?.deviceId &&
+        item.task.address.taskId === currentRuntimeTask?.taskId &&
+        (requestUserInputPayloadKey(item.payload) === pendingRequestUserInputKey ||
+          (pendingRequestUserInput &&
+            !pendingRequestUserInput.interactionScope &&
+            (item.payload.requestId ??
+              item.payload.request_id ??
+              item.payload.itemId ??
+              item.payload.item_id) ===
+              (pendingRequestUserInput.requestId ??
+                pendingRequestUserInput.request_id ??
+                pendingRequestUserInput.itemId ??
+                pendingRequestUserInput.item_id)))
+    )
+    .at(-1)
+  useEffect(() => {
+    registerInteractionView?.(
+      interactionViewOwner,
+      paneActive && workbenchVisible ? (viewedInteraction?.id ?? null) : null
+    )
+    return () => registerInteractionView?.(interactionViewOwner, null)
+  }, [
+    interactionViewOwner,
+    paneActive,
+    registerInteractionView,
+    viewedInteraction?.id,
+    workbenchVisible,
+  ])
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]
@@ -4388,6 +4478,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
         const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
           workspaceTargets: fileWorkspaceTargets,
+          pathStyleSource: workspaceTarget?.path,
         })
         let localTarget =
           attachmentTarget ??
@@ -4413,6 +4504,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           localTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
             workspaceTargets: attachmentTarget ? [] : fileWorkspaceTargets,
             isDirectory: true,
+            pathStyleSource: workspaceTarget?.path,
           })
         }
         setOpenFileRequest(current => ({
@@ -4441,6 +4533,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       effectiveWorkspaceTarget,
       fileWorkspaceTargets,
       getDeviceHomeDirectory,
+      workspaceTarget,
       openRightPanelTab,
       setOpenFileRequest,
       setFileOpenError,
@@ -4899,7 +4992,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
         aria-label={t('workbench.feedback_button')}
-        onClick={() => setFeedbackDialogOpen(true)}
+        onClick={() =>
+          openFeedbackDialog(
+            withLatestFeedbackDialogContext(
+              feedbackDialogRequest,
+              () => feedbackDialogRequestRef.current
+            )
+          )
+        }
       >
         <MessageSquareWarning />
       </button>
@@ -5642,6 +5742,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
+                  showWorkbenchBackground={hasMainBackground}
                   onOpenProjectSelector={anchorElement => {
                     setProjectMenuAnchorElement(anchorElement)
                     setProjectMenuOpenSignal(signal => signal + 1)
@@ -6049,47 +6150,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <ContinueInImDialog
           key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
           {...continueInIm.dialog}
-        />
-        <TaskFeedbackDialog
-          open={feedbackDialogOpen}
-          hasActiveTask={Boolean(currentRuntimeTask)}
-          feedbackApi={services?.feedbackApi}
-          onClose={() => setFeedbackDialogOpen(false)}
-          getTaskContext={async () => {
-            if (!currentRuntimeTask) {
-              return {
-                task: { state: 'new-conversation' },
-                runtime: {
-                  status: paneSession.status,
-                  goal: paneSession.goal,
-                },
-              }
-            }
-            const messages = await paneSession.loadFullTranscriptForExport()
-            return {
-              task: {
-                taskId: currentRuntimeTask?.taskId ?? null,
-                deviceId: currentRuntimeTask?.deviceId ?? null,
-                threadId: currentRuntimeTask?.threadId ?? null,
-                workspacePath: currentRuntimeTask?.workspacePath ?? null,
-                title:
-                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
-                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
-              },
-              conversation: {
-                messages,
-                queuedMessages: paneSession.queuedMessages,
-                guidanceMessages: paneSession.guidanceMessages,
-                turnNavigation: paneSession.turnNavigation,
-              },
-              runtime: {
-                status: paneSession.status,
-                goal: paneSession.goal,
-                taskPlan: paneSession.taskPlan,
-                subagentStatuses: paneSession.subagentStatuses,
-              },
-            }
-          }}
         />
         <TaskSupervisorControl
           open={supervisorDialogOpen && !issueExecutionReadOnly}

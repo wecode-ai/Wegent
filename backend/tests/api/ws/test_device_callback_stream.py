@@ -189,6 +189,10 @@ async def test_device_follow_up_stream_returns_text_and_completes(
     )
     monkeypatch.setattr(chat_session, "setup_chat_session", lambda *a, **kw: setup)
     monkeypatch.setattr(
+        "app.services.device_service.device_service.get_device_by_device_id",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
         unified, "build_execution_request", AsyncMock(return_value=execution_request)
     )
 

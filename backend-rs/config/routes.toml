@@ -327,6 +327,9 @@ methods = ["GET"]
 path = "/api/plugins/marketplace"
 [[routes]]
 methods = ["GET"]
+path = "/api/plugins/marketplace/:plugin_id/owner"
+[[routes]]
+methods = ["GET"]
 path = "/api/models/unified"
 [[routes]]
 methods = ["GET", "POST"]
@@ -414,6 +417,15 @@ path = "/api/resource-library/listings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/resource-library/listings/:listing_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-templates"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-templates/:template_id"
+[[routes]]
+methods = ["PUT"]
+path = "/api/v1/collaboration-templates/:name"
 [[routes]]
 methods = ["GET"]
 path = "/api/resource-library/tags"
@@ -980,10 +992,8 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses/:response_id/cancel" # app/api/endpoints/openapi_responses.py:1849
-# `POST /api/v1/responses` (`openapi_responses.py:440 create_response`) is
-# active in Rust (`responses::create::handler`): the created order/team/bot
-# resolution, `setup_chat_session`, the execution-request builder, and the
-# dispatch seam (executor `queued`, chat-shell sync 500, SSE framing).
+# `POST /api/v1/responses` is Python-owned; the gateway forwards creation
+# requests to `openapi_responses.create_response`.
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses" # app/api/endpoints/openapi_responses.py:440
@@ -1060,11 +1070,7 @@ path = "/api/v1/loop-items/:item_id/assignments/:assignment_id/receipt"
 methods = ["PATCH"]
 path = "/api/v1/deliveries/:delivery_id"
 
-# Responses creation and executor callback migration.
-[[routes]]
-methods = ["POST"]
-path = "/api/v1/responses"
-
+# Executor callback migration.
 [[routes]]
 methods = ["POST"]
 path = "/api/internal/callback"

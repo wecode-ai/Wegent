@@ -9,8 +9,9 @@ export async function openProjectBoard(control, scoped, project) {
     control,
     scoped(`[data-testid="collaboration-workspace-toggle-${project.workspace_id}"]`)
   )
+  // Restored expansion does not prove that the refreshed project rows are mounted.
   await control.command(
-    'click',
+    'clickWhenEnabled',
     scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
   )
   await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {

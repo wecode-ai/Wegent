@@ -55,6 +55,63 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test.each([false, true])(
+    'blocks examples with the primary action and restores them (callback=%s)',
+    withCallback => {
+      const plugin = createDetailPlugin()
+      plugin.raw.spec.interface = { defaultPrompt: 'Review this change' }
+      const onToggle = vi.fn()
+      const onPromptSelect = vi.fn()
+      const view = (disabled: boolean) => (
+        <PluginDetailView
+          plugin={plugin}
+          onBack={vi.fn()}
+          onToggle={onToggle}
+          onComponentToggle={vi.fn()}
+          onUninstall={vi.fn()}
+          primaryActionDisabled={disabled}
+          onPromptSelect={withCallback ? onPromptSelect : undefined}
+        />
+      )
+      const { rerender } = render(view(true))
+      const example = screen.getByTestId('plugin-prompt-0')
+      expect(example).toBeDisabled()
+      fireEvent.click(example)
+      expect(onPromptSelect).not.toHaveBeenCalled()
+      expect(onToggle).not.toHaveBeenCalled()
+      rerender(view(false))
+      expect(example).not.toBeDisabled()
+      fireEvent.click(example)
+      expect(withCallback ? onPromptSelect : onToggle).toHaveBeenCalledOnce()
+    }
+  )
+
+  test('shows the new version action only to a personal owner and reflects preparation', () => {
+    const onSubmit = vi.fn()
+    const view = (accessRole: 'owner' | 'recipient', busy = false) => (
+      <PluginDetailView
+        plugin={createDetailPlugin()}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        accessRole={accessRole}
+        pluginVisibility="personal"
+        versionSubmission={{ currentVersion: '1.1.0', nextVersion: '1.2.0', busy, onSubmit }}
+      />
+    )
+    const { rerender } = render(view('owner'))
+    expect(screen.getByTestId('plugin-version-submit-notice')).toHaveTextContent(
+      '本地 v1.2.0 · 已分享 v1.1.0'
+    )
+    fireEvent.click(screen.getByTestId('plugin-version-submit-open'))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    rerender(view('owner', true))
+    expect(screen.getByTestId('plugin-version-submit-open')).toBeDisabled()
+    rerender(view('recipient'))
+    expect(screen.queryByTestId('plugin-version-submit-notice')).not.toBeInTheDocument()
+  })
+
   test.each([
     { readyToTry: false, updateAvailable: false },
     { readyToTry: true, updateAvailable: true },

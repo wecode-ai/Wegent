@@ -19,6 +19,7 @@ pub(crate) mod personal_marketplace_lock;
 pub(crate) mod plugin_cache;
 pub mod plugin_catalog;
 pub mod plugin_creator;
+pub mod plugin_images;
 pub mod plugin_import;
 pub mod plugin_recovery;
 pub mod pty;

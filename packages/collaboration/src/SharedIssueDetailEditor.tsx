@@ -612,6 +612,8 @@ export interface TodoEditorCreateProps {
   initialParent: CloudLoopItem | null;
   initialStatus: CloudLoopItem["status"];
   initialTitle?: string;
+  initialTags?: string[];
+  draftScope?: string;
   onCreated: (item: CloudLoopItem) => void | Promise<void>;
   onCreateError?: (
     error: unknown,
@@ -718,7 +720,10 @@ export function TodoEditor(props: TodoEditorProps) {
       }));
 
   const draftKey = createProps
-    ? todoDraftKey(createProps.project.id, createProps.initialStatus)
+    ? todoDraftKey(
+        createProps.project.id,
+        createProps.draftScope ?? createProps.initialStatus,
+      )
     : null;
   const [draft] = useState(() => (draftKey ? readTodoDraft(draftKey) : null));
   const [editingContent, setEditingContent] = useState(!readFirst);
@@ -739,7 +744,7 @@ export function TodoEditor(props: TodoEditorProps) {
       startDate: draft?.startDate ?? "",
       dueDate: draft?.dueDate ?? "",
       assigneeTarget: draft?.assigneeTarget ?? "",
-      tags: draft?.tags ?? [],
+      tags: draft?.tags ?? createProps?.initialTags ?? [],
     },
     normalizeDescription: extensions?.normalizeDescription,
     startDateFromSource:

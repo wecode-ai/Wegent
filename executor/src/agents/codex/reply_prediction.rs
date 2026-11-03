@@ -30,6 +30,21 @@ fn prediction_turn_params(thread_id: &str) -> Value {
     })
 }
 
+fn prediction_parent_resume_params(
+    thread_id: &str,
+    request: &ExecutionRequest,
+    launch: Option<&CodexLaunchConfig>,
+) -> Value {
+    let mut config = task_identity_thread_config(request);
+    if let Some(launch) = launch {
+        let mut params = Map::new();
+        append_thread_launch_params(&mut params, launch);
+        // MCP endpoints and authorization are task-scoped, not restored by native history.
+        config.extend(mcp_reload::mcp_thread_configuration(&Value::Object(params)));
+    }
+    json!({"threadId": thread_id, "excludeTurns": true, "config": config})
+}
+
 fn prediction_turn_is_eligible(turn: Option<&Value>, expected_turn_id: Option<&str>) -> bool {
     let Some(turn) = turn else { return false };
     turn.get("status").and_then(Value::as_str) == Some("completed")
@@ -74,11 +89,7 @@ impl CodexAppServerClient {
                 "thread/resume",
                 // Prediction may cold-load the parent before a regular turn or history read.
                 // Restore task shell identity without overriding the parent's model/settings.
-                json!({
-                    "threadId": source_thread_id,
-                    "excludeTurns": true,
-                    "config": task_identity_thread_config(request),
-                }),
+                prediction_parent_resume_params(source_thread_id, request, launch_config),
             )
             .await?;
         if parent
@@ -224,6 +235,31 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::agents::codex::tests::environment::LaunchEnvironment;
+
+    #[test]
+    fn prediction_cold_restore_preserves_task_mcp_without_overriding_parent_model_settings() {
+        let launch = CodexLaunchConfig {
+            thread_config: Map::from_iter([
+                (
+                    "mcp_servers.business.url".into(),
+                    json!("http://localhost/mcp"),
+                ),
+                ("model_reasoning_effort".into(), json!("high")),
+            ]),
+            model_provider: Some("new-provider".into()),
+            config_overrides: vec!["mcp_servers.business.enabled=true".into()],
+            ..Default::default()
+        };
+        let params =
+            prediction_parent_resume_params("source", &ExecutionRequest::default(), Some(&launch));
+        assert_eq!(
+            params["config"]["mcp_servers.business.url"],
+            "http://localhost/mcp"
+        );
+        assert_eq!(params["config"]["mcp_servers.business.enabled"], true);
+        assert!(params.get("modelProvider").is_none());
+        assert!(params["config"].get("model_reasoning_effort").is_none());
+    }
 
     #[test]
     fn prediction_requires_the_latest_completed_turn() {

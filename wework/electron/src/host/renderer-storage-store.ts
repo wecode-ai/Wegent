@@ -51,6 +51,10 @@ export class RendererStorageStore {
     })
   }
 
+  read(): Promise<Record<string, string>> {
+    return this.serial(async () => (await this.readFile())?.entries ?? {})
+  }
+
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
     return this.serial(async () => {
       const state = await this.readFile()

@@ -1262,6 +1262,7 @@ class ProjectChatService:
             from app.services.project_chat.execution_snapshot import (
                 can_restore_reconciled_completion,
                 completed_activity_for_turn,
+                runtime_event_client_message_id,
                 runtime_event_sequence,
             )
 
@@ -1270,6 +1271,8 @@ class ProjectChatService:
                 device_ids=identities,
                 task_id=runtime_task_id,
                 turn_id=turn_id,
+                client_user_message_id=runtime_event_client_message_id(payload),
+                lock=False,
             )
             if completed is None:
                 from app.services.loop_item_executions.service import (
@@ -1302,6 +1305,19 @@ class ProjectChatService:
                     )
                 ):
                     return None
+                if execution is None or accepted_terminal:
+                    if execution is not None:
+                        db.refresh(execution, with_for_update=True)
+                    current = completed_activity_for_turn(
+                        db,
+                        device_ids=identities,
+                        task_id=runtime_task_id,
+                        turn_id=turn_id,
+                        client_user_message_id=runtime_event_client_message_id(payload),
+                    )
+                    if current is None or current.id != completed.id:
+                        return None
+                    completed = current
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
@@ -2102,6 +2118,8 @@ class ProjectChatService:
         if row.sender_type != "agent":
             return False
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        if metadata.get("activity_type") == "manager_assignment":
+            return False
         if row.status in {"completed", "failed"}:
             if metadata.get("run_status") == row.status:
                 return False

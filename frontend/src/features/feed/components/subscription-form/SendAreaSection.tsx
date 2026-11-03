@@ -259,8 +259,9 @@ export function SendAreaSection({
           value={promptTemplate}
           onChange={e => setPromptTemplate(e.target.value)}
           placeholder={t('prompt_template_placeholder')}
-          rows={4}
-          className="resize-none border-border/50 focus:border-primary/50"
+          rows={8}
+          data-testid="subscription-prompt-template"
+          className="min-h-40 max-h-[70vh] resize-y border-border/50 focus:border-primary/50"
         />
       </div>
 

@@ -1,4 +1,5 @@
 import {
+  ArrowUpCircle,
   ArrowRight,
   BookOpenText,
   Boxes,
@@ -62,6 +63,12 @@ interface PluginDetailViewProps {
   shareActionLabel?: string
   shareActionDisabled?: boolean
   onShareAction?: () => void
+  versionSubmission?: {
+    currentVersion: string
+    nextVersion: string
+    busy: boolean
+    onSubmit: () => void
+  }
   publication?: PluginPublicationRequestItem | null
   publicationWithdrawing?: boolean
   onViewPublication?: () => void
@@ -475,6 +482,7 @@ export function PluginDetailView({
   shareActionLabel,
   shareActionDisabled = false,
   onShareAction,
+  versionSubmission,
   publication = null,
   publicationWithdrawing = false,
   onCreatePublicationRevision,
@@ -745,11 +753,12 @@ export function PluginDetailView({
       )}
     </div>
   ) : null
+  const actionDisabled = primaryActionDisabled || (isInstalled && !plugin.enabled)
   const primaryActionButton = (
     <button
       type="button"
       data-testid={`plugin-detail-toggle-${plugin.id}`}
-      disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
+      disabled={actionDisabled}
       className="plugin-detail-action-primary"
       onClick={onToggle}
     >
@@ -798,12 +807,13 @@ export function PluginDetailView({
               key={guide.id}
               type="button"
               data-testid={`plugin-prompt-${index}`}
+              disabled={actionDisabled}
               data-plugin-distribution={plugin.distribution}
               aria-label={t('workbench.plugin_detail_try_example', {
                 example: `${plugin.name} ${displayPrompt}`,
                 defaultValue: `使用示例：${plugin.name} ${displayPrompt}`,
               })}
-              className="plugin-task-example group"
+              className="plugin-task-example group disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => {
                 if (onPromptSelect) {
                   onPromptSelect(guide.prompt)
@@ -915,6 +925,35 @@ export function PluginDetailView({
             {primaryActionButton}
           </div>
         </header>
+
+        {versionSubmission && accessRole === 'owner' && pluginVisibility === 'personal' ? (
+          <div
+            data-testid="plugin-version-submit-notice"
+            className="mt-6 flex flex-wrap items-center gap-4 rounded-xl border border-border/30 bg-surface px-5 py-4"
+          >
+            <ArrowUpCircle aria-hidden="true" className="h-5 w-5 shrink-0 text-text-secondary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-medium">
+                {t('workbench.plugins_version_submit_pending')}
+              </p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t('workbench.plugins_version_submit_versions', {
+                  nextVersion: versionSubmission.nextVersion.replace(/^v/i, ''),
+                  currentVersion: versionSubmission.currentVersion.replace(/^v/i, ''),
+                })}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="min-h-11 md:min-h-8"
+              data-testid="plugin-version-submit-open"
+              disabled={versionSubmission.busy}
+              onClick={versionSubmission.onSubmit}
+            >
+              {t('workbench.plugins_version_submit_open')}
+            </Button>
+          </div>
+        ) : null}
 
         <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
           {description}

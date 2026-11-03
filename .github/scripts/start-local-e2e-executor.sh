@@ -70,11 +70,40 @@ if [[ -n "${CODEX_BINARY_PATH:-}" ]]; then
   test -x "$CODEX_BINARY_PATH"
 fi
 mkdir -p "$(dirname "$log_path")" "$(dirname "$pid_path")"
-nohup env \
-  -u GIT_TOKEN_AES_KEY \
-  -u GIT_TOKEN_AES_IV \
-  WEGENT_AUTH_TOKEN="$token" \
-  "$binary_path" >"$log_path" 2>&1 &
+executor_env=(
+  -u GIT_TOKEN_AES_KEY
+  -u GIT_TOKEN_AES_IV
+  WEGENT_AUTH_TOKEN="$token"
+)
+if [[ -n "${E2E_EXECUTOR_USER:-}" ]]; then
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "E2E_EXECUTOR_USER requires a root launcher" >&2
+    exit 1
+  fi
+  user_home="$(getent passwd "$E2E_EXECUTOR_USER" | cut -d: -f6)"
+  test -n "$user_home"
+  mkdir -p \
+    "$user_home" \
+    "${WEGENT_EXECUTOR_HOME:-$user_home/.wegent-executor}" \
+    "${LOCAL_WORKSPACE_ROOT:-$user_home/workspace}"
+  chown -R "$E2E_EXECUTOR_USER":"$E2E_EXECUTOR_USER" \
+    "$user_home" \
+    "${WEGENT_EXECUTOR_HOME:-$user_home/.wegent-executor}" \
+    "${LOCAL_WORKSPACE_ROOT:-$user_home/workspace}" \
+    "$(dirname "$log_path")" \
+    "$(dirname "$pid_path")"
+  executor_env+=(
+    HOME="$user_home"
+    WEGENT_EXECUTOR_HOME="${WEGENT_EXECUTOR_HOME:-$user_home/.wegent-executor}"
+  )
+  nohup runuser -u "$E2E_EXECUTOR_USER" -- env \
+    "${executor_env[@]}" \
+    "$binary_path" >"$log_path" 2>&1 &
+else
+  nohup env \
+    "${executor_env[@]}" \
+    "$binary_path" >"$log_path" 2>&1 &
+fi
 echo $! >"$pid_path"
 
 for _ in {1..60}; do

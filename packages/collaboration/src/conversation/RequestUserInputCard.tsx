@@ -19,6 +19,7 @@ export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
 import {
   hasImplementationPlanText,
   hasRequestUserInputResponse,
+  requestUserInputApprovalDescription,
 } from "@wegent/chat-core/runtime-user-input";
 import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
 import {
@@ -505,20 +506,8 @@ function localizeApprovalQuestions(
   const interactionKind = payload.interactionKind ?? payload.interaction_kind;
   if (interactionKind !== "approval") return payload.questions;
 
-  const approvalKind =
-    payload.approvalKind ?? payload.approval_kind ?? "command";
-  const detail =
-    approvalKind === "command"
-      ? payload.command
-      : approvalKind === "file_change"
-        ? (payload.grantRoot ?? payload.grant_root ?? payload.reason)
-        : (payload.reason ?? payload.cwd);
-  const questionKey =
-    approvalKind === "file_change"
-      ? "request_user_input.approval_file_change"
-      : approvalKind === "permissions"
-        ? "request_user_input.approval_permissions"
-        : "request_user_input.approval_command";
+  const { detail, key: questionKey } =
+    requestUserInputApprovalDescription(payload);
 
   return [
     {

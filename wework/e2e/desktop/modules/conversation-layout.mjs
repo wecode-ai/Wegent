@@ -1,4 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises'
+import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -744,28 +745,6 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   throw new Error(
     `${description} remained ${distanceFromTop(metrics)}px from the top after ${timeoutMs}ms`
   )
-}
-
-async function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
-  const startedAt = Date.now()
-  let metrics
-  while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, selector, description)
-    if (predicate(metrics.width)) return metrics
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
-}
-
-async function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
-  const startedAt = Date.now()
-  let metrics
-  while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, selector, description)
-    if (predicate(metrics.top)) return metrics
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(`${description} remained at ${metrics.top}px after ${timeoutMs}ms`)
 }
 
 async function waitForProcessingBlock(

@@ -4,6 +4,7 @@ import {
   configure,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -66,6 +67,11 @@ import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
+import {
+  closeFeedbackDialog,
+  openFeedbackDialog,
+  useFeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type {
   DeviceInfo,
@@ -2550,6 +2556,29 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('registers the active task context for the application menu feedback dialog', () => {
+    closeFeedbackDialog()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-feedback',
+          },
+        }}
+      />
+    )
+    const { result } = renderHook(() => useFeedbackDialogRequest())
+
+    act(() => openFeedbackDialog())
+
+    expect(result.current?.hasActiveTask).toBe(true)
+    closeFeedbackDialog()
+  })
+
   test('ignores the implementation plan confirmation through the pane session', async () => {
     render(
       <DesktopWorkbenchLayout
@@ -4549,6 +4578,31 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar')).toHaveAttribute('aria-hidden', 'false')
     expect(screen.queryByTestId('desktop-sidebar-preview')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-sidebar-hover-edge')).not.toBeInTheDocument()
+  })
+
+  test('closes the sidebar preview from its own leave event rather than the hover edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
+    const edge = screen.getByTestId('desktop-sidebar-hover-edge')
+    const preview = screen.getByTestId('desktop-sidebar-preview')
+    fireEvent.pointerEnter(edge)
+    expect(preview).toHaveAttribute('aria-hidden', 'false')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerLeave(edge)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350)
+      })
+      expect(preview).toHaveAttribute('aria-hidden', 'false')
+
+      fireEvent.pointerLeave(preview)
+      expect(preview).toHaveAttribute('aria-hidden', 'true')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('keeps sidebar controls out of the page chrome in Electron', async () => {
@@ -7462,7 +7516,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('toggles an empty project without changing the center selection', async () => {
@@ -8034,6 +8088,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
     expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
+  })
+
+  test('keeps the sidebar and side chat translucent behind the workbench background', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+        backgroundInSidebar: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveClass('bg-background/25')
+    const paneGroups = screen.getAllByTestId(/^workbench-pane-pane-/)
+    expect(paneGroups.length).toBeGreaterThan(0)
+    paneGroups.forEach(group => expect(group).toHaveClass('bg-transparent'))
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(
+      within(screen.getByTestId('right-workspace-chat-panel')).getByTestId(
+        'right-workspace-chat-composer-shell'
+      )
+    ).toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
@@ -10350,6 +10432,54 @@ describe('DesktopWorkbenchLayout', () => {
       }
     }
   )
+
+  test('opens a UNC reference without a workspace using its native share root', async () => {
+    const localDevice = createLocalSkillDevice()
+    const filePath = String.raw`\\server\share\report.md`
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '//server/share/report.md',
+      name: 'report.md',
+      content: 'opened standalone UNC reference',
+      truncated: false,
+      size: 31,
+      modifiedAt: null,
+    })
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, standaloneDeviceId: localDevice.device_id }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [localDevice],
+          currentStandaloneDeviceId: localDevice.device_id,
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '//server/share', entries: [] }),
+          readWorkspaceTextFile,
+        }}
+        messages={[
+          {
+            id: 'assistant-standalone-unc-file',
+            role: 'assistant',
+            content: `[report.md](${encodeURI(filePath)})`,
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened standalone UNC reference'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '//server/share/report.md',
+      '//server/share'
+    )
+  })
 
   test.each(['file', 'skill'] as const)(
     'reports home-directory lookup failures when opening a %s reference',

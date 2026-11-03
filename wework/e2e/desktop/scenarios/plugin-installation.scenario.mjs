@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
+import { verifyPersonalPluginVersionSubmission } from '../modules/plugin-personal-version-flow.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -53,7 +55,18 @@ export function createDesktopScenario(options) {
           await pluginApi(cloud, `/plugins/installed/${installed.metadata.labels.id}`, 'DELETE')
         }
       }
-      await toggle.verify(control)
+      await verifyPersonalPluginVersionSubmission({
+        cloudEnvironment: cloud,
+        control,
+        executorHome: options.executorHome,
+        codexHome: join(options.executorHome, 'codex'),
+        userDataDirectory: options.electronUserDataDirectory,
+        restartDesktopApp: options.restartDesktopApp,
+        verifySharedLifecycle: async restartDesktopApp => {
+          toggle.setRestartDesktopApp(restartDesktopApp)
+          await toggle.verify(control)
+        },
+      })
     },
   }
 }

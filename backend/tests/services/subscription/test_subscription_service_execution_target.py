@@ -281,6 +281,33 @@ def test_create_subscription_rejects_execution_target_device_type_mismatch(
     assert "expected 'local'" in str(exc_info.value.detail)
 
 
+def test_create_subscription_accepts_app_device_for_local_execution_target(
+    test_db: Session, test_user
+):
+    """Desktop app devices use the local subscription execution target."""
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    device = _create_device(
+        test_db,
+        test_user.id,
+        "app-device-1",
+        DeviceType.APP,
+        is_default=True,
+    )
+
+    created = service.create_subscription(
+        test_db,
+        subscription_in=_build_create_payload(
+            team.id,
+            {"type": "local", "device_id": device.name},
+        ),
+        user_id=test_user.id,
+    )
+
+    assert created.execution_target.type == "local"
+    assert created.execution_target.device_id == device.name
+
+
 def test_create_subscription_rejects_device_target_without_device_id(
     test_db: Session, test_user
 ):

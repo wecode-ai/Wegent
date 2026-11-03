@@ -16,6 +16,7 @@ export default defineConfig([
     'electron/release',
     'electron/release-installer',
     'electron/resources',
+    'electron/src/vendor',
     '**/public/vendor',
     'test-results',
   ]),

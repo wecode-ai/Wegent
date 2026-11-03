@@ -18,6 +18,8 @@ interface DesktopEmptyTaskLauncherProps {
   composerInputTestId?: string
   compact?: boolean
   searchActive?: boolean
+  /** Home contributions render translucent surfaces when the workbench background is visible. */
+  showWorkbenchBackground?: boolean
 }
 
 export function DesktopEmptyTaskLauncher({
@@ -29,6 +31,7 @@ export function DesktopEmptyTaskLauncher({
   composerInputTestId = 'chat-message-input',
   compact = false,
   searchActive = false,
+  showWorkbenchBackground = false,
 }: DesktopEmptyTaskLauncherProps) {
   const { t } = useTranslation('common')
   const find = useConversationFind(EMPTY_CONVERSATION, searchActive)
@@ -93,7 +96,7 @@ export function DesktopEmptyTaskLauncher({
           <DshContributionSlotSurface
             attachedClassName="w-full"
             slot={WEWORK_DSH_SLOTS.home}
-            props={{ heading, onSelectSuggestion: selectSuggestion }}
+            props={{ heading, onSelectSuggestion: selectSuggestion, showWorkbenchBackground }}
           />
         </div>
       )}

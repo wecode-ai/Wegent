@@ -153,6 +153,46 @@ test('both fixed baseline and previous release are verified before retaining the
   assert.equal(result.verified.length, 2)
 })
 
+test('required direct repair edges are verified once and can retain older supported sources', async () => {
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.5.14', '0.6.0'])
+  const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
+  const calls = []
+  const result = await verifyReleaseUpgradePlan(
+    plan,
+    async source => {
+      calls.push(source.version)
+      return source.version === '0.5.13' ? null : { from: source.version }
+    },
+    [catalog.releases[1], catalog.releases[2], catalog.releases[1]]
+  )
+  assert.deepEqual(calls, ['0.5.13', '0.6.0', '0.5.14'])
+  assert.equal(result.minSourceVersion, '0.5.14')
+  assert.deepEqual(
+    result.verified.map(item => item.source.version),
+    ['0.6.0', '0.5.14']
+  )
+})
+
+test('a failed required direct repair edge blocks publication without retrying its failed baseline', async () => {
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.5.14', '0.6.0'])
+  const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
+  for (const required of [catalog.releases[0], catalog.releases[1]]) {
+    const calls = []
+    await assert.rejects(
+      verifyReleaseUpgradePlan(
+        plan,
+        async source => {
+          calls.push(source.version)
+          return source.version === '0.6.0' ? { from: source.version } : null
+        },
+        [required]
+      ),
+      /Required direct upgrade/
+    )
+    assert.equal(calls.filter(version => version === required.version).length, 1)
+  }
+})
+
 test('a failed baseline advances to the previous release and persists for the next release', async () => {
   const catalog = publishedCatalog('stable', ['0.5.13', '0.6.0'])
   const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')

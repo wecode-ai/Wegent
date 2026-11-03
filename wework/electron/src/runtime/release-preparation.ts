@@ -7,6 +7,8 @@ import { cloneReleaseProfile, profileRevision } from './release-profile.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { RotatingLog } from './rotating-log.js'
+import { recoverReleaseLayout } from './release-layout-recovery.js'
+import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
 
 export interface ReleasePreparationRequest {
   release: DesktopRelease
@@ -121,4 +123,13 @@ export async function prepareReleaseEnvironment(
     JSON.stringify({ sourceRevision, components })
   )
   await store.save(release)
+  await step('source-layout-recovery', () =>
+    recoverReleaseLayout(store, request.sourceProfile, release.dataSchema)
+  )
+  if (process.platform === 'darwin') {
+    const metadata = JSON.parse(await readFile(join(resources, 'app.asar', 'package.json'), 'utf8'))
+    await step('macos-installation', () =>
+      prepareMacosReleaseInstallation(store, release, metadata.weworkAppId ?? metadata.name)
+    )
+  }
 }

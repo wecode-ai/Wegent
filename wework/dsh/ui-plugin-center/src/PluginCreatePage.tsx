@@ -50,6 +50,7 @@ export function PluginCreatePage() {
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -123,6 +124,7 @@ export function PluginCreatePage() {
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
+          onCloneGitRepository={cloneGitRepository}
           onOpenSettings={options => {
             if (options?.settingsPage) {
               navigateTo(`/settings/${options.settingsPage}`)

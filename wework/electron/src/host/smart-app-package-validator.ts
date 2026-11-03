@@ -1,21 +1,27 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
+import { on, once } from 'node:events'
 import { createWriteStream } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import extractZip from 'extract-zip'
+import type { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import semver from 'semver'
+import * as yauzl from 'yauzl'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
 
 export const MAX_SMART_APP_ARCHIVE_BYTES = 50 * 1024 * 1024
 export const MAX_SMART_APP_EXTRACTED_BYTES = 250 * 1024 * 1024
+const SMART_APP_EXTRACTION_TIMEOUT_MS = 60_000
 
 export interface SmartAppPackageValidationOptions {
   maxArchiveBytes?: number
   maxExtractedBytes?: number
   developmentSource?: boolean
+  extractionTimeoutMs?: number
+  signal?: AbortSignal
 }
 
 export interface ValidatedSmartAppPackage {
@@ -101,18 +107,148 @@ export async function extractSmartAppArchive(
   if (metadata.size > maxArchiveBytes) {
     throw validationError('SA-PACKAGE-ARCHIVE-SIZE', 'Smart app ZIP exceeds 50 MB')
   }
-  await rm(destination, { recursive: true, force: true })
-  await mkdir(destination, { recursive: true, mode: 0o700 })
-  const maxExtractedBytes = options.maxExtractedBytes ?? MAX_SMART_APP_EXTRACTED_BYTES
-  let extractedBytes = 0
-  await extractZip(archivePath, {
-    dir: resolve(destination),
-    onEntry: entry => {
+  options.signal?.throwIfAborted()
+  const controller = new AbortController()
+  const signal = options.signal
+    ? AbortSignal.any([controller.signal, options.signal])
+    : controller.signal
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        validationError('SA-PACKAGE-EXTRACT-TIMEOUT', 'Smart app ZIP extraction timed out')
+      ),
+    options.extractionTimeoutMs ?? SMART_APP_EXTRACTION_TIMEOUT_MS
+  )
+  try {
+    await rm(destination, { recursive: true, force: true })
+    await mkdir(destination, { recursive: true, mode: 0o700 })
+    await extractZipEntries(
+      archivePath,
+      await realpath(destination),
+      options.maxExtractedBytes ?? MAX_SMART_APP_EXTRACTED_BYTES,
+      signal,
+      controller
+    )
+    signal.throwIfAborted()
+  } catch (error) {
+    await rm(destination, { recursive: true, force: true })
+    if (signal.aborted) throw signal.reason
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function openSmartAppZip(archivePath: string, signal: AbortSignal): Promise<yauzl.ZipFile> {
+  signal.throwIfAborted()
+  return new Promise((resolveZip, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    yauzl.open(
+      archivePath,
+      { lazyEntries: true, autoClose: false, strictFileNames: true },
+      (error, zip) => {
+        signal.removeEventListener('abort', abort)
+        if (signal.aborted) {
+          zip?.close()
+          return
+        }
+        if (error) reject(error)
+        else resolveZip(zip)
+      }
+    )
+  })
+}
+
+async function extractZipEntries(
+  archivePath: string,
+  destination: string,
+  maxBytes: number,
+  signal: AbortSignal,
+  controller: AbortController
+): Promise<void> {
+  const zip = await openSmartAppZip(archivePath, signal)
+  const abortOnError = (error: Error) => controller.abort(error)
+  zip.on('error', abortOnError)
+  try {
+    signal.throwIfAborted()
+    const entries = on(zip, 'entry', { signal, close: ['end'] })
+    let extractedBytes = 0
+    zip.readEntry()
+    for await (const [entry] of entries as AsyncIterable<[yauzl.Entry]>) {
       extractedBytes += entry.uncompressedSize
-      if (extractedBytes > maxExtractedBytes) {
+      if (extractedBytes > maxBytes) {
         throw validationError('SA-PACKAGE-EXTRACTED-SIZE', 'Smart app ZIP expands beyond 250 MB')
       }
-    },
+      await extractZipEntry(zip, entry, destination, signal)
+      signal.throwIfAborted()
+      zip.readEntry()
+    }
+  } finally {
+    try {
+      const closed = once(zip, 'close')
+      zip.close()
+      await closed
+    } finally {
+      zip.off('error', abortOnError)
+    }
+  }
+}
+
+async function extractZipEntry(
+  zip: yauzl.ZipFile,
+  entry: yauzl.Entry,
+  destination: string,
+  signal: AbortSignal
+): Promise<void> {
+  const mode = (entry.externalFileAttributes >>> 16) & 0xffff
+  const type = mode & 0o170000
+  if (type === 0o120000) throw symlinkError(entry.fileName)
+  if (type !== 0 && type !== 0o100000 && type !== 0o040000) {
+    throw validationError(
+      'SA-PACKAGE-ENTRY-TYPE',
+      'Smart app ZIP contains a special file',
+      entry.fileName
+    )
+  }
+  if (!isSafeSmartAppRelativePath(entry.fileName)) {
+    throw validationError(
+      'SA-PACKAGE-ENTRY-PATH',
+      'Smart app ZIP contains an unsafe path',
+      entry.fileName
+    )
+  }
+  const target = join(destination, entry.fileName)
+  const directory = type === 0o040000 || entry.fileName.endsWith('/')
+  await mkdir(directory ? target : dirname(target), { recursive: true, mode: 0o700 })
+  signal.throwIfAborted()
+  if (directory) return
+  const source = await openSmartAppEntryStream(zip, entry, signal)
+  await pipeline(source, createWriteStream(target, { flags: 'wx', mode: mode & 0o777 || 0o644 }), {
+    signal,
+  })
+}
+
+async function openSmartAppEntryStream(
+  zip: yauzl.ZipFile,
+  entry: yauzl.Entry,
+  signal: AbortSignal
+): Promise<Readable> {
+  signal.throwIfAborted()
+  return new Promise((resolveStream, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    zip.openReadStreamPromise(entry).then(
+      source => {
+        signal.removeEventListener('abort', abort)
+        if (signal.aborted) source.destroy()
+        else resolveStream(source)
+      },
+      error => {
+        signal.removeEventListener('abort', abort)
+        reject(error)
+      }
+    )
   })
 }
 

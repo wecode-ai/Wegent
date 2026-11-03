@@ -403,3 +403,45 @@ def test_only_project_administrators_can_save_views(
         },
     )
     assert result.status_code == 403
+
+
+def test_backlog_view_round_trips_without_changing_issue_fields(
+    test_client: TestClient, test_token: str
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    project = test_client.post(
+        "/api/v1/cloud-projects", headers=headers, json={"name": "Backlog"}
+    ).json()
+    path = f"/api/v1/cloud-projects/{project['id']}"
+    issue = test_client.post(
+        f"{path}/loop-items",
+        headers=headers,
+        json={"title": "Unplanned", "status": "inbox", "tags": ["bug"]},
+    ).json()
+    config = {
+        "schema_version": 1,
+        "default_view_id": "stages",
+        "views": [
+            {
+                "id": "stages",
+                "name": "Stages",
+                "columns": [
+                    {"id": "backlog", "type": "unmatched", "value": "待规划"},
+                    {"id": "design", "type": "tag", "value": "design"},
+                ],
+                "filter": {"tags": ["bug"], "match": "all"},
+                "sorts": {},
+            }
+        ],
+    }
+    saved = test_client.patch(
+        path,
+        headers=headers,
+        json={"version": project["version"], "board_views": config},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["board_views"] == config
+    read = test_client.get(f"/api/v1/projects/{project['id']}", headers=headers)
+    assert read.json()["board_views"] == config
+    persisted = test_client.get(f"/api/v1/loop-items/{issue['id']}", headers=headers)
+    assert persisted.json() == issue

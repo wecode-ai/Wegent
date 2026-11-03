@@ -8,6 +8,14 @@ use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
+use std::time::Duration;
+
+const DINGTALK_API: &str = "https://api.dingtalk.com";
+
+struct DingTalkContext<'a> {
+    app: &'a AppState,
+    http: &'a brz_http::Client,
+}
 
 #[derive(FromMysqlRow)]
 struct Follow {
@@ -53,9 +61,10 @@ pub(crate) async fn notify(
         .as_str()
         .filter(|v| !v.is_empty())
         .unwrap_or(&subscription.name);
-    let message = public_links(app, &format_message(name, status, summary))?;
+    let directives = super::directives::parse(summary);
+    let message = public_links(app, &format_message(name, status, &directives.content))?;
     let http = brz_http::Client::builder()
-        .read_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
         .build()?;
     let followers: Vec<Follow> = app
         .mysql
@@ -110,13 +119,13 @@ pub(crate) async fn notify(
                         Value::Null
                     };
                     dingtalk(
-                        app,
-                        &http,
+                        DingTalkContext { app, http: &http },
                         &spec["config"],
                         binding,
                         &binding_config,
                         name,
                         &message,
+                        &directives,
                     )
                     .await
                 }
@@ -312,22 +321,28 @@ async fn telegram(
     Ok(())
 }
 async fn dingtalk(
-    app: &AppState,
-    http: &brz_http::Client,
+    context: DingTalkContext<'_>,
     config: &Value,
     binding: &Value,
     options: &Value,
     title: &str,
     message: &str,
+    directives: &super::directives::Directives,
 ) -> Result<()> {
+    let DingTalkContext { app, http } = context;
     let client_id = config["client_id"].as_str().unwrap_or("");
     let client_secret = secret(config, "client_secret")?;
     if client_id.is_empty() || client_secret.is_empty() {
         return Ok(());
     }
+    let api = config["api_base_url"]
+        .as_str()
+        .map(|value| value.trim_end_matches('/'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DINGTALK_API);
     let result = post(
         http,
-        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+        &format!("{api}/v1.0/oauth2/accessToken"),
         &json!({"appKey":client_id,"appSecret":client_secret}),
         None,
     )
@@ -355,22 +370,19 @@ async fn dingtalk(
                 title,
                 message,
                 &[],
+                api,
             )
             .await?;
         }
         if options["bind_group"] == true
+            && !directives.silent
             && let Some(group) = options["group_conversation_id"]
                 .as_str()
                 .filter(|s| !s.is_empty())
         {
-            let mentions = mentions(
-                app,
-                options["group_mention_user_ids"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-            )
-            .await;
+            // Only per-message directives create mention targets. The removed
+            // static group_mention_user_ids setting must not leak old targets.
+            let mentions = mentions(app, &directives.mentions).await;
             card(
                 http,
                 access,
@@ -380,6 +392,7 @@ async fn dingtalk(
                 title,
                 message,
                 &mentions,
+                api,
             )
             .await?;
         }
@@ -388,16 +401,23 @@ async fn dingtalk(
         if message.chars().count() > 20 {
             preview.push_str("...")
         }
-        post(http,"https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",&json!({"robotCode":client_id,"userIds":[user],"msgKey":"sampleMarkdown","msgParam":serde_json::to_string(&json!({"title":preview.replace('\n'," ").trim(),"text":format!("### {title}\n\n{message}")}))?}),Some(("x-acs-dingtalk-access-token",access))).await?;
+        post(http,&format!("{api}/v1.0/robot/oToMessages/batchSend"),&json!({"robotCode":client_id,"userIds":[user],"msgKey":"sampleMarkdown","msgParam":serde_json::to_string(&json!({"title":preview.replace('\n'," ").trim(),"text":format!("### {title}\n\n{message}")}))?}),Some(("x-acs-dingtalk-access-token",access))).await?;
     }
     Ok(())
 }
-async fn mentions(app: &AppState, values: &[Value]) -> Vec<(String, String)> {
+async fn mentions(app: &AppState, values: &[String]) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    for value in values.iter().filter_map(Value::as_str) {
-        let (id, provided) = value.split_once(':').unwrap_or((value, ""));
+    for value in values {
+        let (id, provided) = value.split_once(':').unwrap_or((value.as_str(), ""));
         let mut name = provided.to_owned();
         if id.chars().all(|c| c.is_ascii_digit())
+            && let Some(employee) = app.erp.search_employee(id).await
+            && let Some(resolved) = employee.name.filter(|value| !value.is_empty())
+        {
+            name = resolved;
+        }
+        if id.chars().all(|c| c.is_ascii_digit())
+            && name.is_empty()
             && let Ok(Some(user)) = app
                 .mysql
                 .fetch_optional::<_, _, brz_mysql::MysqlRow>(
@@ -412,6 +432,7 @@ async fn mentions(app: &AppState, values: &[Value]) -> Vec<(String, String)> {
                 .read_timeout(std::time::Duration::from_secs(5))
                 .build()
             && let Ok(users) = post(&http, &url, &json!({"emails":[email]}), None).await
+            && users[0]["notExist"] != true
             && let Some(resolved) = users[0]["NAME"].as_str().filter(|v| !v.is_empty())
         {
             name = resolved.into();
@@ -433,6 +454,7 @@ async fn card(
     title: &str,
     message: &str,
     mentions: &[(String, String)],
+    api: &str,
 ) -> Result<()> {
     let track = super::super::project::notifications::uuid();
     let content = if mentions.is_empty() {
@@ -455,8 +477,10 @@ async fn card(
             .iter()
             .map(|(id, name)| (id.clone(), json!(name)))
             .collect::<serde_json::Map<String, Value>>();
-        payload["imGroupOpenDeliverModel"] =
-            json!({"spaceType":"IM_GROUP","robotCode":robot,"atUserIds":at});
+        payload["imGroupOpenDeliverModel"] = json!({"spaceType":"IM_GROUP","robotCode":robot});
+        if !mentions.is_empty() {
+            payload["imGroupOpenDeliverModel"]["atUserIds"] = Value::Object(at);
+        }
     } else {
         payload["imRobotOpenSpaceModel"] =
             json!({"supportForward":true,"lastMessageI18n":{"ZH_CN":"您收到一条订阅通知"}});
@@ -465,7 +489,7 @@ async fn card(
     let header = Some(("x-acs-dingtalk-access-token", access));
     let result = post(
         http,
-        "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver",
+        &format!("{api}/v1.0/card/instances/createAndDeliver"),
         &payload,
         header,
     )
@@ -475,7 +499,7 @@ async fn card(
     }
     let final_frame = json!({"outTrackId":track,"cardTemplateId":template,"openSpaceId":space,"key":"content","content":content,"isFull":true,"guid":super::super::project::notifications::uuid(),"isFinalize":true});
     let response = http
-        .put("https://api.dingtalk.com/v1.0/card/streaming")?
+        .put(format!("{api}/v1.0/card/streaming"))?
         .header("x-acs-dingtalk-access-token", access)
         .json(&final_frame)
         .send()

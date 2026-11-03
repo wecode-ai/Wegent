@@ -1,10 +1,12 @@
 import { Bot, FileText, ListChecks, PenLine, Search } from 'lucide-react'
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 
 interface HomeProps {
   heading: ReactNode
   onSelectSuggestion: (prompt: string) => void
+  showWorkbenchBackground?: boolean
 }
 
 interface FocusSuggestion {
@@ -56,7 +58,11 @@ const FOCUS_SUGGESTIONS: FocusSuggestion[] = [
   },
 ]
 
-export default function FocusHome({ heading, onSelectSuggestion }: HomeProps) {
+export default function FocusHome({
+  heading,
+  onSelectSuggestion,
+  showWorkbenchBackground = false,
+}: HomeProps) {
   const { t } = useTranslation('common')
 
   return (
@@ -84,7 +90,12 @@ export default function FocusHome({ heading, onSelectSuggestion }: HomeProps) {
               type="button"
               data-testid={`focus-suggestion-${suggestion.id}`}
               onClick={() => onSelectSuggestion(t(suggestion.promptKey, suggestion.fallbackPrompt))}
-              className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
+              className={cn(
+                'group flex min-h-[104px] flex-col justify-between rounded-2xl px-4 py-3 text-left transition-[background-color,box-shadow,transform] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99]',
+                showWorkbenchBackground
+                  ? 'border border-border/45 bg-transparent shadow-none ring-0 hover:bg-background/30'
+                  : 'border-0 bg-background shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 hover:bg-muted dark:ring-white/10'
+              )}
             >
               <Icon className={`h-4 w-4 ${suggestion.tone}`} aria-hidden="true" />
               <span className="text-sm font-medium leading-5 text-text-primary">

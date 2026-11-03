@@ -20,9 +20,30 @@ on:
         type: boolean
         required: false
         default: false
+      verification_run_id:
+        description: "Only verify signed artifacts from an existing Wework App run; never build or publish"
+        type: string
+        required: false
+        default: ""
+      verification_checkpoint:
+        description: "Diagnostic replay only: run one checkpoint without producing upgrade evidence"
+        type: choice
+        options:
+          - all
+          - app-upgrade
+          - app-rollback
+          - app-rollback-recovery
+          - app-upgrade-recovery
+          - app-update-full
+        default: all
+      verification_release_tag:
+        description: "Replay using the matching published release archive instead of the original candidate"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -31,6 +52,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
+    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -229,6 +251,13 @@ jobs:
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
+      - name: Verify native launcher before packaging
+        shell: bash
+        run: |
+          node --test wework/scripts/build-launcher.test.mjs
+          rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
+          "$RUNNER_TEMP/wework-launcher-tests.exe"
+
       - name: Prepare Apple signing keychain
         if: matrix.platform == 'macos'
         shell: bash
@@ -302,6 +331,9 @@ jobs:
           VITE_WEGENT_BACKEND_URL: https://your.wegent-backend.address
           VITE_WEWORK_POSTHOG_HOST: ${{ secrets.WEWORK_POSTHOG_HOST }}
           VITE_WEWORK_POSTHOG_KEY: ${{ secrets.WEWORK_POSTHOG_KEY }}
+          VITE_WEWORK_TELEMETRY_CONTEXT_FIELDS: ${{ vars.WEWORK_TELEMETRY_CONTEXT_FIELDS || '[]' }}
+          VITE_WEWORK_TELEMETRY_IDENTITY: ${{ vars.WEWORK_TELEMETRY_IDENTITY || 'anonymous' }}
+          VITE_WEWORK_TELEMETRY_SOURCE: ${{ vars.WEWORK_TELEMETRY_SOURCE || 'wework' }}
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
@@ -330,7 +362,6 @@ jobs:
         run: |
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments release-package-startup,component-update
-          pnpm --filter wework e2e:desktop -- --segment app-update-full
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -376,18 +407,118 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+      - name: Prepare standalone upgrade test driver
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        shell: bash
+        run: node wework/scripts/build-desktop-e2e-client.mjs "$RUNNER_TEMP/wework-upgrade-client"
+
+      - name: Share immutable release inputs with upgrade verification
+        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/wework-release-assets/WeWorkRelease_*.tar.gz
+            ${{ runner.temp }}/wework-release-assets/release-*.json
+            ${{ runner.temp }}/wework-upgrade-client/*.cjs
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Verify componentized macOS update package
+        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
+        run: |
+          set -euo pipefail
+          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
+          test -n "$zip"
+          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
+            echo "::error::The online Host update contains managed component resources."
+            exit 1
+          fi
+
+  prepare-upgrade-inputs:
+    name: Resolve immutable upgrade inputs
+    needs: [prepare-release, build]
+    if: ${{ !cancelled() && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.inputs.outputs.run_id }}
+      version: ${{ steps.inputs.outputs.version }}
+      channel: ${{ steps.inputs.outputs.channel }}
+      release_tag: ${{ steps.inputs.outputs.release_tag }}
+      verification_sha: ${{ steps.inputs.outputs.verification_sha }}
+      diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
+      published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve completed release build artifacts
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.verification_run_id || github.run_id }}
+          EXPECTED_VERSION: ${{ needs.prepare-release.outputs.version }}
+          VERIFICATION_SHA: ${{ inputs.verification_run_id != '' && github.sha || needs.prepare-release.outputs.release_sha }}
+          REPLAY: ${{ inputs.verification_run_id != '' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          VERIFICATION_CHECKPOINT: ${{ inputs.verification_checkpoint }}
+          PUBLISHED_RELEASE_TAG: ${{ inputs.verification_release_tag }}
+        run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
+
+  verify-upgrades:
+    name: Verify release upgrades (${{ matrix.platform }}/${{ matrix.arch }})
+    permissions:
+      contents: read
+      actions: read
+    needs: prepare-upgrade-inputs
+    if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: windows-latest
+            platform: windows
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-upgrade-inputs.outputs.verification_sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - name: Download prebuilt signed release inputs
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-upgrade-inputs.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/upgrade-input
+          run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
+          github-token: ${{ github.token }}
+
       - name: Verify declared upgrade and rollback edges on real release packages
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
+          WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
+          WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
+          WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
+          WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
-            "$RUNNER_TEMP/wework-release-assets" \
+            "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
             "${{ matrix.platform }}" "${{ matrix.arch }}" \
-            "${{ needs.prepare-release.outputs.channel }}" \
-            "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
+            "${{ needs.prepare-upgrade-inputs.outputs.channel }}" \
+            "$GITHUB_REPOSITORY" "${{ needs.prepare-upgrade-inputs.outputs.release_tag }}"
 
       - name: Retain release upgrade decisions and failure diagnostics
         if: always() && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
@@ -408,23 +539,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Verify componentized macOS update package
-        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
-        run: |
-          set -euo pipefail
-          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
-          test -n "$zip"
-          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
-            echo "::error::The online Host update contains managed component resources."
-            exit 1
-          fi
-
       - name: Upload verified release upgrade evidence
-        if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
+        if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && ((matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows')
         uses: actions/upload-artifact@v4
         with:
-          name: wework-${{ needs.prepare-release.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/wework-release-assets/upgrade-*.json
+          name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-evidence-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/upgrade-input/wework-release-assets/**/upgrade-*.json
           if-no-files-found: error
           compression-level: 0
 
@@ -433,6 +553,7 @@ jobs:
     needs:
       - prepare-release
       - build
+      - verify-upgrades
     runs-on: ubuntu-latest
     if: needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none'
 

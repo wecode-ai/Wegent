@@ -38,6 +38,7 @@ function pendingRequestUserInputBlockPayload(payload: {
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
 
 interface LifecycleEventPayload {
+  task?: import('@/types/api').RuntimeTaskSummary
   taskId?: string
   subtaskId?: string
   deviceId?: string
@@ -84,6 +85,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     let disposed = false
     let reconciliation: Promise<void> | null = null
     let pendingReason: ReconciliationReason | null = null
+    const replacedAddresses: RuntimeTaskAddress[] = []
 
     const reconcileRuntimeGoal = async (
       address: RuntimeTaskAddress,
@@ -118,7 +120,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       while (!disposed && reason) {
         pendingReason = null
         try {
-          const recoveryAddresses = runtimeRecoveryAddresses(store)
+          const recoveryAddresses = runtimeRecoveryAddresses(store, replacedAddresses.splice(0))
           const runtimeWork = await executorClient.runtime.listRuntimeWork()
           if (!disposed) {
             store.syncRuntimeWork(runtimeWork)
@@ -186,6 +188,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     ): { address: RuntimeTaskAddress; settled: boolean; terminalTurnId: string | null } | null => {
       const address = matchingLifecycleAddress(store, payload)
       if (!address) return null
+      if (payload.task) store.syncRuntimeTask(address, payload.task)
       const terminalTurnId = payload.subtaskId?.trim() || null
       const activeTurnId = store.getTask(address)?.turn.id
       if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
@@ -235,9 +238,14 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     }
 
     const unsubscribe = services.chatStream.subscribe({
+      onRuntimeTurnUpdated: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (address && payload.task) store.syncRuntimeTask(address, payload.task)
+      },
       onChatStart: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
+        if (payload.task) store.syncRuntimeTask(address, payload.task)
         store.turnStarted(address, payload.subtaskId?.trim() || null)
       },
       onBlockCreated: payload => {
@@ -273,7 +281,10 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         console.warn('[Wework] Runtime event stream lagged; reconciling task state', payload)
         reconcile('event_lagged')
       },
-      onRuntimeTransportReplaced: () => reconcile('runtime_replaced'),
+      onRuntimeTransportReplaced: () => {
+        replacedAddresses.push(...store.invalidateNativeExecutions())
+        reconcile('runtime_replaced')
+      },
     })
 
     return () => {

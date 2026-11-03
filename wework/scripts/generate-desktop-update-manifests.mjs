@@ -82,9 +82,19 @@ for (const [platform, architecture] of [
     if (platform === 'linux') continue
     throw new Error(`Component release descriptor is missing: ${sourcePath}`)
   }
+  if (
+    source.schemaVersion !== 1 ||
+    source.appVersion !== version ||
+    source.sourceSha !== sourceSha ||
+    source.platform !== platform ||
+    source.arch !== architecture
+  )
+    throw new Error('Component release descriptor does not match the delivered release')
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
     const releaseScope = componentReleaseScope(id)
+    if (releaseScope === 'version' && component.version !== `wework-${sourceSha.slice(0, 12)}`)
+      throw new Error(`Component version does not match the delivered release: ${id}`)
     if (component.releaseScope !== releaseScope) {
       throw new Error(
         `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`

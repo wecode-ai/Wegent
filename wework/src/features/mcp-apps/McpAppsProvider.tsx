@@ -116,10 +116,11 @@ export function McpAppsProvider({
               if (target && entry.container.parentElement !== target)
                 moveDocument(target, entry.container)
             }}
-            onContext={async params => {
+            onContext={async (params, sessionId) => {
               await api.requestMcpApp({
                 address,
                 callId: entry.block.id,
+                sessionId,
                 method: 'ui/update-model-context',
                 params,
               })

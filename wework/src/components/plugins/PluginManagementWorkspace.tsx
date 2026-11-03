@@ -1,12 +1,18 @@
 import { toInstalledPluginItem } from './installedPluginPresentation'
 import {
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+  restorePluginComponentState,
+  type PluginSettingsUpdate,
+} from '@/features/plugins/pluginSettingsRequest'
+import {
   updatePluginInventoryInstallation,
   hasLoadedPluginInventory,
   refreshInstalledPluginInventory,
   commitPluginInventoryInstallation,
 } from '@/features/plugins/pluginInventory'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -23,6 +29,7 @@ import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plu
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
   getPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   pluginMarketplaceCacheKey,
   removePluginMarketplaceInstallation,
   sameInstalledPlugins,
@@ -39,10 +46,16 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import {
   isCloudManagedInstalledPlugin,
+  isWegentManagedStorePlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
-import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
+import {
+  pluginUninstallScope,
+  pluginUninstallWarningDetails,
+  uninstallPluginIdentities,
+  type PluginUninstallScope,
+} from './pluginUninstall'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -58,7 +71,8 @@ import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pl
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
-import { isElectronRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 
 function tryPluginInChat(plugin: InstalledPlugin) {
@@ -81,7 +95,8 @@ export function PluginManagementWorkspace(props: PluginManagementWorkspaceProps)
     props.cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
     props.cloudToken
   )
-  return <PluginManagementWorkspaceContent key={cacheKey} {...props} />
+  const deviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
+  return <PluginManagementWorkspaceContent key={`${cacheKey}:${deviceId}`} {...props} />
 }
 
 function PluginManagementWorkspaceContent({
@@ -92,30 +107,39 @@ function PluginManagementWorkspaceContent({
   onCreateWeworkPlugin,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
+  const mounted = useRef(false)
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const runtime = getRuntimeConfig()
   const resolvedCloudApiBaseUrl = cloudApiBaseUrl || runtime.apiBaseUrl
   const marketplaceCacheKeyValue = useMemo(
     () => pluginMarketplaceCacheKey(resolvedCloudApiBaseUrl, cloudToken),
     [cloudToken, resolvedCloudApiBaseUrl]
   )
+  const knownDeviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
+  const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+  const initialCache = knownDeviceId && cached?.deviceId !== knownDeviceId ? null : cached
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
-    return (getPluginMarketplaceCache(marketplaceCacheKeyValue)?.installedPlugins ?? []).map(
-      toInstalledPluginItem
-    )
+    return (initialCache?.installedPlugins ?? []).map(toInstalledPluginItem)
   })
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>(() => {
-    return getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? []
+    return initialCache?.marketplaceItems ?? []
   })
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(() => {
-    return !hasLoadedPluginInventory(getPluginMarketplaceCache(marketplaceCacheKeyValue))
+    return !hasLoadedPluginInventory(initialCache)
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
-    () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId ?? ''
+    () => knownDeviceId || initialCache?.deviceId || ''
   )
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [pendingUninstall, setPendingUninstall] = useState<{
     id: string | number
     name: string
+    scope: PluginUninstallScope
   } | null>(null)
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
@@ -150,7 +174,12 @@ function PluginManagementWorkspaceContent({
 
   useEffect(() => {
     return subscribePluginMarketplaceCache(snapshot => {
-      if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
+      if (
+        !snapshot ||
+        snapshot.cacheKey !== marketplaceCacheKeyValue ||
+        (knownDeviceId && snapshot.deviceId !== knownDeviceId)
+      )
+        return
       setInstalledPlugins(previous =>
         sameInstalledPlugins(previous, snapshot.installedPlugins.map(toInstalledPluginItem))
           ? previous
@@ -164,7 +193,7 @@ function PluginManagementWorkspaceContent({
       if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
       if (hasLoadedPluginInventory(snapshot)) setIsLoadingPlugins(false)
     })
-  }, [marketplaceCacheKeyValue])
+  }, [marketplaceCacheKeyValue, knownDeviceId])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
     if (!showCoreDshTab) return
@@ -177,9 +206,11 @@ function PluginManagementWorkspaceContent({
     let current = true
     void refreshInstalledPluginInventory({
       cacheKey: marketplaceCacheKeyValue,
-      readLocal: () => localPluginApi.listInstalledPlugins({ requireComplete: true }),
+      deviceId: knownDeviceId,
+      readLocal: () => localPluginApi.listInstalledPlugins(),
       readCloud: deviceId => cloudPluginApi.listInstalledPlugins(deviceId),
-      isCurrent: () => current,
+      isCurrent: () =>
+        current && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId),
     })
       .catch(error => {
         if (!current) return
@@ -196,7 +227,7 @@ function PluginManagementWorkspaceContent({
     return () => {
       current = false
     }
-  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, t])
+  }, [cloudPluginApi, localPluginApi, marketplaceCacheKeyValue, knownDeviceId, t])
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
@@ -210,9 +241,21 @@ function PluginManagementWorkspaceContent({
     [installedPlugins, selectedPluginId]
   )
 
+  const beginSettingsUpdate = (id: string | number, request: PluginSettingsUpdate) => {
+    const scopeIsCurrent = capturePluginMarketplaceScope(marketplaceCacheKeyValue, currentDeviceId)
+    return beginPluginSettingsRequest(
+      JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
+      id,
+      request,
+      () =>
+        scopeIsCurrent() && (!knownDeviceId || getKnownLocalExecutorDeviceId() === knownDeviceId)
+    )
+  }
+
   const updateInstalledPlugin = (
     id: string | number,
-    request: { enabled?: boolean; componentStates?: Record<string, boolean> }
+    request: { enabled?: boolean; componentStates?: Record<string, boolean> },
+    operation: ReturnType<typeof beginSettingsUpdate>
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return Promise.reject(new Error('Installed plugin not found'))
@@ -220,7 +263,13 @@ function PluginManagementWorkspaceContent({
       ? cloudPluginApi.updateInstalledPlugin(id, request, currentDeviceId || undefined)
       : localPluginApi.updateInstalledPlugin(id, request)
     return requestPromise.then(updated => {
-      updatePluginInventoryInstallation(marketplaceCacheKeyValue, id, updated, request)
+      if (operation.isCurrent())
+        updatePluginInventoryInstallation(
+          marketplaceCacheKeyValue,
+          id,
+          updated,
+          operation.currentUpdate()
+        )
     })
   }
 
@@ -232,8 +281,11 @@ function PluginManagementWorkspaceContent({
         String(item.id) === String(id) ? { ...item, enabled: !item.enabled } : item
       )
     )
-    void updateInstalledPlugin(id, { enabled: !plugin.enabled })
+    const request = { enabled: !plugin.enabled }
+    const operation = beginSettingsUpdate(id, request)
+    void updateInstalledPlugin(id, request, operation)
       .then(() => {
+        if (!operation.isCurrent()) return
         notifyLocalPluginSkillsChanged()
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
@@ -242,7 +294,8 @@ function PluginManagementWorkspaceContent({
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
-      .catch(() => {
+      .catch(error => {
+        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
         setInstalledPlugins(previous =>
           previous.map(item =>
             String(item.id) === String(id) ? { ...item, enabled: plugin.enabled } : item
@@ -250,6 +303,7 @@ function PluginManagementWorkspaceContent({
         )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+      .finally(operation.finish)
   }
 
   const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {
@@ -272,8 +326,11 @@ function PluginManagementWorkspaceContent({
           : item
       )
     )
-    void updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+    const request = { componentStates: { [componentKey]: enabled } }
+    const operation = beginSettingsUpdate(id, request)
+    void updateInstalledPlugin(id, request, operation)
       .then(() => {
+        if (!operation.isCurrent()) return
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
@@ -281,16 +338,36 @@ function PluginManagementWorkspaceContent({
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
-      .catch(() => {
+      .catch(error => {
+        if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
         setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(id) ? plugin : item))
+          previous.map(item =>
+            String(item.id) === String(id)
+              ? {
+                  ...item,
+                  raw: {
+                    ...item.raw,
+                    spec: {
+                      ...item.raw.spec,
+                      componentStates: restorePluginComponentState(
+                        item.raw.spec.componentStates,
+                        previousStates,
+                        componentKey
+                      ),
+                    },
+                  },
+                }
+              : item
+          )
         )
         track('operation_failed', { operation: 'plugin_toggle' })
       })
+      .finally(operation.finish)
   }
 
   const requestUninstallPlugin = (id: string | number, name: string) => {
-    setPendingUninstall({ id, name })
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    setPendingUninstall({ id, name, scope: pluginUninstallScope(plugin?.raw ?? null) })
   }
 
   const confirmUninstallPlugin = () => {
@@ -302,6 +379,8 @@ function PluginManagementWorkspaceContent({
   }
 
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
+    const isCurrent = () => mounted.current
+    if (!isCurrent()) return
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) {
       setUninstallingPluginIds(previous => {
@@ -316,16 +395,18 @@ function PluginManagementWorkspaceContent({
       })
       return
     }
-    void logoutLocalConnectorsForPlugin(plugin.raw)
-      .catch(() => undefined)
-      .then(() =>
-        uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
-          uninstallCloud: (pluginId, deviceId) =>
-            cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
-          uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
-        })
-      )
+    void uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
+      readLocalInstalled: () =>
+        localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
+      readCloudInstalled: () => cloudPluginApi.readInstalledPluginsForUninstall(),
+      isCurrent,
+      logoutLocal: () => logoutLocalConnectorsForPlugin(plugin.raw),
+      uninstallCloud: (pluginId, deviceId) =>
+        cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+      uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
+    })
       .then(outcome => {
+        if (!isCurrent()) return
         const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
         removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
           installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
@@ -374,6 +455,7 @@ function PluginManagementWorkspaceContent({
         })
       })
       .catch((error: unknown) => {
+        if (!isCurrent()) return
         const rawErrorMessage = getErrorMessage(
           error,
           t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -390,6 +472,7 @@ function PluginManagementWorkspaceContent({
         track('operation_failed', { operation: 'plugin_uninstall' })
       })
       .finally(() => {
+        if (!isCurrent()) return
         setUninstallingPluginIds(previous => {
           const next = new Set(previous)
           next.delete(id)
@@ -411,10 +494,16 @@ function PluginManagementWorkspaceContent({
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
   const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
-    const slug = createdPluginSlug(plugin)
-    return marketplaceItems.find(
-      item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
+    const associated = findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (associated?.accessRole) return associated.accessRole === 'owner' ? associated : undefined
+    if (
+      isWegentManagedStorePlugin(plugin.raw) ||
+      linkedCloudPluginId(plugin.raw) !== null ||
+      plugin.raw.spec.pluginId != null
     )
+      return undefined
+    const slug = createdPluginSlug(plugin)
+    return marketplaceItems.find(item => item.accessRole === 'owner' && item.name === slug)
   }
 
   const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
@@ -439,7 +528,7 @@ function PluginManagementWorkspaceContent({
         plugin.raw.spec.source.pluginKey,
         createdPluginSlug(plugin),
         plugin.name,
-      ]) ?? (plugin.origin === 'created' ? plugin : null)
+      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
     if (packableCreated?.origin === 'created') {
       setSelectedPluginId(packableCreated.id)
       return
@@ -510,8 +599,10 @@ function PluginManagementWorkspaceContent({
   if (selectedPlugin) {
     const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
+    const associatedListing =
+      ownedMarketplace ?? findMarketplaceItemForInstalled(selectedPlugin, marketplaceItems) ?? null
     const packableCreated =
-      ownedMarketplace && !marketplaceItemOwnsLocalCreatedPackage(ownedMarketplace)
+      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
         ? null
         : (findPackableCreatedPlugin(installedPlugins, [
             selectedPlugin.raw.spec.source.pluginKey,
@@ -519,17 +610,16 @@ function PluginManagementWorkspaceContent({
             selectedPlugin.name,
             ownedMarketplace?.name,
             ownedMarketplace?.displayName,
-          ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null))
+          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace ?? null,
+      ownedListing: associatedListing,
     })
     const continueEditingKey = resolveContinueEditingPluginKey({
       packableCreated,
       currentPlugin: selectedPlugin,
       ownedListingName: ownedMarketplace?.name,
-      isPersonalOwner:
-        ownedMarketplace?.accessRole === 'owner' && ownedMarketplace.visibility === 'personal',
+      listing: associatedListing,
     })
     const submissionStatus =
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
@@ -559,8 +649,9 @@ function PluginManagementWorkspaceContent({
           }
           primaryActionDisabled={isUninstalling}
           showUninstall={!isUninstalling}
-          accessRole={ownedMarketplace?.accessRole}
-          pluginVisibility={ownedMarketplace?.visibility ?? null}
+          accessRole={associatedListing?.accessRole}
+          pluginVisibility={associatedListing?.visibility ?? null}
+          shareRecipient={associatedListing?.accessRole === 'recipient'}
           shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
           shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
           manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
@@ -584,6 +675,7 @@ function PluginManagementWorkspaceContent({
         {pendingUninstall && (
           <UninstallPluginDialog
             pluginName={pendingUninstall.name}
+            scope={pendingUninstall.scope}
             onCancel={() => setPendingUninstall(null)}
             onConfirm={confirmUninstallPlugin}
           />
@@ -728,10 +820,10 @@ function PluginManagementWorkspaceContent({
                           plugin.name,
                           ownedMarketplace?.name,
                           ownedMarketplace?.displayName,
-                        ]) ?? (plugin.origin === 'created' ? plugin : null))
+                        ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null))
                   const ownerActions = resolvePluginOwnerActions({
                     isLocalCreated: Boolean(packableCreated),
-                    ownedListing: ownedMarketplace ?? null,
+                    ownedListing: ownedMarketplace ?? listing,
                   })
                   return (
                     <div
@@ -799,6 +891,7 @@ function PluginManagementWorkspaceContent({
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}
+          scope={pendingUninstall.scope}
           onCancel={() => setPendingUninstall(null)}
           onConfirm={confirmUninstallPlugin}
         />

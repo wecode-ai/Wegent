@@ -282,10 +282,14 @@ export function matchesStandardCloudBoardColumn<
   groupBy: ProjectBoardGroupBy,
   extensions: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">,
 ): boolean {
-  groupBy = column.type ?? groupBy;
-  if (groupBy === "status") return item.status === column.groupValue;
-  if (groupBy === "priority") return item.priority === column.groupValue;
-  if (groupBy === "assignee") {
+  const type = column.type ?? groupBy;
+  if (type === "unmatched")
+    return !(column.unmatchedColumns ?? []).some((candidate) =>
+      matchesStandardCloudBoardColumn(item, candidate, groupBy, extensions),
+    );
+  if (type === "status") return item.status === column.groupValue;
+  if (type === "priority") return item.priority === column.groupValue;
+  if (type === "assignee") {
     const assignee = itemAssignee(item);
     return assignee
       ? standardCloudBoardAssigneeValue(assignee) === column.groupValue
@@ -546,8 +550,15 @@ function resolveStandardCloudBoardGroupMutation<
   sourceColumn: ProjectBoardColumn;
   extensions: Pick<StandardCloudBoardHostExtensions<T>, "noTagGroupValue">;
 }): StandardCloudBoardMutation<T> | null {
-  groupBy = column.type ?? groupBy;
-  if (groupBy === "status") {
+  const type = column.type ?? groupBy;
+  if (
+    type === "unmatched" &&
+    column.unmatchedColumns?.some(
+      (lane) => lane.type === "status" && lane.groupValue === item.status,
+    )
+  )
+    return null;
+  if (type === "status") {
     return {
       kind: "status",
       status: column.groupValue,
@@ -558,7 +569,7 @@ function resolveStandardCloudBoardGroupMutation<
       ),
     };
   }
-  if (groupBy === "priority") {
+  if (type === "priority") {
     return {
       kind: "priority",
       optimisticItems: items.map((candidate) =>
@@ -569,7 +580,7 @@ function resolveStandardCloudBoardGroupMutation<
       priority: column.groupValue,
     };
   }
-  if (groupBy === "assignee") {
+  if (type === "assignee") {
     const [type, id] = column.groupValue.includes(":")
       ? column.groupValue.split(":", 2)
       : ["user", column.groupValue];
@@ -597,17 +608,30 @@ function resolveStandardCloudBoardGroupMutation<
     };
   }
   const sourceType = sourceColumn.type ?? groupBy;
+  const stageTags = new Set(
+    column.unmatchedColumns
+      ?.filter((lane) => lane.type === "tag")
+      .map((lane) => lane.groupValue),
+  );
   const tags =
-    column.groupValue === (extensions.noTagGroupValue ?? "")
-      ? []
-      : [
-          ...new Set([
-            ...item.tags.filter(
-              (tag) => sourceType !== "tag" || tag !== sourceColumn.groupValue,
-            ),
-            column.groupValue,
-          ]),
-        ];
+    type === "unmatched"
+      ? item.tags.filter((tag) => !stageTags.has(tag))
+      : column.groupValue === (extensions.noTagGroupValue ?? "")
+        ? []
+        : [
+            ...new Set([
+              ...item.tags.filter(
+                (tag) =>
+                  sourceType !== "tag" || tag !== sourceColumn.groupValue,
+              ),
+              column.groupValue,
+            ]),
+          ];
+  if (
+    type === "unmatched" &&
+    !matchesBoardView({ tags }, { filter: column.unmatchedFilter })
+  )
+    return null;
   return {
     kind: "tag",
     optimisticItems: items.map((candidate) =>

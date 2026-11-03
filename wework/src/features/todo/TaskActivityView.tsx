@@ -80,6 +80,7 @@ import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   selectActivityRerunModel,
   mergeProjectChatMessages,
+  refreshTaskAfterComment,
   startTaskAiRun,
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
@@ -997,6 +998,13 @@ export function TaskActivityView({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
     } finally {
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: task.id,
+          getTask: projectDeliveryApi?.getLoopItem,
+          onTaskUpdated,
+        })
       setSending(false)
     }
     return persisted

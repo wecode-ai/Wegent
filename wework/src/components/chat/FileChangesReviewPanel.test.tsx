@@ -265,6 +265,38 @@ describe('FileChangesReviewPanel', () => {
     expect(onSelectPreviousTurn).toHaveBeenCalledTimes(1)
   })
 
+  test('closes the review view menu on Escape and outside clicks', async () => {
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={treeDiff}
+        reviewTitle="未暂存"
+        viewOptions={[
+          { id: 'unstaged', label: '未暂存', active: true, onSelect: vi.fn() },
+          { id: 'staged', label: '已暂存', active: false, onSelect: vi.fn() },
+        ]}
+      />
+    )
+
+    const switcherButton = screen.getByTestId('review-view-switcher-button')
+
+    await userEvent.click(switcherButton)
+    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+    expect(switcherButton).toHaveAttribute('aria-expanded', 'false')
+    expect(switcherButton).toHaveFocus()
+
+    await userEvent.click(switcherButton)
+    expect(screen.getByTestId('review-view-switcher-menu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('file-changes-review-diff-lines'))
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(switcherButton)
+    await userEvent.click(switcherButton)
+    expect(screen.queryByTestId('review-view-switcher-menu')).not.toBeInTheDocument()
+  })
+
   test('supports review toolbar actions', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
