@@ -9,10 +9,12 @@ export const UPGRADE_CHECKPOINTS = [
   'app-upgrade-recovery',
 ]
 export const UPGRADE_PACKAGE_CHECKPOINTS = [...UPGRADE_CHECKPOINTS, 'app-update-full']
+// Additional package diagnostics cannot certify an upgrade edge by themselves.
+export const UPGRADE_DIAGNOSTIC_CHECKPOINTS = [...UPGRADE_PACKAGE_CHECKPOINTS, 'app-update-refresh']
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
 
 export function rejectFailedReleaseCheckpoint(checkpoint, result) {
-  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint) && result.code !== 0) {
+  if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint) && result.code !== 0) {
     throw new Error(`Release package checkpoint failed: ${checkpoint}`)
   }
 }

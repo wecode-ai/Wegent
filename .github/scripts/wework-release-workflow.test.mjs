@@ -163,7 +163,28 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   );
   assert.equal(
     jobs["prepare-release"].if,
-    "inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''",
+    "inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''",
+  );
+  const source = verification.steps.find(
+    (step) => step.name === "Download immutable diagnostic source",
+  );
+  assert.equal(
+    source.if,
+    "needs.prepare-upgrade-inputs.outputs.source_run_id != ''",
+  );
+  assert.equal(
+    source.with["run-id"],
+    "${{ needs.prepare-upgrade-inputs.outputs.source_run_id }}",
+  );
+  assert.match(source.with.name, /outputs.source_version/);
+  const verify = verification.steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.match(
+    verify.env.WEWORK_UPGRADE_SOURCE_ASSETS,
+    /outputs.source_run_id != ''/,
   );
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(verification.if, /!cancelled\(\)/);

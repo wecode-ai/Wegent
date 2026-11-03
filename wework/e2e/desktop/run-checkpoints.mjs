@@ -14,7 +14,7 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import {
   UPGRADE_CHECKPOINTS,
-  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   rejectFailedReleaseCheckpoint,
 } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
@@ -129,6 +129,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
+  'app-update-refresh': './scenarios/app-update-full.scenario.mjs',
   ...Object.fromEntries(
     UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
@@ -361,6 +362,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  'app-update-refresh',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
@@ -499,7 +501,7 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
+  if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
@@ -582,7 +584,7 @@ async function runDesktopBuild({
 
 function requirePrebuiltUpgradePair(checkpoints, environment) {
   if (
-    checkpoints.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value)) &&
+    checkpoints.some(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value)) &&
     !environment.WEWORK_E2E_UPGRADE_PAIR
   )
     throw new Error(
@@ -597,14 +599,14 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     requestedParallelCheckpoints(requestedArgs) ??
     requestedCheckpointRange(requestedArgs) ??
     []
-  const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+  const upgradeRequested = selected.some(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value))
   requirePrebuiltUpgradePair(selected, environment)
   if (upgradeRequested) {
     const pairPath = resolve(environment.WEWORK_E2E_UPGRADE_PAIR)
     const pair = JSON.parse(await readFile(pairPath, 'utf8'))
     nextEnvironment = {
       ...environment,
-      ...(selected.every(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+      ...(selected.every(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value))
         ? {
             WEWORK_E2E_APP_BIN: pair.from.executable,
             WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
@@ -794,7 +796,7 @@ async function runParallelCheckpoints(checkpoints) {
   try {
     const baseEnvironment = await sharedBuildEnvironment(process.env, checkpoints)
     const sharedHarnessRuntime = checkpoints.every(checkpoint =>
-      UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)
+      UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)
     )
       ? null
       : baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||

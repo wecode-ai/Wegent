@@ -26,7 +26,7 @@ on:
         required: false
         default: ""
       verification_checkpoint:
-        description: "Diagnostic replay only: run one checkpoint without producing upgrade evidence"
+        description: "Run one diagnostic without producing upgrade evidence; refresh requires a prebuilt source"
         type: choice
         options:
           - all
@@ -35,7 +35,13 @@ on:
           - app-rollback-recovery
           - app-upgrade-recovery
           - app-update-full
+          - app-update-refresh
         default: all
+      verification_source_run_id:
+        description: "Immutable source producer for the non-publishing app-update-refresh diagnostic"
+        type: string
+        required: false
+        default: ""
       verification_release_tag:
         description: "Replay using the matching published release archive instead of the original candidate"
         type: string
@@ -52,7 +58,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''
+    if: inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -472,6 +478,8 @@ jobs:
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
       diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
       published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
+      source_run_id: ${{ steps.inputs.outputs.source_run_id }}
+      source_version: ${{ steps.inputs.outputs.source_version }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve completed release build artifacts
@@ -485,6 +493,7 @@ jobs:
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           VERIFICATION_CHECKPOINT: ${{ inputs.verification_checkpoint }}
           PUBLISHED_RELEASE_TAG: ${{ inputs.verification_release_tag }}
+          VERIFICATION_SOURCE_RUN_ID: ${{ inputs.verification_source_run_id }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
   verify-upgrades:
@@ -524,6 +533,15 @@ jobs:
           run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download immutable diagnostic source
+        if: needs.prepare-upgrade-inputs.outputs.source_run_id != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-upgrade-inputs.outputs.source_version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/upgrade-source
+          run-id: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Verify declared upgrade and rollback edges on real release packages
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         shell: bash
@@ -534,6 +552,8 @@ jobs:
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
           WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
+          WEWORK_UPGRADE_SOURCE_ASSETS: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id != '' && format('{0}/upgrade-source/wework-release-assets', runner.temp) || '' }}
+          WEWORK_UPGRADE_SOURCE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.source_version }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \

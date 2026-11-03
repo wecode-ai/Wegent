@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   downloadPublishedDesktopArchive,
   downloadPublishedDesktopRelease,
+  readPrebuiltDesktopRelease,
 } from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
@@ -17,7 +18,7 @@ import {
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
-  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   UPGRADE_SUITE_VERSION,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
@@ -43,8 +44,16 @@ if (publishedTarget)
     directory: assets,
   })
 const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
-if (diagnosticCheckpoint && !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+if (diagnosticCheckpoint && !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint))
   throw new Error('Invalid upgrade diagnostic checkpoint')
+const sourceAssets = process.env.WEWORK_UPGRADE_SOURCE_ASSETS || ''
+const sourceVersion = process.env.WEWORK_UPGRADE_SOURCE_VERSION || ''
+if (
+  Boolean(sourceAssets) !== Boolean(sourceVersion) ||
+  (sourceAssets && diagnosticCheckpoint !== 'app-update-refresh') ||
+  (diagnosticCheckpoint === 'app-update-refresh' && !sourceAssets)
+)
+  throw new Error('The refresh diagnostic requires immutable source artifacts and their version')
 const diagnostics = resolve(
   process.env.WEWORK_UPGRADE_DIAGNOSTICS_DIR || join(root, 'test-results', 'release-upgrades')
 )
@@ -69,7 +78,11 @@ try {
     upgradeSource(published, release.version).sha256 !== release.sha256
   )
     throw new Error('A published release package is immutable across channels')
-  for (const targetChannel of channel === 'stable' ? ['stable', 'beta'] : ['beta'])
+  for (const targetChannel of sourceAssets
+    ? [channel]
+    : channel === 'stable'
+      ? ['stable', 'beta']
+      : ['beta'])
     await verifyChannel(catalogs, targetChannel)
 } finally {
   await rm(temporary, { recursive: true, force: true })
@@ -102,9 +115,13 @@ async function verifyChannel(catalogs, targetChannel) {
   await saveReport()
   try {
     if (diagnosticCheckpoint) {
-      if (!plan?.previous) throw new Error('Diagnostic replay requires a previous release')
+      if (!sourceAssets && !plan?.previous)
+        throw new Error('Diagnostic replay requires a previous release')
       report.checkpoint = diagnosticCheckpoint
-      const passed = await verifySource(plan.previous, targetChannel)
+      const source = sourceAssets ? { version: sourceVersion } : plan.previous
+      report.previousVersion = source.version
+      const passed = await verifySource(source, targetChannel)
+      report.attempts.push({ version: source.version, status: passed ? 'passed' : 'failed' })
       report.status = passed ? 'diagnostic-passed' : 'diagnostic-failed'
       if (!passed) throw new Error('Upgrade diagnostic checkpoint failed')
       return
@@ -155,6 +172,14 @@ async function verifyChannel(catalogs, targetChannel) {
 }
 
 async function downloadSource(source, targetChannel) {
+  if (sourceAssets)
+    return readPrebuiltDesktopRelease({
+      directory: resolve(sourceAssets),
+      version: source.version,
+      platform,
+      arch,
+      installation: join(temporary, `${targetChannel}-${source.version}`, 'source'),
+    })
   return downloadPublishedDesktopRelease({
     repository,
     version: source.version,
