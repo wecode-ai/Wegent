@@ -202,8 +202,8 @@ describe('unified human response', () => {
     await act(async () => {
       expect(await context!.respond(item, 'first answer')).toBe(true)
     })
-    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
-    expect(marker).toBeTruthy()
+    const marker = `wework.interactions:test:1:accepted:${item.id}`
+    expect(localStorage.getItem(marker)).toBe('true')
     localStorage.removeItem(marker)
     act(() => context!.setDraft(item.id, 'stale second answer'))
     await act(async () => {
