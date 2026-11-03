@@ -37,7 +37,7 @@ export async function routeUpgradeRequests(child, origin, logPath) {
       ...options,
       args: (options?.args ?? launchArguments).filter(argument => argument !== pauseArgument)
     })
-    if (${Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
+    if (${!logPath || Boolean(process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT)}) {
       const report = () => console.log('[desktop-e2e-startup]', JSON.stringify({
         pid: process.pid, ready: app.isReady(), userData: app.getPath('userData')
       }))
