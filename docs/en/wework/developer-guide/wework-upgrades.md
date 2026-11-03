@@ -227,4 +227,11 @@ This mode only downloads and verifies existing artifacts. It skips version prepa
 
 To diagnose a shared startup failure, add `-f verification_checkpoint=app-upgrade` to the replay command. This runs that checkpoint against the previous published release. Focused diagnostics require a non-publishing replay and generate neither upgrade policy nor authorization evidence; normal releases still run the complete suite.
 
+Diagnostic replays record the complete text of early native error dialogs in
+`app.log` under `[desktop-e2e-startup-error]`, while preserving the dialog behavior.
+Check this record when product logging has not initialized; a controller connection
+timeout alone does not identify an upgrade or rollback failure's cause. Unstarted
+transaction fixtures use the retained installation's preparation API while keeping
+the source version's running components and package identity.
+
 If the matching version has been published with different bytes from the original candidate, add `-f verification_release_tag=wework-v<same-version>`. This option is restricted to non-publishing replays: driver dependencies reuse the build artifact, while the target archive and descriptor are downloaded and verified directly from that Release. No package is modified or re-signed. The version must match the input artifact, and the cross-channel package hash check remains enforced.
