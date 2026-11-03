@@ -136,7 +136,7 @@ export function AutomationsPage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialAutomationLoadCompletedRef = useRef(false)
+  const initialSelectionResolvedRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -173,8 +173,8 @@ export function AutomationsPage({
         return false
       })
       setAutomations(items)
-      const shouldSelectInitialAutomation = !initialAutomationLoadCompletedRef.current
-      initialAutomationLoadCompletedRef.current = true
+      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
+      initialSelectionResolvedRef.current = true
       if (shouldSelectInitialAutomation && items[0] && !embedded) {
         setSelectedAutomationId(items[0].id)
         setEditing(items[0])
@@ -300,6 +300,7 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
@@ -308,6 +309,7 @@ export function AutomationsPage({
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -527,6 +529,7 @@ export function AutomationsPage({
 
   const closeDetail = () =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)

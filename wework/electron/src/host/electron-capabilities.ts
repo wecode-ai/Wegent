@@ -7,6 +7,7 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { focusE2EWindow } from './e2e-window-focus.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
@@ -734,9 +735,12 @@ export function createElectronCapabilityRouter(
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
-    target.focus()
-    const primaryContents = e2eHost.captureTarget('main')
-    if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    await focusE2EWindow(target, () => {
+      app.focus({ steal: true })
+      target.focus()
+      const primaryContents = e2eHost.captureTarget('main')
+      if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    })
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')

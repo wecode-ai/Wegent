@@ -724,20 +724,41 @@ async function waitForElementInsideScroller(
   elementSelector,
   scrollerSelector,
   description,
-  timeoutMs = 3_000
+  timeoutMs = 3_000,
+  { occluderSelector, clipToViewport = false } = {}
 ) {
   const startedAt = Date.now()
   let element
   let scroller
+  let occluder
   while (Date.now() - startedAt < timeoutMs) {
     scroller = await getSingleElementMetrics(control, scrollerSelector, description)
     element = (await getElementMetrics(control, elementSelector)).at(-1)
-    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
-      return { element, scroller }
+    occluder = occluderSelector
+      ? (await getElementMetrics(control, occluderSelector)).at(-1)
+      : undefined
+    const bottom = Math.min(
+      scroller.bottom,
+      occluder?.height > 0 ? occluder.top : scroller.bottom,
+      clipToViewport ? scroller.viewportHeight : Infinity
+    )
+    if (
+      element &&
+      (!occluderSelector || occluder?.height > 0) &&
+      element.height > 0 &&
+      element.top >= Math.max(scroller.top, clipToViewport ? 0 : -Infinity) - 2 &&
+      element.bottom <= bottom + 2 &&
+      (!clipToViewport ||
+        (element.left >= Math.max(scroller.left, 0) - 2 &&
+          element.right <= Math.min(scroller.right, scroller.viewportWidth) + 2))
+    ) {
+      return { element, scroller, ...(occluder ? { occluder } : {}) }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
+  throw new Error(
+    `${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller, occluder })}`
+  )
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {

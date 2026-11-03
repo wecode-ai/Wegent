@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { templateMessages } from "../templates/messages";
+import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
+import {
+  readTemplateAgents,
+  templateRoutingResolver,
+  materializeTemplateAgents,
+  validateTemplateAgentRouting,
+} from "../templates/agents";
+
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -1701,6 +1710,32 @@ function RootTeamEditor({
         }),
       removeMember: (userId) =>
         api.workspaces!.removeMember(workspace.id, userId),
+      async loadTemplateAgents(group) {
+        const agents = await api.workspaces!.listAgents(workspace.id, {
+          forceRefresh: true,
+        });
+        return readTemplateAgents(
+          agents,
+          [group],
+          host.projectAgentConfiguration?.readTemplateAgent,
+        );
+      },
+      async createTemplateGroups(document, drafts) {
+        const created = await applyWorkspaceTemplate(
+          api,
+          workspace,
+          document,
+          drafts,
+          host.projectAgentConfiguration,
+          templateMessages[locale].partial,
+          () => {
+            hasCreatedGroups.current = true;
+          },
+          templateMessages[locale].unsupportedPolicy,
+          locale,
+        );
+        return created;
+      },
       async createCollaborationGroup(input) {
         const created = await api.workspaces!.createCollaborationGroup(
           workspace.id,
@@ -1725,7 +1760,17 @@ function RootTeamEditor({
         onClose();
       },
     };
-  }, [api.members, api.workspaces, onClose, onCreated, workspace.id]);
+  }, [
+    api.members,
+    api.workspaces,
+    api.agents,
+    host.projectAgentConfiguration,
+    locale,
+    onClose,
+    onCreated,
+    workspace.id,
+    workspace.namespace,
+  ]);
 
   if (loading || error) {
     return (
@@ -2848,6 +2893,7 @@ function CollaborationPlatformAppContent({
                 ariaLabel={messages.collaborationParticipants}
                 groupsContent={
                   <WorkspaceGroupsPanel
+                    agentConfiguration={host.projectAgentConfiguration}
                     key={workspace.id}
                     api={api}
                     workspace={workspace}
@@ -3274,6 +3320,19 @@ function CollaborationPlatformAppContent({
                     host.loadProjectCollaborationGroupGenerationModels,
                   generateCollaborationGroupDraft:
                     host.generateProjectCollaborationGroupDraft,
+                  validate: async (selection) => {
+                    if (!selection.template) return;
+                    await validateTemplateAgentRouting(
+                      selection.template,
+                      selection.collaborationGroupDrafts,
+                      templateRoutingResolver(
+                        host.projectAgentConfiguration,
+                        projectWorkspace.location,
+                        undefined,
+                        locale,
+                      ),
+                    );
+                  },
                   configure: async (project, selection) => {
                     if (selection.template) {
                       await prepareTemplateProject(
@@ -3360,8 +3419,27 @@ function CollaborationPlatformAppContent({
                           })),
                       )),
                     ];
+                    const resolvedTemplate = selection.template
+                      ? await materializeTemplateAgents(
+                          api,
+                          project.id,
+                          selection.template,
+                          selection.collaborationGroupDrafts,
+                          templateMessages[locale].partial,
+                          undefined,
+                          templateRoutingResolver(
+                            host.projectAgentConfiguration,
+                            projectWorkspace.location,
+                            project.id,
+                            locale,
+                          ),
+                        )
+                      : {
+                          drafts: selection.collaborationGroupDrafts,
+                          agentIds: new Set<string>(),
+                        };
                     const templateGroups: CollaborationGroup[] = [];
-                    for (const rawGroupDraft of selection.collaborationGroupDrafts) {
+                    for (const rawGroupDraft of resolvedTemplate.drafts) {
                       const groupDraft =
                         normalizeCollaborationGroupDraftForPersistence(
                           rawGroupDraft,
@@ -3382,6 +3460,8 @@ function CollaborationPlatformAppContent({
                         const projectAgent = createdAgents.find(
                           ({ resourceId }) => resourceId === participant.id,
                         )?.projectAgent;
+                        if (resolvedTemplate.agentIds.has(participant.id))
+                          return participant;
                         if (!projectAgent) {
                           throw new Error(
                             locale === "zh-CN"
@@ -3432,6 +3512,7 @@ function CollaborationPlatformAppContent({
                         templateGroups,
                         locale,
                       );
+                      return api.projects.get(project.id);
                     }
                   },
                 }
@@ -3448,6 +3529,7 @@ function CollaborationPlatformAppContent({
             setProjectWorkspaceId(null);
           }}
           onCreated={(project) => {
+            commands.registerProject(project);
             setProjectDialogOpen(false);
             setProjectTemplate(null);
             setProjectWorkspaceId(null);

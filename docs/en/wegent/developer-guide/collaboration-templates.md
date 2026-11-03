@@ -45,10 +45,24 @@ downloads, while existing projects retain independent group configurations.
 ## Portable configuration
 
 The document is an `agent.wecode.io/v1` `Template` whose
-`spec.resources.collaboration` contains `project` and `groups`. Groups define
-logical roles, a coordinator role, workflow stages, deliverables, acceptance
-criteria, and execution tags. Users explicitly bind roles to members or agents;
-the coordinator cannot also execute stages.
+`spec.resources.collaboration` contains `project`, `groups` and optional `agents`.
+Agent definitions contain a logical `key`, name, `codex` / `claude_code` runtime,
+`systemPrompt`, `capabilityDescription` and optional approval, workspace and concurrency policies. Roles reference definitions through
+`agentKey`. Applying creates each referenced Agent once in the destination project
+or workspace and replaces coordinator, member and stage references with new IDs.
+The coordinator cannot also execute member roles.
+
+Built-ins include all Agent definitions. The default form shows a compact roster;
+"Customize members (optional)" allows existing members to replace them. Legacy
+templates without definitions still allow manual assignment. Saving YAML into the
+template library alone does not create project Agents; applying it does.
+
+Models, devices, workspaces and tools follow the recipient's execution environment.
+Before creating agents, all required runtimes are checked against the current device's unique default models. Missing defaults or a device not authorized for the destination project block import before any agent is created; import never grants device access.
+When creating a project from a template, device and default-model readiness is checked before project creation. A failed preflight preserves the form without creating an empty project, allowing users to switch templates or complete configuration and retry. Project-specific device authorization is still checked after creation. Later persistence failures retain the created project and direct users to inspect its configuration, preventing duplicate creation.
+Source account model, plugin and device IDs and credentials are excluded. Project
+and group exports load real Agent definitions, preserving prompts with portable
+references that can be imported by another account. Multi-Bot resources that cannot be represented are rejected explicitly. Cloud workspaces cannot represent manual approval, explicit workspace policies or concurrency limits. Import rejects these settings before creating resources and directs users to apply the template to a project. Local workspaces and direct project imports preserve them.
 
 YAML validation rejects unknown fields, duplicate keys, aliases, invalid
 references, and files larger than 1 MB. Exports include current configuration,
@@ -56,8 +70,8 @@ without account identities, tasks, comments, execution history, or credentials.
 Export actions belong to project configuration sharing and group management.
 
 Applying to an existing project adds groups and preserves existing groups and
-tasks. Name conflicts require renaming. Partial creation failures require users
-to inspect added groups before continuing, preventing duplicate writes.
+tasks. Name conflicts require renaming. Partial Agent or group creation prevents
+direct reapplication and asks users to inspect persisted configuration first.
 
 ## Local availability
 
@@ -90,3 +104,5 @@ Roles may set `defaultKind`; built-in coordinators default to an agent and canno
 `project.board` defines a view name and stage tags. Import appends a default tag view while preserving existing views and business tags. The coordinator updates stage tags as work progresses and submits the result for human acceptance; defining columns alone does not advance an issue. Project snapshots export these settings with portable group references instead of live group IDs.
 
 The CI-registered `collaboration-template-lifecycle` desktop checkpoint covers import, automatic group assignment, six workflow rounds, tag columns, shell deliverables and human acceptance. Electron, Executor, MCP and persistence are real; only the model service uses deterministic responses.
+
+The CI-registered `collaboration-template-agents` checkpoint covers cross-account application, prompt preservation, role and stage bindings, saving and reuse, and zero project creation when a default model is missing followed by recovery with a configured template. Shared tests additionally cover device preflight and partial persistence. Executor tests verify the actual initial and resumed execution requests contain both the leader prompt and manager constraints.

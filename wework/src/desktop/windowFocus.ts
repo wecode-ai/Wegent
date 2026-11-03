@@ -8,8 +8,13 @@ let initialized = false
 let focusRevision = 0
 let initializationGeneration = 0
 let unsubscribeNativeFocus: (() => void) | null = null
+const focusEvents: Array<{ source: string; focused: boolean; revision: number; at: number }> = []
 
-function publishFocused(focused: boolean) {
+function publishFocused(focused: boolean, source: string) {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    focusEvents.push({ source, focused, revision: focusRevision, at: Date.now() })
+    if (focusEvents.length > 32) focusEvents.shift()
+  }
   if (focused === currentFocused) return
   currentFocused = focused
   for (const listener of listeners) {
@@ -21,14 +26,14 @@ function ensureListenerInstalled() {
   if (initialized) return
   initialized = true
   const generation = ++initializationGeneration
-  publishFocused(document.hasFocus())
+  publishFocused(document.hasFocus(), 'initial-document')
   window.addEventListener('focus', handleFocus)
   window.addEventListener('blur', handleBlur)
   const subscribeNativeFocus = window.weworkElectronLifecycle?.onWindowFocusChanged
   if (!subscribeNativeFocus) return
   unsubscribeNativeFocus = subscribeNativeFocus(focused => {
     focusRevision += 1
-    publishFocused(focused)
+    publishFocused(focused, 'native-event')
   })
   const revision = focusRevision
   void invokeDesktopHost<{ focused?: boolean }>('window.getState')
@@ -39,7 +44,7 @@ function ensureListenerInstalled() {
         revision === focusRevision &&
         typeof state.focused === 'boolean'
       ) {
-        publishFocused(state.focused)
+        publishFocused(state.focused, 'native-initial')
       }
     })
     .catch(() => undefined)
@@ -47,16 +52,20 @@ function ensureListenerInstalled() {
 
 function handleFocus() {
   focusRevision += 1
-  publishFocused(true)
+  publishFocused(true, 'renderer-focus')
 }
 
 function handleBlur() {
   focusRevision += 1
-  publishFocused(false)
+  publishFocused(false, 'renderer-blur')
 }
 
 export function isMainWindowFocused(): boolean {
   return currentFocused
+}
+
+export function getMainWindowFocusDiagnostics() {
+  return { focused: currentFocused, revision: focusRevision, events: [...focusEvents] }
 }
 
 export function subscribeMainWindowFocus(callback: (focused: boolean) => void): () => void {
