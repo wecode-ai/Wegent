@@ -5781,6 +5781,7 @@
   "interactions": {
     "title": "Needs your input",
     "tab_title_with_count": "Needs your input ({{count}})",
+    "tab_pending_count": " ({{count}})",
     "needs_reply": "AI needs your input",
     "reply": "Reply",
     "reply_placeholder": "Write a reply…",

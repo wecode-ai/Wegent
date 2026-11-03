@@ -364,12 +364,15 @@ describe('WorkspaceTabStrip', () => {
       </I18nextProvider>
     )
     const rendered = render(tree(0))
-    for (const count of [0, 2, 1, 0]) {
+    for (const count of [0, 2, 1234, 1, 0]) {
       rendered.rerender(tree(count))
       const title = language === 'zh-CN' ? `待你处理（${count}）` : `Needs your input (${count})`
       const button = screen.getByTestId('workspace-tab-select-pending-interactions')
       expect(button).toHaveTextContent(title)
       expect(button).toHaveAttribute('title', title)
+      expect(
+        screen.getByTestId('workspace-tab-pending-count-pending-interactions')
+      ).toHaveTextContent(String(count))
       expect(screen.getAllByRole('tab')).toHaveLength(1)
     }
   })

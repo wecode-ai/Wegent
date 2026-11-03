@@ -141,10 +141,15 @@ function WorkspaceTabButton({
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
   const interactions = useRuntimeInteractions()
-  const title =
+  const pendingCount =
     interactions && tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
+      ? interactions.pending.length
+      : null
+  const label = pendingCount === null ? tab.title : t('interactions.title', '待你处理')
+  const title =
+    pendingCount !== null
       ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
-          count: interactions.pending.length,
+          count: pendingCount,
         })
       : tab.title
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
@@ -173,6 +178,7 @@ function WorkspaceTabButton({
       }}
       className={cn(
         'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
           ? 'border border-border/70 bg-white text-text-primary shadow-sm dark:bg-white/[0.09]'
@@ -214,7 +220,17 @@ function WorkspaceTabButton({
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
-        <span className={cn('truncate', active && 'font-medium')}>{title}</span>
+        <span className={cn('flex min-w-0 items-center', active && 'font-medium')}>
+          <span className="truncate">{label}</span>
+          {pendingCount !== null ? (
+            <span
+              data-testid={`workspace-tab-pending-count-${tab.id}`}
+              className="shrink-0 whitespace-pre tabular-nums"
+            >
+              {t('interactions.tab_pending_count', '（{{count}}）', { count: pendingCount })}
+            </span>
+          ) : null}
+        </span>
         {tab.fixed ? (
           <Pin
             aria-label={t('workbench.workspace_tab_fixed', '固定标签页')}
