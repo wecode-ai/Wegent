@@ -47,7 +47,7 @@ impl LocalTaskStore {
             metadata
                 .as_deref()
                 .and_then(|value| serde_json::from_str::<Value>(value).ok())
-                .is_none_or(|value| value.get("execution_environment").is_none())
+                .map_or(true, |value| value.get("execution_environment").is_none())
         };
         // Existing configured projects need no Git discovery. Keep external I/O outside the transaction.
         let execution_environment = needs_environment
