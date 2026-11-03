@@ -3938,8 +3938,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       document.spec.resources.collaboration.project.taskAssignment!.groupKey =
         "group-0";
       for (const group of document.spec.resources.collaboration.groups) {
-        group.roles.find((role) => role.key === group.leaderRole)!.defaultKind =
-          "human";
+        const leader = group.roles.find((role) => role.key === group.leaderRole)!;
+        leader.defaultKind = "human";
+        delete leader.agentKey;
       }
       await templateStore.save(document, member.user_id);
       const { api } = createApi({
@@ -3976,6 +3977,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       await click(byTestId("template-details-three-groups"));
       await click(byTestId("template-use"));
       for (const group of document.spec.resources.collaboration.groups) {
+        expect(
+          byTestId(`template-customize-${group.key}`).closest("details")?.open,
+        ).toBe(true);
         for (const role of group.roles.filter(
           (role) => role.key !== group.leaderRole,
         )) {
@@ -3996,7 +4000,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       if (failLater) {
         expect(listWorkspaces).toHaveBeenCalledTimes(navigationReads);
         expect(byTestId("collaboration-template-dialog").textContent).toContain(
-          "部分小组已添加",
+          "部分智能体或小组已添加",
         );
         expect(
           (byTestId("template-bindings-apply") as HTMLButtonElement).disabled,
