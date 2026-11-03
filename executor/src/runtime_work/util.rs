@@ -698,6 +698,9 @@ pub(crate) fn workspace_label(path: &str) -> String {
 
 pub(crate) fn workspace_group_path(path: &str) -> String {
     let normalized = normalize_workspace_path(path);
+    if let Some(root) = super::restored_workspaces::workspace_root(&normalized) {
+        return root;
+    }
     git_common_workspace_root(&normalized)
         .or_else(|| codex_worktree_fallback_root(&normalized))
         .unwrap_or(normalized)
@@ -705,6 +708,9 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
+    if let Some(root) = super::restored_workspaces::workspace_root(&normalized) {
+        return root;
+    }
     if infer_workspace_kind(&normalized) == "chat" {
         return normalized;
     }
@@ -719,6 +725,9 @@ pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
 }
 
 pub(crate) fn infer_workspace_kind(path: &str) -> &'static str {
+    if super::restored_workspaces::workspace_root(path).is_some() {
+        return "workspace";
+    }
     if path.contains("/Codex/") || path.contains("\\Codex\\") {
         "chat"
     } else if infer_worktree_id(path).is_some() {
@@ -796,7 +805,16 @@ fn git_common_workspace_root(path: &str) -> Option<String> {
 }
 
 pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let mut current = path.to_path_buf();
+    let restore_root =
+        super::restored_workspaces::workspace_root(&path.to_string_lossy()).map(PathBuf::from);
+    git_metadata_directories_with_boundary(path, restore_root.as_deref())
+}
+
+fn git_metadata_directories_with_boundary(
+    path: &Path,
+    boundary: Option<&Path>,
+) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let mut current = PathBuf::from(normalize_workspace_path(&path.to_string_lossy()));
     loop {
         let git_marker = current.join(".git");
         if git_marker.is_dir() {
@@ -807,11 +825,15 @@ pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf,
             let common_dir = read_common_git_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
             return Some((current, git_dir, common_dir));
         }
-        if !current.pop() {
+        if boundary == Some(current.as_path()) || !current.pop() {
             return None;
         }
     }
 }
+
+#[cfg(test)]
+#[path = "util/restored_boundaries_tests.rs"]
+mod restored_boundaries_tests;
 
 fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     let (workspace, git_dir, _) = git_metadata_directories(Path::new(path))?;
@@ -823,6 +845,9 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    if super::restored_workspaces::workspace_root(path).is_some() {
+        return None;
+    }
     if !Path::new(path).exists() {
         return path_worktree_root_and_id(path);
     }

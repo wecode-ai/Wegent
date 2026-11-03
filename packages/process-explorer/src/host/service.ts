@@ -3,6 +3,7 @@ import type {
   ProcessDegradation,
   ProcessExplorerClient,
   ProcessSnapshot,
+  ProcessSnapshotOptions,
 } from '../contract.js'
 import {
   buildProcessSnapshot,
@@ -42,7 +43,7 @@ export interface ProcessExplorerServiceOptions {
 export class ProcessExplorerService implements ProcessExplorerClient {
   private cached: ProcessSnapshot | null = null
   private lastCollectedAt = 0
-  private inFlight: Promise<ProcessSnapshot> | null = null
+  private inFlight = new Map<SystemProcessTableResult | null, Promise<ProcessSnapshot>>()
   private pendingSystemTableRead: Promise<SystemProcessTableResult> | null = null
   private systemTableResult: SystemProcessTableResult | null = null
   private systemTableRefresh: Promise<void> | null = null
@@ -51,28 +52,42 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   constructor(private readonly options: ProcessExplorerServiceOptions) {}
 
-  snapshot(): Promise<ProcessSnapshot> {
+  async snapshot(options: ProcessSnapshotOptions = {}): Promise<ProcessSnapshot> {
     const now = this.currentTime()
     const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
-    if (this.cached && now - this.lastCollectedAt < minimumInterval) {
-      return Promise.resolve(this.cached)
+    const complete = options.waitForSystemProcesses !== false
+    if (
+      this.cached &&
+      now - this.lastCollectedAt < minimumInterval &&
+      (!complete || (!this.systemTableRefresh && !this.cached.collectingSystemProcesses))
+    ) {
+      return this.cached
     }
-    return this.collect(now)
+    const refresh = this.refreshSystemTable(this.options.systemTable ?? null)
+    if (complete) await refresh
+    return this.collect(this.currentTime(), this.systemTableResult)
   }
 
-  private async collect(now: number): Promise<ProcessSnapshot> {
-    if (this.inFlight) return this.inFlight
-    this.inFlight = this.collectNow(now)
+  private async collect(
+    now: number,
+    system: SystemProcessTableResult | null
+  ): Promise<ProcessSnapshot> {
+    const active = this.inFlight.get(system)
+    if (active) return active
+    const pending = this.collectNow(now, system)
+    this.inFlight.set(system, pending)
     try {
-      return await this.inFlight
+      return await pending
     } finally {
-      this.inFlight = null
+      if (this.inFlight.get(system) === pending) this.inFlight.delete(system)
     }
   }
 
-  private async collectNow(now: number): Promise<ProcessSnapshot> {
+  private async collectNow(
+    now: number,
+    system: SystemProcessTableResult | null
+  ): Promise<ProcessSnapshot> {
     const systemTable = this.options.systemTable ?? null
-    this.refreshSystemTable(systemTable)
     const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
     if (!this.cachedMetrics || now - this.lastMetricsAt >= minimumInterval) {
       this.cachedMetrics = this.options.metrics()
@@ -86,7 +101,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       'host-process-provider-failed'
     )
 
-    const system = this.systemTableResult ?? { processes: [], degraded: [] }
+    const data = system ?? { processes: [], degraded: [] }
     const snapshot = buildProcessSnapshot({
       capturedAt: now,
       platform: this.options.platform ?? process.platform,
@@ -94,13 +109,16 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       applicationName: this.options.applicationName,
       metrics,
       windows: windows.values,
-      system: system.processes,
+      system: data.processes,
       hostProcesses: hostProcesses.values,
-      degraded: [...system.degraded, ...windows.degraded, ...hostProcesses.degraded],
+      degraded: [...data.degraded, ...windows.degraded, ...hostProcesses.degraded],
     })
-    snapshot.collectingSystemProcesses = Boolean(systemTable && !this.systemTableResult)
-    this.cached = snapshot
-    this.lastCollectedAt = now
+    snapshot.collectingSystemProcesses = Boolean(systemTable && !system)
+    // A slower preview must not replace a completed table's cached snapshot.
+    if (system === this.systemTableResult) {
+      this.cached = snapshot
+      this.lastCollectedAt = now
+    }
     return snapshot
   }
 
@@ -108,8 +126,9 @@ export class ProcessExplorerService implements ProcessExplorerClient {
     return (this.options.now ?? Date.now)()
   }
 
-  private refreshSystemTable(systemTable: SystemProcessTable | null): void {
-    if (!systemTable || this.systemTableRefresh) return
+  private refreshSystemTable(systemTable: SystemProcessTable | null): Promise<void> {
+    if (!systemTable) return Promise.resolve()
+    if (this.systemTableRefresh) return this.systemTableRefresh
     // Electron owns its metrics. External process enumeration supplements them
     // asynchronously and must not hide the application's available processes.
     this.systemTableRefresh = this.readSystemTable(
@@ -123,6 +142,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       .finally(() => {
         this.systemTableRefresh = null
       })
+    return this.systemTableRefresh
   }
 
   private async readSystemTable(

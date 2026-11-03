@@ -158,7 +158,7 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('click', `[data-testid="stand-in-overview-role-${ROLE}"]`)
+        await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${ROLE}"]`)
         await control.command('waitFor', '[data-testid="stand-in-settings-open"]:not(:disabled)')
         await captureScreenshot(control, 'router-01-existing-stand-in-entry.png')
         const issue = await rpc(control, 'todos.create', {

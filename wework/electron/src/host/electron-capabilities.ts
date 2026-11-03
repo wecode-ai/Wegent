@@ -45,7 +45,10 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type {
+  ProcessExplorerClient,
+  ProcessSnapshotOptions,
+} from '../vendor/process-explorer/contract.js'
 import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
@@ -132,9 +135,7 @@ function assertE2EEnabled(control: string): void {
 }
 
 /** Host-side process explorer the capability router exposes to the renderer. */
-export interface ProcessExplorerHostService {
-  snapshot: () => Promise<ProcessSnapshot>
-}
+export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -1460,7 +1461,11 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', (options: ProcessSnapshotOptions = {}) =>
+    services.processExplorer.snapshot({
+      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
+    })
+  )
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )

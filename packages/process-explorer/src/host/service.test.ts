@@ -3,6 +3,39 @@ import type { ElectronProcessMetric } from '../core/build-snapshot.js'
 import { ProcessExplorerService } from './service.js'
 import type { SystemProcessTableResult } from './system-process-table.js'
 
+const executorProcess = {
+  pid: 40,
+  name: 'Executor',
+  kind: 'host-service' as const,
+  owner: { id: 'executor', label: 'Executor' },
+}
+
+function deferredSystemTable() {
+  let resolve!: (value: SystemProcessTableResult) => void
+  const pending = new Promise<SystemProcessTableResult>(complete => {
+    resolve = complete
+  })
+  return {
+    read: vi.fn(() => pending),
+    complete: () =>
+      resolve({
+        processes: [
+          {
+            pid: 40,
+            parentPid: 10,
+            name: 'Executor',
+            command: 'executor',
+            cpuPercent: 1,
+            memoryBytes: 4096,
+            startedAt: 1000,
+            identity: 'created-40',
+          },
+        ],
+        degraded: [],
+      }),
+  }
+}
+
 function metric(pid: number, type: string): ElectronProcessMetric {
   return {
     pid,
@@ -36,14 +69,74 @@ function createService(
 }
 
 describe('ProcessExplorerService', () => {
+  it.each(['preview-first', 'complete-first'])(
+    'waits for authoritative host identities with %s requests',
+    async order => {
+      const table = deferredSystemTable()
+      const { service, metrics } = createService({
+        systemTable: table,
+        hostProcesses: () => [executorProcess],
+      })
+      let delivered = false
+      const complete = () =>
+        service.snapshot().then(value => {
+          delivered = true
+          return value
+        })
+      const full = order === 'complete-first' ? complete() : null
+      const preview = await service.snapshot({ waitForSystemProcesses: false })
+      expect(preview.collectingSystemProcesses).toBe(true)
+      expect(preview.processes.find(row => row.pid === 40)?.startedAt).toBeNull()
+      const pending = full ?? complete()
+      await service.snapshot({ waitForSystemProcesses: false })
+      expect(delivered).toBe(false)
+      table.complete()
+      const snapshot = await pending
+      expect(snapshot.collectingSystemProcesses).toBe(false)
+      expect(snapshot.processes.find(row => row.pid === 40)?.startedAt).toBe(1000)
+      expect(await service.snapshot()).toBe(snapshot)
+      expect(table.read).toHaveBeenCalledTimes(1)
+      expect(metrics).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('does not share a pending preview or overwrite a complete cached snapshot', async () => {
+    const table = deferredSystemTable()
+    let release!: (value: (typeof executorProcess)[]) => void
+    const heldHost = new Promise<(typeof executorProcess)[]>(resolve => {
+      release = resolve
+    })
+    const hostProcesses = vi.fn().mockReturnValueOnce(heldHost).mockReturnValue([executorProcess])
+    const { service, metrics } = createService({ systemTable: table, hostProcesses })
+    const preview = service.snapshot({ waitForSystemProcesses: false })
+    const full = service.snapshot()
+    let snapshot: Awaited<typeof full> | undefined
+    const delivered = full.then(value => {
+      snapshot = value
+    })
+    table.complete()
+    try {
+      await vi.waitFor(() =>
+        expect(snapshot?.processes.find(row => row.pid === 40)?.startedAt).toBe(1000)
+      )
+    } finally {
+      release([executorProcess])
+    }
+    await delivered
+    expect((await preview).processes.find(row => row.pid === 40)?.startedAt).toBeNull()
+    expect(await service.snapshot()).toBe(snapshot)
+    expect(table.read).toHaveBeenCalledTimes(1)
+    expect(metrics).toHaveBeenCalledTimes(1)
+  })
+
   it('shows authoritative Electron metrics while external enumeration is pending', async () => {
     const read = vi.fn(() => new Promise<never>(() => undefined))
     const { service, advance } = createService({ systemTable: { read } })
-    const snapshot = await service.snapshot()
+    const snapshot = await service.snapshot({ waitForSystemProcesses: false })
     expect(snapshot.processes.map(row => row.pid)).toEqual([10, 20, 30])
     expect(snapshot.collectingSystemProcesses).toBe(true)
     advance(2000)
-    expect((await service.snapshot()).processes).toHaveLength(3)
+    expect((await service.snapshot({ waitForSystemProcesses: false })).processes).toHaveLength(3)
     expect(read).toHaveBeenCalledTimes(1)
   })
 
@@ -57,7 +150,9 @@ describe('ProcessExplorerService', () => {
           }),
       },
     })
-    expect((await service.snapshot()).collectingSystemProcesses).toBe(true)
+    expect(
+      (await service.snapshot({ waitForSystemProcesses: false })).collectingSystemProcesses
+    ).toBe(true)
     complete({
       processes: [
         {
@@ -74,7 +169,7 @@ describe('ProcessExplorerService', () => {
       degraded: [],
     })
     await vi.waitFor(async () => {
-      const snapshot = await service.snapshot()
+      const snapshot = await service.snapshot({ waitForSystemProcesses: false })
       expect(snapshot.collectingSystemProcesses).toBe(false)
       expect(snapshot.processes.find(row => row.pid === 40)).toMatchObject({
         source: 'system',
@@ -95,17 +190,19 @@ describe('ProcessExplorerService', () => {
           }),
       },
     })
-    await service.snapshot()
+    await service.snapshot({ waitForSystemProcesses: false })
     advance(100)
     complete({ processes: [], degraded: [] })
     await vi.waitFor(async () => {
-      expect((await service.snapshot()).collectingSystemProcesses).toBe(false)
+      expect(
+        (await service.snapshot({ waitForSystemProcesses: false })).collectingSystemProcesses
+      ).toBe(false)
     })
     advance(100)
-    await service.snapshot()
+    await service.snapshot({ waitForSystemProcesses: false })
     expect(metrics).toHaveBeenCalledTimes(1)
     advance(1000)
-    await service.snapshot()
+    await service.snapshot({ waitForSystemProcesses: false })
     expect(metrics).toHaveBeenCalledTimes(2)
   })
   it('shares one metrics measurement window across consumers', async () => {

@@ -66,6 +66,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
         await control.command('click', '[data-testid="stand-in-add-connection"]')
         await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')

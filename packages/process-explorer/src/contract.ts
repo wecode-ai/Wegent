@@ -95,7 +95,13 @@ export type HostProcessProvider = () =>
   | readonly HostProcessDescriptor[]
   | Promise<readonly HostProcessDescriptor[]>
 
+/** Completeness requested by a snapshot consumer. */
+export interface ProcessSnapshotOptions {
+  /** Wait for the external process table by default; read-only views may opt out. */
+  waitForSystemProcesses?: boolean
+}
+
 /** Transport-neutral client the view uses; the host supplies an implementation. */
 export interface ProcessExplorerClient {
-  snapshot: () => Promise<ProcessSnapshot>
+  snapshot: (options?: ProcessSnapshotOptions) => Promise<ProcessSnapshot>
 }

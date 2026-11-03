@@ -87,7 +87,7 @@ export function ProcessExplorerView({
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current
     try {
-      const next = await client.snapshot()
+      const next = await client.snapshot({ waitForSystemProcesses: false })
       if (loadSequence.current !== sequence) return
       setSnapshot(next)
       setError(null)
