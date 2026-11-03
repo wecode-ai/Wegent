@@ -359,11 +359,12 @@ async fn preload_components(
                 group_rows.insert((row.kinds_name.clone(), row.kinds_namespace.clone()), row);
             }
         }
-        for (owner_id, name, namespace) in &missing_group_shells {
-            if let Some(row) = group_rows.get(&(name.clone(), namespace.clone())) {
-                shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
-            }
-        }
+        insert_group_shell_rows(
+            &missing_group_shells,
+            &owner_groups,
+            &group_rows,
+            &mut shells,
+        );
     }
 
     let missing_public_shells: Vec<(i64, String, String)> = shell_keys
@@ -428,6 +429,24 @@ async fn preload_components(
         shells,
         models,
     })
+}
+
+/// Populate each owner's group fallback without inheriting another owner's access.
+fn insert_group_shell_rows(
+    missing_keys: &[(i64, String, String)],
+    owner_groups: &HashMap<i64, HashSet<String>>,
+    group_rows: &HashMap<RefKey, KindRow>,
+    shells: &mut HashMap<(i64, String, String), KindRow>,
+) {
+    for (owner_id, name, namespace) in missing_keys {
+        if owner_groups
+            .get(owner_id)
+            .is_some_and(|groups| groups.contains(namespace))
+            && let Some(row) = group_rows.get(&(name.clone(), namespace.clone()))
+        {
+            shells.insert((*owner_id, name.clone(), namespace.clone()), row.clone());
+        }
+    }
 }
 
 /// Resolve Shell capability references for keys that have no direct Shell row
@@ -681,5 +700,42 @@ mod tests {
             converted.kinds_json.0.to_value()["spec"]["shellType"],
             "ClaudeCode"
         );
+    }
+
+    /// One authorized owner must not expose a same-key group Shell to other owners.
+    #[test]
+    fn group_shell_rows_do_not_share_owner_permissions() {
+        let key = ("shared-shell".to_string(), "shell-group".to_string());
+        let missing: Vec<_> = [74, 75, 76]
+            .into_iter()
+            .map(|owner| (owner, key.0.clone(), key.1.clone()))
+            .collect();
+        let owner_groups =
+            HashMap::from([(74, HashSet::from([key.1.clone()])), (75, HashSet::new())]);
+        let row = KindRow {
+            kinds_id: 10,
+            kinds_user_id: 77,
+            kinds_name: key.0.clone(),
+            kinds_namespace: key.1.clone(),
+            kinds_json: brz_mysql::Json(brz_json::OpaqueJson::from(serde_json::json!({
+                "spec": {"shellType": "Agno"}
+            }))),
+        };
+        let group_rows = HashMap::from([(key.clone(), row)]);
+        let mut shells = HashMap::new();
+
+        insert_group_shell_rows(&missing, &owner_groups, &group_rows, &mut shells);
+
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[&missing[0]].kinds_id, 10);
+        assert!(!shells.contains_key(&missing[1]));
+        assert!(!shells.contains_key(&missing[2]));
+        // Denied owners remain unresolved so the caller can apply the public fallback.
+        let unresolved: Vec<_> = missing
+            .iter()
+            .filter(|key| !shells.contains_key(*key))
+            .map(|key| key.0)
+            .collect();
+        assert_eq!(unresolved, [75, 76]);
     }
 }

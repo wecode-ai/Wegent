@@ -226,6 +226,59 @@ def test_bot_list_resolves_referenced_shells_in_batch(
     assert listed["shell_type"] == "ClaudeCode"
 
 
+@pytest.mark.parametrize("shell_namespace", ["default", "owner-shells"])
+def test_shared_bot_prompt_save_uses_owner_shell_identity(
+    test_db, test_user, shell_namespace
+):
+    """A collaborator saving a prompt must not retarget the owner's Shell."""
+    group = _create_group(test_db, test_user, "collaborative-bots")
+    owner = SimpleNamespace(id=test_user.id + 1)
+    if shell_namespace != "default":
+        _create_group(test_db, owner, shell_namespace)
+    owner_shell = _create_shell(
+        test_db,
+        owner,
+        "owner-source" if shell_namespace == "default" else shell_namespace,
+        name="shared-shell",
+        shell_type="ClaudeCode",
+    )
+    if shell_namespace == "default":
+        _reference_shell_to_user(test_db, owner_shell, owner.id)
+    _create_shell(
+        test_db,
+        test_user,
+        "default",
+        name="shared-shell",
+        shell_type="Codex",
+        owner_user_id=0,
+    )
+    bot = _create_bot(
+        test_db,
+        owner,
+        namespace=group.name,
+        shell_namespace=shell_namespace,
+        name="collaborative-bot",
+        shell_name="shared-shell",
+    )
+    service = BotKindsService(Kind)
+    before = service.get_by_id_and_user(test_db, bot_id=bot.id, user_id=test_user.id)
+    assert before["shell_type"] == "ClaudeCode"
+
+    saved = service.update_with_user(
+        test_db,
+        bot_id=bot.id,
+        obj_in=BotUpdate(shell_name="shared-shell", system_prompt="updated prompt"),
+        user_id=test_user.id,
+    )
+
+    test_db.expire_all()
+    persisted = test_db.get(Kind, bot.id)
+    assert persisted.json["spec"]["shellRef"]["namespace"] == shell_namespace
+    assert saved["shell_type"] == before["shell_type"]
+    after = service.get_by_id_and_user(test_db, bot_id=bot.id, user_id=test_user.id)
+    assert after["shell_type"] == before["shell_type"]
+
+
 def test_detail_and_list_share_reference_precedence(
     test_db, test_user, referenced_shell_bot
 ):

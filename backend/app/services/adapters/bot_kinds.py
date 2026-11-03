@@ -1058,7 +1058,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             if shell_ref.name == new_shell_name:
                 existing_namespace = shell_ref.namespace or "default"
                 candidate = get_shell_by_name(
-                    db, new_shell_name, user_id, existing_namespace
+                    db, new_shell_name, bot.user_id, existing_namespace
                 )
                 public_fallback = (
                     candidate is not None
