@@ -2102,6 +2102,13 @@ export function WorkspaceBrowserTabPanel({
     if (state.status === 'error') {
       return t('workbench.browser_agent_error')
     }
+    if (
+      state.status === 'needs_user' &&
+      state.errorCode &&
+      state.errorCode !== 'approval_required'
+    ) {
+      return t('workbench.browser_agent_needs_user')
+    }
     if (state.approval) {
       return t('workbench.browser_agent_approval_required', {
         action: agentActionLabel(state.action || state.approval.actionKind),

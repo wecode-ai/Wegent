@@ -864,7 +864,9 @@ export class EmbeddedBrowserManager {
         !candidate.approved &&
         candidate.payload.expiresAtUnixMs > Date.now()
     )?.payload
-    const awaitingApproval = approval && status !== 'error'
+    const awaitingApproval =
+      approval &&
+      (status === 'idle' || status === 'running' || detail.errorCode === 'approval_required')
     if (status === 'running') {
       this.agentActive.add(normalizedLabel)
       this.clearAgentCursorHide(normalizedLabel)

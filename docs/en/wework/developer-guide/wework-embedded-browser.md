@@ -30,7 +30,7 @@ When a high-risk action returns `approval_required`, the browser panel shows app
 
 User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
 
-Failures from other operations retain their error status, message, and code while pending approve/reject controls remain available. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
+Failures from other operations retain their error status, message, and code, including `wait_timeout` reported as `needs_user`, while pending approve/reject controls remain available. Pending approval details replace activity details only for idle/running updates or an operation that itself requires approval. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
 
 ### Multi-tab navigation connection graph
 

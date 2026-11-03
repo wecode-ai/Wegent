@@ -1289,38 +1289,42 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('shows browser failures without removing pending approval controls', () => {
-    let handleAgentState!: (event: EmbeddedBrowserAgentStateEvent) => void
-    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
-      handleAgentState = handler
-      return null
-    })
-    render(<WorkspaceBrowserPanel active />)
-    act(() => {
-      handleAgentState({
-        label: 'workspace-browser',
-        status: 'error',
-        action: 'inspect',
-        target: null,
-        message: 'Inspection failed',
-        errorCode: 'operation_failed',
-        createdAtUnixMs: Date.now(),
-        approval: {
-          approvalId: 'pending-editor',
-          risk: 'high',
-          actionKind: 'fill',
-          reason: 'Confirm editing this field.',
-          target: null,
-          expiresAtUnixMs: Date.now() + 60_000,
-        },
+  test.each([
+    { status: 'error', code: 'operation_failed', text: 'AI 浏览器操作遇到问题' },
+    { status: 'needs_user', code: 'wait_timeout', text: 'AI 需要你处理当前页面' },
+  ] as const)(
+    'shows $code without removing pending approval controls',
+    ({ status, code, text }) => {
+      let handleAgentState!: (event: EmbeddedBrowserAgentStateEvent) => void
+      embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+        handleAgentState = handler
+        return null
       })
-    })
-    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent(
-      'AI 浏览器操作遇到问题'
-    )
-    expect(screen.getByTestId('workspace-browser-agent-approval-approve-button')).toBeVisible()
-    expect(screen.getByTestId('workspace-browser-agent-approval-reject-button')).toBeVisible()
-  })
+      render(<WorkspaceBrowserPanel active />)
+      act(() => {
+        handleAgentState({
+          label: 'workspace-browser',
+          status,
+          action: 'inspect',
+          target: null,
+          message: 'Inspection failed',
+          errorCode: code,
+          createdAtUnixMs: Date.now(),
+          approval: {
+            approvalId: 'pending-editor',
+            risk: 'high',
+            actionKind: 'fill',
+            reason: 'Confirm editing this field.',
+            target: null,
+            expiresAtUnixMs: Date.now() + 60_000,
+          },
+        })
+      })
+      expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent(text)
+      expect(screen.getByTestId('workspace-browser-agent-approval-approve-button')).toBeVisible()
+      expect(screen.getByTestId('workspace-browser-agent-approval-reject-button')).toBeVisible()
+    }
+  )
 
   test('ignores agent browser state from a different label', () => {
     let handleAgentState!: (event: {

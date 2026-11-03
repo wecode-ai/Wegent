@@ -292,6 +292,22 @@ async function verifyPendingApprovalTakeover(bridgeCall, control, label, timeout
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
 }
 
+async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) {
+  const result = await bridgeCall({
+    action: 'waitFor',
+    options: { condition: { textVisible: 'WEWORK_APPROVAL_ABSENT_TEXT' } },
+    timeoutMs: 100,
+  })
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error?.code, 'wait_timeout', JSON.stringify(result))
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, {
+    text: 'AI 需要你处理当前页面',
+    timeoutMs,
+  })
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
 async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs) {
   const edit = { action: 'fill', selector: '#script-editor', text: 'pipeline regression fixture' }
   const blocked = await bridgeCall(edit)
@@ -309,6 +325,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
     timeoutMs,
   })
   console.log('[browser-approval] Approval controls remain visible after inspect')
+  await verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs)
   await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
   await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })

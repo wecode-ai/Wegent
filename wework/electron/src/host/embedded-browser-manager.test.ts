@@ -48,6 +48,18 @@ describe('EmbeddedBrowserManager lifecycle', () => {
           errorCode: 'operation_failed',
           approval,
         })
+        manager.emitAgentState('workspace-browser', 'needs_user', {
+          action: 'waitFor',
+          message: 'Timed out waiting for text',
+          errorCode: 'wait_timeout',
+        })
+        expect(events.at(-1)?.payload).toMatchObject({
+          status: 'needs_user',
+          action: 'waitFor',
+          message: 'Timed out waiting for text',
+          errorCode: 'wait_timeout',
+          approval,
+        })
         manager.emitAgentState('other-browser', 'idle', { action: 'inspect' })
         expect(events.at(-1)?.payload.approval).toBeNull()
         expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
