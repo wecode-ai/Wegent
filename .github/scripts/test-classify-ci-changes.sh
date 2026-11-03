@@ -131,9 +131,9 @@ assert_checkpoint_runtime_failure_rejected() {
 assert_checkpoint_runtime_failure_rejected
 
 if ! grep -Fq 'node wework/scripts/verify-release-upgrades.mjs' "$wework_app_workflow" ||
-  ! grep -Fq 'diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP' \
+  ! grep -Fq 'diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)' \
     "$repo_root/wework/scripts/verify-release-upgrades.mjs"; then
-  printf 'The formal release verifier must invoke the complete upgrade group\n' >&2
+  printf 'The formal release verifier must invoke the registered platform upgrade checkpoints\n' >&2
   exit 1
 fi
 

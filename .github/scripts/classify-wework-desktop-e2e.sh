@@ -357,7 +357,7 @@ validate_registered_checkpoint_coverage() {
     cd "$repository_root"
     node --input-type=module -e '
       import { readFileSync } from "node:fs"
-      import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
+      import { upgradeVerificationCheckpoint } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
         DESKTOP_CHECKPOINT_CI_HOSTS,
@@ -373,11 +373,12 @@ validate_registered_checkpoint_coverage() {
       const upgradeVerifier = readFileSync("wework/scripts/verify-release-upgrades.mjs", "utf8")
       if (!releaseWorkflow.includes("node wework/scripts/verify-release-upgrades.mjs") ||
           !upgradeVerifier.includes("--parallel-segments") ||
-          !upgradeVerifier.includes("diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP")) {
-        console.error("The release workflow must invoke the registered upgrade checkpoint group")
+          !upgradeVerifier.includes("diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)")) {
+        console.error("The release workflow must invoke its registered platform upgrade checkpoints")
         process.exit(1)
       }
-      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
+      const releaseCheckpoints = ["macos", "windows"].map(upgradeVerificationCheckpoint)
+      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), ...releaseCheckpoints]))
       for (const checkpoint of registered) {
         const host = DESKTOP_CHECKPOINT_CI_HOSTS.get(checkpoint) ?? checkpoint
         if (!covered.has(host)) {
