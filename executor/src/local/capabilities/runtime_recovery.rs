@@ -10,12 +10,17 @@ use crate::services::workbench::{verify_published_package, PackageKind};
 #[path = "runtime_recovery_journal.rs"]
 mod journal;
 use journal::RecoveryJournal;
+#[path = "runtime_legacy_sources.rs"]
+pub(super) mod legacy_sources;
 #[path = "runtime_materialization.rs"]
 mod materialization;
 #[path = "runtime_recovery_ownership.rs"]
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
 mod plan;
+use materialization::{
+    runtime_tree_fingerprint, same_fingerprints, same_runtime_contents, tree_fingerprint,
+};
 use ownership::*;
 
 #[derive(Debug, Default)]
@@ -210,7 +215,8 @@ impl GlobalCapabilityStore {
                 .and_then(Value::as_str)
                 .map(Path::new);
             if !historical.is_some_and(|path| historical_cache_path(path, &spec, field))
-                || !same_runtime_contents(&target, &template)?
+                || (!same_runtime_contents(&target, &template)?
+                    && !self.matches_verified_legacy_contents(&spec, &target, &package.path)?)
             {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin recovery destination is occupied by an unrelated item; preserving it",
@@ -457,10 +463,12 @@ impl GlobalCapabilityStore {
         &self,
         target: &Path,
         entry: &Value,
+        key: &str,
     ) -> Result<bool, CapabilitySyncError> {
         if entry.get("managed").and_then(Value::as_bool) != Some(true) {
             return Ok(false);
         }
+        let spec = checked_spec(key, entry)?;
         if let Some(hash) = entry.get("checksum").and_then(Value::as_str) {
             let package = self.verified_plugin_package(hash)?;
             let stage = tempfile::tempdir()?;
@@ -468,10 +476,9 @@ impl GlobalCapabilityStore {
             copy_dir_atomic(&package.path, &template)?;
             ensure_dual_plugin_manifests(&template)?;
             ensure_plugin_hook_permissions(&template)?;
-            return same_runtime_contents(target, &template);
+            return Ok(same_runtime_contents(target, &template)?
+                || self.matches_verified_legacy_contents(&spec, target, &package.path)?);
         }
-        let key = value_string(entry.get("key")).unwrap_or_default();
-        let spec = checked_spec(&key, entry)?;
         for (runtime, field) in self.plugin_runtime_targets(&spec) {
             if entry_owns_path(entry, &runtime, field) {
                 self.ensure_runtime_path(&runtime, false)?;
@@ -549,6 +556,9 @@ impl GlobalCapabilityStore {
             {
                 continue;
             }
+            if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
+                continue;
+            }
             // Existing personal sources and directories are not implicitly managed.
             let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
                 && entry.get("installed_plugin_id").and_then(Value::as_i64)
@@ -562,7 +572,7 @@ impl GlobalCapabilityStore {
                 .map_err(CapabilitySyncError::invalid_payload)?;
             if published_source
                 || !same_install
-                || !self.matches_old_managed_copy(&target, entry)?
+                || !self.matches_old_managed_copy(&target, entry, &spec.key)?
             {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin marketplace entry is occupied by an unrelated source",
@@ -923,63 +933,6 @@ pub(super) fn safe_managed_path(
 
 fn exists(path: &Path) -> bool {
     path.exists() || path.is_symlink()
-}
-
-fn tree_fingerprint(path: &Path) -> Result<BTreeMap<PathBuf, String>, CapabilitySyncError> {
-    fn visit(
-        root: &Path,
-        path: &Path,
-        result: &mut BTreeMap<PathBuf, String>,
-    ) -> Result<(), CapabilitySyncError> {
-        let metadata = fs::symlink_metadata(path)?;
-        if metadata.file_type().is_symlink() {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Runtime ownership cannot be proved through a symlink",
-            ));
-        }
-        if metadata.is_dir() {
-            for child in fs::read_dir(path)? {
-                visit(root, &child?.path(), result)?;
-            }
-        } else if metadata.is_file() {
-            let relative = path.strip_prefix(root).unwrap();
-            let mut bytes = fs::read(path)?;
-            if [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH]
-                .iter()
-                .any(|manifest| relative == Path::new(manifest))
-            {
-                // Generated manifests can change formatting across executor versions.
-                let mut manifest: Value = serde_json::from_slice(&bytes)?;
-                manifest.sort_all_objects();
-                bytes = serde_json::to_vec(&manifest)?;
-            }
-            result.insert(relative.to_owned(), sha256_digest(&bytes));
-        } else {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Runtime contains a special file",
-            ));
-        }
-        Ok(())
-    }
-    let mut result = BTreeMap::new();
-    visit(path, path, &mut result)?;
-    Ok(result)
-}
-
-fn same_runtime_contents(left: &Path, right: &Path) -> Result<bool, CapabilitySyncError> {
-    if !left.is_dir() || left.is_symlink() || !right.is_dir() || right.is_symlink() {
-        return Ok(false);
-    }
-    let mut left = tree_fingerprint(left)?;
-    let right = tree_fingerprint(right)?;
-    left.retain(|path, _| {
-        !(path
-            .components()
-            .any(|component| component.as_os_str() == "__pycache__")
-            && path.extension().is_some_and(|extension| extension == "pyc")
-            && !right.contains_key(path))
-    });
-    Ok(left == right)
 }
 
 #[cfg(test)]

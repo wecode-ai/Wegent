@@ -401,6 +401,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               availability={
                 (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
               }
+              preferredOpener={preferredOpener}
               labels={openerLabels}
               onChooseOther={handleChooseOther}
               onOpen={refreshLocalWorkspaceOpeners}

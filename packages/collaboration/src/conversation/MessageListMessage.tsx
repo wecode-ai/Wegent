@@ -35,6 +35,7 @@ type MessageListMessageProps = Pick<
   runtimeTurn?: RuntimeConversationTurn
   forceExpanded: boolean
   isActiveTurn: boolean
+  isHistoricalTurn: boolean
   replyQuestions: ComponentProps<typeof UserMessage>['replyQuestions']
   editable: boolean
   editing: boolean
@@ -50,6 +51,7 @@ export const MessageListMessage = memo(function MessageListMessage({
   runtimeTurn,
   forceExpanded,
   isActiveTurn,
+  isHistoricalTurn,
   userMessageServices,
   renderVisualization,
   conversationKey,
@@ -113,6 +115,7 @@ export const MessageListMessage = memo(function MessageListMessage({
       runtimeTurn={runtimeTurn}
       conversationKey={conversationKey}
       isActiveTurn={isActiveTurn}
+      isHistoricalTurn={isHistoricalTurn}
       devices={devices}
       onRetryFailedMessage={onRetryFailedMessage}
       onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}

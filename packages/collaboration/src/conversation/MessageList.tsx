@@ -228,6 +228,8 @@ export const MessageList = memo(function MessageList({
     () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
     [turns]
   )
+  // Native crash history may retain an open status; only its latest root turn is live.
+  const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
     const result = new Map<string, string>()
     visibleMessages.forEach(message => {
@@ -755,6 +757,9 @@ export const MessageList = memo(function MessageList({
               }
               forceExpanded={searchMessageId === message.id}
               isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
+              isHistoricalTurn={Boolean(
+                message.turnId && latestNativeTurnId && message.turnId !== latestNativeTurnId
+              )}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
               conversationKey={conversationKey}

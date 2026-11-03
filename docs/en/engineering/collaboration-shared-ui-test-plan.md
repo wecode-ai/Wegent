@@ -25,6 +25,23 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Long-history follow-ups and background execution
+
+`follow-up-task-switch` runs isolated Electron with the real Executor and Codex, replacing only model responses.
+Native Goal continuations create paginated history; after restarting, the latest page must contain only assistant replies.
+
+1. Submit a new Goal while reading history, wait for real tool execution, progress and a plan, then switch away and back through the sidebar task list.
+2. Native history must already contain the accepted request. Its entire user message must appear inside the viewport above the composer before tool completion or another model response.
+3. A second task completes an initial reply, opens the real Wework built-in browser beside a narrow conversation, and starts another Goal. Its background progress must remain visible on return.
+4. Read upward and then scroll to the bottom after returning; the latest request must remain reachable. Component tests also preserve the reading position when paging prepends an older user message.
+5. Reuse one child agent across two native turns and exceed the latest-page budget in the new turn. After returning, the older reply must retain its original turn identity instead of merging into the follow-up.
+
+A child thread identity cannot establish that two execution turns are aliases. When native history lacks an older terminal record, only the latest native turn displays a live timer; the original historical status stays unchanged and no end time is invented.
+Component tests verify that historical timing stops while the current timer advances, without mutating native history.
+
+Run `pnpm --filter wework e2e:desktop --segment follow-up-task-switch`.
+The checkpoint belongs to the shared desktop runner and Core CI. Screenshots, logs and isolated history stay under `wework/test-results/`.
+
 ### Parent issues and parallel board work
 
 Wework adds a personal **By parent** layout to the existing board toolbar, preserving columns and

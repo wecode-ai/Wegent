@@ -567,12 +567,13 @@ function requestAdvertisesShellTool(request) {
 
 function programmaticExecTools(request) {
   const input = Array.isArray(request.input) ? request.input : []
-  return input
+  const injected = input
     .filter(item => item?.type === 'additional_tools')
     .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
     .filter(namespace => namespace?.type === 'namespace' && namespace.name === 'functions')
     .flatMap(namespace => (Array.isArray(namespace.tools) ? namespace.tools : []))
-    .filter(tool => tool?.type === 'custom' && tool.name === 'exec')
+  const declared = Array.isArray(request.tools) ? request.tools : []
+  return [...declared, ...injected].filter(tool => tool?.type === 'custom' && tool.name === 'exec')
 }
 
 function serializedOutputReportsSuccess(value) {

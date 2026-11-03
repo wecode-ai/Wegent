@@ -102,6 +102,14 @@ export function observePluginSyncTransport(proxy, { holdCapability = () => false
   return observation
 }
 
+export function latestPluginSyncRequest(requests) {
+  return requests.reduce(
+    (latest, request) =>
+      !latest || request.pluginSync.generation > latest.pluginSync.generation ? request : latest,
+    undefined
+  )
+}
+
 // A later full sync may supersede a setup delta before the polling read. Require
 // an exact successful transport ACK for the generation actually on disk.
 export function acknowledgedPluginGeneration(observation, plugin, installedId, baseline) {
