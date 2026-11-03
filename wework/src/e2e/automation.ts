@@ -670,6 +670,7 @@ function desktopControlElementMetrics(selector: string): string {
         bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
+        devicePixelRatio: window.devicePixelRatio,
         height: rect.height,
         left: rect.left,
         right: rect.right,
@@ -679,6 +680,8 @@ function desktopControlElementMetrics(selector: string): string {
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
         width: rect.width,
       }
     })

@@ -462,11 +462,49 @@ export function createDesktopScenario({
             `${page} [data-testid="interaction-entity-container"]`
           )
         )
+        const questionRegion = issueFixture
+          ? contextParagraph.replace(' p:first-of-type', '')
+          : `${page} [data-testid="request-user-input-question-question_1"]`
+        assert.ok(
+          (await control.command('getText', questionRegion)).includes(QUESTION),
+          'The measured original question region must contain the pending question'
+        )
+        const narrowElements = {}
+        for (const [name, selector] of Object.entries({ questionRegion, input, submit })) {
+          narrowElements[name] = JSON.parse(await control.command('getElementMetrics', selector))
+        }
+        focusDiagnostics.narrowLayout = {
+          viewport: {
+            width: entity.viewportWidth,
+            height: entity.viewportHeight,
+            devicePixelRatio: entity.devicePixelRatio,
+          },
+          entity,
+          questionRegionKind: issueFixture ? 'original-message-body' : 'original-question',
+          ...narrowElements,
+        }
+        await writeFile(
+          join(resultDir, 'narrow-layout-metrics.json'),
+          JSON.stringify(focusDiagnostics.narrowLayout, null, 2)
+        )
         assert.ok(
           entity.scrollWidth <= entity.clientWidth + 1,
           'The original entity must fit its narrow container'
         )
         await captureScreenshot(control, '05b-entity-narrow.png')
+        assert.equal(entity.viewportWidth, 480, 'The actual narrow content width must be 480')
+        assert.equal(entity.viewportHeight, 760, 'The actual narrow content height must be 760')
+        assert.equal(narrowElements.submit.length, 1, 'The pending entity must have one submit')
+        const [submitBounds] = narrowElements.submit
+        assert.ok(
+          submitBounds.width > 0 &&
+            submitBounds.height > 0 &&
+            submitBounds.left >= 0 &&
+            submitBounds.top >= 0 &&
+            submitBounds.right <= entity.viewportWidth &&
+            submitBounds.bottom <= entity.viewportHeight,
+          'The narrow submit button must fit completely inside the actual content viewport'
+        )
         await control.command('click', `${page} [data-testid="interactions-back-to-list"]`)
         await control.command('waitFor', `${page} [data-testid="interaction-list-item"]`, {
           text: QUESTION,

@@ -155,6 +155,11 @@ describe('Electron desktop E2E automation', () => {
       expect(results.map(result => result.ok)).toEqual([true, true, true])
       expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
       expect(JSON.parse(results[1].value!)[0].width).toBe(200)
+      expect(JSON.parse(results[1].value!)[0]).toMatchObject({
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      })
     } finally {
       surface.remove()
       duplicate.remove()

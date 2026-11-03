@@ -499,6 +499,14 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (
+    ['human-interactions', 'human-interactions-hidden', 'human-interactions-issue'].includes(
+      checkpoint
+    )
+  ) {
+    // The narrow 480x760 content viewport must fit inside the physical display.
+    nextEnv.WEWORK_E2E_XVFB_SCREEN = '1280x900x24'
+  }
   if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
