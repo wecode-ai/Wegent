@@ -1740,6 +1740,7 @@ function installApplicationMenu(): void {
     },
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
+    openProcessExplorer: openProcessExplorerWindow,
     showMain: reactivateMainWindow,
     quit: () => requestApplicationShutdown(() => app.quit()),
     openExternal: url => shell.openExternal(url),
