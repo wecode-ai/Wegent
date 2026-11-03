@@ -201,6 +201,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'python-runtime': './scenarios/python-runtime.scenario.mjs',
@@ -219,6 +220,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
   'board-transcript-followup',
