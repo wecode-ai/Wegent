@@ -41,6 +41,7 @@ export function createDesktopScenario({
   executorHome,
   workspacePath,
   captureScreenshot,
+  resultDir,
   modelResponseTimeoutMs,
   uiTimeoutMs,
 }) {
@@ -380,6 +381,27 @@ export function createDesktopScenario({
       assert.ok(
         originalAction.top >= 0,
         'The entity must scroll inside its pane without hiding the inbox header'
+      )
+      if (issueFixture) {
+        const execution = issueDiagnostics.find(
+          message => message.senderType === 'agent' && message.runtimeAddress
+        )
+        assert.ok(execution, 'The Issue must contain its original AI message')
+        const originalMessage = `${page} [data-message-id="${execution.id}"]`
+        await control.command('scrollIntoView', originalMessage)
+        await control.command('waitFor', originalMessage, { text: CONTEXT, visible: true })
+        const [detail] = JSON.parse(
+          await control.command('getElementMetrics', `${page} [data-testid="cloud-todo-detail"]`)
+        )
+        assert.ok(
+          detail.top >= focusDiagnostics.entityMetrics['interaction-entity-container'][0].top - 1,
+          'Reading original context must not scroll the Issue header out of its container'
+        )
+        await captureScreenshot(control, '05d-issue-original-context.png')
+      }
+      await writeFile(
+        join(resultDir, 'entity-layout-metrics.json'),
+        JSON.stringify(focusDiagnostics.entityMetrics, null, 2)
       )
       const previousSize = JSON.parse(
         await control.command('setMainWindowSize', 'body', {
