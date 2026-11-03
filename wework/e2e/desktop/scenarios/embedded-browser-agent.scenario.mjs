@@ -19,6 +19,7 @@ const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="works
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
+const BROWSER_AGENT_REJECT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
 const BROWSER_AGENT_CURSOR_SELECTOR =
   '[data-testid="workspace-browser-agent-cursor"][data-visible="true"]'
 const BROWSER_AGENT_TAB_ICON_SELECTOR =
@@ -91,7 +92,7 @@ function fixtureHtml() {
     <button id="agent-submit" type="button">Run agent form</button>
     <button id="agent-delete" type="button">Delete agent record</button>
     <button id="agent-hover" type="button">Hover target</button>
-    <textarea id="script-editor" aria-label="Code editor"></textarea>
+    <textarea id="script-editor" aria-label="Code editor" oninput="this.dataset.edits = Number(this.dataset.edits || 0) + 1"></textarea>
     <label for="agent-kind">Agent kind</label>
     <select id="agent-kind">
       <option value="general">General</option>
@@ -308,73 +309,108 @@ async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) 
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
 }
 
-async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs) {
-  const edit = { action: 'fill', selector: '#script-editor', text: 'pipeline regression fixture' }
-  const blocked = await bridgeCall(edit)
-  assert.equal(blocked.error?.code, 'approval_required', JSON.stringify(blocked))
-  assert.ok(blocked.approval?.approvalId)
-  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
-  console.log('[browser-approval] Editor fill blocked; approval controls visible before inspect')
+async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
+  let completed = false
+  const pending = invoke({ action: 'fill', selector: '#script-editor', text }).then(
+    result => {
+      completed = true
+      return result
+    },
+    error => {
+      completed = true
+      return { transportError: String(error) }
+    }
+  )
+  const selector = previousId
+    ? BROWSER_AGENT_APPROVE_SELECTOR + ':not([data-approval-id="' + previousId + '"])'
+    : BROWSER_AGENT_APPROVE_SELECTOR
+  await control.command('waitFor', selector, { timeoutMs })
+  const approvalId = await control.command('getAttribute', selector, { value: 'data-approval-id' })
+  assert.ok(approvalId, 'The visible approval must identify its original operation')
+  assert.equal(completed, false, 'The original tool call must await the user decision')
+  return { pending, approvalId, completed: () => completed }
+}
 
-  const inspected = await bridgeCall({ action: 'inspect' })
-  assert.ok(inspected.inspectText.includes('Code editor'))
-  // Receive the post-inspect events before checking the approval controls.
-  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
-  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, {
-    visible: true,
-    timeoutMs,
-  })
-  console.log('[browser-approval] Approval controls remain visible after inspect')
-  await verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs)
-  await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
-  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
-  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
-  const edited = await bridgeCall(edit)
-  assert.equal(edited.ok, true, JSON.stringify(edited))
+async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs, mcpFill) {
+  const editText = 'pipeline regression fixture'
+  const first = await beginEditorApproval(mcpFill, control, editText, timeoutMs)
   const readEditor = async () => {
     const result = await bridgeCall({
       action: 'evaluate',
-      expression: 'document.querySelector("#script-editor").value',
+      expression:
+        '({ text: document.querySelector("#script-editor").value, edits: Number(document.querySelector("#script-editor").dataset.edits || 0) })',
     })
     assert.equal(result.ok, true, JSON.stringify(result))
     return result.value
   }
-  assert.equal(await readEditor(), edit.text)
-
-  const blockedAgain = await bridgeCall({ ...edit, text: 'rejected change' })
-  assert.equal(blockedAgain.error?.code, 'approval_required', JSON.stringify(blockedAgain))
-  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
-  await control.command(
-    'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
+  assert.deepEqual(await readEditor(), { text: '', edits: 0 })
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: true, timeoutMs })
+  assert.equal(first.completed(), false)
+  console.log(
+    '[browser-approval] Original MCP fill remains pending; inspect preserves its controls'
   )
+  await verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs)
+  await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
+  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+  const edited = await first.pending
+  assert.equal(edited.ok, true, JSON.stringify(edited))
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
-  assert.equal(await readEditor(), edit.text, 'Rejected edit must not change the editor')
-  console.log('[browser-approval] Approved retry succeeded; subsequent edit required new approval')
+  assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
+  console.log(
+    '[browser-approval] Continue executed the original MCP fill once and returned its result'
+  )
 
-  const earlier = await bridgeCall({ ...edit, text: 'earlier pending change' })
-  const latestEdit = { ...edit, text: 'latest pending change' }
-  const latest = await bridgeCall(latestEdit)
-  assert.equal(earlier.error?.code, 'approval_required', JSON.stringify(earlier))
-  assert.equal(latest.error?.code, 'approval_required', JSON.stringify(latest))
-  assert.notEqual(earlier.approval.approvalId, latest.approval.approvalId)
+  const rejected = await beginEditorApproval(bridgeCall, control, 'rejected change', timeoutMs)
+  await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
+  const rejectedResult = await rejected.pending
+  assert.equal(rejectedResult.error?.code, 'approval_rejected', JSON.stringify(rejectedResult))
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
+
+  const earlier = await beginEditorApproval(
+    bridgeCall,
+    control,
+    'earlier pending change',
+    timeoutMs
+  )
+  const latestText = 'latest pending change'
+  const latest = await beginEditorApproval(
+    bridgeCall,
+    control,
+    latestText,
+    timeoutMs,
+    earlier.approvalId
+  )
   await bridgeCall({ action: 'inspect' })
   await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  assert.equal(
+    await control.command('getAttribute', BROWSER_AGENT_APPROVE_SELECTOR, {
+      value: 'data-approval-id',
+    }),
+    latest.approvalId
+  )
   await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
-  const latestRetry = await bridgeCall(latestEdit)
-  assert.equal(latestRetry.ok, true, JSON.stringify(latestRetry))
-  assert.equal(await readEditor(), latestEdit.text)
-  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
-  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+  const latestResult = await latest.pending
+  assert.equal(latestResult.ok, true, JSON.stringify(latestResult))
+  assert.equal(
+    earlier.completed(),
+    false,
+    'Approving the latest operation must not approve the earlier one'
+  )
   await control.command(
-    'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
+    'waitFor',
+    BROWSER_AGENT_REJECT_SELECTOR + '[data-approval-id="' + earlier.approvalId + '"]',
+    { timeoutMs }
   )
+  await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
+  const earlierResult = await earlier.pending
+  assert.equal(earlierResult.error?.code, 'approval_rejected', JSON.stringify(earlierResult))
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
-  assert.equal(await readEditor(), latestEdit.text, 'Rejecting the earlier request must not edit')
-  console.log(
-    '[browser-approval] Latest approval survives inspect; earlier request remains separate'
-  )
+  assert.deepEqual(await readEditor(), { text: latestText, edits: 2 })
+  console.log('[browser-approval] Separate pending operations settle independently without retries')
 }
 
 async function waitForElementCount(control, selector, expected, timeoutMs, message) {
@@ -1443,19 +1479,18 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.ok(finalInspect.inspectText.includes(DIRECT_CLICKED_TEXT))
 
-      const deleteApproval = await bridgeCall({
+      const pendingDelete = bridgeCall({
         action: 'click',
         ref: deleteNode.ref,
         timeoutMs: 5_000,
       })
-      assert.equal(
-        deleteApproval.ok,
-        false,
-        `Delete click should require approval: ${JSON.stringify(deleteApproval)}`
-      )
-      assert.equal(deleteApproval.error?.code, 'approval_required')
-      assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const deleteApprovalId = await control.command(
+        'getAttribute',
+        BROWSER_AGENT_APPROVE_SELECTOR,
+        { value: 'data-approval-id' }
+      )
+      assert.ok(deleteApprovalId)
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
       const approvalResolutionStartedAt = Date.now()
       let approvalButtonCount = 1
@@ -1472,11 +1507,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Browser approval remained pending after the user approved it'
       )
 
-      const approvedDeleteResult = await bridgeCall({
-        action: 'click',
-        ref: deleteNode.ref,
-        timeoutMs: 5_000,
-      })
+      const approvedDeleteResult = await pendingDelete
       assert.equal(
         approvedDeleteResult.ok,
         true,
@@ -1549,7 +1580,21 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         screenshotResult = screenshotResponse
       }
 
-      await verifyEditorApprovalPersistence(bridgeCall, control, browserLabel, uiTimeoutMs)
+      await withBrowserMcp(mcpIdentity, browserLabel, async callTool => {
+        await verifyEditorApprovalPersistence(
+          bridgeCall,
+          control,
+          browserLabel,
+          uiTimeoutMs,
+          async request =>
+            parseToolJson(
+              await callTool('browser_fill', {
+                selector: request.selector,
+                text: request.text,
+              })
+            )
+        )
+      })
 
       // file:// local file support: the bridge renders a local HTML page, and
       // an un-previewable local file surfaces a notice instead of downloading.
@@ -1695,7 +1740,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
             deleteRef: deleteNode.ref,
             fillEffect: fillResult.effect,
             clickEffect: clickResult.effect,
-            approvalId: deleteApproval.approval.approvalId,
+            approvalId: deleteApprovalId,
             deleteEffect: approvedDeleteResult.effect,
             waitReason: waitResult.reason,
             screenshot: screenshotResult,

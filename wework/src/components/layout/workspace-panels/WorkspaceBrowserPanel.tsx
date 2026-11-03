@@ -2666,6 +2666,7 @@ export function WorkspaceBrowserTabPanel({
               <button
                 type="button"
                 data-testid="workspace-browser-agent-approval-approve-button"
+                data-approval-id={agentState.approval.approvalId}
                 className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
                 onClick={() => resolveAgentApproval(agentState.approval?.approvalId || '', true)}
               >
@@ -2675,6 +2676,7 @@ export function WorkspaceBrowserTabPanel({
               <button
                 type="button"
                 data-testid="workspace-browser-agent-approval-reject-button"
+                data-approval-id={agentState.approval.approvalId}
                 className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
                 onClick={() => resolveAgentApproval(agentState.approval?.approvalId || '', false)}
               >

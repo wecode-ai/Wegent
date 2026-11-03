@@ -22,11 +22,16 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       const events: BrowserHostEvent[] = []
       const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
       try {
-        const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+        const approval = manager.registerAgentApproval('workspace-browser', 'fill', {
           ok: false,
           error: { code: 'approval_required' },
           approval: { reason: 'Confirm editing this field.' },
         })!
+        const decision = manager.waitForAgentApproval(
+          'workspace-browser',
+          approval.approvalId,
+          new AbortController().signal
+        )
         for (const status of ['running', 'idle'] as const) {
           manager.emitAgentState('workspace-browser', status, { action: 'inspect' })
           expect(events.at(-1)?.payload).toMatchObject({
@@ -62,16 +67,18 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         })
         manager.emitAgentState('other-browser', 'idle', { action: 'inspect' })
         expect(events.at(-1)?.payload.approval).toBeNull()
-        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
 
+        expect(() =>
+          manager.resolveAgentApproval('other-browser', approval.approvalId, approved)
+        ).toThrow('different label')
         manager.resolveAgentApproval('workspace-browser', approval.approvalId, approved)
+        await expect(decision).resolves.toBe(approved ? 'approved' : 'rejected')
         expect(events.at(-1)?.payload.approval).toBeNull()
         manager.emitAgentState('workspace-browser', 'idle', { action: 'inspect' })
         expect(events.at(-1)?.payload.approval).toBeNull()
-        expect(manager.consumeApprovedAgentRisk('other-browser', 'fill:editor')).toBe(false)
-        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:editor')).toBe(false)
-        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(approved)
-        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
+        expect(() =>
+          manager.resolveAgentApproval('workspace-browser', approval.approvalId, approved)
+        ).toThrow('not found')
       } finally {
         await rm(directory, { recursive: true, force: true })
       }
@@ -83,14 +90,24 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
     try {
-      const first = manager.registerAgentApproval('workspace-browser', 'fill:first', 'fill', {
+      const first = manager.registerAgentApproval('workspace-browser', 'fill', {
         error: { code: 'approval_required' },
         approval: { reason: 'First edit' },
       })!
-      const latest = manager.registerAgentApproval('workspace-browser', 'click:second', 'click', {
+      const latest = manager.registerAgentApproval('workspace-browser', 'click', {
         error: { code: 'approval_required' },
         approval: { reason: 'Second action' },
       })!
+      const firstDecision = manager.waitForAgentApproval(
+        'workspace-browser',
+        first.approvalId,
+        new AbortController().signal
+      )
+      const latestDecision = manager.waitForAgentApproval(
+        'workspace-browser',
+        latest.approvalId,
+        new AbortController().signal
+      )
       manager.emitAgentState('workspace-browser', 'needs_user', {
         action: 'click',
         errorCode: 'approval_required',
@@ -104,10 +121,12 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(events.at(-1)?.payload.approval).toEqual(latest)
       manager.resolveAgentApproval('workspace-browser', latest.approvalId, true)
       expect(events.at(-1)?.payload.approval).toEqual(first)
-      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:first')).toBe(false)
-      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:second')).toBe(true)
-      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:second')).toBe(false)
+      await expect(latestDecision).resolves.toBe('approved')
+      expect(() =>
+        manager.resolveAgentApproval('workspace-browser', latest.approvalId, true)
+      ).toThrow('not found')
       manager.resolveAgentApproval('workspace-browser', first.approvalId, false)
+      await expect(firstDecision).resolves.toBe('rejected')
       expect(events.at(-1)?.payload.approval).toBeNull()
     } finally {
       await rm(directory, { recursive: true, force: true })
@@ -119,7 +138,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
     try {
-      const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+      const approval = manager.registerAgentApproval('workspace-browser', 'fill', {
         error: { code: 'approval_required' },
       })!
       const now = vi.spyOn(Date, 'now').mockReturnValue(approval.expiresAtUnixMs)
@@ -129,7 +148,9 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         expect(() =>
           manager.resolveAgentApproval('workspace-browser', approval.approvalId, true)
         ).toThrow('expired')
-        expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:editor')).toBe(false)
+        expect(() =>
+          manager.resolveAgentApproval('workspace-browser', approval.approvalId, true)
+        ).toThrow('not found')
       } finally {
         now.mockRestore()
       }
@@ -143,7 +164,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
     try {
-      const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+      const approval = manager.registerAgentApproval('workspace-browser', 'fill', {
         error: { code: 'approval_required' },
       })!
       manager.setAgentControlPaused('workspace-browser', true)
@@ -156,6 +177,43 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  test.each(['navigation', 'close'])(
+    'cancels the original pending action on browser %s',
+    async change => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+      const manager = new EmbeddedBrowserManager(directory)
+      const contents = new FakeWebContents()
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      try {
+        const approval = manager.registerAgentApproval('workspace-browser', 'fill', {
+          error: { code: 'approval_required' },
+        })!
+        const decision = manager.waitForAgentApproval(
+          'workspace-browser',
+          approval.approvalId,
+          new AbortController().signal
+        )
+        if (change === 'navigation')
+          contents.emit('did-start-navigation', {}, 'https://other.test/', false, true)
+        else manager.close('workspace-browser')
+        await expect(decision).resolves.toBe('cancelled')
+        expect(() =>
+          manager.resolveAgentApproval('workspace-browser', approval.approvalId, true)
+        ).toThrow('not found')
+      } finally {
+        manager.close('workspace-browser')
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   test('distinguishes host registration from initial navigation completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-navigation-'))
@@ -1047,12 +1105,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       error: { code: 'approval_required' },
       approval: { actionKind: 'click' },
     }
-    const approval = manager.registerAgentApproval(
-      temporaryLabel,
-      'click:button',
-      'click',
-      approvalResult
-    )
+    const approval = manager.registerAgentApproval(temporaryLabel, 'click', approvalResult)
     expect(approval).not.toBeNull()
     manager.resolveAgentApproval(temporaryLabel, approval?.approvalId ?? '', true)
     manager.relabel(temporaryLabel, taskLabel)
@@ -1065,7 +1118,9 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
     expect(manager.has(taskLabel)).toBe(false)
     expect(manager.isAgentControlPaused(taskLabel)).toBe(false)
-    expect(manager.consumeApprovedAgentRisk(taskLabel, 'click:button')).toBe(false)
+    expect(() => manager.resolveAgentApproval(taskLabel, approval!.approvalId, true)).toThrow(
+      'not found'
+    )
     expect(internals.agentActive.has(taskLabel)).toBe(false)
     expect(internals.agentCursorStates.has(taskLabel)).toBe(false)
     await rm(directory, { recursive: true, force: true })

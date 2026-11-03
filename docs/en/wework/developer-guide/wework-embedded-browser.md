@@ -26,13 +26,15 @@ The bridge supports limited concurrency. A long `waitFor` request must not block
 
 ### Agent action approval
 
-When a high-risk action returns `approval_required`, the browser panel shows approve and reject controls. The Electron host stores pending requests by logical label. State events from subsequent inspection, waiting, or other operations must carry any unexpired pending approval so activity updates cannot dismiss its controls. Resolving the request removes the controls; approval permits only one retry with the same browser label and action signature, and expired approvals cannot authorize execution. The `embedded-browser` desktop checkpoint covers requesting approval, inspecting again, approving, and retrying the action.
+A high-risk browser action suspends its original tool call before changing the page. Electron registers a pending approval for 60 seconds and displays Continue and Cancel in the browser panel. Continue executes that call's saved arguments once and returns the execution result to the same MCP call, so the AI does not need to invoke the action again. Rejection, expiry, page navigation, browser closure, or a disconnected original request ends the wait without executing. The former authorization-for-a-later-retry path has been removed. Subsequent inspect, wait, or other status updates must retain the pending approval. The embedded-browser desktop checkpoint uses a real MCP call to verify the pending state, inspection, completion of the original call after Continue, and exactly one page mutation.
 
-When several actions await approval in one browser, the panel displays the most recently registered request and keeps it selected during inspection. Resolving it reveals any remaining pending request; each approval still applies only to its own action signature.
+When several actions await approval in one browser, the panel displays the most recently registered request and keeps it selected during inspection. Resolving it reveals any remaining pending request; each approval still applies only to its own waiting operation.
 
 User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
 
 Failures from other operations retain their error status, message, and code, including `wait_timeout` reported as `needs_user`, while pending approve/reject controls remain available. Pending approval details replace activity details only for idle/running updates or an operation that itself requires approval. Desktop regression checks must confirm renderer delivery of the post-inspect host events before asserting approval controls; a stability window alone cannot prove delivery.
+
+Mutating browser requests reserve 60 seconds for human approval in addition to their existing 45-second action budget. Only the browser MCP tool budget is 120 seconds; observation requests retain their 45-second limit. Disconnecting must cancel the pending operation so it cannot execute after its tool call has ended.
 
 ### Multi-tab navigation connection graph
 

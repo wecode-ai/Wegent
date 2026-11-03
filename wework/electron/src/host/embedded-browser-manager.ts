@@ -19,6 +19,7 @@ import {
   type BrowserHistoryEntry,
   type BrowserHistorySearch,
 } from './browser-history-store.js'
+import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
 import {
   captureWebContentsDataUrl,
@@ -86,20 +87,6 @@ export interface BrowserHostEvent {
     | 'popup'
     | 'annotation-request'
   payload: Record<string, unknown>
-}
-
-interface BrowserAgentApproval {
-  label: string
-  signature: string
-  approved: boolean
-  payload: {
-    approvalId: string
-    risk: string
-    actionKind: string
-    reason: string
-    target: unknown
-    expiresAtUnixMs: number
-  }
 }
 
 interface BrowserAgentCursorState {
@@ -170,7 +157,9 @@ export class EmbeddedBrowserManager {
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
-  private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
+  private readonly agentApprovals = new BrowserAgentApprovals(label =>
+    this.emitAgentState(label, 'idle')
+  )
   private readonly agentCursorStates = new Map<string, BrowserAgentCursorState>()
   private readonly agentCursorArrivals = new Map<string, number>()
   private readonly agentCursorArrivalWaiters = new Map<
@@ -498,6 +487,7 @@ export class EmbeddedBrowserManager {
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (isMainFrame) {
+        this.agentApprovals.cancelLabel(entry.label)
         entry.navigationError = null
         entry.historyId = null
         entry.historyGeneration = this.historyGeneration
@@ -727,9 +717,7 @@ export class EmbeddedBrowserManager {
       if (activeLabel === entry.label) this.activeTabs.set(baseLabel, target)
     }
     if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
-    for (const approval of this.agentApprovals.values()) {
-      if (approval.label === entry.label) approval.label = target
-    }
+    this.agentApprovals.cancelLabel(entry.label)
     for (const download of this.downloads.values()) {
       if (download.label === entry.label) download.label = target
     }
@@ -789,75 +777,20 @@ export class EmbeddedBrowserManager {
     this.emitAgentState(normalizedLabel, paused ? 'paused' : 'idle')
   }
 
-  consumeApprovedAgentRisk(label: string, signature: string): boolean {
-    const normalizedLabel = requiredLabel(label)
-    const approval = [...this.agentApprovals.values()].find(
-      candidate =>
-        candidate.label === normalizedLabel &&
-        candidate.signature === signature &&
-        candidate.approved &&
-        candidate.payload.expiresAtUnixMs > Date.now()
-    )
-    if (!approval) return false
-    this.agentApprovals.delete(approval.payload.approvalId)
-    return true
+  registerAgentApproval(label: string, action: string, result: Record<string, unknown>) {
+    return this.agentApprovals.register(requiredLabel(label), action, result)
   }
 
-  registerAgentApproval(
+  waitForAgentApproval(
     label: string,
-    signature: string,
-    action: string,
-    result: Record<string, unknown>
-  ): BrowserAgentApproval['payload'] | null {
-    const error = result.error as { code?: unknown } | undefined
-    if (error?.code !== 'approval_required') return null
-    const source = (result.approval ?? {}) as Record<string, unknown>
-    const payload = {
-      approvalId: `browser-approval-${randomUUID()}`,
-      risk: typeof source.risk === 'string' ? source.risk : 'high',
-      actionKind: typeof source.actionKind === 'string' ? source.actionKind : action,
-      reason:
-        typeof source.reason === 'string'
-          ? source.reason
-          : 'This browser action may change data on the page.',
-      target: source.target ?? null,
-      expiresAtUnixMs: Date.now() + 60_000,
-    }
-    result.approval = payload
-    this.agentApprovals.set(payload.approvalId, {
-      label: requiredLabel(label),
-      signature,
-      approved: false,
-      payload,
-    })
-    return payload
+    approvalId: string,
+    signal: AbortSignal
+  ): Promise<BrowserApprovalDecision> {
+    return this.agentApprovals.wait(requiredLabel(label), approvalId, signal)
   }
 
   resolveAgentApproval(label: string, approvalId: string, approved: boolean): void {
-    const normalizedLabel = requiredLabel(label)
-    const approval = this.agentApprovals.get(approvalId)
-    if (!approval) throw new Error('Browser approval request not found')
-    if (approval.label !== normalizedLabel) {
-      throw new Error('Browser approval request belongs to a different label')
-    }
-    if (approval.payload.expiresAtUnixMs <= Date.now()) {
-      this.agentApprovals.delete(approvalId)
-      throw new Error('Browser approval request expired')
-    }
-    if (approved) {
-      approval.approved = true
-      this.emitAgentState(normalizedLabel, 'idle', {
-        action: approval.payload.actionKind,
-        message: 'Browser action approved. The agent can retry it now.',
-      })
-      return
-    }
-    this.agentApprovals.delete(approvalId)
-    this.emitAgentState(normalizedLabel, 'error', {
-      action: approval.payload.actionKind,
-      message: 'Browser action was rejected by the user.',
-      errorCode: 'approval_rejected',
-    })
+    this.agentApprovals.resolve(requiredLabel(label), approvalId, approved)
   }
 
   emitAgentState(
@@ -872,16 +805,7 @@ export class EmbeddedBrowserManager {
   ): void {
     const normalizedLabel = requiredLabel(label)
     if (this.agentControlPaused.has(normalizedLabel)) status = 'paused'
-    // Keep the latest blocked action selected across subsequent read-only events.
-    const approval = [...this.agentApprovals.values()]
-      .reverse()
-      .find(
-        candidate =>
-          status !== 'paused' &&
-          candidate.label === normalizedLabel &&
-          !candidate.approved &&
-          candidate.payload.expiresAtUnixMs > Date.now()
-      )?.payload
+    const approval = status === 'paused' ? null : this.agentApprovals.latest(normalizedLabel)
     const awaitingApproval =
       approval &&
       (status === 'idle' || status === 'running' || detail.errorCode === 'approval_required')
@@ -1023,9 +947,7 @@ export class EmbeddedBrowserManager {
     this.agentCursorStates.delete(label)
     this.agentCursorArrivals.delete(label)
     this.cancelAgentCursorArrivalWaiters(label)
-    for (const [approvalId, approval] of this.agentApprovals) {
-      if (approval.label === label) this.agentApprovals.delete(approvalId)
-    }
+    this.agentApprovals.cancelLabel(label)
     this.attachedContents.delete(label)
     this.rejectAttachmentWaiters(
       label,
