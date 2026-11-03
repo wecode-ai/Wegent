@@ -1481,6 +1481,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 
 # Keep this checkpoint expectation separate from the shared matrix literal.
+full_desktop_expected="${full_desktop_expected/goal-state-sync,/goal-state-sync,follow-up-task-switch,}"
 full_desktop_expected="${full_desktop_expected/native-window-startup,/native-window-startup,startup-network-change,}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
@@ -2878,6 +2879,18 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs"
+
+for path in \
+  wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs \
+  wework/e2e/desktop/modules/follow-up-agent-history.mjs; do
+  assert_desktop_case "follow-up identity regression has CI coverage: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"follow-up-task-switch"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$path"
+done
 
 assert_desktop_case "pane goal updates select conversation and goal synchronization coverage" \
   'wework_desktop_e2e=true
