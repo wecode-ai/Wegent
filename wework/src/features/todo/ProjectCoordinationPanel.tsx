@@ -16,6 +16,7 @@ export function ProjectCoordinationPanel({
   projectId,
   projectStore,
   groupId,
+  leaderName,
   onOpenIssue,
 }: {
   api: StandInExecutorApi
@@ -24,6 +25,7 @@ export function ProjectCoordinationPanel({
   projectId: string
   projectStore: 'local' | 'cloud'
   groupId: string
+  leaderName?: string
   onOpenIssue(issueId: string): void
 }) {
   const { t } = useTranslation('common')
@@ -100,7 +102,11 @@ export function ProjectCoordinationPanel({
       aria-busy={pending}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{t('standIn.project_coordinator.coordination')}</span>
+        <span className="font-medium">
+          {t('standIn.project_coordinator.coordination', {
+            leader: leaderName ?? t('standIn.project_coordinator.leader'),
+          })}
+        </span>
         <span className="min-w-0 flex-1 break-words text-text-muted" role="status">
           {!state
             ? t('standIn.loading')

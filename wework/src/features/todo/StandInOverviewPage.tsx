@@ -22,10 +22,6 @@ import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
-import {
-  AutomationsPage,
-  type AutomationNavigationHandle,
-} from '@/features/automations/AutomationsPage'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
@@ -53,20 +49,24 @@ export function StandInOverviewPage({
   const [roleId, setRoleId] = useState<string | undefined>(
     props.initialProfileId === '@primary' ? undefined : props.initialProfileId
   )
-  const [chatting, setChatting] = useState(initialWorkView === 'scheduled')
-  const [workView, setWorkView] = useState<'work' | 'scheduled'>(initialWorkView)
+  const [chatting, setChatting] = useState(false)
+  const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
+  const [calendarOpen, setCalendarOpen] = useState(initialWorkView === 'scheduled')
   const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
-    initialPrimaryProfile || props.initialProfileId === '@primary'
-      ? 'primary'
-      : props.initialProfileId
+    initialWorkView === 'scheduled'
+      ? props.initialProfileId && props.initialProfileId !== '@primary'
         ? 'role'
-        : null
+        : 'primary'
+      : initialPrimaryProfile || props.initialProfileId === '@primary'
+        ? 'primary'
+        : props.initialProfileId
+          ? 'role'
+          : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
-  const automationRef = useRef<AutomationNavigationHandle>(null)
   const previousSettingsRequest = useRef(settingsRequestKey)
   useEffect(() => {
     if (previousSettingsRequest.current === settingsRequestKey) return
@@ -80,7 +80,6 @@ export function StandInOverviewPage({
       setProfile(targetPanel)
     }
     if (panelRef.current) panelRef.current.requestLeave(openSettings)
-    else if (automationRef.current) automationRef.current.requestLeave(openSettings)
     else openSettings()
   }, [settingsRequestKey, props.initialProfileId, profile, roleId])
   useEffect(() => {
@@ -94,29 +93,27 @@ export function StandInOverviewPage({
         const openPrimary = () => {
           setRoleId(undefined)
           setChatting(false)
-          setWorkView('work')
           setProfile(null)
           reload()
         }
         if (panelRef.current) panelRef.current.requestLeave(openPrimary)
-        else if (automationRef.current) automationRef.current.requestLeave(openPrimary)
         else openPrimary()
         return
       }
       if (new URLSearchParams(search).get('view') !== 'scheduled') return
       const openView = () => {
-        setWorkView('scheduled')
-        setChatting(!roleId)
+        setCalendarRequest(value => value + 1)
+        setProfile(roleId ? 'role' : 'primary')
       }
       // Preserve settings drafts and guard every request, including the same URL.
-      if (automationRef.current) automationRef.current.requestLeave(openView)
+      if (panelRef.current) panelRef.current.requestLeave(openView)
       else openView()
     }
     window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
     return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
   }, [active, roleId, reload])
-  const leaveSchedules = (action: () => void) => {
-    if (automationRef.current) automationRef.current.requestLeave(action)
+  const leavePanel = (action: () => void) => {
+    if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
   const pressedInPanel = useRef(false)
@@ -197,9 +194,9 @@ export function StandInOverviewPage({
   const conversation = roleId ? chatting : !chatting
   const enabled = role ? role.enabled : state.draft?.primary?.enabled !== false
   const chooseRole = (id?: string) =>
-    leaveSchedules(() => {
+    leavePanel(() => {
+      setCalendarRequest(0)
       setRoleId(id)
-      setWorkView('work')
       setChatting(false)
       setProfile(null)
     })
@@ -272,7 +269,10 @@ export function StandInOverviewPage({
         <button
           type="button"
           data-testid="stand-in-create-role"
-          onClick={() => setProfile('create')}
+          onClick={() => {
+            setCalendarRequest(0)
+            setProfile('create')
+          }}
           className="mt-2 inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm text-text-secondary hover:bg-muted"
         >
           <Plus className="h-4 w-4" />
@@ -291,7 +291,7 @@ export function StandInOverviewPage({
             <button
               type="button"
               data-testid="stand-in-role-chat"
-              onClick={() => leaveSchedules(() => setChatting(value => !value))}
+              onClick={() => leavePanel(() => setChatting(value => !value))}
               className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
             >
               <MessageSquare className="h-4 w-4" />
@@ -321,7 +321,10 @@ export function StandInOverviewPage({
             type="button"
             data-testid="stand-in-settings-open"
             disabled={(!state.saved && state.loading) || state.saving}
-            onClick={() => setProfile(role ? 'role' : 'primary')}
+            onClick={() => {
+              setCalendarRequest(0)
+              setProfile(role ? 'role' : 'primary')
+            }}
             className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
           >
             <Settings className="h-4 w-4" />
@@ -456,48 +459,19 @@ export function StandInOverviewPage({
               />
             ) : (
               <div className="flex min-h-0 flex-1 flex-col">
-                <nav
-                  className="flex shrink-0 gap-2 border-b border-border px-5 py-2"
-                  aria-label={t('standIn.workspace.work_list')}
-                >
-                  {(['work', 'scheduled'] as const).map(value => (
-                    <button
-                      type="button"
-                      key={value}
-                      data-testid={`stand-in-work-view-${value}`}
-                      aria-pressed={workView === value}
-                      onClick={() => {
-                        if (value !== workView) leaveSchedules(() => setWorkView(value))
-                      }}
-                      className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${workView === value ? 'bg-muted font-medium' : 'hover:bg-muted'}`}
-                    >
-                      {t(value === 'work' ? 'standIn.workspace.work_list' : 'workbench.automation')}
-                    </button>
-                  ))}
-                </nav>
-                {workView === 'scheduled' ? (
-                  <AutomationsPage
-                    ref={automationRef}
-                    key={roleId ?? '@primary'}
-                    embedded
-                    standInDeviceId={deviceId}
-                    standInOwner={{ userId: props.userId, roleId: roleId ?? '@primary' }}
-                  />
-                ) : (
-                  <StandInWorkList
-                    active={active && !conversation}
-                    key={roleId ? `role:${roleId}` : 'primary'}
-                    items={roleItems}
-                    inbox={
-                      roleId ? visibleInbox.filter(work => work.roleId === roleId) : visibleInbox
-                    }
-                    api={api}
-                    userId={props.userId}
-                    deviceId={deviceId}
-                    onRefresh={inbox.refresh}
-                    onOpenTask={onOpenTask}
-                  />
-                )}
+                <StandInWorkList
+                  active={active && !conversation}
+                  key={roleId ? `role:${roleId}` : 'primary'}
+                  items={roleItems}
+                  inbox={
+                    roleId ? visibleInbox.filter(work => work.roleId === roleId) : visibleInbox
+                  }
+                  api={api}
+                  userId={props.userId}
+                  deviceId={deviceId}
+                  onRefresh={inbox.refresh}
+                  onOpenTask={onOpenTask}
+                />
               </div>
             )}
           </>
@@ -529,7 +503,7 @@ export function StandInOverviewPage({
                       : 'standIn.workspace.role_profile'
                 )}
                 data-testid="stand-in-profile-panel"
-                className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
+                className={`absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg ${calendarOpen ? 'md:max-w-5xl' : 'md:max-w-lg'}`}
               >
                 {profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
@@ -547,7 +521,9 @@ export function StandInOverviewPage({
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
                     ref={panelRef}
-                    key={state.draft.executionDeviceId}
+                    key={`${state.draft.executionDeviceId}:${calendarRequest}`}
+                    initialCalendar={calendarRequest > 0}
+                    onCalendarViewChange={setCalendarOpen}
                     settings={state.draft}
                     saving={state.saving || state.loading}
                     services={props.services}
@@ -570,7 +546,9 @@ export function StandInOverviewPage({
                   />
                 ) : (
                   <StandInSettingsPage
-                    key={profile === 'create' ? '@create' : (roleId ?? '@default')}
+                    key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
+                    initialCalendar={calendarRequest > 0}
+                    onCalendarViewChange={setCalendarOpen}
                     {...props}
                     ref={panelRef}
                     initialProfileId={roleId}

@@ -73,9 +73,20 @@ export function createStandInCoordinatorVerification({
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
       })
-      await control.command('click', '[data-testid="stand-in-role-chat"]')
-      await control.command('click', '[data-testid="stand-in-work-view-scheduled"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await control.command('click', '[data-testid="stand-in-time-connections"]')
+      await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
+        '0'
+      )
       await control.command('click', '[data-testid="create-automation-button"]')
+      await control.command('click', '[data-testid="automation-save-button"]')
+      await control.command('waitFor', '[data-testid="automation-error"]', {
+        text: '请填写名称和任务说明',
+      })
+      await captureScreenshot(control, '22b-calendar-invalid-draft-preserved.png')
       await control.command('fill', '[data-testid="automation-name-input"]', { value: SCHEDULE })
       await control.command('fill', '[data-testid="automation-prompt-input"]', {
         value: 'STAND_IN_SCHEDULE_VERIFY',
@@ -85,7 +96,7 @@ export function createStandInCoordinatorVerification({
         '0'
       )
       await captureScreenshot(control, '23-schedule-inherits-stand-in.png')
-      await control.command('click', '[data-testid="stand-in-work-view-work"]')
+      await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('waitFor', '[data-testid="automation-discard"]')
       await captureScreenshot(control, '23b-schedule-unsaved-navigation.png')
       await control.command('click', '[data-testid="automation-keep-editing"]')
@@ -95,10 +106,35 @@ export function createStandInCoordinatorVerification({
       )
       await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="automation-error"]'),
+        '0'
+      )
       const schedules = await rpc('runtime.automations.list', {})
       const schedule = schedules.items.find(row => row.name === SCHEDULE)
       assert.deepEqual(schedule.taskRequest.standInOwner, { userId: USER, roleId: '@primary' })
       assert.equal(schedule.taskPayload.executionRequest, undefined)
+      await control.command('fill', '[data-testid="automation-name-input"]', {
+        value: `${SCHEDULE}（已调整）`,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
+      await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
+      assert.equal(
+        (await rpc('runtime.automations.list', {})).items.find(row => row.id === schedule.id).name,
+        `${SCHEDULE}（已调整）`
+      )
+      await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
+      await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
+        text: '已暂停',
+      })
+      assert.equal(
+        (await rpc('runtime.automations.list', {})).items.find(row => row.id === schedule.id)
+          .enabled,
+        false
+      )
+      await captureScreenshot(control, '23c-calendar-updated-and-paused.png')
+      await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
+      await control.command('waitFor', '[data-testid="automation-detail-panel"]', { text: '活跃' })
       await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')
       await control.command('waitFor', '[data-testid="automation-run-history"]', {
@@ -108,6 +144,64 @@ export function createStandInCoordinatorVerification({
       const runs = await rpc('runtime.automation_runs.list', { automationId: schedule.id })
       assert.ok(runs.items.some(row => row.status === 'succeeded'))
       await captureScreenshot(control, '24-schedule-executed.png')
+      const run = runs.items.find(row => row.status === 'succeeded')
+      await control.command('click', `[data-testid="automation-run-open-${run.id}"]`)
+      await control.command('waitFor', 'body', {
+        text: 'STAND_IN_SCHEDULE_VERIFIED',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await captureScreenshot(control, '24b-calendar-result-in-original-work.png')
+
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      const preferences = await control.command('getValue', '[data-testid="stand-in-preferences"]')
+      await control.command('fill', '[data-testid="stand-in-preferences"]', {
+        value: `${preferences}\n保留这份说明草稿`,
+      })
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await control.command('click', '[data-testid="stand-in-time-connections"]')
+      await control.command('click', '[data-testid="create-automation-button"]')
+      await control.command('fill', '[data-testid="automation-name-input"]', {
+        value: '不保存的日历草稿',
+      })
+      await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
+      await control.command('click', '[data-testid="automation-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-keep-editing"]')
+      await captureScreenshot(control, '24b2-separate-calendar-and-settings-drafts.png')
+      await control.command('click', '[data-testid="stand-in-primary-keep-editing"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="automation-name-input"]'),
+        '0'
+      )
+      await control.command('click', '[data-testid="stand-in-connections-back"]')
+      await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-preferences"]'),
+        `${preferences}\n保留这份说明草稿`
+      )
+      await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
+      await control.command('click', '[data-testid="stand-in-primary-discard"]')
+      await control.command('click', '[data-testid="stand-in-overview-role-default"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+      await control.command('click', '[data-testid="stand-in-connections-open"]')
+      await control.command('click', '[data-testid="stand-in-time-connections"]')
+      await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
+      await control.command('click', '[data-testid="create-automation-button"]')
+      await control.command('fill', '[data-testid="automation-name-input"]', {
+        value: '角色的安排草稿',
+      })
+      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('waitFor', '[data-testid="automation-discard"]')
+      await control.command('click', '[data-testid="automation-keep-editing"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-name-input"]'),
+        '角色的安排草稿'
+      )
+      await captureScreenshot(control, '24c-role-calendar-draft-kept.png')
+      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('click', '[data-testid="automation-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
       await rpc('runtime.automations.delete', { automationId: schedule.id })
 
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')

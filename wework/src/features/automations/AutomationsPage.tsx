@@ -47,6 +47,7 @@ import type {
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 
 import { AutomationListPane, AutomationEmptyState, type StatusFilter } from './AutomationListPane'
+import { useAutomationRunNavigation } from './useAutomationRunNavigation'
 
 export interface AutomationNavigationHandle {
   requestLeave(action: () => void): void
@@ -57,11 +58,13 @@ export function AutomationsPage({
   standInOwner,
   standInDeviceId,
   onDirtyChange,
+  onNavigate,
   ref,
 }: {
   embedded?: boolean
   ref?: Ref<AutomationNavigationHandle>
   onDirtyChange?(dirty: boolean): void
+  onNavigate?(action: () => void): void
   standInDeviceId?: string
   standInOwner?: { userId: number; roleId: string }
 } = {}) {
@@ -499,6 +502,12 @@ export function AutomationsPage({
     await openRuntimeTask(address)
     navigateTo(buildRuntimeTaskRoute(address))
   }
+  const openRun = useAutomationRunNavigation({
+    openRuntimeTask,
+    requestLeave,
+    onNavigate,
+    onError: setError,
+  })
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
     selectProject(projectId)
@@ -535,6 +544,9 @@ export function AutomationsPage({
         onConfirm={() => {
           const action = pendingNavigation
           setPendingNavigation(null)
+          setDirty(false)
+          setDraft(editing ? automationDraftFromAutomation(editing, state.runtimeWork) : null)
+          if (!editing) setSelectedAutomationId(null)
           action?.()
         }}
       />
@@ -634,6 +646,7 @@ export function AutomationsPage({
         {hasWorkspace ? (
           <>
             <AutomationListPane
+              calendar={Boolean(standInOwner)}
               automations={filteredAutomations}
               allAutomations={automations}
               query={query}
@@ -656,6 +669,7 @@ export function AutomationsPage({
                 inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
                 automation={editing}
                 runs={runs}
+                onOpenRun={openRun}
                 locale={locale}
                 devices={state.devices}
                 projects={state.runtimeWork?.projects ?? []}
@@ -680,6 +694,7 @@ export function AutomationsPage({
           </>
         ) : (
           <AutomationEmptyState
+            calendar={Boolean(standInOwner)}
             loading={loading}
             error={error}
             query={query}

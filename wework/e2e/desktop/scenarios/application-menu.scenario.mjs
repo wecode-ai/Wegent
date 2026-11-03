@@ -175,22 +175,22 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         assert.equal(await activateMenuItem(control, id), true, `${id} could not be activated`)
         await waitForRoute(control, route, uiTimeoutMs)
         if (id === 'work.automations') {
-          await control.command('waitFor', '[data-testid="stand-in-work-view-scheduled"]', {
+          await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
             timeoutMs: uiTimeoutMs,
           })
           assert.equal(
-            await control.command('getAttribute', '[data-testid="stand-in-work-view-scheduled"]', {
-              value: 'aria-pressed',
-            }),
-            'true'
+            await control.command(
+              'getElementCount',
+              '[data-testid="stand-in-work-view-scheduled"]'
+            ),
+            '0'
           )
-          await control.command('click', '[data-testid="stand-in-work-view-work"]')
+          await control.command('click', '[data-testid="stand-in-connections-back"]')
+          await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
           assert.equal(await activateMenuItem(control, id), true)
-          await control.command(
-            'waitFor',
-            '[data-testid="stand-in-work-view-scheduled"][aria-pressed="true"]',
-            { timeoutMs: uiTimeoutMs }
-          )
+          await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
+            timeoutMs: uiTimeoutMs,
+          })
           await captureScreenshot(control, 'application-menu-stand-in-scheduled.png', 'body')
         }
       }

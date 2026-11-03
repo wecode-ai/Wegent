@@ -20,9 +20,19 @@ const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => actio
 vi.mock('@/features/automations/AutomationsPage', async () => {
   const { useImperativeHandle } = await import('react')
   return {
-    AutomationsPage: ({ ref }: { ref: import('react').Ref<unknown> }) => {
+    AutomationsPage: ({
+      ref,
+      onDirtyChange,
+    }: {
+      ref: import('react').Ref<unknown>
+      onDirtyChange?(dirty: boolean): void
+    }) => {
       useImperativeHandle(ref, () => ({ requestLeave: menuMocks.leave }))
-      return <div data-testid="scheduled-work-fixture" />
+      return (
+        <button data-testid="scheduled-work-fixture" onClick={() => onDirtyChange?.(true)}>
+          编辑安排
+        </button>
+      )
     },
   }
 })
@@ -460,21 +470,26 @@ it('keeps unsaved settings mounted when the menu requests scheduled work', async
   expect(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).toBeInTheDocument()
 })
 
-it('handles repeated scheduled menu requests and guards each request after cancellation', async () => {
+it('opens the calendar as a connection and protects its draft on every repeated menu request', async () => {
   const { props } = fixture()
-  const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   await screen.findByTestId('stand-in-overview-role-default')
+  expect(screen.queryByTestId('stand-in-work-view-scheduled')).not.toBeInTheDocument()
   requestScheduledWork()
-  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
-  await user.click(screen.getByTestId('stand-in-work-view-work'))
+  expect(await screen.findByTestId('stand-in-calendar-connection')).toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-primary-profile')).toHaveTextContent('连接')
+  expect(screen.queryByTestId('stand-in-primary-save')).not.toBeInTheDocument()
+  const calendar = screen.getByTestId('stand-in-calendar-connection')
+  menuMocks.leave.mockImplementationOnce(() => {})
+  const before = menuMocks.leave.mock.calls.length
   requestScheduledWork()
-  expect(screen.getByTestId('stand-in-work-view-scheduled')).toHaveAttribute('aria-pressed', 'true')
+  expect(menuMocks.leave).toHaveBeenCalledTimes(before + 1)
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBe(calendar)
   menuMocks.leave.mockImplementationOnce(() => {})
   requestScheduledWork()
-  const afterCancellation = menuMocks.leave.mock.calls.length
+  expect(menuMocks.leave).toHaveBeenCalledTimes(before + 2)
   requestScheduledWork()
-  expect(menuMocks.leave).toHaveBeenCalledTimes(afterCancellation + 1)
+  expect(await screen.findByTestId('stand-in-calendar-connection')).not.toBe(calendar)
 })
 
 it('reopens the same role settings for a new explicit project entry request', async () => {

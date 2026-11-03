@@ -1,6 +1,68 @@
 use super::super::project_coordination_commands::tests::fixture;
 use super::*;
 
+#[test]
+fn assessment_uses_the_existing_leaders_fixed_model_instead_of_device_default() {
+    let default =
+        json!({"runtime":"codex","provider":"test","model_id":"default","is_default":true});
+    let fixed = json!({"runtime":"codex","provider":"test","model_id":"leader"});
+    let agent = json!({"runtime":"codex","execution_policy":{"mode":"project_pool"},
+        "model_policy":{"mode":"fixed","model":fixed},"system_prompt":"PRIVATE_PROMPT",
+        "plugins":["PRIVATE_PLUGIN"],"mcp_servers":{"private":{}}});
+    let result =
+        assessment::assessment_model(&agent, &json!({"models":[default,fixed]}), "runner-a")
+            .unwrap();
+    assert_eq!(result["model_id"], "leader");
+    assert!(!result.to_string().contains("PRIVATE"));
+}
+
+#[test]
+fn assessment_rejects_an_unavailable_leader_model_instead_of_substituting_default() {
+    let agent = json!({"runtime":"codex","execution_policy":{"mode":"project_pool"},
+        "model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"test","model_id":"removed"}}});
+    let result = assessment::assessment_model(
+        &agent,
+        &json!({"models":[{"runtime":"codex","provider":"test","model_id":"default","is_default":true}]}),
+        "runner-a",
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn assessment_does_not_replace_a_non_codex_leader_with_a_codex_default() {
+    let agent = json!({"runtime":"claude_code"});
+    let error = assessment::assessment_model(&agent, &json!({}), "runner-a").unwrap_err();
+    assert_eq!(error.code, "unsupported_runtime");
+}
+
+#[tokio::test]
+async fn queued_assessment_rechecks_the_existing_leaders_model_configuration_before_start() {
+    let (_directory, handler, store, target, source, event) = routing_fixture().await;
+    let snapshot = assess(&store, &target, &source, &event);
+    let state = store.project_router_state(&target).unwrap();
+    let context = handler
+        .current_project_router_context(&target)
+        .await
+        .unwrap();
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":state["batch"]["taskId"],"ephemeral":true,"enable_tools":false,"user_id":7,
+        "projectLeaderVersion":LocalTaskStore::coordination_event_version(&context["agent"]),
+        "origin":{"type":"project_assessment","contextId":context_id(&target),"batchId":snapshot["id"],"userId":7,"deviceId":"runner-a"}
+    })).unwrap();
+    handler
+        .validate_project_router_assessment(&request)
+        .await
+        .unwrap();
+    let agent = &context["agent"];
+    store.update_chat_agent(target["projectId"].as_str().unwrap(), agent["id"].as_str().unwrap(),
+        serde_json::from_value(json!({"version":agent["version"],"model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"test","model_id":"replacement"}}})).unwrap()).unwrap();
+    let error = handler
+        .validate_project_router_assessment(&request)
+        .await
+        .unwrap_err();
+    assert!(error.contains("configuration changed"));
+}
+
 async fn routing_fixture() -> (
     tempfile::TempDir,
     RuntimeWorkRpcHandler,
@@ -69,7 +131,12 @@ async fn router_native_assessment_requires_exact_actor_batch_and_read_only_reque
     let (_directory, handler, store, target, source, event) = routing_fixture().await;
     let snapshot = assess(&store, &target, &source, &event);
     let state = store.project_router_state(&target).unwrap();
+    let context = handler
+        .current_project_router_context(&target)
+        .await
+        .unwrap();
     let request: ExecutionRequest = serde_json::from_value(json!({
+        "projectLeaderVersion":LocalTaskStore::coordination_event_version(&context["agent"]),
         "task_id":state["batch"]["taskId"],"ephemeral":true,"enable_tools":false,"user_id":7,
         "origin":{"type":"project_assessment","contextId":context_id(&target),"batchId":snapshot["id"],"userId":7,"deviceId":"runner-a"}
     })).unwrap();

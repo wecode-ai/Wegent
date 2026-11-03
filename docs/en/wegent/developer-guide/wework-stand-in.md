@@ -40,11 +40,13 @@ When MCP batch authority changes, Executor waits for the active execution to fin
 
 ## Scheduled work
 
-Scheduled work lives in the stand-in work list and reuses the existing Automation store, scheduler and execution history. Its separate sidebar entry is removed; Time inside connection settings uses the same capability. taskRequest.standInOwner binds ownership. The current identity model, workspace and agent policies resolve when due rather than copying credentials at creation. Legacy unowned schedules remain visible under the primary identity.
+Settings → Connections → Calendar is the single entry for arranging work; scheduled work is no longer a peer tab of the work list. Calendar reuses the existing Automation store, scheduler and execution history. Menu deep links open this connection. Calendar saves independently and reuses the arrangement editor’s draft guard for returning and closing. Execution history links to the original work. taskRequest.standInOwner binds ownership. The current identity model, workspace and agent policies resolve when due rather than copying credentials at creation. Legacy unowned schedules remain visible under the primary identity.
 
 The primary chat can list, create and cancel personal schedules. An arrangement creates concrete work or continues current-user concrete work, never a coordinator or identity conversation. Pausing/deleting an identity or modifying/cancelling an arrangement invalidates prepared requests. Existing questions and confirmations remain intact. Busy work or unavailable capacity produces Needs attention rather than entering a stale delayed queue. Version checks distinguish the system claiming a one-time job from a later user cancellation. Unsaved arrangements inside settings also require discard confirmation.
 
 ## Project coordinator conversations
+
+Private chat, automatic handling and Issue execution belong to the existing collaboration group leader. There is no separate coordinator identity. Read-only assessment follows that leader’s model and device policies while excluding private prompts, skills, plugins and memories. Queued starts recheck the leader configuration fingerprint; an unavailable fixed model fails instead of using a default.
 
 The conversation entry exists on the project page. Collaboration groups supply leaders and members; a bare group has no independent project chat. Multiple groups are selected inside the project. Human-led groups direct users back to the project Issue.
 

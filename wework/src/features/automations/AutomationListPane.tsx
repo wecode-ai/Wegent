@@ -31,6 +31,7 @@ export function AutomationListPane({
   onSelect,
   onCreate,
   onClearError,
+  calendar = false,
 }: {
   automations: Automation[]
   allAutomations: Automation[]
@@ -49,6 +50,7 @@ export function AutomationListPane({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) => void
   onClearError: () => void
+  calendar?: boolean
 }) {
   const { t } = useTranslation('common')
   return (
@@ -126,7 +128,7 @@ export function AutomationListPane({
             {t('workbench.automations_no_results', '没有匹配的自动化')}
           </p>
         )}
-        {statusFilter === 'all' && !query && allAutomations.length > 0 ? (
+        {!calendar && statusFilter === 'all' && !query && allAutomations.length > 0 ? (
           <>
             <div className="my-4 border-t border-border" />
             <AutomationSuggestions onSelect={onCreate} compact />
@@ -144,6 +146,7 @@ export function AutomationEmptyState({
   onQueryChange,
   onCreate,
   onClearError,
+  calendar = false,
 }: {
   loading: boolean
   error: string | null
@@ -153,8 +156,31 @@ export function AutomationEmptyState({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) => void
   onClearError: () => void
+  calendar?: boolean
 }) {
   const { t } = useTranslation('common')
+  if (calendar)
+    return (
+      <div className="min-w-0 flex-1 overflow-y-auto py-3" data-testid="stand-in-calendar-empty">
+        <button
+          type="button"
+          data-testid="create-automation-button"
+          onClick={() => onCreate()}
+          className="inline-flex min-h-8 items-center gap-2 rounded-md bg-text-primary px-3 text-sm text-background"
+        >
+          <Plus aria-hidden="true" className="h-4 w-4" />
+          {t('standIn.workspace.calendar_create')}
+        </button>
+        {error ? <AutomationError error={error} onClear={onClearError} /> : null}
+        {loading ? (
+          <p role="status" className="py-5 text-sm text-text-muted">
+            {t('standIn.loading')}
+          </p>
+        ) : !error ? (
+          <p className="py-5 text-sm text-text-muted">{t('standIn.workspace.calendar_empty')}</p>
+        ) : null}
+      </div>
+    )
   return (
     <div className="relative min-w-0 flex-1 overflow-y-auto">
       <button

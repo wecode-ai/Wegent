@@ -131,7 +131,12 @@ export function ProjectCoordinatorConversation({
               <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-5 py-3">
                 <div className="min-w-0 flex-1">
                   <h2 className="heading-sm truncate">
-                    {t('standIn.project_coordinator.title', { project: project.name })}
+                    {group
+                      ? t('standIn.project_coordinator.leader_title', {
+                          group: group.name,
+                          leader: group.leader.name || t('standIn.project_coordinator.leader'),
+                        })
+                      : t('standIn.project_coordinator.title', { project: project.name })}
                   </h2>
                   <p className="text-xs text-text-muted">
                     {t('standIn.project_coordinator.private_context')}
@@ -257,6 +262,7 @@ export function ProjectCoordinatorConversation({
                         projectId={project.id}
                         projectStore={storage}
                         groupId={group.id}
+                        leaderName={group.leader.name || t('standIn.project_coordinator.leader')}
                         onOpenIssue={issueId => {
                           closeConversation()
                           onOpenIssue(issueId)

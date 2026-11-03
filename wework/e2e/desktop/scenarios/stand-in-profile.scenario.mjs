@@ -145,15 +145,23 @@ export function createDesktopScenario({
         await control.command('getValue', '[data-testid="stand-in-preferences"]'),
         '帮我跟进工作\n\n回复简洁，发送前确认'
       )
-      await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-execution"]')
       await captureScreenshot(control, '01-unified-profile.png', PANEL)
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-time-connections"]', {
+        text: '日历',
+      })
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-connections-empty"]'),
+        '0'
+      )
       await control.command('click', '[data-testid="stand-in-add-connection"]')
       await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
       await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
       await captureScreenshot(control, '02-connection-editor.png', PANEL)
       await control.command('click', '[data-testid="stand-in-connections-back"]')
-      await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
+      await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
+      await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
       await control.command('click', `${PANEL} [data-testid="project-work-button"]`)
       const option = await waitForTestIdByText(control, 'body', 'project-option-', NAME)
       await control.command('click', selector(option))

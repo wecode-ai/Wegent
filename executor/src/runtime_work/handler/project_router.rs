@@ -117,10 +117,10 @@ impl RuntimeWorkRpcHandler {
         json!({"contexts":contexts,"errors":errors})
     }
 
-    pub(super) async fn current_project_router_source(
+    pub(super) async fn current_project_router_context(
         &self,
         target: &Value,
-    ) -> Result<(Value, Value), AppIpcError> {
+    ) -> Result<Value, AppIpcError> {
         let user = target["userId"].as_i64().ok_or_else(|| {
             AppIpcError::new("permission_denied", "Missing project coordination member")
         })?;
@@ -159,6 +159,14 @@ impl RuntimeWorkRpcHandler {
                 "Project coordination requires an AI leader",
             ));
         }
+        Ok(context)
+    }
+
+    pub(super) async fn current_project_router_source(
+        &self,
+        target: &Value,
+    ) -> Result<(Value, Value), AppIpcError> {
+        let context = self.current_project_router_context(target).await?;
         let project_data = json!({"id":context["project"]["id"],"name":context["project"]["name"],"description":context["project"]["description"],"version":context["project"]["version"]});
         let members: Vec<Value> = context["group"]["members"]
             .as_array()

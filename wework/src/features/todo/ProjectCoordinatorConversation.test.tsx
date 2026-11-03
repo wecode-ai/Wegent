@@ -79,6 +79,9 @@ it('binds the selected AI leader conversation to project, group, user and device
   await waitFor(() =>
     expect(f.projectConversation).toHaveBeenCalledWith(7, 'mac', 'project-a', 'local', 'group')
   )
+  expect(screen.getByRole('heading', { name: '交付组 · 负责人' })).toBeVisible()
+  expect(screen.getByText('自动处理项目事件')).toBeVisible()
+  expect(screen.queryByText('项目自动统筹')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('project-coordinator-work-list'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })

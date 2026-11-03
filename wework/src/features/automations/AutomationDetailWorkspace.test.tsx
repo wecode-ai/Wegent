@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
-import type { Automation } from '@/types/automation'
+import type { Automation, AutomationRun } from '@/types/automation'
 import { emptyAutomationDraft, type AutomationDraft } from './automationDraft'
 import { AutomationDetailWorkspace } from './AutomationDetailWorkspace'
 
@@ -13,19 +13,24 @@ function AutomationDetailHarness({
   automation = null,
   runtimeWork = null,
   localDeviceIds = ['local-device'],
+  runs = [],
+  onOpenRun,
 }: {
   devices?: React.ComponentProps<typeof AutomationDetailWorkspace>['devices']
   initialDraft?: AutomationDraft
   automation?: Automation | null
   runtimeWork?: RuntimeWorkListResponse | null
   localDeviceIds?: string[]
+  runs?: AutomationRun[]
+  onOpenRun?(run: AutomationRun): void
 }) {
   const [draft, setDraft] = useState<AutomationDraft>(initialDraft)
   return (
     <AutomationDetailWorkspace
       draft={draft}
       automation={automation}
-      runs={[]}
+      runs={runs}
+      onOpenRun={onOpenRun}
       locale="zh-CN"
       devices={devices}
       projects={[]}
@@ -86,6 +91,30 @@ const savedAutomation: Automation = {
 }
 
 describe('AutomationDetailWorkspace', () => {
+  test('opens the original work only when its execution has an exact task and device', async () => {
+    const onOpenRun = vi.fn()
+    const run = {
+      id: 'run',
+      automationId: savedAutomation.id,
+      status: 'succeeded',
+      taskId: 'original-work',
+      deviceId: 'runner',
+      scheduledFor: savedAutomation.createdAt,
+    } as AutomationRun
+    const view = render(
+      <AutomationDetailHarness automation={savedAutomation} runs={[run]} onOpenRun={onOpenRun} />
+    )
+    await userEvent.setup().click(screen.getByTestId('automation-run-open-run'))
+    expect(onOpenRun).toHaveBeenCalledWith(run)
+    view.rerender(
+      <AutomationDetailHarness
+        automation={savedAutomation}
+        runs={[{ ...run, deviceId: null }]}
+        onOpenRun={onOpenRun}
+      />
+    )
+    expect(screen.queryByTestId('automation-run-open-run')).not.toBeInTheDocument()
+  })
   test('enables the task instructions as a persistent goal', async () => {
     const user = userEvent.setup()
     render(<AutomationDetailHarness />)

@@ -41,10 +41,7 @@ export function createDesktopScenario({
   }
   async function showArrangements(control) {
     await control.command('navigate', 'body', { value: '/stand-in?view=scheduled' })
-    await control.command(
-      'waitFor',
-      '[data-testid="stand-in-work-view-scheduled"][aria-pressed="true"]'
-    )
+    await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]')
     await control.command('waitFor', '[data-testid="automation-open-arrangement-once"]')
   }
   return {

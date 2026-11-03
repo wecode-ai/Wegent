@@ -77,6 +77,7 @@ interface AutomationDetailWorkspaceProps {
   onRun: () => void
   onToggle: () => void
   onDelete: () => void
+  onOpenRun?: (run: AutomationRun) => void
 }
 
 export function AutomationDetailWorkspace({
@@ -103,6 +104,7 @@ export function AutomationDetailWorkspace({
   onRun,
   onToggle,
   onDelete,
+  onOpenRun,
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
@@ -449,7 +451,7 @@ export function AutomationDetailWorkspace({
         />
         <FrequencySettings draft={draft} onChange={onChange} />
 
-        {automation ? <RunHistory runs={runs} locale={locale} /> : null}
+        {automation ? <RunHistory runs={runs} locale={locale} onOpenRun={onOpenRun} /> : null}
       </div>
 
       {!automation || dirty ? (
@@ -741,7 +743,15 @@ type AutomationTaskMenuOption = ReturnType<typeof buildAutomationTaskOptions>[nu
   disabled: boolean
 }
 
-function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string }) {
+function RunHistory({
+  runs,
+  locale,
+  onOpenRun,
+}: {
+  runs: AutomationRun[]
+  locale: string
+  onOpenRun?(run: AutomationRun): void
+}) {
   const { t } = useTranslation('common')
   return (
     <div className="mt-8" data-testid="automation-run-history">
@@ -771,6 +781,16 @@ function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string })
                   {run.error}
                 </span>
               ) : null}
+              {run.taskId && run.deviceId && onOpenRun && (
+                <button
+                  type="button"
+                  data-testid={`automation-run-open-${run.id}`}
+                  onClick={() => onOpenRun(run)}
+                  className="min-h-8 shrink-0 rounded-md px-2 text-sm underline hover:bg-surface"
+                >
+                  {t('standIn.workspace.open_work')}
+                </button>
+              )}
             </div>
           ))
         )}

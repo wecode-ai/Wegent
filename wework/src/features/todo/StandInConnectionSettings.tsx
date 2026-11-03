@@ -1,6 +1,5 @@
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { ArrowLeft, ChevronRight, Folder, MessageSquare, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
@@ -8,7 +7,10 @@ import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/sta
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
-import { AutomationsPage } from '@/features/automations/AutomationsPage'
+import {
+  AutomationsPage,
+  type AutomationNavigationHandle,
+} from '@/features/automations/AutomationsPage'
 import { Clock } from 'lucide-react'
 import { findStandInProject } from './standInProjects'
 
@@ -25,6 +27,11 @@ export function StandInConnectionSettings({
   focusedProjectId,
   scheduling,
   onScheduleDirtyChange,
+  initialCalendar = false,
+  onCalendarViewChange,
+  hideHeading = false,
+  ref,
+  onNavigate,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -36,14 +43,29 @@ export function StandInConnectionSettings({
   focusedProjectId?: string
   scheduling?: { userId: number; roleId: string }
   onScheduleDirtyChange?(dirty: boolean): void
+  initialCalendar?: boolean
+  onCalendarViewChange?(open: boolean): void
+  hideHeading?: boolean
+  ref?: Ref<AutomationNavigationHandle>
+  onNavigate?(action: () => void): void
 }) {
   const { t, i18n } = useTranslation('common')
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [discardSchedule, setDiscardSchedule] = useState(false)
+  const calendarRef = useRef<AutomationNavigationHandle>(null)
+  useImperativeHandle(ref, () => ({
+    requestLeave(action) {
+      if (calendarRef.current) calendarRef.current.requestLeave(action)
+      else action()
+    },
+  }))
   useEffect(() => {
     onScheduleDirtyChange?.(scheduleDirty)
   }, [scheduleDirty, onScheduleDirtyChange])
-  const [view, setView] = useState<string | null>(null)
+  const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
+  useEffect(() => {
+    onCalendarViewChange?.(view === 'time')
+    return () => onCalendarViewChange?.(false)
+  }, [view, onCalendarViewChange])
   const [adding, setAdding] = useState(false)
   const [catalog, setCatalog] = useState<{
     key: string
@@ -57,10 +79,10 @@ export function StandInConnectionSettings({
   const catalogKey = JSON.stringify([deviceId, i18n.language, refresh])
   const currentCatalog = catalog?.key === catalogKey && catalog.api === api ? catalog : null
   const providers = currentCatalog?.items ?? []
-  const loading = installing || Boolean(api && !currentCatalog)
-  const visibleError = error ?? currentCatalog?.error
+  const loading = view !== 'time' && (installing || Boolean(api && !currentCatalog))
+  const visibleError = view === 'time' ? null : (error ?? currentCatalog?.error)
   useEffect(() => {
-    if (!api) return
+    if (!api || view === 'time') return
     let active = true
     void api
       .connectionProviders(deviceId)
@@ -80,7 +102,7 @@ export function StandInConnectionSettings({
     return () => {
       active = false
     }
-  }, [api, deviceId, catalogKey, i18n.language])
+  }, [api, deviceId, catalogKey, i18n.language, view])
   const provider = providers.find(item => item.id === view)
   const source = role.collaboration
   const projectRows = !source.enabled
@@ -145,30 +167,23 @@ export function StandInConnectionSettings({
             disabled={disabled}
             className="flex min-h-8 items-center gap-2 text-sm text-text-secondary hover:text-text-primary disabled:opacity-40"
             onClick={() => {
-              if (scheduleDirty) setDiscardSchedule(true)
+              if (calendarRef.current) calendarRef.current.requestLeave(() => setView(null))
               else setView(null)
             }}
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
             {t('standIn.workspace.back_to_connections')}
           </button>
-          <ConfirmDialog
-            open={discardSchedule}
-            onClose={() => setDiscardSchedule(false)}
-            title={t('standIn.personal.discard_help')}
-            description={t('standIn.personal.discard_description')}
-            confirmLabel={t('standIn.personal.discard')}
-            cancelLabel={t('standIn.personal.keep_editing')}
-            confirmTestId="stand-in-schedule-discard"
-            onConfirm={() => {
-              setDiscardSchedule(false)
-              setScheduleDirty(false)
-              setView(null)
-            }}
-          />
           {view === 'time' && scheduling ? (
-            <div className="flex h-[32rem] min-h-0 flex-col">
+            <div
+              className="flex h-[32rem] min-h-0 flex-col"
+              data-testid="stand-in-calendar-connection"
+            >
+              <h3 className="mb-2 font-medium">{t('standIn.workspace.time_connection')}</h3>
+              <p className="mb-4 text-sm text-text-muted">{t('standIn.workspace.calendar_help')}</p>
               <AutomationsPage
+                ref={calendarRef}
+                onNavigate={onNavigate}
                 embedded
                 standInOwner={scheduling}
                 standInDeviceId={deviceId}
@@ -234,8 +249,10 @@ export function StandInConnectionSettings({
         </>
       ) : (
         <>
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>
+          <div className="flex items-center justify-end gap-3">
+            {!hideHeading && (
+              <h3 className="flex-1 font-medium">{t('standIn.workspace.connections')}</h3>
+            )}
             <button
               type="button"
               data-testid="stand-in-add-connection"
@@ -266,21 +283,6 @@ export function StandInConnectionSettings({
                 <Folder aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.personal.collaboration')}
               </button>
-              {scheduling && (
-                <button
-                  type="button"
-                  data-testid="stand-in-add-time-connection"
-                  disabled={disabled}
-                  onClick={() => {
-                    setView('time')
-                    setAdding(false)
-                  }}
-                  className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
-                >
-                  <Clock className="h-4 w-4" />
-                  {t('standIn.workspace.time_connection')}
-                </button>
-              )}
               {providers.map(item => (
                 <div key={item.id}>
                   <button
@@ -353,11 +355,11 @@ export function StandInConnectionSettings({
                 </button>
               ))}
             </div>
-          ) : (
+          ) : !scheduling ? (
             <p className="py-4 text-sm text-text-muted" data-testid="stand-in-connections-empty">
               {t('standIn.workspace.connections_empty')}
             </p>
-          )}
+          ) : null}
         </>
       )}
       {loading && <p role="status">{t('standIn.loading')}</p>}
