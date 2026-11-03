@@ -113,6 +113,14 @@ describe('cors', () => {
 })
 
 describe('programmatic exec', () => {
+  test('recognizes the native exec declaration before additional tools are injected', () => {
+    const request = { tools: [{ type: 'custom', name: 'exec' }], input: [] }
+    expect(requestAdvertisesProgrammaticExec(request)).toBe(true)
+    expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
+      name: 'exec',
+      input: 'text("ok")',
+    })
+  })
   const request = {
     input: [
       {

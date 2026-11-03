@@ -59,6 +59,52 @@ describe("native positions mixed with streamed turns", () => {
     items: [{ id: `${id}-text`, type: "assistant_text", content: id }],
   });
 
+  it("keeps turns distinct when the same child agent is resumed across history pages", () => {
+    const activity = {
+      id: "subagent-reused-child",
+      type: "block" as const,
+      block: {
+        id: "subagent-reused-child",
+        type: "subagent" as const,
+        status: "done" as const,
+        createdAt: 1,
+      },
+    };
+    const old = {
+      ...streamed("old"),
+      status: "done" as const,
+      position: 100,
+      items: [activity],
+    };
+    const current = {
+      ...streamed("current"),
+      position: 300,
+      items: [
+        {
+          id: "follow-up",
+          type: "user_message" as const,
+          message: {
+            id: "follow-up",
+            role: "user" as const,
+            content: "New request",
+          },
+        },
+        activity,
+        ...streamed("current").items,
+      ],
+    };
+    for (const [local, page] of [
+      [old, current],
+      [current, old],
+    ]) {
+      const merged = mergeRuntimeConversationTurns([local], [page]);
+      expect(merged.map((turn) => turn.id)).toEqual(["old", "current"]);
+      expect(merged[1].position).toBe(300);
+      expect(merged[1].status).toBe("streaming");
+      expect(merged[1].items).toEqual(current.items);
+    }
+  });
+
   it("keeps earlier streamed goal turns before a positioned latest page", () => {
     const local = [
       { ...streamed("initial"), position: 1 },

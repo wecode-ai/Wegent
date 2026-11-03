@@ -1,5 +1,11 @@
 import { readRequestBody as readJson } from './response-protocol.mjs'
-import { selectE2EModel, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL } from './shared.mjs'
+import {
+  selectE2EModel,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
 
 export const ACTIVE_WORKBENCH_SELECTOR =
@@ -849,6 +855,14 @@ export async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs,
   })
+  // Native project registration persists Codex state and refreshes executor workspaces.
+  // Wait for that initialization before applying the ordinary UI assertion budget.
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.workbench?.currentProject?.name === 'streaming-navigation',
+    'The streaming project did not finish native workspace initialization',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     text: 'streaming-navigation',
     timeoutMs,
