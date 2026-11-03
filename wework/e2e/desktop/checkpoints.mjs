@@ -34,6 +34,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-group-onboarding',
   'collaboration-templates',
   'collaboration-template-lifecycle',
+  'collaboration-template-agents',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',

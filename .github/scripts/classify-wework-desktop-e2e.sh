@@ -30,6 +30,7 @@ core_segments=(
   collaboration-group-onboarding
   collaboration-templates
   collaboration-template-lifecycle
+  collaboration-template-agents
   collaboration-local-agent-dispatch
   stand-in
   stand-in-identities
@@ -262,7 +263,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-parent-board,python-runtime,plugin-development
+  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-parent-board,python-runtime,plugin-development
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
@@ -1982,6 +1983,7 @@ classify_path() {
       select_target "core:collaboration-deliveries"
       select_target "core:collaboration-delivery-editing"
       ;;
+    wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-template-lifecycle.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
@@ -1990,6 +1992,7 @@ classify_path() {
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
       select_target "core:collaboration-template-lifecycle"
+      select_target "core:collaboration-template-agents"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
         select_target "core:collaboration-group-onboarding"
       fi
@@ -2005,6 +2008,9 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
+      if [[ "$path" == packages/collaboration/src/project-agent-config/* ]]; then
+        select_target "core:collaboration-template-agents"
+      fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
         select_target "core:collaboration-deliveries"

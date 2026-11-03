@@ -32,6 +32,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
   const fillRoles = async (control, count) => {
+    if (
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('details:not([open]):has(> [data-testid="template-customize-main"])')
+        )
+      ) > 0
+    ) {
+      await click(control, 'template-customize-main')
+    }
     await wait(control, 'template-role-main-role-0', '当前设备智能体')
     // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
     const human = await control.command(
@@ -311,6 +321,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '02-preview')
       await click(control, 'template-use')
       await wait(control, 'project-create-template-section')
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            testId('collaboration-project-create-confirm') + ':disabled'
+          )
+        ),
+        0,
+        'A self-contained template must be ready without selecting existing Agents'
+      )
+      await click(control, 'template-customize-main')
+      await control.command('select', testId('template-role-main-role-1'), { value: '' })
       assert.equal(
         Number(
           await control.command(

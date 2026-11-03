@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { access, copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
 
-import { accountCommandEvents, accountCommandResult } from './account-auth-command.mjs'
+import { accountCommandResult } from './account-auth-command.mjs'
+import { shellCommandPollResponse, shellCommandResponse } from './shell-command-response.mjs'
 import { assertManagedPythonHome, PYTHON_BOOTSTRAP_TIMEOUT_MS } from './managed-python.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from './shared.mjs'
 import {
@@ -122,7 +123,7 @@ export function createPluginPythonChat({
         )
         const result = accountCommandResult(body.input, CALL)
         if (result?.sessionId) {
-          events = accountCommandEvents(body, result.pollId, { sessionId: result.sessionId })
+          events = shellCommandPollResponse(body, result.pollId, result.sessionId)
         } else if (result) {
           assert.ok(result.output.includes('ORDINARY_TASK_ENVIRONMENT_PRESERVED'), result.output)
           const encoded = result.output.match(/PLUGIN_PYTHON_RESULT:([A-Za-z0-9+/=]+)/)?.[1]
@@ -143,7 +144,7 @@ export function createPluginPythonChat({
         } else {
           assert.equal(started, false, 'The chat must start the plugin command only once')
           started = true
-          events = accountCommandEvents(body, CALL, { command, workspacePath })
+          events = shellCommandResponse(body, CALL, command, workspacePath)
         }
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
