@@ -5,6 +5,40 @@ import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaborat
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
 
+test('waits for the first role catalog before reading or selecting its human coordinator', async () => {
+  let ready = false
+  let releaseCatalog!: () => void
+  let reachedWait!: () => void
+  const catalog = new Promise<void>(resolve => {
+    releaseCatalog = resolve
+  })
+  const waiting = new Promise<void>(resolve => {
+    reachedWait = resolve
+  })
+  const command = vi.fn(async (action: string, selector: string) => {
+    if (action === 'waitFor' && selector === role(0)) {
+      reachedWait()
+      await catalog
+    }
+    if (action === 'getAttribute') {
+      if (!ready) throw new Error('The first role catalog is still loading')
+      return 'human:1'
+    }
+  })
+  const result = fillTemplateRoleBindings({ command }, 1).then(
+    () => ({ error: null }),
+    (error: unknown) => ({ error })
+  )
+  expect(await Promise.race([waiting.then(() => 'waiting'), result.then(() => 'finished')])).toBe(
+    'waiting'
+  )
+  expect(command).not.toHaveBeenCalledWith('getAttribute', expect.anything(), expect.anything())
+  ready = true
+  releaseCatalog()
+  expect((await result).error).toBeNull()
+  expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })
+})
+
 test('waits for the current-device Agent catalog before binding every non-human template role', async () => {
   let catalogReady = false
   let releaseCatalog!: () => void
@@ -57,5 +91,5 @@ test('propagates an unavailable Agent catalog without changing the binding or re
   })
 
   await expect(fillTemplateRoleBindings({ command }, 3)).rejects.toBe(unavailable)
-  expect(command.mock.calls.filter(([action]) => action === 'select')).toHaveLength(1)
+  expect(command.mock.calls.filter(([action]) => action === 'select')).toHaveLength(0)
 })

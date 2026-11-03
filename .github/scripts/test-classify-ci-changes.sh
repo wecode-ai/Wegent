@@ -956,6 +956,7 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs" \
   "wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs" \
+  "wework/e2e/desktop/fixtures/historical-plugin-revision.py" \
   "wework/scripts/plugin-runtime-path-fixture.test.mjs"
 
 assert_desktop_case "conversation auth changes select managed login regression" \
@@ -1494,7 +1495,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/IssueBadges.tsx" \
   "wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs"
 
-assert_desktop_case "Smart app harness changes run every harness app checkpoint" \
+assert_desktop_case "Harness app changes run every harness app checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"harness-app-lifecycle,harness-app-models"},{"id":"core-7","name":"Core / shard 7","segments":"harness-app-development"}]}
@@ -1502,6 +1503,14 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/harness-apps.scenario.mjs" \
   "wework/e2e/desktop/modules/harness-app-models.mjs"
+
+assert_desktop_case "Smart app deep-link fixtures run the lifecycle checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"harness-app-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/smart-app-marketplace-identity.mjs"
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -1650,6 +1659,15 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}
 wework_desktop_macos_inspector_e2e=true' \
   "wework/src/lib/browser-url.ts"
+
+assert_desktop_case "embedded browser scheme interception runs the agent checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/electron/src/host/embedded-browser-manager.ts" \
+  "wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs"
 
 assert_desktop_case "browser toolbar scenario is invoked by Core and macOS CI" \
   'wework_desktop_e2e=true

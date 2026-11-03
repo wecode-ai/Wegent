@@ -21,7 +21,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/pipeline-session-archive.spec.ts': 5,
-  'tasks/claude-background-lifecycle.spec.ts': 2,
+  'tasks/claude-background-lifecycle.spec.ts': 3,
   'tasks/provider-native-claudecode.spec.ts': 2,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
   'collaboration/issue-dispatch-executor.spec.ts': 2,
@@ -56,7 +56,7 @@ describe('Executor scheduling boundaries', () => {
     }
   })
 
-  it('discovers all 40 original tests exactly once through the existing CI entry point', () => {
+  it('discovers the original 40 tests and the upstream large-output regression exactly once through CI', () => {
     const cli = join(dirname(require.resolve('@playwright/test/package.json')), 'cli.js')
     const listed = spawnSync(
       process.execPath,
@@ -101,7 +101,12 @@ describe('Executor scheduling boundaries', () => {
       for (const child of suite.suites || []) visit(child)
     }
     for (const suite of report.suites) visit(suite)
-    expect(identities.size).toBe(40)
+    expect(identities.size).toBe(41)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'
+      )
+    ).toBe(true)
     expect(counts).toEqual(expectedCounts)
   })
 })
