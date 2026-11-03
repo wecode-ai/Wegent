@@ -294,6 +294,51 @@ test("unknown product code and lockfiles require explicit ci:all", () => {
   }
 });
 
+test("E2E test changes require coverage while ordinary unit tests remain path checked", () => {
+  for (const path of [
+    "wework/e2e/tests/chat.spec.ts",
+    "wework/e2e/desktop/checkpoint-scheduler.test.mjs",
+    "frontend/e2e/helpers/session.test.ts",
+  ]) {
+    assert.deepEqual(planFor([path], []).plan.missing, ["ci:all"], path);
+    const { plan, outputs } = planFor([path], ["ci:all"]);
+    assert.deepEqual(plan.errors, [], path);
+    assert.equal(outputs.platform_suite, "true");
+    assert.equal(outputs.wework_e2e, "true");
+  }
+  assert.deepEqual(
+    planFor(["wework/src/components/chat/MessageList.test.tsx"], []).plan
+      .required,
+    [],
+  );
+});
+
+test("label synchronization only executes trusted main code", () => {
+  const workflow = JSON.parse(
+    execFileSync(
+      "ruby",
+      [
+        "-ryaml",
+        "-rjson",
+        "-e",
+        "puts JSON.generate(YAML.load_file(ARGV[0]))",
+        resolve(root, ".github/workflows/ci-feature-labels.yml"),
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  for (const ref of [
+    "refs/heads/main",
+    "refs/heads/feature/unreviewed",
+    "refs/tags/main",
+  ]) {
+    assert.equal(
+      vm.runInNewContext(workflow.jobs.labels.if, { github: { ref } }),
+      ref === "refs/heads/main",
+    );
+  }
+});
+
 test("CI policy edits without label-write permission execute complete coverage", () => {
   for (const path of [
     ".github/ci/features.json",

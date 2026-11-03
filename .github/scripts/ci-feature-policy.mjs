@@ -6,7 +6,7 @@ export const sourceRules = [
   ],
   [/^(docs\/|AGENTS\.md$|README|LICENSE|\.gitignore$|\.editorconfig$)/, []],
   [/^(frontend|wework)\/src\/i18n\//, []],
-  [/\.(test|spec)\.[cm]?[jt]sx?$/, []],
+  [/^(?!wework\/e2e\/|frontend\/e2e\/).*\.(test|spec)\.[cm]?[jt]sx?$/, []],
   [
     /^(backend\/tests\/(?!e2e|integration)|executor\/tests\/|shared\/tests\/)/,
     [],

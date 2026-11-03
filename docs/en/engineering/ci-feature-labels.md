@@ -35,7 +35,7 @@ Existing narrow desktop selections remain mandatory; broad selections are reduce
 Extra feature or platform labels explicitly widen coverage. Assertions inside scenarios are not pruned.
 
 `ci:windows` adds the selected features' registered Windows Core cases. It does not claim Windows
-parity for Cloud/Plugins. Requesting it for a feature with no Windows Core coverage fails the plan.
+parity for Cloud/Plugins. The plan fails only when the selected feature union has no Windows Core coverage.
 `ci:macos` adds the existing Inspector suite, not arbitrary macOS feature parity. Previously required
 path-based Inspector coverage remains. The `ci:memory` name is retained; the full PR plans below trigger the memory suite.
 
