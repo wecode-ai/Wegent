@@ -306,9 +306,9 @@ async function run(environment) {
         env: {
           ...process.env,
           ...environment,
-          // Windows installs targets in private slots. macOS replaces the shared
-          // application bundle, so its checkpoints must remain serial.
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: platform === 'windows' ? '2' : '1',
+          // Default-layout migration and Windows singleton identity both use
+          // the OS-wide legacy application-data name, despite isolated HOME.
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: '1',
           WEWORK_E2E_PARALLEL_SCOPE: 'core',
         },
         stdio: 'inherit',
