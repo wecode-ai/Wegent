@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     | ((event: { type: string; payload: Record<string, unknown> }) => void)
     | null,
   publish: vi.fn(),
+  flushInternalSinks: vi.fn(),
   listApps: vi.fn(),
   preferences: {
     loaded: true,
@@ -53,6 +54,7 @@ vi.mock('./client', () => ({
 
 vi.mock('./dispatcher', () => ({
   createTelemetryDispatcher: () => ({
+    flushInternalSinks: mocks.flushInternalSinks,
     publish: mocks.publish,
   }),
 }))
@@ -73,6 +75,7 @@ describe('TelemetryAgent', () => {
     vi.unstubAllEnvs()
     mocks.listApps.mockReset().mockResolvedValue([])
     mocks.publish.mockReset()
+    mocks.flushInternalSinks.mockReset()
     mocks.preferences.loaded = true
     mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
     mocks.telemetryEnabled = true
