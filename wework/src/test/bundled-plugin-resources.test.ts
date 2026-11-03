@@ -55,7 +55,13 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledPluginExampleManifests) {
       expect(existsSync(resolve(resourcesDirectory, manifest))).toBe(true)
     }
-    expect(packageScript).toContain("join(electronRoot, 'resources', 'bundled-plugins')")
+    const componentLayout = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/bundled-component-layout.cjs'),
+      'utf8'
+    )
+    expect(componentLayout).toContain("'bundled-plugins'")
+    expect(packageScript).toContain('...bundledComponentLayout.directories.map')
+    expect(packageScript).toContain("join(electronRoot, 'resources', `${name}.tar.gz`)")
   })
 
   test('packages a runnable MCP server in the plugin example', () => {

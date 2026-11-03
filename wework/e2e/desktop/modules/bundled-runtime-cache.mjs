@@ -61,7 +61,8 @@ export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot) {
     }
     await assertRuntimeIdentity(destination, runtime)
   }
-  await writeFile(join(runtimeRoot, 'runtimes.json'), JSON.stringify({ runtimes }) + '\n')
+  if (!ready)
+    await writeFile(join(runtimeRoot, 'runtimes.json'), JSON.stringify({ runtimes }) + '\n')
   return runtimeRoot
 }
 

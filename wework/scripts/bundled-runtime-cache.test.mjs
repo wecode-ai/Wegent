@@ -133,6 +133,20 @@ test('a warmed cache does not bypass verification of the delivered archive', asy
   await assert.rejects(prepareBundledRuntimeCache(resources, cache))
 })
 
+test('parallel warmed readers validate archives without rewriting the shared catalog', async t => {
+  const { resources, cache } = await fixture(t)
+  await prepareBundledRuntimeCache(resources, cache)
+  const catalog = join(cache, 'runtimes.json')
+  const original = await stat(catalog)
+  await Promise.all([
+    prepareBundledRuntimeCache(resources, cache),
+    prepareBundledRuntimeCache(resources, cache),
+  ])
+  const after = await stat(catalog)
+  assert.equal(after.mtimeMs, original.mtimeMs)
+  assert.equal(after.ctimeMs, original.ctimeMs)
+})
+
 test('an incomplete installation fails without retrying extraction or deleting diagnostics', async t => {
   const { resources, cache } = await fixture(t)
   await mkdir(cache)

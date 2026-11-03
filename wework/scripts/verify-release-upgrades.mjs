@@ -15,7 +15,10 @@ import {
   verifiedUpgradeEdge,
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
-import { bundledRuntimeCacheKey } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
+import {
+  bundledRuntimeCacheKey,
+  prepareBundledRuntimeCache,
+} from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
@@ -233,6 +236,10 @@ async function verifySource(source, targetChannel, previous) {
   const from = await downloadSource(source, targetChannel)
   if (previous && source.version !== previous.version)
     from.installedSource = await downloadSource(previous, targetChannel)
+  // Finish shared immutable installation before workers read it. All mutable
+  // catalogs, profiles and release slots still belong to individual checkpoints.
+  for (const installed of [from, from.installedSource].filter(Boolean))
+    await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache)
   const directory = dirname(from.path)
   const pairPath = join(directory, 'pair.json')
   const evidenceFile = join(directory, 'evidence.json')
@@ -296,7 +303,9 @@ async function run(environment) {
         env: {
           ...process.env,
           ...environment,
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: '1',
+          // Windows installs targets in private slots. macOS replaces the shared
+          // application bundle, so its checkpoints must remain serial.
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: platform === 'windows' ? '2' : '1',
           WEWORK_E2E_PARALLEL_SCOPE: 'core',
         },
         stdio: 'inherit',
