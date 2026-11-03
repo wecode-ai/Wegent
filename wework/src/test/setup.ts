@@ -1,5 +1,5 @@
 import * as matchers from '@testing-library/jest-dom/matchers'
-import { beforeEach, expect } from 'vitest'
+import { beforeEach, expect, vi } from 'vitest'
 import {
   WEWORK_DSH_SLOTS,
   type WeworkDshSlotEntry,
@@ -498,6 +498,8 @@ beforeEach(() => {
   installDefaultDshUiTestRuntime()
   installDefaultDshUiTestModules()
   testAppPreferences = {}
+  vi.stubEnv('VITE_WEGENT_BACKEND_URL', '')
+  vi.stubEnv('VITE_WEGENT_SOCKET_URL', '')
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -432,9 +432,9 @@ describe('WorkspacePanelActions', () => {
     expect(startDeviceCodeServerMock).not.toHaveBeenCalled()
   })
 
-  test('opens local workspaces from the titlebar IDE picker menu', async () => {
+  test('remembers and prioritizes the last successful titlebar IDE selection', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
-    render(
+    const actions = (
       <WorkspacePanelActions
         {...baseProps}
         currentProject={{
@@ -465,10 +465,16 @@ describe('WorkspacePanelActions', () => {
         ]}
       />
     )
+    const { unmount } = render(actions)
+    const menuOptionIds = () =>
+      within(screen.getByTestId('open-local-workspace-picker-menu'))
+        .getAllByRole('menuitem')
+        .map(option => option.getAttribute('data-testid'))
 
     await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
 
     expect(screen.getByTestId('open-local-workspace-picker-menu')).toBeInTheDocument()
+    const initialOrder = menuOptionIds()
     expect(screen.getByTestId('open-local-workspace-option-android-studio')).toHaveTextContent(
       'Android Studio'
     )
@@ -484,10 +490,63 @@ describe('WorkspacePanelActions', () => {
         path: '/Users/me/project38',
       })
     )
-    expect(getPreferredWorkspaceOpener('/Users/me/project38')).toBe('intellij-idea')
+    await waitFor(() =>
+      expect(getPreferredWorkspaceOpener('/Users/me/project38')).toBe('intellij-idea')
+    )
+    const preferredOrder = [
+      'open-local-workspace-option-intellij-idea',
+      ...initialOrder.filter(id => id !== 'open-local-workspace-option-intellij-idea'),
+    ]
+    await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+    expect(menuOptionIds()).toEqual(preferredOrder)
+    await userEvent.keyboard('{Escape}')
+
+    unmount()
+    render(actions)
+    await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+    expect(menuOptionIds()).toEqual(preferredOrder)
+    await userEvent.keyboard('{Escape}')
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
     expect(openLocalWorkspaceMock).toHaveBeenLastCalledWith({
       opener: 'intellij-idea',
+      path: '/Users/me/project38',
+    })
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      openLocalWorkspaceMock.mockRejectedValueOnce(new Error('Application launch failed'))
+      await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+      await userEvent.click(screen.getByTestId('open-local-workspace-option-cursor'))
+      await waitFor(() => expect(consoleError).toHaveBeenCalled())
+      expect(openLocalWorkspaceMock).toHaveBeenLastCalledWith({
+        opener: 'cursor',
+        path: '/Users/me/project38',
+      })
+      expect(getPreferredWorkspaceOpener('/Users/me/project38')).toBe('intellij-idea')
+      await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+      expect(menuOptionIds()).toEqual(preferredOrder)
+      await userEvent.keyboard('{Escape}')
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    listLocalWorkspaceOpenersMock.mockResolvedValue(
+      defaultOpenersAvailability.map(opener => ({
+        ...opener,
+        available: opener.available && opener.id !== 'intellij-idea',
+      }))
+    )
+    await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+    expect(menuOptionIds()).toEqual(
+      initialOrder.filter(id => id !== 'open-local-workspace-option-intellij-idea')
+    )
+    expect(
+      screen.queryByTestId('open-local-workspace-option-intellij-idea')
+    ).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+    expect(openLocalWorkspaceMock).toHaveBeenLastCalledWith({
+      opener: 'vscode',
       path: '/Users/me/project38',
     })
   })

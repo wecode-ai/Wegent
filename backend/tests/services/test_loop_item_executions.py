@@ -1300,6 +1300,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
     execution, _, manager_activity = _make_running_automation_execution(
         test_db, test_user
     )
+    execution.last_event_seq = 12
     issue = test_db.get(LoopItem, execution.loop_item_id)
     assert issue is not None
     issue.status = "in_progress"
@@ -1319,6 +1320,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
             "subagent_id": "worker-1",
             "subagent_name": "Worker",
             "subagent_status": "running",
+            "runtime_event_sequence": "11",
         },
         trigger_message_id=manager_activity.message_id,
         reply_to_message_id=manager_activity.message_id,
@@ -1360,6 +1362,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
     assert manager_activity.status == "cancelled"
     assert child_activity.status == "cancelled"
     assert child_activity.metadata_json["subagent_status"] == "cancelled"
+    assert child_activity.metadata_json["runtime_event_sequence"] == "12"
     assert issue.status == "in_progress"
 
 
@@ -3256,6 +3259,77 @@ def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
     assert messages[0].runtime_task_id == f"codex-queue-{claimed.id}"
 
 
+@pytest.mark.parametrize("event_name", ["response.created", "response.in_progress"])
+@pytest.mark.parametrize("parent_status", ["claimed", "cancel_requested"])
+def test_reopening_group_activity_preserves_runtime_progress(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    event_name: str,
+    parent_status: str,
+) -> None:
+    from app.services.project_chat.service import project_chat_service
+
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message", MagicMock()
+    )
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    intent = execution.execution_intent
+    intent["runtime_selection"]["executor_kind"] = "collaboration_group_dispatch"
+    intent["origin_context"].update(
+        {"manager_agent_id": bot.id, "dispatch_role": "manager"}
+    )
+    execution.execution_payload = json.dumps(intent)
+    test_db.commit()
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    first = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    assert first is not None
+    manager_task_id = f"{claimed.runtime_task_id}-manager-initial"
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id=manager_task_id,
+        event_name=event_name,
+        payload={"taskId": manager_task_id, "data": {}},
+        owner_user_id=test_user.id,
+    )
+    assert projected is not None
+    assert projected[0].metadata["run_status"] == "running"
+    claimed.status = parent_status
+    test_db.commit()
+
+    reopened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert reopened is not None
+    assert reopened.message_id == first.message_id
+    assert reopened.status == ("streaming" if parent_status == "claimed" else "pending")
+    assert reopened.metadata["run_status"] == (
+        "running" if parent_status == "claimed" else "cancelling"
+    )
+    test_db.refresh(claimed)
+    assert claimed.status == parent_status
+    assert test_db.query(ProjectChatMessage).filter_by(task_id=item.id).count() == 1
+
+
 @pytest.mark.parametrize("terminal_status", ["completed", "failed"])
 def test_group_dispatch_binds_and_settles_its_initial_manager_session(
     test_db: Session, test_user: User, terminal_status: str
@@ -3322,6 +3396,49 @@ def test_group_dispatch_binds_and_settles_its_initial_manager_session(
     assert activity.status == terminal_status
     assert activity.metadata_json["run_status"] == terminal_status
     assert activity.runtime_task_id == manager_task_id
+
+
+@pytest.mark.parametrize(
+    "event_name", ["thread/tokenUsage/updated", "runtime.turn.updated"]
+)
+def test_thread_metadata_does_not_fence_a_delayed_current_turn_completion(
+    test_db: Session, test_user: User, event_name: str
+) -> None:
+    execution, _, activity = _make_running_automation_execution(test_db, test_user)
+    activity.metadata_json = {
+        **activity.metadata_json,
+        "runtime_turn_id": "current-turn",
+    }
+    test_db.commit()
+    loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name=event_name,
+        payload={"eventSeq": 3, "subtaskId": "previous-turn", "data": {}},
+    )
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.completed",
+        payload={
+            "eventSeq": 2,
+            "subtaskId": "current-turn",
+            "data": {
+                "text": "The current turn completed before thread metadata arrived"
+            },
+        },
+    )
+
+    assert completed is not None and completed.status == "completed"
+    assert completed.last_event_seq == 2
+    test_db.refresh(activity)
+    assert activity.status == "completed"
+    assert (
+        activity.content == "The current turn completed before thread metadata arrived"
+    )
 
 
 def test_open_execution_activity_never_revives_a_terminal_execution(

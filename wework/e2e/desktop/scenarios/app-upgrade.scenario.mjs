@@ -1,15 +1,26 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
+import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
+import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
+import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
+import { stopProcessGroup } from '../process-lifecycle.mjs'
+import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
+import {
+  assertMacosUpgradeIdentity,
+  macosUpgradeIdentity,
+  pruneWithRolledBackSource,
+  useVersionedMacosRecoveryBridge,
+} from '../modules/macos-upgrade-identity.mjs'
 import {
   assistantMessage,
   createSse,
@@ -53,6 +64,7 @@ export async function createDesktopScenario(options) {
   const {
     checkpoint,
     electronUserDataDirectory,
+    executorHome,
     resultDir,
     restartDesktopApp,
     workbenchReadyTimeoutMs,
@@ -61,6 +73,14 @@ export async function createDesktopScenario(options) {
   const pairFile = process.env.WEWORK_E2E_UPGRADE_PAIR
   assert.ok(pairFile, 'Upgrade checkpoints require an independently built source/target pair')
   const pair = JSON.parse(await readFile(pairFile, 'utf8'))
+  const usesDefaultUserData = options.usesDefaultUserData === true
+  assert.equal(pair.transport, 'default-update-route')
+  assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
+  const verifiesUnstartedActivation =
+    usesDefaultUserData &&
+    checkpoint === 'app-upgrade' &&
+    (pair.kind === 'regression' || Boolean(pair.from.installedSource))
+  let legacyDataDirectory
   assert.equal(pair.schemaVersion, 1)
   assert.equal(
     pair.suiteVersion,
@@ -80,6 +100,16 @@ export async function createDesktopScenario(options) {
     assert.equal((await stat(asset.path)).size, asset.bytes)
   }
   const channel = pair.channel || (pair.to.version.includes('-beta.') ? 'beta' : 'stable')
+  const verifiesRefreshedUpdate = checkpoint === 'app-update-refresh'
+  let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
+  const unavailablePolicy = () => ({
+    ...unavailableUpdatePolicy(
+      { ...pair.from, appVersion: pair.from.version },
+      { platform: pair.to.platform, arch: pair.to.arch },
+      origin
+    ),
+    channel,
+  })
   let control
   let passed = false
   let origin
@@ -93,6 +123,25 @@ export async function createDesktopScenario(options) {
       range: request.headers.range ?? null,
     })
     if (url.pathname.startsWith('/components-')) {
+      if (offer === 'refresh-failed') {
+        response.writeHead(503)
+        response.end()
+        return
+      }
+      if (offer !== 'target') {
+        const policy = unavailablePolicy()
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            schemaVersion: 1,
+            upgradePolicy:
+              offer === 'withdrawn'
+                ? { ...policy, releases: policy.releases.slice(0, 1), edges: [] }
+                : policy,
+          })
+        )
+        return
+      }
       const releases = [pair.from, pair.to].map(asset => ({
         ...asset,
         url: `${origin}/${asset.name}`,
@@ -127,6 +176,9 @@ export async function createDesktopScenario(options) {
           },
         })
       )
+    } else if (url.pathname === '/unavailable-release.tar.gz') {
+      response.writeHead(503)
+      response.end()
     } else if (url.pathname === `/${pair.to.name}`) {
       response.writeHead(200, {
         'content-type': 'application/gzip',
@@ -149,11 +201,8 @@ export async function createDesktopScenario(options) {
   })
   origin = `http://127.0.0.1:${server.address().port}`
   const root = join(electronUserDataDirectory, 'releases')
-  const sourceRuntimeRoot = join(root, 'source-runtime-cache')
-  const appEnvironment = {
-    WEWORK_UPDATE_BASE_URL: origin,
-    WEWORK_HARNESS_RUNTIME_ROOT: sourceRuntimeRoot,
-  }
+  const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
+  const appEnvironment = {}
   if (checkpoint === 'app-upgrade-recovery')
     appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
   if (checkpoint === 'app-rollback-recovery')
@@ -162,6 +211,7 @@ export async function createDesktopScenario(options) {
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
   const compositions = []
+  let macosIdentity
   const assertSelectedComposition = async version => {
     const id = (await readFile(join(root, 'active'), 'utf8')).trim()
     const slot = join(root, 'slots', id)
@@ -184,14 +234,20 @@ export async function createDesktopScenario(options) {
       assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
     }
     compositions.push({ version, ...actual, coreDsh: components.coreDsh })
+    await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
+    if (process.platform === 'darwin') {
+      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+      await assertMacosStatusItem(control, pid, resultDir, version)
+    }
   }
   const about = async () => {
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="about-menu-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
     await control.command('waitFor', '[data-testid="about-settings-page"]')
   }
   const send = async text => {
     const expectedAnswer = `${ANSWER} ${modelRequests + 1}`
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
     await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -201,6 +257,13 @@ export async function createDesktopScenario(options) {
   }
   return {
     usesReleasePackageRuntimeAssets: true,
+    ...(!options.preparationOnly
+      ? {
+          electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
+          appProcessStarted: child =>
+            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
+        }
+      : {}),
     appEnvironment,
     async prepareApp({ appEnvironment: sourceEnvironment }) {
       // Exercise each delivered package's own executor and coding CLIs. Fixed
@@ -253,19 +316,24 @@ export async function createDesktopScenario(options) {
         })
       )
       console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = promisify(execFile)(
+      const preparation = prepareReleaseProcess(
         pair.from.executable,
         [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
         {
           env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          timeout: 300_000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
+          progress: { logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log') },
+          version: pair.from.version,
+          releaseId: 'source-preparation',
+          stop: stopProcessGroup,
         }
       )
       try {
         await preparation
       } catch (error) {
+        await writeFile(
+          join(resultDir, 'source-preparation.log'),
+          `${error.stdout ?? ''}\n${error.stderr ?? ''}`
+        )
         await writeFile(
           join(resultDir, 'source-preparation-result.json'),
           JSON.stringify({
@@ -273,14 +341,25 @@ export async function createDesktopScenario(options) {
             code: error.code,
             signal: error.signal,
             killed: error.killed,
+            error: { name: error.name, message: error.message },
           })
         )
-        throw new Error(
-          `Source preparation failed: code=${error.code}, signal=${error.signal}, killed=${error.killed}`,
-          { cause: error }
-        )
+        throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
       }
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
+    },
+    async prepareUserDataLaunch() {
+      if (usesDefaultUserData) {
+        // Start from the real default application-data location. The shipped
+        // migration, bootstrap and updater must agree on the resulting userData.
+        const applicationData = options.upgradeHome?.applicationData
+        assert.ok(applicationData)
+        assert.match(pair.applicationId, /^io\.wecode\.wework(?:\.[a-z0-9-]+)*$/)
+        const legacyTarget = join(applicationData, pair.applicationId)
+        await assert.rejects(stat(legacyTarget), { code: 'ENOENT' })
+        await rename(electronUserDataDirectory, legacyTarget)
+        legacyDataDirectory = legacyTarget
+      }
     },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -306,6 +385,14 @@ export async function createDesktopScenario(options) {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       assert.equal(await installedVersion(), pair.from.version)
+      const { release: sourceRuntime } = JSON.parse(
+        await control.command('getDesktopRuntimeDiagnostics', 'body')
+      )
+      macosIdentity = await macosUpgradeIdentity(sourceRuntime.hostExecutable)
+      await writeFile(
+        join(resultDir, 'source-runtime-result.json'),
+        `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
+      )
       console.log(`[upgrade-e2e] Source ${pair.from.version} is ready`)
       const workspace = join(workspacePath, 'upgrade-source-project')
       await mkdir(workspace, { recursive: true })
@@ -315,16 +402,58 @@ export async function createDesktopScenario(options) {
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
+      let stalled
+      if (verifiesUnstartedActivation) {
+        assert.ok(compareVersions(pair.from.version, pair.from.installedSource.version) < 0)
+        const { release: running } = JSON.parse(
+          await control.command('getDesktopRuntimeDiagnostics', 'body')
+        )
+        await control.command('quitApp', 'body')
+        await restartDesktopApp({
+          afterStop: async () => {
+            stalled = await seedUnstartedActivation({
+              dataDirectory: electronUserDataDirectory,
+              executorHome,
+              root,
+              resultDir,
+              running,
+              from: pair.from,
+              homePath: options.homePath,
+            })
+          },
+        })
+        assert.equal(await installedVersion(), pair.from.version)
+        await control.command('waitFor', '[data-testid="new-chat-button"]', {
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+        assert.equal((await readFile(join(root, 'active'), 'utf8')).trim(), stalled.to)
+        await assert.rejects(readFile(join(root, 'attempted')), { code: 'ENOENT' })
+        console.log(
+          '[upgrade-e2e] Reproduced the shipped unstarted activation with a usable source'
+        )
+      }
       await about()
       const updateButton = '[data-testid="about-check-update-button"]'
-      const alreadyAvailable = (await control.command('clickWhenEnabled', updateButton)).includes(
-        pair.to.version
-      )
-      if (!alreadyAvailable) {
-        await control.command('waitFor', '[data-testid="about-update-status"]', {
-          text: pair.to.version,
+      if (verifiesRefreshedUpdate) {
+        await startRefreshedAppUpdate(control, {
+          staleVersion: unavailablePolicy().releases[1].version,
+          targetVersion: pair.to.version,
+          requests,
+          setOffer: value => {
+            offer = value
+          },
+          manifestPath: `/components-${channel}-${pair.to.platform}-${pair.to.arch}.json`,
         })
-        await control.command('clickWhenEnabled', updateButton)
+      } else {
+        const alreadyAvailable = (await control.command('clickWhenEnabled', updateButton)).includes(
+          pair.to.version
+        )
+        if (!alreadyAvailable) {
+          await control.command('waitFor', '[data-testid="about-update-status"]', {
+            text: pair.to.version,
+          })
+          await control.command('clickWhenEnabled', updateButton)
+        }
       }
       const accepted = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       assert.notEqual(
@@ -349,7 +478,31 @@ export async function createDesktopScenario(options) {
       await control.command('downloadPendingAppUpdate', 'body')
       assert.equal(requests.length, requestCount, 'Repeated preparation started another transfer')
       console.log(`[upgrade-e2e] Target ${pair.to.version} fully prepared before restart`)
+      if (stalled) {
+        await assert.rejects(readFile(join(root, 'activation.json')), { code: 'ENOENT' })
+        assert.equal((await readFile(join(root, 'active'), 'utf8')).trim(), stalled.from)
+        assert.deepEqual(
+          JSON.parse(await readFile(join(root, 'recovery', `${stalled.token}.json`), 'utf8')),
+          stalled
+        )
+        console.log('[upgrade-e2e] Target preparation recovered the unstarted source transaction')
+      }
       await control.command('waitFor', '[data-testid="app-update-restart-confirm"]')
+      if (verifiesRefreshedUpdate) {
+        const confirmation = await control.command(
+          'getText',
+          '#app-update-restart-confirm-description'
+        )
+        assert.ok(
+          confirmation.includes(pair.to.version),
+          'Confirmation must show the actual prepared version'
+        )
+        assert.equal(
+          confirmation.includes(unavailablePolicy().releases[1].version),
+          false,
+          'Confirmation must not retain the stale target version'
+        )
+      }
       const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       assert.equal(
         progress.phase,
@@ -365,6 +518,8 @@ export async function createDesktopScenario(options) {
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
       )
+      if (checkpoint === 'app-upgrade-recovery')
+        await useVersionedMacosRecoveryBridge(root, pair.to.version)
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
@@ -441,12 +596,17 @@ export async function createDesktopScenario(options) {
         'The restored task did not execute through the real runtime'
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
-      if (checkpoint === 'app-rollback' || checkpoint === 'app-rollback-recovery') {
+      if (
+        verifiesUnstartedActivation ||
+        verifiesRefreshedUpdate ||
+        checkpoint === 'app-rollback' ||
+        checkpoint === 'app-rollback-recovery'
+      ) {
         await control.command('setLocalStorageItem', 'body', {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })
         await about()
-        await control.command('click', '[data-testid="about-rollback-button"]')
+        await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount
         await control.command('click', '[data-testid="app-update-rollback-confirm"]')
@@ -498,6 +658,7 @@ export async function createDesktopScenario(options) {
           0
         )
           await control.command('click', '[data-testid="settings-back-button"]')
+        await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await send(`${PROMPT} continue after rollback`)
         await assertSelectedComposition(pair.from.version)
         if (restoreRequired) {
@@ -532,58 +693,128 @@ export async function createDesktopScenario(options) {
         fromSourceSha: pair.from.sourceSha,
         toSourceSha: pair.to.sourceSha,
         upgrade: 'passed',
-        rollback: ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
-          ? 'passed'
-          : 'not-run',
+        rollback:
+          verifiesUnstartedActivation ||
+          verifiesRefreshedUpdate ||
+          ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
+            ? 'passed'
+            : 'not-run',
         requests,
         compositions,
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
-      if (process.env.WEWORK_E2E_UPGRADE_EVIDENCE)
+      if (
+        process.env.WEWORK_E2E_UPGRADE_EVIDENCE &&
+        (!process.env.WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT ||
+          process.env.WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT === checkpoint)
+      )
         await writeFile(process.env.WEWORK_E2E_UPGRADE_EVIDENCE, evidence)
       passed = true
     },
     async cleanup() {
-      if (control) await control.command('quitApp', 'body').catch(() => undefined)
-      const fs = await import('node:fs/promises')
-      // A failed activation can leave the native recovery shell waiting for
-      // confirmation before it connects to the renderer control channel.
-      const recoveryPid = Number(
-        await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
-      )
-      if (recoveryPid && !passed) {
-        try {
-          process.kill(recoveryPid)
-        } catch (error) {
-          if (error.code !== 'ESRCH') throw error
-        }
-      }
-      const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
-      if (pid) {
-        const deadline = Date.now() + 10_000
-        let alive = true
-        while (alive && Date.now() < deadline) {
-          try {
-            process.kill(pid, 0)
-          } catch {
-            alive = false
+      const errors = []
+      try {
+        if (control) await control.command('quitApp', 'body').catch(() => undefined)
+        const fs = await import('node:fs/promises')
+        // Default-layout runs keep product log locations. Retain diagnostics before
+        // the shared result compactor removes the isolated Home and its databases.
+        if (usesDefaultUserData) {
+          for (const [name, directory] of [
+            ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
+            ['release-logs', join(electronUserDataDirectory, 'logs')],
+            ...(legacyDataDirectory
+              ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
+              : []),
+          ]) {
+            await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
+              if (error.code !== 'ENOENT') throw error
+            })
           }
-          if (alive) await new Promise(accept => setTimeout(accept, 100))
-        }
-        // Retain shutdown phases even when the successful release slot is removed.
-        await fs
-          .copyFile(
-            join(root, 'activation-diagnostics.log'),
-            join(resultDir, 'activation-diagnostics.log')
+          const state = {}
+          for (const name of [
+            'active',
+            'bridge',
+            'trial',
+            'attempted',
+            'healthy',
+            'failed',
+            'activation.json',
+            'last-activation.json',
+          ]) {
+            state[name] = await readFile(join(root, name), 'utf8').catch(error => {
+              if (error.code !== 'ENOENT') throw error
+              return null
+            })
+          }
+          await writeFile(
+            join(resultDir, 'release-state-result.json'),
+            JSON.stringify(state, null, 2)
           )
-          .catch(error => {
+        }
+        // A failed activation can leave the native recovery shell waiting for
+        // confirmation before it connects to the renderer control channel.
+        const recoveryPid = Number(
+          await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
+        )
+        if (recoveryPid && !passed) {
+          try {
+            process.kill(recoveryPid)
+          } catch (error) {
+            if (error.code !== 'ESRCH') throw error
+          }
+        }
+        const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
+        if (pid) {
+          const deadline = Date.now() + 10_000
+          let alive = true
+          while (alive && Date.now() < deadline) {
+            try {
+              process.kill(pid, 0)
+            } catch {
+              alive = false
+            }
+            if (alive) await new Promise(accept => setTimeout(accept, 100))
+          }
+          // Retain shutdown phases even when the successful release slot is removed.
+          await fs
+            .copyFile(
+              join(root, 'activation-diagnostics.log'),
+              join(resultDir, 'activation-diagnostics.log')
+            )
+            .catch(error => {
+              if (error.code !== 'ENOENT') throw error
+            })
+          assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
+        }
+        if (passed) await fs.rm(root, { recursive: true, force: true })
+        if (legacyDataDirectory) {
+          const legacy = await lstat(legacyDataDirectory).catch(error => {
             if (error.code !== 'ENOENT') throw error
+            return null
           })
-        assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
+          if (legacy?.isSymbolicLink()) {
+            assert.equal(
+              await realpath(legacyDataDirectory),
+              await realpath(electronUserDataDirectory)
+            )
+            await rm(legacyDataDirectory)
+          } else if (legacy) {
+            // Preparation can fail before the application migrates its fixture.
+            await rename(legacyDataDirectory, electronUserDataDirectory)
+          }
+        }
+      } catch (error) {
+        errors.push(error)
       }
-      if (passed) await fs.rm(root, { recursive: true, force: true })
-      server.closeAllConnections()
-      await new Promise(accept => server.close(accept))
+      try {
+        server.closeAllConnections()
+        await new Promise((accept, reject) =>
+          server.close(error => (error ? reject(error) : accept()))
+        )
+      } catch (error) {
+        errors.push(error)
+      }
+      if (errors.length) throw new AggregateError(errors, 'Upgrade verification cleanup failed')
     },
   }
 }

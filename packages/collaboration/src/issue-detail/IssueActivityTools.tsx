@@ -121,7 +121,7 @@ export function IssueActivityTools({
           className="flex items-center gap-1.5"
         >
           {rerun}
-          {onAccept ? (
+          {onAccept && task.status !== 'completed' ? (
             <button
               type="button"
               data-testid={`cloud-task-activity-accept-${task.id}`}

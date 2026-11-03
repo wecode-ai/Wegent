@@ -110,7 +110,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       })
       await control.command('click', '[data-testid="cloud-todo-detail-assignee"]')
       await control.command(
-        'click',
+        'clickWhenEnabled',
         `[data-testid="cloud-todo-detail-assignee-option-user:${assignee.id}"]`
       )
       const refreshStart = proxy.requests.length

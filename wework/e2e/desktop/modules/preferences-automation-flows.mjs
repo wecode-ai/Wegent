@@ -312,10 +312,10 @@ async function ensureExperimentalFeaturesDisabled(control) {
 async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
-    initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('personal-stand-in-button'),
+    'The stand-in schedules entry remained hidden behind the experimental-features preference'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -552,7 +552,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
     }
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -650,7 +650,7 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     })
 
     await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('navigate', 'body', { value: '/automations' })
     await control.command('waitFor', `[data-testid="${automationRow}"]`, {
       text: AUTOMATION_NAME,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -674,10 +674,10 @@ async function verifyCloudAutomationLifecycle(
   const automationName = `${AUTOMATION_NAME} ${automationSuffix}`
   const completionText = `${AUTOMATION_COMPLETION_TEXT}_${expectedCompletionIndex}`
   assert.ok(
-    initialSnapshot.testIds.includes('automation-button'),
-    'Automations remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('personal-stand-in-button'),
+    'The stand-in schedules entry remained hidden behind the experimental-features preference'
   )
-  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

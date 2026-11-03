@@ -40,6 +40,8 @@ import {
 import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
+import { issueExecutionApprovalCreator } from './issueExecutionApproval'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { createTaskCommentPreparer } from './prepareTaskComment'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -80,6 +82,7 @@ import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   selectActivityRerunModel,
   mergeProjectChatMessages,
+  refreshTaskAfterComment,
   startTaskAiRun,
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
@@ -651,10 +654,11 @@ export function TaskActivityView({
     ]
   )
   const activeUserId = currentUserId ?? chatCurrentUserId
+  const approvalUserId = projectLocation === 'local' ? LOCAL_USER.id : activeUserId
   const canApproveCurrentRun = canApproveIssueExecution(
     task.can_approve,
-    assignedAgent?.createdByUserId,
-    activeUserId
+    issueExecutionApprovalCreator(task, threadMessages, projectChatAgents),
+    approvalUserId
   )
   useEffect(() => {
     if (!onRefreshExecutionArtifacts) return
@@ -997,6 +1001,13 @@ export function TaskActivityView({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
     } finally {
+      if (persisted)
+        await refreshTaskAfterComment({
+          projectId: project.id,
+          taskId: task.id,
+          getTask: projectDeliveryApi?.getLoopItem,
+          onTaskUpdated,
+        })
       setSending(false)
     }
     return persisted

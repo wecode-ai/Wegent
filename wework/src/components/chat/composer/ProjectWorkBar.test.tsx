@@ -1270,7 +1270,7 @@ describe('ProjectWorkBar', () => {
     expect(onCheckoutBranch).toHaveBeenCalledWith('develop')
   })
 
-  test('does not checkout again when selecting the current local branch', async () => {
+  test('checks out the selected branch even when its name matches the cached current branch', async () => {
     const onCheckoutBranch = vi.fn()
 
     render(
@@ -1295,7 +1295,7 @@ describe('ProjectWorkBar', () => {
     const menu = await screen.findByTestId('project-branch-menu')
     await userEvent.click(within(menu).getByText('main'))
 
-    expect(onCheckoutBranch).not.toHaveBeenCalled()
+    expect(onCheckoutBranch).toHaveBeenCalledWith('main')
     await waitFor(() => expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument())
   })
 

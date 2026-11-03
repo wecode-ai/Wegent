@@ -11,6 +11,7 @@ import {
   mirrorMacosUpgradePolicy,
   verifiedUpgradeEdge,
   mergeUpgradePolicy,
+  releaseUpgradeChannels,
   releaseUpgradePlan,
   verifyReleaseUpgradePlan,
   upgradeSource,
@@ -38,6 +39,23 @@ function publishedCatalog(channel, versions) {
 }
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
+
+test('a fixed Beta source upgrading to stable uses a catalog that permits Beta history', () => {
+  const source = '0.6.4-beta.5'
+  const channels = releaseUpgradeChannels('stable', source)
+  assert.equal(channels.length, 1)
+  const catalog = publishedCatalog(channels[0], [source, '0.6.4'])
+  assert.doesNotThrow(() => planUpgrade(catalog, source))
+  assert.deepEqual(channels, ['beta'])
+})
+
+test('ordinary release verification retains both channels and stable-source diagnostics stay scoped', () => {
+  assert.deepEqual(releaseUpgradeChannels('stable'), ['stable', 'beta'])
+  assert.deepEqual(releaseUpgradeChannels('beta'), ['beta'])
+  assert.deepEqual(releaseUpgradeChannels('stable', '0.6.3'), ['stable'])
+  assert.deepEqual(releaseUpgradeChannels('beta', '0.6.3'), ['beta'])
+  assert.deepEqual(releaseUpgradeChannels('beta', '0.6.3-beta.1'), ['beta'])
+})
 
 test('release sources are automatic even when only the Beta catalog has history', () => {
   const beta = publishedCatalog('beta', ['0.5.13-beta.8'])
@@ -151,6 +169,46 @@ test('both fixed baseline and previous release are verified before retaining the
   assert.deepEqual(calls, ['0.5.13', '0.6.0'])
   assert.equal(result.minSourceVersion, '0.5.13')
   assert.equal(result.verified.length, 2)
+})
+
+test('required direct repair edges are verified once and can retain older supported sources', async () => {
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.5.14', '0.6.0'])
+  const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
+  const calls = []
+  const result = await verifyReleaseUpgradePlan(
+    plan,
+    async source => {
+      calls.push(source.version)
+      return source.version === '0.5.13' ? null : { from: source.version }
+    },
+    [catalog.releases[1], catalog.releases[2], catalog.releases[1]]
+  )
+  assert.deepEqual(calls, ['0.5.13', '0.6.0', '0.5.14'])
+  assert.equal(result.minSourceVersion, '0.5.14')
+  assert.deepEqual(
+    result.verified.map(item => item.source.version),
+    ['0.6.0', '0.5.14']
+  )
+})
+
+test('a failed required direct repair edge blocks publication without retrying its failed baseline', async () => {
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.5.14', '0.6.0'])
+  const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
+  for (const required of [catalog.releases[0], catalog.releases[1]]) {
+    const calls = []
+    await assert.rejects(
+      verifyReleaseUpgradePlan(
+        plan,
+        async source => {
+          calls.push(source.version)
+          return source.version === '0.6.0' ? { from: source.version } : null
+        },
+        [required]
+      ),
+      /Required direct upgrade/
+    )
+    assert.equal(calls.filter(version => version === required.version).length, 1)
+  }
 })
 
 test('a failed baseline advances to the previous release and persists for the next release', async () => {

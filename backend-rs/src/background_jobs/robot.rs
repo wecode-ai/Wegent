@@ -30,6 +30,34 @@ use std::{
 
 const JOB: &str = "app.tasks.robot_queue_tasks.scan_robot_queue";
 
+/// Validate a recorded coordinator command without granting or dispatching work.
+pub(crate) async fn coordination_context(
+    app: &AppState,
+    project: &str,
+    scope: &str,
+    actor: i64,
+) -> Result<Option<Value>> {
+    let row: Option<model::Execution> = app
+        .mysql
+        .fetch_optional(
+            // Retries preserve the command scope after Runtime confirms the preceding attempt ended.
+            format!("SELECT {} FROM loop_item_executions WHERE cloud_project_id=? AND execution_scope=? ORDER BY id DESC LIMIT 1", model::COLUMNS),
+            (project, scope),
+        )
+        .await?;
+    let Some(row) = row else { return Ok(None) };
+    if row.assigner_user_id != actor
+        || matches!(
+            row.status.as_str(),
+            "cancel_requested" | "cancelled" | "failed"
+        )
+        || !authority::authorized(app, &row).await?
+    {
+        return Ok(None);
+    }
+    Ok(row.context().get("project_coordination").cloned())
+}
+
 pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
     admission::prepare(app).await?;
     wake::notify(app).await?;

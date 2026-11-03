@@ -38,6 +38,7 @@ import { decodeDesktopControlImage } from './desktop-control-image'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { hasInFlightPluginDeviceSync } from '@/features/plugins/pluginDeviceAutoSync'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
@@ -87,6 +88,7 @@ import {
 } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { waitForDesktopHostEventDelivery } from './desktop-host-event-delivery'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
 import { RUNTIME_WORK_CHANGED_EVENT } from '@/desktop/runtimeWorkSync'
@@ -108,6 +110,7 @@ import {
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
@@ -117,6 +120,24 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
+  return Object.fromEntries(
+    Object.entries(sourceReads ?? {}).flatMap(([source, read]) =>
+      read
+        ? [
+            [
+              source,
+              {
+                status: read.status,
+                pluginKeys: read.items?.map(plugin => plugin.spec.source.pluginKey) ?? [],
+              },
+            ],
+          ]
+        : []
+    )
+  )
+}
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
@@ -1186,7 +1207,20 @@ async function pressNativeDesktopControlKey(
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
-  if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  if (document.activeElement !== element) {
+    throw new Error(
+      `Keyboard target could not receive focus: ${JSON.stringify({
+        selector,
+        className: element.className,
+        connected: element.isConnected,
+        tabIndex: element.tabIndex,
+        overflowY: getComputedStyle(element).overflowY,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        activeTagName: document.activeElement?.tagName,
+      })}`
+    )
+  }
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
   const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
@@ -1954,12 +1988,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
     case 'getWindowBackgroundPolicy':
-      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.getWindowBackgroundPolicy', {
+          browserLabel: command.value || undefined,
+        })
+      )
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''
     case 'getStartupSplashSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
+    case 'inspectStartupSplash':
+      return JSON.stringify(await invokeDesktopHost('e2e.inspectStartupSplash'))
+    case 'clickStartupSplash':
+      await invokeDesktopHost('e2e.clickStartupSplash', { testId: command.value })
+      return ''
+    case 'setStartupLogPath':
+      await invokeDesktopHost('e2e.setStartupLogPath', { path: command.value || null })
+      return ''
     case 'getTraySnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
     case 'getApplicationMenuSnapshot':
@@ -2051,6 +2097,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'waitForDesktopHostEvents':
+      return waitForDesktopHostEventDelivery(command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS)
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
@@ -2440,6 +2488,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'invokeDshPluginBackend': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        params?: Record<string, unknown>
+        plugin?: string
+      }
+      if (!input.plugin || !input.method) {
+        throw new Error('invokeDshPluginBackend requires plugin and method')
+      }
+      const host = window.__WEWORK_DSH_EXTENSIONS__
+      if (!host?.backend) throw new Error('The DSH plugin backend transport is unavailable')
+      const result = await host.backend
+        .scope(input.plugin)
+        .request(input.method, input.params ?? {})
+      return JSON.stringify(result ?? null)
+    }
     case 'storeLocalProxyUrl': {
       const config = saveLocalProxyUrl(command.value?.trim() ?? '')
       await flushDesktopLocalStoragePersistence()
@@ -2623,6 +2687,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return getWindowFocusSnapshot()
     case 'getDesktopRuntimeDiagnostics':
       return JSON.stringify(await invokeDesktopHost('e2e.getRuntimeDiagnostics'))
+    case 'getOwnedProcessSnapshot':
+      return JSON.stringify(await invokeDesktopHost('diagnostics.processSnapshot'))
     case 'showSystemDragPanel': {
       await invokeDesktopHost<void>('systemDrag.showPanel')
       return ''
@@ -2942,7 +3008,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
     case 'startAppUpdateDownload':
-      await invokeDesktopHost<void>('appUpdate.download')
+      await invokeDesktopHost<void>('appUpdate.download', { channel: 'stable' })
       return 'started'
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()
@@ -3279,8 +3345,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
+      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3297,6 +3365,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             nextHopProtocol: timing.nextHopProtocol,
           }
         }),
+        ...(command.value
+          ? {
+              pluginDeviceSyncInFlight: hasInFlightPluginDeviceSync(command.value),
+              systemPressure: await invokeDesktopHost('maintenance.getSystemPressure'),
+            }
+          : {}),
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
@@ -3312,15 +3386,60 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getImageLoadState':
+      return JSON.stringify(
+        findDesktopControlElements(command.selector).map(element => {
+          if (!(element instanceof HTMLImageElement)) {
+            throw new Error('Image diagnostics require an image selector')
+          }
+          return {
+            complete: element.complete,
+            naturalWidth: element.naturalWidth,
+            naturalHeight: element.naturalHeight,
+            sourceProtocol: new URL(element.currentSrc || element.src, window.location.href)
+              .protocol,
+          }
+        })
+      )
+    case 'getPluginImageRequestTimings': {
+      const path = command.value
+      if (
+        !path ||
+        path.length > 32768 ||
+        !(path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\'))
+      ) {
+        throw new Error('Plugin image timing diagnostics require an absolute image path')
+      }
+      performance.setResourceTimingBufferSize(10_000)
+      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      return JSON.stringify(
+        completed
+          .filter(resource => {
+            const url = new URL(resource.name, window.location.href)
+            return (
+              url.origin === window.location.origin &&
+              url.pathname === '/wework/executor/v1/plugin-image' &&
+              url.searchParams.get('path') === path
+            )
+          })
+          .map(resource => ({
+            initiatorType: resource.initiatorType,
+            responseStatus:
+              (resource as PerformanceResourceTiming & { responseStatus?: number })
+                .responseStatus ?? null,
+            startedAt: performance.timeOrigin + resource.startTime,
+            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
+          }))
+      )
+    }
     case 'getComposerPluginInventoryDiagnostics': {
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
-      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
-      const installed =
-        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
-        peekLocalCodexPluginsReadState()
+      const { peekLocalInstalledPluginInventory } = await import('@/api/local/codexPlugins')
+      const installed = peekLocalInstalledPluginInventory()
       return JSON.stringify({
         sharedInventory: getPluginInventoryDiagnostics(),
+        installedSourceReads: pluginSourceReadDiagnostics(installed?.sourceReads),
         composerApps: getComposerApps().map(app => ({
           id: app.id,
           isAccessible: app.isAccessible,
@@ -3329,7 +3448,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           pluginKey: app.pluginKey ?? null,
           source: app.source,
         })),
-        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+        installedPlugins: (installed?.items ?? []).map(plugin => ({
           enabled: plugin.spec.enabled,
           installState: plugin.spec.installState,
           marketplace: plugin.spec.source.marketplace,
@@ -3347,6 +3466,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         refresh: true,
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
+    case 'readLocalPluginDiskInventory': {
+      const { readLocalInstalledInventoryFromDisk } = await import('@/api/local/codexPlugins')
+      const read = await readLocalInstalledInventoryFromDisk()
+      return JSON.stringify({
+        deviceId: read.deviceId,
+        partial: Boolean(read.partial),
+        sourceReads: pluginSourceReadDiagnostics(read.sourceReads),
+      })
     }
     case 'getPluginSyncDiagnostics': {
       const deviceId = command.value?.trim()
@@ -3598,6 +3726,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify(result),
     })
+    await response.arrayBuffer()
     if (!response.ok) {
       throw new Error(`Desktop E2E control result failed with ${response.status}`)
     }
@@ -3639,6 +3768,7 @@ async function postDesktopControlStarted(
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    await response.arrayBuffer()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -3676,6 +3806,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
+  await readyResponse.arrayBuffer()
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }

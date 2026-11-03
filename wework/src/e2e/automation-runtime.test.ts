@@ -14,6 +14,8 @@ import {
   listLegacyLocalModelConfigs,
 } from '@/features/model-settings/localModelSettings'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
+import * as codexPlugins from '@/api/local/codexPlugins'
+import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
@@ -40,6 +42,88 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test.each([
+    'no-catalog',
+    'local-only',
+    'prefer-local',
+    'legacy-all',
+    'legacy-selected',
+    'empty-inventory',
+    'no-inventory',
+  ] as const)('reads live plugin inventory diagnostics with a %s catalog', async mode => {
+    const snapshot = (name: string): codexPlugins.LocalCodexPluginsState => {
+      const plugin = toInstalledPlugin(
+        { name: 'wegent', path: '/plugins', plugins: [] },
+        { name, installed: true, enabled: true },
+        undefined,
+        key => key
+      )
+      return {
+        deviceId: 'diagnostic-device',
+        installedPlugins: [plugin],
+        sourceReads: { store: { status: 'fulfilled', items: [plugin] } },
+        marketplaceItems: [],
+        marketplaces: [],
+        selectedMarketplaceId: 'wegent',
+        marketplacePath: '/plugins',
+        installRegistryPath: '',
+      }
+    }
+    const local = snapshot('local-tool')
+    const all = snapshot('older-all-tool')
+    const selected = snapshot('selected-tool')
+    const peek = vi
+      .spyOn(codexPlugins, 'peekLocalCodexPluginsReadState')
+      .mockImplementation(params => {
+        if (params?.marketplaceKinds?.includes('local'))
+          return mode === 'local-only' || mode === 'prefer-local' ? local : null
+        if (params?.mergeAllMarketplaces)
+          return mode === 'prefer-local' || mode === 'legacy-all' ? all : null
+        return mode === 'legacy-selected' ? selected : null
+      })
+    const live = snapshot('live-tool')
+    const expectedKeys = mode === 'empty-inventory' || mode === 'no-inventory' ? [] : ['live-tool']
+    const liveItems = mode === 'empty-inventory' ? [] : live.installedPlugins
+    const inventory = vi.spyOn(codexPlugins, 'peekLocalInstalledPluginInventory').mockReturnValue(
+      mode === 'no-inventory'
+        ? null
+        : {
+            deviceId: live.deviceId,
+            items: liveItems,
+            sourceReads: { store: { status: 'fulfilled', items: liveItems } },
+          }
+    )
+    const results: Array<{ ok: boolean; value?: string }> = []
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'plugin-source-diagnostics',
+              action: 'getComposerPluginInventoryDiagnostics',
+              selector: 'body',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await vi.waitFor(() => expect(results).toHaveLength(1))
+    expect(results[0].ok).toBe(true)
+    const diagnostics = JSON.parse(results[0].value!)
+    expect(diagnostics.installedSourceReads).toEqual(
+      mode === 'no-inventory' ? {} : { store: { status: 'fulfilled', pluginKeys: expectedKeys } }
+    )
+    expect(
+      diagnostics.installedPlugins.map((plugin: { pluginKey: string }) => plugin.pluginKey)
+    ).toEqual(expectedKeys)
+    expect(inventory).toHaveBeenCalledTimes(1)
+    expect(peek).not.toHaveBeenCalled()
+  })
   test('reports metric cardinality across missing, mounted, and duplicate DOM surfaces', async () => {
     const surface = document.createElement('section')
     surface.dataset.testid = 'layout-cardinality-surface'
@@ -501,6 +585,111 @@ describe('Electron desktop E2E automation', () => {
       })
     } finally {
       debug.mockRestore()
+      button.remove()
+    }
+  })
+
+  test.each([null, 'ready', 'started', 'results'] as const)(
+    'consumes nonempty acknowledgement bodies including HTTP failure at %s',
+    async failedEndpoint => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const button = document.createElement('button')
+      button.dataset.testid = 'control-response-body-button'
+      const clicked = vi.fn()
+      button.onclick = clicked
+      document.body.append(button)
+      const acknowledgements: Array<{ endpoint: string; response: Response }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 1) return new Response(null, { status: 410 })
+          return new Response(
+            JSON.stringify({
+              id: 'response-body-click',
+              action: 'click',
+              selector: '[data-testid="control-response-body-button"]',
+            })
+          )
+        }
+        const endpoint = new URL(url).pathname.slice(1)
+        if (['ready', 'started', 'results'].includes(endpoint)) {
+          const response = new Response('{"ok":true}\n', {
+            status: endpoint === failedEndpoint ? 503 : 200,
+          })
+          acknowledgements.push({ endpoint, response })
+          return response
+        }
+        return new Response(null, { status: 204 })
+      })
+      try {
+        const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        if (failedEndpoint === 'ready') {
+          await expect(client).rejects.toThrow('registration failed with 503')
+        } else {
+          await client
+        }
+        expect(acknowledgements.map(entry => entry.endpoint)).toEqual(
+          failedEndpoint === 'ready'
+            ? ['ready']
+            : failedEndpoint === 'started'
+              ? ['ready', 'started']
+              : ['ready', 'started', 'results']
+        )
+        expect(acknowledgements.every(entry => entry.response.bodyUsed)).toBe(true)
+        expect(clicked).toHaveBeenCalledTimes(
+          failedEndpoint === 'ready' || failedEndpoint === 'started' ? 0 : 1
+        )
+      } finally {
+        button.remove()
+      }
+    }
+  )
+
+  test('finishes reading the result acknowledgement before polling again', async () => {
+    const button = document.createElement('button')
+    button.dataset.testid = 'control-ack-stream-button'
+    const clicked = vi.fn()
+    button.onclick = clicked
+    document.body.append(button)
+    let finishBody!: () => void
+    let bodyClosed = false
+    const acknowledgement = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"ok":true}\n'))
+          finishBody = () => {
+            if (bodyClosed) return
+            bodyClosed = true
+            controller.close()
+          }
+        },
+      })
+    )
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'streamed-ack',
+            action: 'click',
+            selector: '[data-testid="control-ack-stream-button"]',
+          })
+        )
+      }
+      return url.endsWith('/results') ? acknowledgement : new Response('{"ok":true}\n')
+    })
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(acknowledgement.bodyUsed).toBe(true))
+      expect(clicked).toHaveBeenCalledOnce()
+      expect(polls).toBe(1)
+      finishBody()
+      await client
+      expect(polls).toBe(2)
+    } finally {
+      finishBody()
+      await client
       button.remove()
     }
   })

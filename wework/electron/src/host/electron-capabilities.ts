@@ -7,7 +7,9 @@ import {
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
+import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
+import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
 import {
   app,
   BrowserWindow,
@@ -43,7 +45,11 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
+import type {
+  ProcessExplorerClient,
+  ProcessSnapshotOptions,
+} from '../vendor/process-explorer/contract.js'
+import type { ProcessExplorerWindowSnapshot } from './process-explorer-window-snapshot.js'
 import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
@@ -129,9 +135,7 @@ function assertE2EEnabled(control: string): void {
 }
 
 /** Host-side process explorer the capability router exposes to the renderer. */
-export interface ProcessExplorerHostService {
-  snapshot: () => Promise<ProcessSnapshot>
-}
+export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
@@ -248,25 +252,6 @@ export interface PluginDevelopmentService {
   validate(sourceRoot: string): Promise<unknown>
 }
 
-export interface ProcessExplorerWindowSnapshot {
-  exists: boolean
-  visible: boolean
-  applicationPid: number
-  url: string
-  windowLabel: string
-  windowWidth: number
-  windowHeight: number
-  alwaysOnTop: boolean
-  menuBarVisible: boolean
-  testIds: string[]
-  text: string
-  layout: {
-    viewportWidth: number
-    tableClientWidth: number
-    tableScrollWidth: number
-  }
-}
-
 export interface ElectronE2EHost {
   disconnectMcpAppSession?: (sessionId: string) => void
   capturePopout: () => Promise<string>
@@ -297,8 +282,15 @@ export interface ElectronE2EHost {
     workbenchRuntimes: unknown[]
   }
   rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
-  rendererStartupFailed: () => void | Promise<void>
+  rendererStartupFailed: (failure: {
+    message: string
+    stack?: string
+    source: string
+  }) => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
+  startupSplashInspect: () => Promise<Record<string, unknown>>
+  startupSplashClick: (testId: string) => Promise<void>
+  startupLogPath: (path: string | null) => void
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
@@ -385,6 +377,9 @@ export function createElectronCapabilityRouter(
     rendererStartupReady: () => undefined,
     rendererStartupFailed: () => undefined,
     startupSplashSnapshot: () => null,
+    startupSplashInspect: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupSplashClick: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupLogPath: () => undefined,
     trayActivate: () => false,
     traySetState: () => undefined,
     traySnapshot: () => null,
@@ -458,7 +453,15 @@ export function createElectronCapabilityRouter(
       optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
     )
   )
-  router.register('renderer.startupFailed', () => e2eHost.rendererStartupFailed())
+  router.register('renderer.startupFailed', params =>
+    e2eHost.rendererStartupFailed({
+      message: optionalStringParam(params, 'message') ?? 'Desktop frontend failed to initialize',
+      source: optionalStringParam(params, 'source') ?? 'renderer_initialize',
+      ...(optionalStringParam(params, 'stack')
+        ? { stack: optionalStringParam(params, 'stack') }
+        : {}),
+    })
+  )
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
@@ -799,15 +802,10 @@ export function createElectronCapabilityRouter(
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    const debugSession = contents.debugger
-    const alreadyAttached = debugSession.isAttached()
-    if (!alreadyAttached) debugSession.attach('1.3')
-    try {
+    return withDebuggerSession(contents, async debugSession => {
       await debugSession.sendCommand('HeapProfiler.collectGarbage')
       return await debugSession.sendCommand('Runtime.getHeapUsage')
-    } finally {
-      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
-    }
+    })
   })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
@@ -837,11 +835,14 @@ export function createElectronCapabilityRouter(
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.
-  router.register('e2e.getWindowBackgroundPolicy', () => {
+  router.register('e2e.getWindowBackgroundPolicy', params => {
     const target = requiredWindow(window)
+    const browserLabel = optionalStringParam(params, 'browserLabel')
     return {
       platform: process.platform,
-      backgroundThrottling: target.webContents.getBackgroundThrottling(),
+      backgroundThrottling: browserLabel
+        ? browser.backgroundThrottling(browserLabel)
+        : target.webContents.getBackgroundThrottling(),
       backgroundTimerThrottlingDisabled: app.commandLine.hasSwitch(
         BACKGROUND_TIMER_THROTTLING_SWITCH
       ),
@@ -868,6 +869,29 @@ export function createElectronCapabilityRouter(
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
   router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
+  router.register('e2e.inspectStartupSplash', () => {
+    assertE2EEnabled('Startup splash inspection')
+    return e2eHost.startupSplashInspect()
+  })
+  router.register('e2e.clickStartupSplash', params => {
+    assertE2EEnabled('Startup splash actions')
+    const testId = stringParam(params, 'testId')
+    if (
+      ![
+        'startup-timeout-copy-button',
+        'startup-timeout-open-logs-button',
+        'startup-copy-diagnostics-button',
+        'startup-open-logs-button',
+      ].includes(testId)
+    ) {
+      throw new HostCapabilityError('invalid_params', 'Unsupported startup splash action')
+    }
+    return e2eHost.startupSplashClick(testId)
+  })
+  router.register('e2e.setStartupLogPath', params => {
+    assertE2EEnabled('Startup log directory failure fixture')
+    return e2eHost.startupLogPath(nullableStringParam(params, 'path') ?? null)
+  })
   router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
   router.register('e2e.activateTray', params => e2eHost.trayActivate(trayActivationParam(params)))
@@ -981,6 +1005,9 @@ export function createElectronCapabilityRouter(
     mcpDiscoveryFault ??= new McpDiscoveryNetworkFault(contents.session)
     return mcpDiscoveryFault.configure(params.enabled)
   })
+  router.register('e2e.inlineVisualizationFrame', params =>
+    controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
+  )
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
@@ -1373,17 +1400,19 @@ export function registerAppUpdateCapabilities(
   // A download outlives any single host request, and every host request is
   // bounded by a fixed timeout. Start the download and let callers follow
   // appUpdate.downloadProgress until it reports a terminal phase.
-  router.register('appUpdate.download', () => {
+  router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download()
+      .download(updateChannelParam(params))
       .catch(() => undefined)
     return null
   })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
-  router.register('appUpdate.install', (_params, context) => {
-    context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  router.register('appUpdate.install', (params, context) => {
+    context.deferUntilResponseSent(
+      requiredAppUpdates(appUpdates).createInstallAction(stringParam(params, 'version'))
+    )
   })
   router.register(
     'appUpdate.previousRelease',
@@ -1437,7 +1466,11 @@ export function registerDesktopServiceCapabilities(
   router.register('processExplorer.setAlwaysOnTop', params =>
     developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
   )
-  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
+  router.register('diagnostics.processSnapshot', (options: ProcessSnapshotOptions = {}) =>
+    services.processExplorer.snapshot({
+      waitForSystemProcesses: options?.waitForSystemProcesses !== false,
+    })
+  )
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )

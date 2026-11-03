@@ -3,7 +3,7 @@ import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -683,9 +683,11 @@ export function useWorkbenchDataRefresh({
           isElectronRuntime() &&
           getDesktopWindowLabel() === 'main'
         ) {
-          void invokeDesktopHost<void>('renderer.startupFailed').catch(error => {
-            console.error('[Wework] Failed to report task-list startup failure:', error)
-          })
+          void reportDesktopStartupFailure(runtimeWorkResult.reason, 'task_list_initialize').catch(
+            error => {
+              console.error('[Wework] Failed to report task-list startup failure:', error)
+            }
+          )
         }
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'

@@ -4,6 +4,7 @@ import type { InstalledPluginItem } from '@/components/plugins/PluginManagementR
 import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
   clearPluginMarketplaceCache,
+  capturePluginMarketplaceScope,
   flushPluginMarketplaceCachePersist,
   getPluginMarketplaceCache,
   marketplaceItemsSignature,
@@ -105,6 +106,26 @@ describe('pluginMarketplaceCache', () => {
     vi.restoreAllMocks()
     clearPluginMarketplaceCache()
   })
+
+  test.each(['account', 'device', 'clear'] as const)(
+    'expires a settings scope after %s changes even when the original scope returns',
+    change => {
+      publishGithub([acceptedGithub()])
+      const isCurrent = capturePluginMarketplaceScope('receipt-account', 'receipt-device')
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(true)
+      if (change === 'clear') clearPluginMarketplaceCache()
+      else
+        publishGithub(
+          [],
+          change === 'account' ? 'other-account' : 'receipt-account',
+          change === 'device' ? 'other-device' : 'receipt-device'
+        )
+      expect(isCurrent()).toBe(false)
+      publishGithub([acceptedGithub()])
+      expect(isCurrent()).toBe(false)
+    }
+  )
 
   function acceptedGithub() {
     const plugin = installedItem(
@@ -750,6 +771,37 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, right)).toBe(false)
   })
 
+  test('retains installed plugin device transitions even when package metadata is unchanged', () => {
+    const ready = installedItem('101', 'wegent', 'documents')
+    ready.raw.status.devices = [
+      {
+        deviceId: 'current-device',
+        state: 'installed',
+        desiredReleaseId: 1001,
+        actualReleaseId: 1001,
+        attemptCount: 0,
+      },
+    ]
+    const removing = {
+      ...ready,
+      raw: {
+        ...ready.raw,
+        status: {
+          ...ready.raw.status,
+          devices: [
+            {
+              ...ready.raw.status.devices[0]!,
+              state: 'uninstalling' as const,
+            },
+          ],
+        },
+      },
+    }
+    expect(sameInstalledPlugins([ready], [removing])).toBe(false)
+    expect(sameInstalledPlugins([removing], [ready])).toBe(false)
+    expect(sameInstalledPlugins([ready], [structuredClone(ready)])).toBe(true)
+  })
+
   test('detects device installation state changes via signature', () => {
     const base = item({ id: 1, name: 'a', installed: false })
     const failed = item({
@@ -791,6 +843,18 @@ describe('pluginMarketplaceCache', () => {
       }),
     ]
     expect(sameMarketplaceItems(available, locked)).toBe(false)
+  })
+
+  test.each([
+    ['manual', 'auto'],
+    ['auto', 'manual'],
+  ] as const)('detects a refreshed update policy changing from %s to %s', (before, after) => {
+    const previous = installedItem('83', 'wegent', 'auto-update')
+    previous.raw.spec.updatePolicy = before
+    const refreshed = structuredClone(previous)
+    refreshed.raw.spec.updatePolicy = after
+
+    expect(sameInstalledPlugins([previous], [refreshed])).toBe(false)
   })
 
   test('detects installed plugin name and distribution changes via signature', () => {
@@ -935,6 +999,71 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.components.skills).toEqual([
       { name: 'review', description: 'Review code', path: 'skills/review' },
     ])
+  })
+
+  test('persists source ownership changes even when canonical records are unchanged', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-sources')
+    const plugin = installedItem('tool@market', 'market', 'tool').raw
+    const identity = 'market:tool'
+    const snapshot = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      installedPlugins: [plugin],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [identity], store: [] },
+        localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [], store: [identity] },
+        localInstalledSourceStatus: { codex: 'rejected', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+
+    resetPluginMarketplaceCacheMemory()
+    const restored = getPluginMarketplaceCache(key)!
+    expect(restored.installedPlugins).toHaveLength(1)
+    expect(restored.localInstalledSources).toEqual({ codex: [], store: [identity] })
+    expect(restored.localInstalledSourceStatus).toEqual({ codex: 'rejected', store: 'fulfilled' })
+  })
+
+  test('remaps native ownership when a cloud response projects a new canonical identity', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-project-source')
+    const raw = installedItem('tool@market', 'market', 'tool').raw
+    raw.spec.sourcePayload = { cloudPluginId: 42, managedByWegent: true }
+    const base = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      { ...base, installedPlugins: [raw], localInstalledSources: { store: ['market:tool'] } },
+      { persistImmediately: true }
+    )
+    const cloud = { ...raw, spec: { ...raw.spec, pluginId: 42 } }
+    setPluginMarketplaceCache({ ...base, installedPlugins: [cloud] }, { persistImmediately: true })
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual(['cloud:42'])
+    removePluginMarketplaceInstallation(key, {
+      installedIds: ['tool@market'],
+      pluginKeys: ['tool'],
+      marketplaceItemIds: [],
+    })
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual([])
   })
 
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {

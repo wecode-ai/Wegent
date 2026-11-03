@@ -312,6 +312,42 @@ describe('RightWorkspacePanel file tab labels', () => {
 })
 
 describe('RightWorkspacePanel file tab loading', () => {
+  test('exposes whether the directory tree is expanded after opening a file', async () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const api = {
+      listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+      readWorkspaceTextFile: vi.fn(async () => ({
+        path: '/fixture/repo/file.ts',
+        name: 'file.ts',
+        content: 'const value = 1',
+        editable: true,
+        revision: '1',
+        truncated: false,
+        size: 15,
+      })),
+      writeWorkspaceTextFile: vi.fn(),
+    }
+    render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        openFileRequest={{ path: '/fixture/repo/file.ts', id: 1 }}
+      />
+    )
+    await screen.findByTestId('workspace-file-editor')
+    const toggle = screen.getByTestId('workspace-file-toggle-tree-button')
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
   test.each(['resolve', 'reject'])(
     'does not replace a newer file when an older parent listing finishes with %s',
     async outcome => {

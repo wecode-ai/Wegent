@@ -9,7 +9,9 @@ import type { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions } from '
  */
 
 export const APPLICATION_MENU_ACTIONS = {
+  openAbout: 'open-about',
   openSettings: 'open-settings',
+  openFeedback: 'open-feedback',
   openTasks: 'open-tasks',
   openProjectSpaces: 'open-project-spaces',
   openPlugins: 'open-plugins',
@@ -131,7 +133,7 @@ const EN_LABELS = {
   tasks: 'Tasks',
   projectSpaces: 'Project spaces',
   plugins: 'Plugins',
-  automations: 'Scheduled',
+  automations: 'Calendar connection',
   applications: 'Applications',
   search: 'Search tasks',
   sidebar: 'Toggle sidebar',
@@ -180,7 +182,7 @@ const ZH_LABELS: typeof EN_LABELS = {
   tasks: '任务',
   projectSpaces: '项目空间',
   plugins: '插件',
-  automations: '已安排',
+  automations: '日历连接',
   applications: '应用',
   search: '搜索任务',
   sidebar: '切换侧边栏',
@@ -288,7 +290,11 @@ export class ApplicationMenu {
     const quitAccelerator = mac ? 'Command+Q' : platform === 'linux' ? 'Control+Q' : undefined
     const separator: MenuItemConstructorOptions = { type: 'separator' }
     const application: MenuItemConstructorOptions[] = [
-      { role: 'about', label: `${labels.about} ${this.dependencies.appName}` },
+      {
+        id: 'application.about',
+        label: `${labels.about} ${this.dependencies.appName}`,
+        click: this.dispatch('open-about'),
+      },
       separator,
       { id: 'application.settings', label: labels.settings, click: this.dispatch('open-settings') },
       ...(mac
@@ -463,9 +469,7 @@ export class ApplicationMenu {
           {
             id: 'help.issues',
             label: labels.issues,
-            click: this.run(() =>
-              this.dependencies.openExternal('https://github.com/wecode-ai/Wegent/issues')
-            ),
+            click: this.dispatch('open-feedback'),
           },
           separator,
           {

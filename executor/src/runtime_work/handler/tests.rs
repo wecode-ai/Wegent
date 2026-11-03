@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "superseded_turn_tests.rs"]
+mod superseded_turn_tests;
+
 #[test]
 fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
     for method in [
@@ -30,6 +33,9 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 #[path = "native_history_test_support.rs"]
 mod native_history_test_support;
 use native_history_test_support::install_native_history;
+
+#[path = "command_recovery_tests.rs"]
+mod command_recovery_tests;
 
 #[path = "native_timeline_tests.rs"]
 mod native_timeline_tests;
@@ -65,6 +71,9 @@ mod transcript_turn_status_tests;
 
 #[path = "transcript_status_tests.rs"]
 mod transcript_status_tests;
+
+#[path = "async_question_delivery_tests.rs"]
+mod async_question_delivery_tests;
 
 /// Restores one environment variable when a test finishes.
 pub(super) struct ScalarEnv {
@@ -1192,7 +1201,7 @@ fn finish_test_native_turn(handler: &RuntimeWorkRpcHandler, task_id: &str, threa
     }
 }
 
-fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
+pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -1226,6 +1235,9 @@ fn next_content_event(
 
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[path = "pre_admission_transcript_tests.rs"]
+mod pre_admission_transcript_tests;
 
 impl RuntimeWorkRpcHandler {
     // Test the same route/publication/hook handoff used by the two real subscriptions.

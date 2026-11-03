@@ -150,6 +150,22 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
 }
 
 #[test]
+fn stand_in_project_coordinator_disables_native_global_memories() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(
+        json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator"}}),
+    )
+    .unwrap();
+    let config = build_codex_launch_config(&request).unwrap();
+    for flag in [
+        "memories.use_memories=false",
+        "memories.generate_memories=false",
+    ] {
+        assert!(config.config_overrides.contains(&flag.to_owned()));
+    }
+}
+
+#[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(
@@ -215,7 +231,8 @@ approval_mode = "approve"
             fs::read_to_string(home.join("config.toml"))
                 .unwrap()
                 .contains("home_only"),
-            "The synthetic MCP fixture was overwritten during launch configuration"
+            "The synthetic MCP fixture was overwritten during launch configuration: home={} team_id={team_id} origin_type={origin_type}",
+            home.display()
         );
         assert!(config
             .config_overrides
@@ -310,7 +327,7 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
-fn spawn_idle_app_server_child() -> Child {
+pub(super) fn spawn_idle_app_server_child() -> Child {
     #[cfg(windows)]
     let mut command = {
         let mut command = Command::new("cmd");
@@ -499,6 +516,41 @@ async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
     assert_eq!(result, Err((1, 0)));
     client.mark_thread_idle("recovering-goal", false).await;
     assert_eq!(client.restart_if_idle().await, Ok(()));
+}
+
+#[tokio::test]
+async fn idle_restart_preserves_pending_reads_until_the_native_response() {
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let mut client = CodexAppServerClient::new("codex-idle-restart-pending-read-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let response = client
+        .start_existing_request("thread/list", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(client.restart_if_idle().await, Err((0, 1)));
+    assert!(client.state.lock().await.process.is_some());
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, sender) in responses {
+        sender.send(Ok(json!({"data": []}))).unwrap();
+    }
+    assert_eq!(response.await.unwrap().unwrap(), json!({"data": []}));
+    assert_eq!(client.restart_if_idle().await, Ok(()));
+    assert!(client.state.lock().await.process.is_none());
 }
 
 #[tokio::test]
@@ -1049,6 +1101,35 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
         command.as_std().get_current_dir(),
         Some(codex_home.as_path())
     );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn codex_app_server_starts_beyond_windows_max_path() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let mut directory = crate::path_compat::strip_windows_verbatim_prefix(root.path());
+    while directory.as_os_str().encode_wide().count() < 280 {
+        directory.push("codex-long-path-component");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("codex.exe");
+    fs::copy(env::current_exe().unwrap(), &binary).unwrap();
+    assert!(binary.as_os_str().encode_wide().count() > 260);
+
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        CODEX_HOME_ENV.to_owned(),
+        root.path().join("codex-home").display().to_string(),
+    );
+    // The test binary treats app-server as a filter with no matching tests.
+    let mut child = spawn_codex_app_server(binary.to_str().unwrap(), &config).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
 }
 
 #[test]
@@ -4012,6 +4093,7 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 
 #[test]
 fn single_collaboration_mode_disables_codex_native_subagents() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         model_config: json!({"model_id": "gpt-5.5-codex"}),
         ..ExecutionRequest::default()
@@ -5289,7 +5371,7 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     assert!(!config.contains_key("mcp_servers.wework_browser.command"));
     assert!(!config.contains_key("mcp_servers.wework_browser.args"));
     assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
-    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 120);
     assert_eq!(
         config["mcp_servers.wework_browser.default_tools_approval_mode"],
         "approve"

@@ -111,6 +111,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
+  onOpenRelatedIssue?: (issue: CloudLoopItem) => void
   /** Starts the work item a manager assigned this member, from a reply. */
   onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -395,6 +396,11 @@ export function TodoEditor(props: TodoEditorProps) {
         onAddChild={props.onAddChild}
         onOpenChildTask={
           props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined
+        }
+        onOpenRelatedIssue={
+          props.onOpenRelatedIssue
+            ? item => props.onOpenRelatedIssue?.(item as CloudLoopItem)
+            : undefined
         }
       />
     )

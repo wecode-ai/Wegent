@@ -1,5 +1,11 @@
 import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
 
+// These checkpoints retain standalone selection but execute inside an existing
+// Cloud checkpoint in CI, sharing its service and Runtime lifecycle.
+export const DESKTOP_CHECKPOINT_CI_HOSTS = new Map([
+  ['responses-api-gateway', 'plugin-account-auth-dws'],
+])
+
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
   'project-space-tool-discovery',
@@ -13,6 +19,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
+  'responses-api-gateway',
   'task-model-deletion',
   'cloud-model-presets',
   'cloud-space-mention',
@@ -25,6 +32,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
@@ -32,11 +41,17 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-telemetry',
   'stand-in-profile-settings',
   'stand-in-model-catalog',
+  'stand-in-processing',
+  'coordination-runtime',
+  'coordination-arrangements',
+  'project-coordinator-publication',
+  'project-coordination',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',
+  'stand-in-alternate-source',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',
@@ -63,6 +78,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-archive',
   'collaboration-board-sorting',
   'collaboration-board-backlog',
+  'collaboration-parent-board',
   'collaboration-board-move-recovery',
   'collaboration-home-preload',
   'board-transcript-followup',
@@ -127,6 +143,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-task-flow',
   'task-attachments',
   'device-artifact-declaration',
+  'local-artifact-declaration',
   'drawing-attachment',
   'cloud-git-worktree',
   'cloud-worktree-capability',
@@ -149,6 +166,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  'app-update-refresh',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
@@ -217,7 +235,18 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
     'collaboration-issue-comment-notification',
     ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],
   ],
-  ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
+  [
+    'stand-in-profile',
+    [
+      'stand-in-profile-settings',
+      'stand-in-model-catalog',
+      'stand-in-processing',
+      'coordination-runtime',
+      'coordination-arrangements',
+      'project-coordinator-publication',
+      'project-coordination',
+    ],
+  ],
   [
     'plugin-account-auth',
     [

@@ -7,6 +7,8 @@ import { cloneReleaseProfile, profileRevision } from './release-profile.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { RotatingLog } from './rotating-log.js'
+import { recoverReleaseLayout } from './release-layout-recovery.js'
+import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
 
 export interface ReleasePreparationRequest {
   release: DesktopRelease
@@ -14,22 +16,34 @@ export interface ReleasePreparationRequest {
   sourceProfile: string
 }
 
+export interface ReleasePreparationStage {
+  event: 'release-preparation-stage'
+  releaseId: string
+  version: string
+  stage: string
+}
+
 export async function preparationStep<T>(
   log: Pick<RotatingLog, 'write'>,
   release: DesktopRelease,
   stage: string,
-  run: () => Promise<T>
+  run: () => Promise<T>,
+  onProgress?: (event: ReleasePreparationStage) => void
 ): Promise<T> {
   const startedAt = performance.now()
+  const event: ReleasePreparationStage = {
+    event: 'release-preparation-stage',
+    releaseId: release.id,
+    version: release.version,
+    stage,
+  }
+  onProgress?.(event)
   const write = (phase: string) =>
     log
       .write(
         'supervisor',
         JSON.stringify({
-          event: 'release-preparation-stage',
-          releaseId: release.id,
-          version: release.version,
-          stage,
+          ...event,
           phase,
           elapsedMs: Math.round(performance.now() - startedAt),
         })
@@ -54,7 +68,8 @@ export async function prepareReleaseEnvironment(
   resources: string,
   version: string,
   dataSchema: number,
-  readableDataSchemas: number[]
+  readableDataSchemas: number[],
+  onProgress?: (event: ReleasePreparationStage) => void
 ): Promise<void> {
   const request = JSON.parse(await readFile(requestFile, 'utf8')) as ReleasePreparationRequest
   const { release } = request
@@ -71,7 +86,7 @@ export async function prepareReleaseEnvironment(
     path: join(dirname(request.storeRoot), 'logs', 'release-preparation.log'),
   })
   const step = <T>(stage: string, run: () => Promise<T>) =>
-    preparationStep(log, release, stage, run)
+    preparationStep(log, release, stage, run, onProgress)
   const sourceRevision = await step('profile-copy', () =>
     cloneReleaseProfile(request.sourceProfile, release.profileRoot)
   )
@@ -121,4 +136,13 @@ export async function prepareReleaseEnvironment(
     JSON.stringify({ sourceRevision, components })
   )
   await store.save(release)
+  await step('source-layout-recovery', () =>
+    recoverReleaseLayout(store, request.sourceProfile, release.dataSchema)
+  )
+  if (process.platform === 'darwin') {
+    const metadata = JSON.parse(await readFile(join(resources, 'app.asar', 'package.json'), 'utf8'))
+    await step('macos-installation', () =>
+      prepareMacosReleaseInstallation(store, release, metadata.weworkAppId ?? metadata.name)
+    )
+  }
 }

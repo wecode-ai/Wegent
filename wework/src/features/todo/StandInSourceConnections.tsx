@@ -5,7 +5,7 @@ import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInHandlingSelect } from './StandInHandlingSelect'
+import { StandInImmediateSwitch } from './StandInImmediateSwitch'
 
 type Connection = Pick<StandInSourceConnection, 'id' | 'name' | 'kind' | 'profile' | 'providerId'>
 
@@ -109,7 +109,7 @@ export function StandInSourceConnections({
               {provider.resourceLabels?.[row.kind] ?? row.kind}
             </p>
           </div>
-          <StandInHandlingSelect
+          <StandInImmediateSwitch
             policy={row.policy}
             disabled={disabled}
             label={t('standIn.workspace.handling_for', { name: row.name })}
@@ -236,7 +236,7 @@ export function StandInSourceConnections({
                       {
                         ...row,
                         providerId: provider.id,
-                        policy: { automatic: true, askBeforeAct: true },
+                        policy: { automatic: true, askBeforeAct: true, immediate: false },
                       },
                     ])
                   }

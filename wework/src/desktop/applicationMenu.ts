@@ -4,6 +4,7 @@ import { navigateTo } from '@/lib/navigation'
 import i18n from '@/i18n'
 import { openDeveloperCommandMenu } from '@/lib/developerCommandMenu'
 import { requestOpenTaskSearch } from '@/components/layout/workbenchShellEvents'
+import { openFeedbackDialog } from '@/features/feedback/feedbackDialogStore'
 import {
   DECREASE_FONT_SIZE_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
@@ -18,7 +19,7 @@ import { APPLICATION_MENU_ACTIONS } from './applicationMenuModel'
 /** Routes reachable from the Work menu; they reuse the workbench navigation. */
 export const APPLICATION_MENU_WORK_ROUTES: Record<string, string> = {
   [APPLICATION_MENU_ACTIONS.openPlugins]: '/plugins',
-  [APPLICATION_MENU_ACTIONS.openAutomations]: '/automations',
+  [APPLICATION_MENU_ACTIONS.openAutomations]: '/stand-in?view=scheduled',
   [APPLICATION_MENU_ACTIONS.openApplications]: '/sites',
 }
 
@@ -31,7 +32,11 @@ export function installApplicationMenuNavigation(): () => void {
     if (event.type !== 'application-menu.action') return
     if (event.payload.windowLabel !== getDesktopWindowLabel()) return
     const action = event.payload.action
-    if (action === APPLICATION_MENU_ACTIONS.openSettings) {
+    if (action === APPLICATION_MENU_ACTIONS.openAbout) {
+      navigateTo('/settings/about')
+    } else if (action === APPLICATION_MENU_ACTIONS.openFeedback) {
+      openFeedbackDialog()
+    } else if (action === APPLICATION_MENU_ACTIONS.openSettings) {
       navigateTo('/settings')
     } else if (action === APPLICATION_MENU_ACTIONS.developerCommands) {
       openDeveloperCommandMenu()

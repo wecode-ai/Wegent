@@ -111,6 +111,7 @@ import { PublishedResourceIndicator } from '@/features/resource-library/componen
 import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
 import { paths } from '@/config/paths'
 import { useUser } from '@/features/common/UserContext'
+import { createLatestRequestGuard } from '@/utils/latest-request-guard'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -210,6 +211,7 @@ export default function TeamList({
   const modeFilter = controlledModeFilter ?? internalModeFilter
   const handledCreateRequestId = useRef<number | null>(null)
   const pendingCreateRequestRef = useRef<ResourceCreateRequest | null>(null)
+  const botsRequestRef = useRef(createLatestRequestGuard())
   // Groups where user has at least Developer role (for copy target selection)
   const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
@@ -236,6 +238,7 @@ export default function TeamList({
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
+      botsRequestRef.current.invalidate()
       setBots(prev => {
         const next =
           typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater
@@ -246,24 +249,32 @@ export default function TeamList({
   )
 
   const loadBots = useCallback(async () => {
-    const selectedGroups = scope === 'group' && !groupName ? groupFilter : undefined
-    const items = selectedGroups
-      ? deduplicateResourcesById(
-          (await Promise.all(selectedGroups.map(name => fetchBotsList('group', name)))).flat()
-        )
-      : await fetchBotsList(scope, groupName)
-    setBotsSorted(items)
-  }, [scope, groupName, groupFilter, setBotsSorted])
+    const requestId = botsRequestRef.current.begin()
+    try {
+      const selectedGroups = scope === 'group' && !groupName ? groupFilter : undefined
+      const items = selectedGroups
+        ? deduplicateResourcesById(
+            (await Promise.all(selectedGroups.map(name => fetchBotsList('group', name)))).flat()
+          )
+        : await fetchBotsList(scope, groupName)
+      if (botsRequestRef.current.isLatest(requestId)) setBots(sortBotsByUpdatedAt(items))
+    } catch (cause) {
+      if (botsRequestRef.current.isLatest(requestId)) throw cause
+    }
+  }, [scope, groupName, groupFilter])
 
   useEffect(() => {
     if (!editDialogOpen || userId === undefined) return
+    const requests = botsRequestRef.current
     loadBots().catch(() => toast({ variant: 'destructive', title: t('teams.loading') }))
-  }, [editDialogOpen, userId, loadBots, toast, t])
+    return () => requests.invalidate()
+  }, [editDialogOpen, editingTeamId, userId, loadBots, toast, t])
 
   const loadData = useCallback(async () => {
+    const requestId = editDialogOpen ? botsRequestRef.current.begin() : null
     invalidateTeams()
     await refreshList()
-    if (editDialogOpen) await loadBots()
+    if (requestId !== null && botsRequestRef.current.isLatest(requestId)) await loadBots()
   }, [invalidateTeams, refreshList, editDialogOpen, loadBots])
 
   useEffect(() => {
@@ -421,6 +432,8 @@ export default function TeamList({
   }
 
   const handleCloseEditDialog = () => {
+    botsRequestRef.current.invalidate()
+    setBots([])
     const hadPendingCreateRequest = pendingCreateRequestRef.current !== null
     pendingCreateRequestRef.current = null
     setEditDialogOpen(false)

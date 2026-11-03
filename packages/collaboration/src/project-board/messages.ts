@@ -4,6 +4,24 @@
 
 export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> = {
   'zh-CN': {
+    'todo.parent_board_layout': '按父事项',
+    'todo.parent_board_summary': '{{parents}} 个父事项 · {{standalone}} 个独立事项',
+    'todo.parent_board_nested_summary': '{{parents}} 个父事项 · {{children}} 个直属子事项',
+    'todo.parent_board_summary_with_other':
+      '{{parents}} 个父事项 · {{standalone}} 个独立事项 · {{other}} 个其他事项',
+    'todo.parent_board_direct_children': '直属子事项',
+    'todo.parent_board_other': '其他事项',
+    'todo.parent_board_layout_hint': '按父事项分行，查看子事项的并发进度',
+    'todo.parent_board_empty': '暂无匹配的事项，请调整搜索或泳道筛选。',
+    'todo.parent_board_toggle': '展开或收起父事项行',
+    'todo.parent_board_enter': '进入此事项的子级看板',
+    'todo.parent_board_standalone': '独立事项',
+    'todo.parent_board_progress': '{{completed}}/{{total}} 已完成',
+    'todo.parent_board_progress_hint': '按全部可见的直接子事项统计；筛选不改变整体进度',
+    'todo.parent_board_parallel': '{{count}} 项并行中',
+    'todo.parent_board_parent': '父事项',
+    'todo.parent_board_children': '子事项',
+    'todo.parent_board_add_child': '新建子事项',
     'todo.board_sort_by': '排序方式',
     'todo.board_sort_add': '添加排序规则',
     'todo.board_sort_remove': '删除规则',
@@ -19,6 +37,26 @@ export const boardSortMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.board_sort_manual': '手动排序',
   },
   en: {
+    'todo.parent_board_layout': 'By parent',
+    'todo.parent_board_summary': '{{parents}} parent issues · {{standalone}} standalone issues',
+    'todo.parent_board_nested_summary':
+      '{{parents}} parent issues · {{children}} direct sub-issues',
+    'todo.parent_board_summary_with_other':
+      '{{parents}} parent issues · {{standalone}} standalone issues · {{other}} other issues',
+    'todo.parent_board_direct_children': 'Direct sub-issues',
+    'todo.parent_board_other': 'Other issues',
+    'todo.parent_board_layout_hint': 'Group by parent to see parallel child progress',
+    'todo.parent_board_empty': 'No matching issues. Adjust the search or column filter.',
+    'todo.parent_board_toggle': 'Expand or collapse parent row',
+    'todo.parent_board_enter': 'Open the child board',
+    'todo.parent_board_standalone': 'Standalone issues',
+    'todo.parent_board_progress': '{{completed}}/{{total}} completed',
+    'todo.parent_board_progress_hint':
+      'Counts all visible direct sub-issues; filters do not change overall progress',
+    'todo.parent_board_parallel': '{{count}} running in parallel',
+    'todo.parent_board_parent': 'Parent',
+    'todo.parent_board_children': 'Sub-issues',
+    'todo.parent_board_add_child': 'New sub-issue',
     'todo.board_sort_by': 'Sort by',
     'todo.board_sort_add': 'Add sort rule',
     'todo.board_sort_remove': 'Remove rule',
