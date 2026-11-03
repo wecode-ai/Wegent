@@ -5354,7 +5354,7 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     assert!(!config.contains_key("mcp_servers.wework_browser.command"));
     assert!(!config.contains_key("mcp_servers.wework_browser.args"));
     assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
-    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 120);
     assert_eq!(
         config["mcp_servers.wework_browser.default_tools_approval_mode"],
         "approve"
