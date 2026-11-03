@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   createContext,
@@ -52,7 +52,11 @@ import {
   RUNTIME_RETRY_CONTINUATION_PROMPT,
   useWorkbenchPaneSession,
 } from '@/components/layout/useWorkbenchPaneSession'
-import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
+import {
+  buildRuntimeTaskRoute,
+  parseRuntimeTaskRoute,
+  WORKSPACE_NAVIGATION_EVENT,
+} from '@/lib/navigation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import {
@@ -8397,6 +8401,49 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('start new chat'))
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+  })
+
+  test('starts a new task in the destination tab when requested from the plugin tab', async () => {
+    let activeTabId = 'task'
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const taskServices = createWorkbenchServices()
+    const pluginServices = createWorkbenchServices()
+    render(
+      <WorkspaceTabActivityContext.Provider value={tabId => tabId === activeTabId}>
+        <section data-testid="destination-task-tab">
+          <WorkbenchProvider user={user} services={taskServices} workspaceTabId="task">
+            <WorkbenchProbeSessionProvider>
+              <ProjectSendProbe />
+            </WorkbenchProbeSessionProvider>
+          </WorkbenchProvider>
+        </section>
+        <section data-testid="source-plugin-tab">
+          <WorkbenchProvider user={user} services={pluginServices} workspaceTabId="plugins">
+            <WorkbenchProbeSessionProvider>
+              <ProjectSendProbe />
+            </WorkbenchProbeSessionProvider>
+          </WorkbenchProvider>
+        </section>
+      </WorkspaceTabActivityContext.Provider>
+    )
+    const taskTab = within(screen.getByTestId('destination-task-tab'))
+    const pluginTab = within(screen.getByTestId('source-plugin-tab'))
+    await userEvent.click(await taskTab.findByText('open project runtime task'))
+    expect(taskTab.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    activeTabId = 'plugins'
+    const selectDestination = () => {
+      activeTabId = 'task'
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, selectDestination)
+    try {
+      await userEvent.click(pluginTab.getByText('start new chat'))
+      expect(taskTab.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+      expect(taskTab.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    } finally {
+      window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, selectDestination)
+    }
   })
 
   test('keeps a standalone new task unassigned when starting another new task', async () => {

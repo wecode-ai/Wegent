@@ -49,7 +49,12 @@ import {
   getLocalRuntimeSourceIdentity,
   type LocalRuntimeSidebarIdentity,
 } from '@/lib/local-runtime-sidebar-identity'
-import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  consumeWorkbenchNewChatRequest,
+  requestNewChatComposerFocus,
+  requestWorkbenchNewChat,
+  WORKBENCH_NEW_CHAT_REQUEST_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/desktop/localWorkspaceOpen'
 import {
   installMainRuntimeWorkChangedListener,
@@ -1016,7 +1021,7 @@ export function WorkbenchProvider({
         })
       }
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
     },
     [
       currentUser.id,
@@ -1034,6 +1039,7 @@ export function WorkbenchProvider({
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
       t,
+      workspaceTabId,
     ]
   )
   const {
@@ -1548,6 +1554,11 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    navigateTo('/')
+    if (!canNavigateWorkspaceTab()) {
+      requestWorkbenchNewChat()
+      return
+    }
     const project = state.currentProject
       ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
       : null
@@ -1558,8 +1569,7 @@ export function WorkbenchProvider({
         project,
         deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
       })
-      navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
       return
     }
 
@@ -1573,16 +1583,26 @@ export function WorkbenchProvider({
       ),
       standaloneWorkspacePath: null,
     })
-    navigateTo('/')
-    requestNewChatComposerFocus()
+    requestNewChatComposerFocus(workspaceTabId)
   }, [
+    canNavigateWorkspaceTab,
     state.currentProject,
     state.devices,
     state.projects,
     state.runtimeWork,
     state.standaloneDeviceId,
     user,
+    workspaceTabId,
   ])
+
+  useEffect(() => {
+    const startRequestedChat = () => {
+      if (canNavigateWorkspaceTab() && consumeWorkbenchNewChatRequest()) startNewChat()
+    }
+    startRequestedChat()
+    window.addEventListener(WORKBENCH_NEW_CHAT_REQUEST_EVENT, startRequestedChat)
+    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_REQUEST_EVENT, startRequestedChat)
+  }, [canNavigateWorkspaceTab, startNewChat])
 
   const localSkillsWorkspacePath =
     state.currentRuntimeTask?.workspacePath ??
@@ -1688,7 +1708,7 @@ export function WorkbenchProvider({
         startFreshChat: true,
       })
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
       return true
     },
     [
@@ -1700,6 +1720,7 @@ export function WorkbenchProvider({
       state.standaloneChatKey,
       state.standaloneDeviceId,
       user,
+      workspaceTabId,
     ]
   )
 
@@ -1745,7 +1766,7 @@ export function WorkbenchProvider({
         startFreshChat: Boolean(state.currentRuntimeTask && !hasPreservedBlankComposerState),
       })
       navigateTo('/')
-      requestNewChatComposerFocus()
+      requestNewChatComposerFocus(workspaceTabId)
     },
     [
       attachmentSelection.stateByScope,
@@ -1755,6 +1776,7 @@ export function WorkbenchProvider({
       state.runtimeWork,
       state.standaloneChatKey,
       user.id,
+      workspaceTabId,
     ]
   )
 

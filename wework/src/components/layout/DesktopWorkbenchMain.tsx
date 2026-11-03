@@ -5542,7 +5542,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         disabled={
                                           composerDisabled || !paneVisible || !workbenchVisible
                                         }
-                                        pluginPickerIconOnly={hasConversation}
+                                        showPluginPicker={!hasConversation}
                                         submitDisabled={paneSession.status.isSubmitting}
                                         error={paneSession.error}
                                         disabledReason={inlineComposerDisabledReason}
