@@ -57,7 +57,7 @@ impl RuntimeWorkRpcHandler {
         limit: usize,
         direction: CodexTranscriptDirection,
     ) -> Result<Value, String> {
-        load_codex_transcript(
+        let page = load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
                 thread_id,
@@ -68,10 +68,18 @@ impl RuntimeWorkRpcHandler {
                 bounded_items: false,
                 prefer_rollout_history: false,
             },
-        )
-        .await
-        .map(|page| page.thread)
-        .map_err(|error| error.to_string())
+        );
+        #[cfg(test)]
+        let page = match self.transcript_test_workers.clone() {
+            Some(workers) => {
+                crate::runtime_work::transcript_work::with_test_workers(workers, page).await
+            }
+            None => page.await,
+        };
+        #[cfg(not(test))]
+        let page = page.await;
+        page.map(|page| page.thread)
+            .map_err(|error| error.to_string())
     }
 
     pub(super) async fn list_tasks(&self, payload: &Value) -> Result<Value, AppIpcError> {

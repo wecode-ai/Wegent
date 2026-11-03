@@ -555,11 +555,13 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
       tabId: 'tab-1',
       url: 'http://127.0.0.1:4401',
       command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: '1' },
     })
     await runtime.openWorkbenchRuntime({
       tabId: 'tab-2',
       url: 'http://127.0.0.1:4402',
       command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: '1' },
     })
 
     expect(snapshot).toEqual({
@@ -615,6 +617,35 @@ describe('DesktopRuntime.openWorkbenchRuntime', () => {
     })
     expect(options[0]).not.toHaveProperty('hostPipe')
     expect(options[0]).not.toHaveProperty('hostPrincipal')
+  })
+
+  test('never provisions a host pipe for an unauthenticated legacy launch', async () => {
+    const createWorkbenchHostPipe = vi.fn()
+    const runtime = new DesktopRuntime({
+      environment: {},
+      dataDirectory: '/data',
+      logDirectory: '/logs',
+      hostPipe: {} as never,
+      createWorkbenchHostPipe,
+    })
+    const open = vi.fn(async (launch: { tabId: string; url: string }) => ({
+      tabId: launch.tabId,
+      url: launch.url,
+      pid: 404,
+    }))
+    // @ts-expect-error – inject a fake workbench factory for testing
+    runtime.workbench = { get: () => null, open }
+    // @ts-expect-error – bypass the ready check
+    runtime.started = true
+    await runtime.openWorkbenchRuntime({
+      tabId: 'legacy',
+      url: 'http://127.0.0.1:4404',
+      command: '/runtime/dsh',
+      environment: { WEWORK_DSH_BROWSER_AUTH: 'legacy' },
+    })
+    expect(createWorkbenchHostPipe).not.toHaveBeenCalled()
+    expect(open.mock.calls[0][0]).not.toHaveProperty('hostPipe')
+    expect(open.mock.calls[0][0]).not.toHaveProperty('hostPrincipal')
   })
 
   test('preserves explicit host pipe from the launch', async () => {

@@ -1,3 +1,4 @@
+import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
@@ -37,7 +38,7 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
-import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
+import { DshExecutorTransportError, reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
@@ -349,6 +350,7 @@ type LocalExecutorRequest = <T>(
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
+  connectionDependencyPlugins?: ConnectionDependencyPluginApi
   listCloudModels?: () => Promise<UnifiedModel[]>
   listCloudInstalledPlugins?: (deviceId: string) => Promise<InstalledPlugin[]>
   available?: () => Promise<LocalExecutorStatus>
@@ -488,6 +490,8 @@ async function reconcilePendingLocalModelCatalog(
   try {
     await reconciliation
   } catch (error) {
+    // A transport interruption must not suppress synchronization after recovery.
+    if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
     console.error('Local model catalog reconciliation failed', error)
   } finally {
     if (tracker.inFlight === reconciliation) tracker.inFlight = null
@@ -3559,6 +3563,24 @@ export function createAutomationApiFromIpc(
       schemaVersion: 2,
       deviceId: localDeviceId,
     }
+    if (taskRequest.standInOwner) {
+      const continuation = data.continuationPayload as RuntimeSendRequest | null | undefined
+      return {
+        id: data.id ?? '',
+        version: data.version ?? 0,
+        name: data.name,
+        description: data.description ?? '',
+        prompt: data.prompt,
+        schedule: serializeLocalAutomationSchedule(data.schedule),
+        timezone: data.timezone,
+        enabled: data.enabled,
+        conversationMode: data.conversationMode,
+        notificationPolicy: data.notificationPolicy,
+        taskRequest,
+        taskPayload: { runtime: 'codex', standaloneChatWorkspace: true },
+        continuationPayload: continuation ? { taskId: continuation.address.taskId } : null,
+      }
+    }
     const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
       taskRequest,
       localDeviceId,
@@ -4702,7 +4724,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi((method, payload) => request(method, payload)),
+    standInApi: createStandInExecutorApi(
+      (method, payload) => request(method, payload),
+      deps.connectionDependencyPlugins
+    ),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

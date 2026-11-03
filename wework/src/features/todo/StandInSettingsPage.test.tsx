@@ -22,6 +22,9 @@ vi.mock('./StandInRequirements', () => ({
     <button data-testid="stand-in-requirements-open">处理要求（选填）</button>
   ),
 }))
+vi.mock('@/features/automations/AutomationsPage', () => ({
+  AutomationsPage: () => <div data-testid="calendar-editor-fixture" />,
+}))
 
 function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
   let settings: PersonalStandInSettings = {
@@ -63,6 +66,19 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('opens a role calendar with independent saving and consumes the initial deep link once', async () => {
+    const { props } = fixture()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProfileId="default" initialCalendar />)
+    await screen.findByTestId('stand-in-calendar-connection')
+    expect(screen.queryByTestId('stand-in-save')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-settings')).not.toHaveClass('max-w-xl')
+    await user.click(screen.getByTestId('stand-in-connections-back'))
+    await user.click(screen.getByTestId('stand-in-back'))
+    await user.click(screen.getByTestId('stand-in-connections-open'))
+    expect(screen.getByTestId('stand-in-time-connections')).toBeVisible()
+    expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  })
   it('uses the project store in both project-agent scope labels', async () => {
     const role = newStandInRole('mac', 'review')
     role.agentId = 'reviewer'

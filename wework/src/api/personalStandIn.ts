@@ -8,6 +8,7 @@ export interface StandInProjectRef {
 export interface StandInHandlingPolicy {
   automatic: boolean
   askBeforeAct: boolean
+  immediate?: boolean
 }
 
 export interface StandInSourceConnection {

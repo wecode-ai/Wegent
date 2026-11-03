@@ -193,7 +193,7 @@ export async function installFixture(cloud, control, slug, deviceId, timeoutMs) 
   assert.ok(installed, 'Real install did not create account membership')
   const fixture = { ...release, slug, installedId: Number(installed.metadata.labels.id) }
   await openPlugin(control, fixture)
-  await control.command('click', testId('plugins-refresh-button'))
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await control.command('waitFor', testId(`plugin-marketplace-actions-${fixture.pluginId}`), {
     timeoutMs,
   })

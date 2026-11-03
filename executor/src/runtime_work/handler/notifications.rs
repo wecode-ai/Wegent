@@ -312,7 +312,7 @@ impl RuntimeWorkRpcHandler {
                     if !self.normalize_pending_mcp_elicitation(&local_task_id, &mut message) {
                         return;
                     }
-                    self.record_async_question_notification(&local_task_id, &message);
+                    self.persist_async_question_interaction(&local_task_id, &message);
                     if codex_notification_requires_user_input(&message)
                         || message["method"] == "mcpServer/elicitation/request"
                         || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD

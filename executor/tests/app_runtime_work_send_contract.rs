@@ -4853,6 +4853,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       case "$line" in
@@ -5027,6 +5029,8 @@ while IFS= read -r line; do
     *'"method":"thread/unsubscribe"'*)
       thread_loaded=0
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"turn/start"'*)
       if [ "$thread_loaded" -eq 0 ]; then
@@ -5086,6 +5090,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
   esac
 done
@@ -5120,6 +5126,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
@@ -5374,6 +5382,8 @@ while IFS= read -r line; do
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/unsubscribe"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+    closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+    printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/read"'; then
@@ -5455,6 +5465,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -5535,6 +5547,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -5608,6 +5622,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
@@ -5657,6 +5673,8 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      closed_thread_id=$(printf '%s\n' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      printf '%s\n' '{{"method":"thread/closed","params":{{"threadId":"'"$closed_thread_id"'"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

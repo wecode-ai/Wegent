@@ -2072,7 +2072,174 @@ async fn app_ipc_routes_git_inspection_for_repository_workspaces() {
     assert_eq!(response["ok"], true);
     assert_eq!(response["result"]["success"], true);
     let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv, ["git", "branch", "--show-current"]);
+    assert_eq!(
+        request.argv,
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"]
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_branch_list_uses_portable_ref_query() {
+    let workspace = tempfile::tempdir().unwrap();
+    assert_command_success(
+        git_command()
+            .arg("init")
+            .arg(workspace.path())
+            .output()
+            .unwrap(),
+    );
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "branch-list",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch_list",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(
+        seen_request.lock().unwrap().as_ref().unwrap().argv,
+        [
+            "git",
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_branch_list_handles_empty_detached_and_linked_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let worktree = root.path().join("linked");
+    assert_command_success(git_command().arg("init").arg(&repo).output().unwrap());
+    let setup = |args: &[&str]| {
+        assert_command_success(
+            git_command()
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    };
+    let server = AppIpcServer::new();
+    let list = |path: std::path::PathBuf| {
+        let server = &server;
+        async move {
+            let response = server
+                .handle_line(
+                    &json!({
+                        "type": "request",
+                        "id": "branch-list",
+                        "method": "device.execute_command",
+                        "params": {"command_key": "git_branch_list", "path": path}
+                    })
+                    .to_string(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response["result"]["success"], true, "{response}");
+            response["result"]["stdout"].as_str().unwrap().to_owned()
+        }
+    };
+    assert_eq!(list(repo.clone()).await, "");
+    setup(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    setup(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "seed",
+    ]);
+    setup(&["branch", "feature/nested"]);
+    setup(&["tag", "tag-only"]);
+    setup(&["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
+    assert_eq!(list(repo.clone()).await, "feature/nested\nmain\n");
+    setup(&["checkout", "--detach"]);
+    assert_eq!(list(repo.clone()).await, "feature/nested\nmain\n");
+    setup(&[
+        "worktree",
+        "add",
+        worktree.to_str().unwrap(),
+        "feature/nested",
+    ]);
+    assert_eq!(list(worktree).await, "feature/nested\nmain\n");
+}
+
+#[tokio::test]
+async fn app_ipc_current_branch_handles_unborn_detached_and_invalid_head() {
+    let root = tempfile::tempdir().unwrap();
+    assert_command_success(git_command().arg("init").arg(root.path()).output().unwrap());
+    let setup = |args: &[&str]| {
+        assert_command_success(
+            git_command()
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    };
+    let server = AppIpcServer::new();
+    let read_branch = || async {
+        server
+            .handle_line(
+                &json!({
+                    "type": "request", "id": "current-branch",
+                    "method": "device.execute_command",
+                    "params": {"command_key": "git_branch", "path": root.path()}
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap()
+    };
+    setup(&["symbolic-ref", "HEAD", "refs/heads/feature/nested"]);
+    let unborn = read_branch().await;
+    assert_eq!(unborn["result"]["success"], true, "{unborn}");
+    assert_eq!(unborn["result"]["stdout"], "feature/nested\n");
+    setup(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "seed",
+    ]);
+    let attached = read_branch().await;
+    assert_eq!(attached["result"]["success"], true, "{attached}");
+    assert_eq!(attached["result"]["stdout"], "feature/nested\n");
+    setup(&["checkout", "--detach"]);
+    let detached = read_branch().await;
+    assert_eq!(detached["result"]["success"], true, "{detached}");
+    assert_eq!(detached["result"]["stdout"], "");
+    assert_eq!(detached["result"]["exit_code"], 0);
+    fs::write(root.path().join(".git/HEAD"), "invalid HEAD\n").unwrap();
+    let invalid = read_branch().await;
+    assert_eq!(invalid["result"]["success"], false, "{invalid}");
 }
 
 #[tokio::test]

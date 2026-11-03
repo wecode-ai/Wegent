@@ -156,6 +156,8 @@ interface SendRequestUserInputResponseOptions {
 }
 
 interface RuntimePaneSendOptions {
+  // Capture before asynchronous submission preparation to protect unpublished edits.
+  draftEditVersion?: number
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
   runtime?: RuntimeName
@@ -328,6 +330,8 @@ export function useWorkbenchPaneSession({
   }, [])
   const [inputRevision, setInputRevision] = useState(0)
   const inputRevisionRef = useRef(0)
+  const draftEditVersionRef = useRef(0)
+  const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const activeInputScopeRef = useRef(inputScopeKey)
   useLayoutEffect(() => {
     if (activeInputScopeRef.current === inputScopeKey) return
@@ -340,9 +344,25 @@ export function useWorkbenchPaneSession({
       inputRevisionRef.current += 1
       setInputRevision(inputRevisionRef.current)
       setInputForScope(inputScopeKey, value)
+      return { appliedSynchronously: true } as const
     },
     [inputScopeKey, setInputForScope]
   )
+  const replaceInputForScope = useCallback(
+    (scopeKey: string, value: string) => {
+      setInputForScope(scopeKey, value)
+      if (!mountedRef.current || activeInputScopeRef.current !== scopeKey) return
+      inputRevisionRef.current += 1
+      setInputRevision(inputRevisionRef.current)
+      setReplaceDraftKey(key => key + 1)
+    },
+    [setInputForScope]
+  )
+  const replaceInput = useCallback(
+    (value: string) => replaceInputForScope(inputScopeKey, value),
+    [inputScopeKey, replaceInputForScope]
+  )
+  const getDraftEditVersion = useCallback(() => draftEditVersionRef.current, [])
   const [localError, setLocalError] = useState<string | null>(null)
   const error = projectChat.composerErrorByScope
     ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
@@ -369,12 +389,11 @@ export function useWorkbenchPaneSession({
   )
   const clearError = useCallback(() => setError(null), [setError])
   const setInput = scopedSetInput
-  const restoreInputAfterFailure = useCallback(
-    (value: string) => {
-      scopedSetInput(value)
-    },
-    [scopedSetInput]
-  )
+  const onDraftEdit = useCallback(() => {
+    if (activeInputScopeRef.current !== inputScopeKey) return
+    draftEditVersionRef.current += 1
+    clearError()
+  }, [clearError, inputScopeKey])
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
@@ -1679,6 +1698,7 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
+        const submittedDraftEditVersion = options.draftEditVersion ?? draftEditVersionRef.current
         // Capture the rendered revision, before asynchronous submission preparation.
         let submittedInputRevision = inputRevision
         let submittedSharedInputRevision = sharedInputRevision
@@ -1693,7 +1713,9 @@ export function useWorkbenchPaneSession({
           submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
         }
         const restoreSubmittedInput = (scopeKey: string, value: string) => {
-          if (ownsSubmittedInput()) setInputForScope(scopeKey, value)
+          if (ownsSubmittedInput() && draftEditVersionRef.current === submittedDraftEditVersion) {
+            replaceInputForScope(scopeKey, value)
+          }
         }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
@@ -2214,7 +2236,7 @@ export function useWorkbenchPaneSession({
         setErrorForScope,
         setError,
         setInput,
-        setInputForScope,
+        replaceInputForScope,
         setQueuedMessages,
         setRuntimeGoal,
       ]
@@ -2450,13 +2472,19 @@ export function useWorkbenchPaneSession({
         return
 
       queuedMessageBusyBlocks.delete(id)
-      setInput(queuedMessage.content)
+      replaceInput(queuedMessage.content)
       queuedMessage.attachments?.forEach(attachment => {
         addExistingAttachment(attachment)
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [addExistingAttachment, queuedMessageBusyBlocks, queuedMessages, setInput, setQueuedMessages]
+    [
+      addExistingAttachment,
+      queuedMessageBusyBlocks,
+      queuedMessages,
+      replaceInput,
+      setQueuedMessages,
+    ]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -2485,10 +2513,20 @@ export function useWorkbenchPaneSession({
         notice: undefined,
       }
       setInput('')
+      const submittedInputRevision = inputRevisionRef.current
+      const submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
+      const submittedDraftEditVersion = draftEditVersionRef.current
       resetAttachments()
       const sent = await interruptAndSendQueuedMessage(combinedMessage)
       if (sent) return
-      restoreInputAfterFailure(combinedMessage.displayContent ?? combinedMessage.content)
+      if (
+        activeInputScopeRef.current === inputScopeKey &&
+        inputRevisionRef.current === submittedInputRevision &&
+        getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
+        draftEditVersionRef.current === submittedDraftEditVersion
+      ) {
+        replaceInput(combinedMessage.displayContent ?? combinedMessage.content)
+      }
       combinedMessage.attachments?.forEach(addExistingAttachment)
       if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
         setCodeCommentContexts(combinedMessage.codeComments)
@@ -2498,11 +2536,13 @@ export function useWorkbenchPaneSession({
       addExistingAttachment,
       attachmentState.attachments,
       input,
+      inputScopeKey,
+      getInputRevisionForScope,
       interruptAndSendQueuedMessage,
       queuedMessageBusyBlocks,
       queuedMessages,
       resetAttachments,
-      restoreInputAfterFailure,
+      replaceInput,
       setInput,
     ]
   )
@@ -2543,9 +2583,9 @@ export function useWorkbenchPaneSession({
 
   const editCurrentGoal = useCallback(() => {
     if (!goal) return
-    setInput(goal.objective)
+    replaceInput(goal.objective)
     setGoalDraftActive(true)
-  }, [goal, setInput])
+  }, [goal, replaceInput])
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {
@@ -2774,6 +2814,10 @@ export function useWorkbenchPaneSession({
     browserAnnotationCommand,
     input,
     setInput,
+    replaceInput,
+    replaceDraftKey,
+    onDraftEdit,
+    getDraftEditVersion,
     error,
     setError,
     clearError,

@@ -5,6 +5,7 @@ import type {
 } from '@/types/api'
 import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   abortableRuntimeRead,
   cancelledRuntimeRead,
@@ -91,7 +92,10 @@ export function synchronizeRuntimeConversation(
     options.reconcileClientUserMessageIds?.slice().sort() ?? null,
   ])
   const existing = requests.get(requestKey)
-  if (existing && !existing.controller.signal.aborted) return subscribeRuntimeRead(existing, signal)
+  if (existing && !existing.controller.signal.aborted) {
+    diagnoseRead('join', address, options)
+    return subscribeRuntimeRead(existing, signal)
+  }
   const controller = new AbortController()
   writer.controllers.add(controller)
   const previous = writer.pending
@@ -108,10 +112,12 @@ export function synchronizeRuntimeConversation(
     if (!options.navigationOnly) adoptRuntimeConversationThread(address, address.threadId)
     const token = options.navigationOnly ? null : beginRuntimeConversationHydration(address)
     try {
+      diagnoseRead('start', address, options)
       const transcript = await abortableRuntimeRead(
         readRuntimeConversation(read, address, options, controller.signal),
         controller.signal
       )
+      diagnoseRead('resolved', address, options)
       if (writer.generation !== generation) throw new SupersededConversationRead()
       if (token && operation.isCurrent()) {
         completeRuntimeConversationHydration(
@@ -126,6 +132,7 @@ export function synchronizeRuntimeConversation(
       }
       return transcript
     } catch (error) {
+      diagnoseRead('rejected', address, options)
       if (token) abortRuntimeConversationHydration(address, token)
       throw error
     }
@@ -148,6 +155,17 @@ export function synchronizeRuntimeConversation(
   requests.set(requestKey, shared)
   writer.pending = barrier
   return subscribeRuntimeRead(shared, signal)
+}
+
+function diagnoseRead(action: string, address: RuntimeTaskAddress, options: ReadOptions): void {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  logRuntimeTaskCreateStage('conversation-read', {
+    action,
+    taskId: address.taskId,
+    projectSession: Boolean(address.projectSession),
+    limit: options.limit ?? null,
+    navigationOnly: options.navigationOnly === true,
+  })
 }
 
 /** Viewing a child thread does not adopt it as the task's current conversation. */

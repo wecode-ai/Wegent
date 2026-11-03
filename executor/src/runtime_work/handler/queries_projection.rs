@@ -286,6 +286,12 @@ impl RuntimeWorkRpcHandler {
             response["supersededTurnIds"] =
                 json!(superseded_transcript_turn_ids(&link.runtime_handle));
         }
+        handler.log_suspicious_transcript_outcomes(
+            &response,
+            &thread,
+            local_link.as_ref(),
+            direct_thread_override,
+        );
         Ok(response)
     }
 }

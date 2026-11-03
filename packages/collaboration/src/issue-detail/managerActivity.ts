@@ -1,4 +1,9 @@
 import type { CollaborationTranslate } from "../i18n";
+import {
+  executionDisplayStatus,
+  type ExecutionDisplayStatus,
+} from "./executionStatus";
+import { taskExecutionStatusLabel } from "./taskBindingPresentation";
 
 export interface ManagerAssignment {
   assigneeName: string;
@@ -41,7 +46,7 @@ export function managerAssignments(
 export function managerActivityPresentation(
   translate: CollaborationTranslate,
   metadata: Record<string, unknown>,
-  state: "running" | "completed" | "failed" | "cancelled",
+  state: ExecutionDisplayStatus | "completed",
 ): { label: string; planning: boolean } {
   if (state === "failed") {
     return {
@@ -55,14 +60,20 @@ export function managerActivityPresentation(
       planning: false,
     };
   }
+  const display = executionDisplayStatus(state) ?? "unknown";
+  if (display !== "running" && display !== "succeeded") {
+    return {
+      label: taskExecutionStatusLabel(display, translate),
+      planning: false,
+    };
+  }
   const assignments = managerAssignments(metadata);
   if (assignments.length) {
     return {
       label: translate("activity.task_activity_manager_dispatched", undefined, {
         assignments: assignments
           .map(
-            ({ assigneeName, taskTitle }) =>
-              `${taskTitle} → ${assigneeName}`,
+            ({ assigneeName, taskTitle }) => `${taskTitle} → ${assigneeName}`,
           )
           .join("；"),
       }),
@@ -71,10 +82,10 @@ export function managerActivityPresentation(
   }
   return {
     label: translate(
-      state === "completed"
+      display === "succeeded"
         ? "activity.task_activity_manager_planned"
         : "activity.task_activity_manager_planning",
     ),
-    planning: state === "running",
+    planning: display === "running",
   };
 }

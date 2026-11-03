@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
@@ -15,14 +20,11 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
-  functionCall,
   mcpToolRequestEvents,
   readRequestBody,
   responseCompleted,
   responseCreated,
   requestContainsToolOutput,
-  selectShellToolCommand,
-  toolOutputText,
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -68,32 +70,6 @@ async function addAgent(control, name, prompt, timeoutMs) {
     visible: false,
     timeoutMs,
   })
-}
-
-function shellEvents(body, callId, command, workspacePath) {
-  const namespace = [
-    ...(body.tools ?? []),
-    ...(body.input ?? [])
-      .filter(item => item.type === 'additional_tools')
-      .flatMap(item => item.tools ?? []),
-  ].find(tool => tool.type === 'namespace' && tool.tools?.some(child => child.name === 'exec'))
-  if (namespace)
-    return [
-      {
-        type: 'response.output_item.done',
-        output_index: 0,
-        item: {
-          id: callId,
-          type: 'custom_tool_call',
-          call_id: callId,
-          namespace: namespace.name,
-          name: 'exec',
-          input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000 })}))`,
-        },
-      },
-    ]
-  const selection = selectShellToolCommand(body, command, workspacePath)
-  return functionCall(callId, selection.name, selection.arguments)
 }
 
 export function createDesktopScenario({
@@ -171,8 +147,13 @@ export function createDesktopScenario({
         memberStarted = index
         await releases[index].promise
         const callId = `${MARKER}-artifact-${index}`
-        if (requestContainsToolOutput(body, callId)) {
-          const output = toolOutputText(body, callId)
+        const result = accountCommandResult(body.input, callId)
+        if (result?.sessionId) {
+          respond(response, id, shellCommandPollResponse(body, result.pollId, result.sessionId))
+          return true
+        }
+        if (result) {
+          const output = result.output
           assert.match(
             output,
             /Exit code: 0|exit_code\W*0|Process exited with code 0/,
@@ -204,7 +185,11 @@ export function createDesktopScenario({
         // A script file preserves quotes and Unicode across native Windows and POSIX shells.
         const scriptName = `template-stage-${index + 1}.cjs`
         await writeFile(join(nativeWorkspace, scriptName), script)
-        respond(response, id, shellEvents(body, callId, `node ${scriptName}`, nativeWorkspace))
+        respond(
+          response,
+          id,
+          shellCommandResponse(body, callId, `node ${scriptName}`, nativeWorkspace)
+        )
         return true
       }
       const index = phase

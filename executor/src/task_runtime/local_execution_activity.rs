@@ -50,13 +50,15 @@ pub(super) fn create_local_execution(
         None
     };
     let execution_scope = local_execution_scope(item_id, &payload);
+    let actor =
+        super::project_coordination_commands::execution_actor_on(connection, project_id, &payload)?;
     connection.execute(
         "INSERT INTO loop_item_executions (
             loop_item_id, cloud_project_id, agent_id, execution_environment,
             execution_device_id, assigner_user_id, status, priority_weight, queued_at,
             approval_status, execution_payload, execution_scope,
             version, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?8, ?8)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?12, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?8, ?8)",
         params![
             item_id,
             project_id,
@@ -80,6 +82,7 @@ pub(super) fn create_local_execution(
                 Some(payload.to_string())
             },
             execution_scope,
+            actor,
         ],
     )?;
     let execution_id = connection.last_insert_rowid();
