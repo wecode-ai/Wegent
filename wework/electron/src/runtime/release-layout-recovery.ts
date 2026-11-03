@@ -4,6 +4,7 @@ import { ReleaseStore } from './release-store.js'
 import { resolveWorkbenchPaths } from './workbench-environment.js'
 import { releaseParentExecutable } from './release-parent-process.js'
 import { usesLegacyReleaseLayout } from './legacy-release-layout.mjs'
+import { ownsLegacyPreparedSource } from './legacy-prepared-source.js'
 
 // These delivered clients read <desktop>/releases before main migrates userData.
 // Target-owned preparation can repair that handoff without modifying signed hosts.
@@ -30,9 +31,14 @@ export async function recoverReleaseLayout(
     homeDirectory: environment.HOME || environment.USERPROFILE || '',
   }).desktop
   if (resolve(store.root) !== join(desktop, 'user-data', 'releases')) return
-  if ((await realpath(source.profileRoot)) !== (await realpath(sourceProfile)))
+  const parent = await releaseParentExecutable()
+  const copiedSource =
+    !activation &&
+    usesLegacyReleaseLayout(source.version) &&
+    (await ownsLegacyPreparedSource(store, source, sourceProfile, parent))
+  if (!copiedSource && (await realpath(source.profileRoot)) !== (await realpath(sourceProfile)))
     throw new Error('Recovery source profile does not own the running application data')
-  if ((await releaseParentExecutable()) !== (await realpath(source.executable)))
+  if (!copiedSource && parent !== (await realpath(source.executable)))
     throw new Error('Recovery source does not match the running update host')
   const prepare = async () => {
     if (!usesLegacyReleaseLayout(source.version)) return
