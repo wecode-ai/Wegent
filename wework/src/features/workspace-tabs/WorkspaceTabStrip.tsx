@@ -16,6 +16,11 @@ import { ExperimentalBadge } from '@/features/experimental-features/Experimental
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  INTERACTIONS_PATH,
+  INTERACTIONS_TAB_ID,
+  useRuntimeInteractions,
+} from '@/features/notifications/RuntimeInteractionsContext'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import {
@@ -135,11 +140,16 @@ function WorkspaceTabButton({
 }) {
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
-  const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title: tab.title })
+  const interactions = useRuntimeInteractions()
+  const title =
+    interactions && tab.contentRoute.split('?', 1)[0] === INTERACTIONS_PATH
+      ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
+          count: interactions.pending.length,
+        })
+      : tab.title
+  const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
   const unavailable = tab.kind === 'agent' && !agentAvailable
-  const tabTitle = unavailable
-    ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
-    : tab.title
+  const tabTitle = unavailable ? t('workbench.app_wegent_requires_cloud', '连接云端后可用') : title
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
     onDragStartTab(tab.id)
@@ -204,7 +214,7 @@ function WorkspaceTabButton({
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
-        <span className={cn('truncate', active && 'font-medium')}>{tab.title}</span>
+        <span className={cn('truncate', active && 'font-medium')}>{title}</span>
         {tab.fixed ? (
           <Pin
             aria-label={t('workbench.workspace_tab_fixed', '固定标签页')}
@@ -553,6 +563,28 @@ export function WorkspaceTabStrip({
                   {label}
                 </button>
               ))}
+              {availableKindSet.has('auxiliary') ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-add-pending-interactions"
+                  onClick={() => {
+                    const existing = tabs.find(tab => tab.id === INTERACTIONS_TAB_ID)
+                    if (existing) selectTab(existing.id)
+                    else
+                      openTab('auxiliary', {
+                        id: INTERACTIONS_TAB_ID,
+                        title: t('interactions.title', '待你处理'),
+                        contentRoute: INTERACTIONS_PATH,
+                      })
+                    setAddMenuPosition(null)
+                  }}
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                >
+                  <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('interactions.title', '待你处理')}
+                </button>
+              ) : null}
               {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
                 <>
                   {installedSmartApps.map(installation => (

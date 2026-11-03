@@ -20,6 +20,7 @@ import {
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
+import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import {
@@ -99,6 +100,8 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await verifyPendingInteractionsTab(control, 0, { openFromMenu: true })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       const capabilities = join(executorHome, 'capabilities')
       await mkdir(capabilities, { recursive: true })
       await writeFile(
@@ -267,6 +270,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="wework-notifications-pending"]')
       const page = `${ACTIVE} [data-testid="runtime-interactions-page"]`
       await control.command('waitFor', page, { text: QUESTION })
+      await verifyPendingInteractionsTab(control, 1, { openFromMenu: true })
       assert.equal(
         await control.command('getValue', `${page} [data-testid="interaction-reply-input"]`),
         ANSWER
@@ -280,6 +284,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, '05-pending-tab-with-shared-draft.png')
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
+      await verifyPendingInteractionsTab(control, 1)
       await control.command(
         'waitFor',
         `${page} [data-testid="interaction-reply-input"]:not(:disabled)`,
@@ -306,6 +311,7 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
+      await verifyPendingInteractionsTab(control, 0)
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', page, { text: QUESTION })
       await captureScreenshot(control, '08-handled-history.png')

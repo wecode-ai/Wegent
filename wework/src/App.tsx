@@ -972,12 +972,15 @@ function AppShell() {
       board: t('workbench.workspace_tab_board', '协作 (Beta)'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
-      auxiliaryRoutes: Object.fromEntries(
-        registeredRoutes.map(route => [
-          route.path,
-          t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
-        ])
-      ),
+      auxiliaryRoutes: {
+        ...Object.fromEntries(
+          registeredRoutes.map(route => [
+            route.path,
+            t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
+          ])
+        ),
+        [INTERACTIONS_PATH]: t('interactions.title', '待你处理'),
+      },
     }),
     [registeredRoutes, t]
   )

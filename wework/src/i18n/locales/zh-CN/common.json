@@ -5775,6 +5775,7 @@
   },
   "interactions": {
     "title": "待你处理",
+    "tab_title_with_count": "待你处理（{{count}}）",
     "needs_reply": "AI 需要你回应",
     "reply": "回复",
     "reply_placeholder": "补充你的判断…",
