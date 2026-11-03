@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 export interface CodexConnectionDependency {
   kind: 'codexPlugin'
   source: { marketplaceId: string; pluginId: string }
+  alternateSources?: Array<{ marketplaceId: string; pluginId: string }>
   version: string
 }
 
@@ -163,6 +164,9 @@ export interface WeworkConnectionsService {
 }
 
 export declare function parseConnections(manifest: unknown): ConnectionDefinition | null
+export declare function dependencySources(
+  dependency: CodexConnectionDependency
+): Array<CodexConnectionDependency['source']>
 export declare function dependencyPlan(
   definition: ConnectionDefinition,
   inventory: InstalledConnectionDependency[],

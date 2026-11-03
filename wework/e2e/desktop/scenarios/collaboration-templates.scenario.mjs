@@ -40,11 +40,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
     await control.command('select', testId('template-role-main-role-0'), { value: human })
     for (let index = 1; index < count; index++) {
-      await control.command('waitFor', testId(`template-role-main-role-${index}`), {
+      const select = testId(`template-role-main-role-${index}`)
+      await control.command('waitFor', `${select} option`, {
         text: '当前设备智能体',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('select', testId(`template-role-main-role-${index}`), {
+      await control.command('select', select, {
         by: 'label',
         value: '当前设备智能体',
       })
