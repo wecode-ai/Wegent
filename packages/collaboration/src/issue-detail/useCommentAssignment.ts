@@ -1,10 +1,13 @@
 import { useRef, useState } from 'react'
-import type { CollaborationMember } from '../types'
-import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
+import type { IssueDetailSearchableSelectOption } from './IssueDetailControls'
+import {
+  issueCommentSubmission,
+  type IssueMentionOption,
+} from './issueCommentMentions'
 
 export interface CommentAssignment {
-  members: CollaborationMember[]
-  assign(userId: number): Promise<void>
+  options: IssueDetailSearchableSelectOption[]
+  assign(target: string): Promise<void>
 }
 
 export function useCommentAssignment(
@@ -12,20 +15,18 @@ export function useCommentAssignment(
   assignment: CommentAssignment | undefined,
   onSubmit: (
     body: string,
-    mentions: IssueMentionOption[]
-  ) => void | boolean | Promise<void | boolean>
+    mentions: IssueMentionOption[],
+  ) => void | boolean | Promise<void | boolean>,
 ) {
   const [manualTarget, setManualTarget] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submitting = useRef(false)
-  const members =
-    assignment?.members.filter(
-      member => member.can_be_assignee !== false && member.role !== 'Viewer'
-    ) ?? []
+  const options = assignment?.options ?? []
   const mentioned = issueCommentSubmission(value).mentions.find(
     mention =>
-      mention.type === 'user' && members.some(member => String(member.user_id) === mention.id)
+      mention.type === 'user' &&
+      options.some(option => option.value === mention.id),
   )
   const target = assignment ? (manualTarget ?? mentioned?.id ?? '') : ''
 
@@ -40,7 +41,7 @@ export function useCommentAssignment(
       if (target && assignment) {
         // Keep the target after the host clears a successfully persisted comment.
         setManualTarget(target)
-        await assignment.assign(Number(target))
+        await assignment.assign(target)
       }
       setManualTarget(null)
     } catch (cause) {
@@ -56,5 +57,5 @@ export function useCommentAssignment(
     setManualTarget(next)
   }
 
-  return { members, target, setTarget, busy, error, submit }
+  return { options, target, setTarget, busy, error, submit }
 }

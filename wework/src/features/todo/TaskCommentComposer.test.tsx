@@ -55,11 +55,10 @@ describe('TaskCommentComposer', () => {
     const user = userEvent.setup()
     const assign = vi.fn().mockResolvedValue(undefined)
     const assignment = {
-      members: [1, 2].map(user_id => ({
-        user_id,
-        user_name: `User ${user_id}`,
-        role: 'Developer',
-      })) as import('@wegent/collaboration').CollaborationMember[],
+      options: [1, 2].map(userId => ({
+        value: String(userId),
+        label: `User ${userId}`,
+      })),
       assign,
     }
     const { props, rerender } = setup({
@@ -77,7 +76,25 @@ describe('TaskCommentComposer', () => {
     expect(send).toHaveTextContent('转派')
     expect(send).toBeEnabled()
     await user.click(send)
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(2))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('2'))
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['agent:bot', '代码助手'],
+    ['resource:workspace-agent', '空间智能体'],
+    ['team:42', 'Wegent 智能体'],
+    ['group:squad', '协作小组'],
+  ])('selects %s and assigns without posting an empty comment', async (value, label) => {
+    const user = userEvent.setup()
+    const assign = vi.fn().mockResolvedValue(undefined)
+    const { props } = setup({ value: '', assignment: { options: [{ value, label }], assign } })
+    const picker = screen.getByTestId('task-comment-form-assignee')
+    await user.click(picker)
+    await user.click(screen.getByTestId('task-comment-form-assignee-option-' + value))
+    expect(picker).toHaveTextContent(label)
+    await user.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(value))
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 

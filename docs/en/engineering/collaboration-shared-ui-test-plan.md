@@ -25,6 +25,25 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Multiple comment assignment target types
+
+The comment assignment menu shares the Issue property candidates and persistence
+flow: members, project bots, workspace Agents, Wegent Agents, and collaboration
+groups. Member eligibility and Viewer restrictions still apply. Keeping the
+current assignee does not change ownership. Empty comments can transfer ownership;
+nonempty comments are saved before assignment. Assignment failures retain the
+selection, and retrying after the draft clears does not duplicate the comment.
+
+Focused component tests cover target selection, saving with the latest Issue
+version, permissions, and send failure recovery. The existing
+`collaboration-shared-core` checkpoint adds real Electron coverage using its
+project and bot fixtures plus an isolated Issue and human-led group. It assigns
+the bot, group, and member through the comment menu, verifies real persisted
+fields and mutual exclusion after each transfer, checks that no empty comments
+were created, and removes the added Issue and group before returning to the
+original Issue. Use the checkpoint environment and command below; only model
+services are simulated.
+
 ### Parent issues and parallel board work
 
 Wework adds a personal **By parent** layout to the existing board toolbar, preserving columns and

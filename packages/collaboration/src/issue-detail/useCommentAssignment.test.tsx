@@ -18,10 +18,28 @@ describe('comment assignment', () => {
   let transfer: ReturnType<typeof useCommentAssignment>
   let draft: string
   let enabled: boolean
-  const assign = vi.fn<(id: number) => Promise<void>>()
+  const assign = vi.fn<(id: string) => Promise<void>>()
   const send = vi.fn<() => Promise<boolean>>()
   function Harness() {
-    transfer = useCommentAssignment(draft, enabled ? { members, assign } : undefined, send)
+    transfer = useCommentAssignment(
+      draft,
+      enabled
+        ? {
+            options: members
+              .filter(member => member.role !== 'Viewer')
+              .map(member => ({
+                value: String(member.user_id),
+                label: member.user_name,
+              }))
+              .concat([
+                { value: 'agent:bot', label: 'Robot' },
+                { value: 'group:squad', label: 'Squad' },
+              ]),
+            assign,
+          }
+        : undefined,
+      send,
+    )
     return null
   }
   function render(value: string) {
@@ -39,7 +57,9 @@ describe('comment assignment', () => {
   afterEach(() => act(() => root.unmount()))
 
   it('uses the first eligible human in document order and follows mention removal', () => {
-    render(`[$@Robot](wework-agent://99) ${mention(3)} ${mention(1)} ${mention(2)} ${mention(1)}`)
+    render(
+      `[$@Robot](wework-agent://99) ${mention(3)} ${mention(1)} ${mention(2)} ${mention(1)}`,
+    )
     expect(transfer.target).toBe('1')
     render(mention(2))
     expect(transfer.target).toBe('2')
@@ -62,8 +82,10 @@ describe('comment assignment', () => {
     act(() => transfer.setTarget('2'))
     await act(() => transfer.submit(draft))
     expect(send).toHaveBeenCalledWith('Please review', [])
-    expect(assign).toHaveBeenCalledWith(2)
-    expect(send.mock.invocationCallOrder[0]).toBeLessThan(assign.mock.invocationCallOrder[0])
+    expect(assign).toHaveBeenCalledWith('2')
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(
+      assign.mock.invocationCallOrder[0],
+    )
     expect(transfer.target).toBe('')
   })
 
@@ -112,10 +134,24 @@ describe('comment assignment', () => {
     expect(transfer.error).toBeNull()
   })
 
+  it.each(['agent:bot', 'group:squad'])(
+    'assigns %s without converting the target to a number',
+    async target => {
+      render('Please take over')
+      act(() => transfer.setTarget(target))
+      await act(() => transfer.submit(draft))
+      expect(assign).toHaveBeenCalledWith(target)
+      expect(send.mock.invocationCallOrder[0]).toBeLessThan(
+        assign.mock.invocationCallOrder[0],
+      )
+      expect(transfer.target).toBe('')
+    },
+  )
+
   it('never selects an assignee without assignment permission', () => {
     enabled = false
     render(mention(1))
     expect(transfer.target).toBe('')
-    expect(transfer.members).toEqual([])
+    expect(transfer.options).toEqual([])
   })
 })

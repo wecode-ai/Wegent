@@ -179,19 +179,16 @@ export function IssueMainCommentComposer({
                 <>
                   <span>{translate("todo.comment_assign_to")}</span>
                   <span className="truncate">
-                    {transfer.members.find(
-                      (member) => String(member.user_id) === transfer.target,
-                    )?.user_name ?? translate("todo.keep_assignee")}
+                    {transfer.options.find(
+                      (option) => option.value === transfer.target,
+                    )?.label ?? translate("todo.keep_assignee")}
                   </span>
                   <ChevronDown className="h-4 w-4 shrink-0" />
                 </>
               }
               options={[
                 { value: "", label: translate("todo.keep_assignee") },
-                ...transfer.members.map((member) => ({
-                  value: String(member.user_id),
-                  label: member.user_name,
-                })),
+                ...transfer.options,
               ]}
             />
           ) : null}
