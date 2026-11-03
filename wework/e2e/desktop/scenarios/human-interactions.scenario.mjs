@@ -22,13 +22,14 @@ import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
-import { waitForElementInsideScroller } from '../modules/conversation-layout.mjs'
+import { waitForElementInsideScroller, waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   startHumanInteractionIssue,
   verifyHumanInteractionIssueReply,
 } from '../modules/human-interaction-issue.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
+const ORIGINAL = `${ACTIVE} [data-testid="desktop-workbench-surface"][aria-hidden="false"]`
 const COMPOSER = `${ACTIVE} [data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
 const PROMPT = 'HUMAN_INTERACTIONS_REVIEW'
 const QUESTION = '旧客户是否继续保留原来的订单校验规则？'
@@ -53,6 +54,7 @@ export function createDesktopScenario({
   let issueDiagnostics
   let focusDiagnostics
   let contextItemId
+  let originalTaskId
   let toolRequested = false
   const callId = 'human-interactions-business-question'
   const responseId = 'human-interactions-review'
@@ -196,6 +198,21 @@ export function createDesktopScenario({
       const deadline = Date.now() + modelResponseTimeoutMs
       while (!held && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100))
       assert.ok(held, 'The real Codex run never requested the question tool')
+      if (!issueFixture) {
+        if (checkpoint === 'human-interactions-hidden') originalTaskId = 'unlisted-review'
+        else {
+          const snapshot = await waitForSnapshot(
+            control,
+            value => {
+              const url = new URL(value.location)
+              return url.pathname.endsWith('/runtime-tasks') && url.searchParams.has('taskId')
+            },
+            'The source conversation must identify its task before opening the inbox',
+            uiTimeoutMs
+          )
+          originalTaskId = new URL(snapshot.location).searchParams.get('taskId')
+        }
+      }
       if (issueFixture) {
         const messages = await readProjectChatMessages(
           issueFixture,
@@ -332,6 +349,11 @@ export function createDesktopScenario({
       const contextParagraph = issueFixture
         ? `${page} [data-testid="task-activity-content-${issueDiagnostics.find(message => message.senderType === 'agent' && message.runtimeAddress).id}"] .task-activity-content-body p:first-of-type`
         : `${page} [data-testid="assistant-message-content"][data-runtime-item-id="${contextItemId}"] p:first-of-type`
+      const readingViewport = `${page} [data-testid="${issueFixture ? 'cloud-todo-detail-scroll' : 'right-workspace-chat-scroll-area'}"]`
+      const readingOptions = {
+        clipToViewport: true,
+        ...(issueFixture ? { occluderSelector: `${page} .task-detail-comment-bar` } : {}),
+      }
       await control.command('waitFor', contextParagraph, { text: CONTEXT, visible: true })
       assert.equal(
         Number(await control.command('getElementCount', contextParagraph)),
@@ -346,9 +368,10 @@ export function createDesktopScenario({
         await waitForElementInsideScroller(
           control,
           contextParagraph,
-          `${page} [data-testid="${issueFixture ? 'cloud-todo-detail-scroll' : 'right-workspace-chat-scroll-area'}"]`,
+          readingViewport,
           'Opening the pending entity must bring its original context paragraph into the reading viewport',
-          uiTimeoutMs
+          uiTimeoutMs,
+          readingOptions
         )
       assert.ok(
         contextBounds.height > 0 &&
@@ -449,6 +472,18 @@ export function createDesktopScenario({
         })
       )
       try {
+        focusDiagnostics.mediumContext = await waitForElementInsideScroller(
+          control,
+          contextParagraph,
+          readingViewport,
+          'The original context must remain readable after resizing to 900px',
+          uiTimeoutMs,
+          readingOptions
+        )
+        await writeFile(
+          join(resultDir, 'medium-context-metrics.json'),
+          JSON.stringify(focusDiagnostics.mediumContext, null, 2)
+        )
         await captureScreenshot(control, '05a-entity-medium.png')
         await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 480, height: 760 }),
@@ -456,6 +491,18 @@ export function createDesktopScenario({
         await control.command('waitFor', `${page} [data-testid="interactions-back-to-list"]`, {
           visible: true,
         })
+        focusDiagnostics.narrowContext = await waitForElementInsideScroller(
+          control,
+          contextParagraph,
+          readingViewport,
+          'The original context must remain readable above the composer after resizing to 480px',
+          uiTimeoutMs,
+          readingOptions
+        )
+        await writeFile(
+          join(resultDir, 'narrow-context-metrics.json'),
+          JSON.stringify(focusDiagnostics.narrowContext, null, 2)
+        )
         const [entity] = JSON.parse(
           await control.command(
             'getElementMetrics',
@@ -545,8 +592,21 @@ export function createDesktopScenario({
         await control.command('scrollIntoView', executionAction)
         await control.command('waitFor', `${executionAction}:not(:disabled)`, { visible: true })
         await control.command('click', executionAction)
-        await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
+        await waitForSnapshot(
+          control,
+          value => {
+            const url = new URL(value.location)
+            return (
+              url.pathname.endsWith('/runtime-tasks') &&
+              url.searchParams.get('taskId') === execution.runtimeAddress.taskId
+            )
+          },
+          'The execution action must navigate to its original task',
+          uiTimeoutMs
+        )
+        await control.command('waitFor', `${ORIGINAL} [data-testid="message-assistant"]`, {
           text: CONTEXT,
+          visible: true,
           timeoutMs: modelResponseTimeoutMs,
         })
         const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
@@ -586,30 +646,99 @@ export function createDesktopScenario({
         text: '0',
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', `${page} [data-testid="interactions-empty"]`, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       await captureScreenshot(control, '07-accepted-response-clears-pending.png')
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', page, { text: QUESTION })
+      await control.command('waitFor', contextParagraph, {
+        text: CONTEXT,
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const historyReading = await waitForElementInsideScroller(
+        control,
+        contextParagraph,
+        readingViewport,
+        'Handled history must finish loading with its original context readable',
+        uiTimeoutMs,
+        readingOptions
+      )
+      await writeFile(
+        join(resultDir, 'history-context-metrics.json'),
+        JSON.stringify(historyReading, null, 2)
+      )
       await captureScreenshot(control, '08-handled-history.png')
       if (issueFixture) {
         await verifyHumanInteractionIssueReply(issueFixture, ANSWER, modelResponseTimeoutMs)
         await control.command('click', `${page} [data-testid="interaction-open-original"]`)
-        await control.command('waitFor', `${ACTIVE} [data-testid="cloud-todo-detail-title"]`, {
+        await waitForSnapshot(
+          control,
+          value => {
+            const url = new URL(value.location)
+            return (
+              url.pathname.endsWith('/todo') &&
+              url.searchParams.get('projectId') === issueFixture.projectId &&
+              url.searchParams.get('itemId') === issueFixture.issueId
+            )
+          },
+          'The container must navigate to its original Issue',
+          uiTimeoutMs
+        )
+        await control.command('waitFor', `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`, {
           text: '判断旧客户订单兼容策略',
+          visible: true,
           timeoutMs: modelResponseTimeoutMs,
         })
+        const originalContext = contextParagraph.replace(page, ORIGINAL)
+        await control.command('waitFor', originalContext, {
+          text: CONTEXT,
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const originalReading = await waitForElementInsideScroller(
+          control,
+          originalContext,
+          `${ORIGINAL} [data-testid="cloud-todo-detail-scroll"]`,
+          'The original Issue must finish opening with its context above the composer',
+          uiTimeoutMs,
+          {
+            clipToViewport: true,
+            occluderSelector: `${ORIGINAL} .task-detail-comment-bar`,
+          }
+        )
+        await writeFile(
+          join(resultDir, 'original-issue-context-metrics.json'),
+          JSON.stringify(originalReading, null, 2)
+        )
         await captureScreenshot(control, '09-original-issue-thread-resumes.png')
         return
       }
       await control.command('click', `${page} [data-testid="interaction-open-original"]`)
-      await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
+      await waitForSnapshot(
+        control,
+        value => {
+          const url = new URL(value.location)
+          return (
+            url.pathname.endsWith('/runtime-tasks') &&
+            url.searchParams.get('taskId') === originalTaskId
+          )
+        },
+        'The container must navigate to its original task before reading the transcript',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', `${ORIGINAL} [data-testid="message-assistant"]`, {
         text: COMPLETION,
+        visible: true,
         timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(
         Number(
           await control.command(
             'getElementCount',
-            `${ACTIVE} [data-testid="request-user-input-card"]`,
+            `${ORIGINAL} [data-testid="request-user-input-card"]`,
             { visible: true }
           )
         ),

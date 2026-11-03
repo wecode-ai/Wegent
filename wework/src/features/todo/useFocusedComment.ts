@@ -5,6 +5,7 @@ const COMMENT_FLASH_MS = 2000
 interface CommentFocusRequest {
   commentId: string
   requestKey: string | null
+  cancelled?: boolean
 }
 
 export function useFocusedComment(
@@ -16,18 +17,22 @@ export function useFocusedComment(
 ): string | null {
   const [flashedRequest, setFlashedRequest] = useState<CommentFocusRequest | null>(null)
   const revealed = useRef<CommentFocusRequest | null>(null)
+  const readingSize = useRef<{ width: number; height: number } | null>(null)
   useEffect(() => {
     if (!commentId) {
       revealed.current = null
       return
     }
-    if (revealed.current?.commentId === commentId && revealed.current.requestKey === requestKey)
-      return
+    const sameRequest =
+      revealed.current?.commentId === commentId && revealed.current.requestKey === requestKey
+    if (sameRequest && revealed.current?.cancelled) return
     const list = listRef.current
     if (!list) return
     let disposed = false
     let frame = 0
+    let located = sameRequest
     const viewport = commentViewport(list)
+    const composer = viewport?.querySelector<HTMLElement>('.task-detail-comment-bar')
     const eventTarget = viewport ?? window
     const cleanup = () => {
       disposed = true
@@ -35,13 +40,19 @@ export function useFocusedComment(
       resize.disconnect()
       mutations.disconnect()
       eventTarget.removeEventListener('wheel', cancel)
-      eventTarget.removeEventListener('touchstart', cancel)
-      eventTarget.removeEventListener('pointerdown', cancel)
+      eventTarget.removeEventListener('touchstart', cancelPointer)
+      eventTarget.removeEventListener('pointerdown', cancelPointer)
       eventTarget.removeEventListener('keydown', cancelKey)
+      window.removeEventListener('resize', schedule)
     }
     const cancel = () => {
-      revealed.current = { commentId, requestKey }
+      revealed.current = { commentId, requestKey, cancelled: true }
       cleanup()
+    }
+    const cancelPointer = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('.task-detail-comment-bar'))
+        return
+      cancel()
     }
     const cancelKey = (event: Event) => {
       const key = (event as KeyboardEvent).key
@@ -56,12 +67,7 @@ export function useFocusedComment(
         node => node.dataset.messageId === commentId
       )
       if (!target) return
-      const bounds = viewport?.getBoundingClientRect() ?? {
-        top: 0,
-        bottom: window.innerHeight,
-        height: window.innerHeight,
-        width: window.innerWidth,
-      }
+      const bounds = commentReadingBounds(viewport)
       if (bounds.width <= 0 || bounds.height <= 0 || target.getBoundingClientRect().height <= 0)
         return
       resize.observe(target)
@@ -69,6 +75,14 @@ export function useFocusedComment(
         behavior: 'instant',
         block: target.getBoundingClientRect().height > bounds.height ? 'start' : 'center',
       })
+      if (viewport) {
+        const rect = target.getBoundingClientRect()
+        if (rect.top < bounds.top || rect.bottom > bounds.bottom) {
+          const top =
+            bounds.top + (rect.height > bounds.height ? 0 : (bounds.height - rect.height) / 2)
+          viewport.scrollTop += rect.top - top
+        }
+      }
       const rect = target.getBoundingClientRect()
       if (
         rect.top < bounds.top - 1 ||
@@ -76,23 +90,38 @@ export function useFocusedComment(
       )
         return
       revealed.current = { commentId, requestKey }
-      setFlashedRequest(revealed.current)
-      cleanup()
+      readingSize.current = { width: bounds.width, height: bounds.height }
+      if (!located) setFlashedRequest(revealed.current)
+      located = true
+      mutations.disconnect()
+      resize.disconnect()
+      if (viewport) resize.observe(viewport)
+      const currentComposer = viewport?.querySelector<HTMLElement>('.task-detail-comment-bar')
+      if (currentComposer) resize.observe(currentComposer)
     }
     const schedule = () => {
       if (!disposed && !frame) frame = window.requestAnimationFrame(locate)
     }
-    const resize = new ResizeObserver(schedule)
+    const currentBounds = commentReadingBounds(viewport)
+    let { width, height } = located && readingSize.current ? readingSize.current : currentBounds
+    const resize = new ResizeObserver(() => {
+      const bounds = commentReadingBounds(viewport)
+      if (!located || bounds.width !== width || bounds.height !== height) schedule()
+      width = bounds.width
+      height = bounds.height
+    })
     const mutations = new MutationObserver(schedule)
-    resize.observe(list)
+    if (!located) resize.observe(list)
     if (viewport) resize.observe(viewport)
-    mutations.observe(list, { childList: true, subtree: true })
+    if (composer) resize.observe(composer)
+    if (!located) mutations.observe(list, { childList: true, subtree: true })
     eventTarget.addEventListener('wheel', cancel, { passive: true })
-    eventTarget.addEventListener('touchstart', cancel, { passive: true })
-    eventTarget.addEventListener('pointerdown', cancel, { passive: true })
+    eventTarget.addEventListener('touchstart', cancelPointer, { passive: true })
+    eventTarget.addEventListener('pointerdown', cancelPointer, { passive: true })
     eventTarget.addEventListener('keydown', cancelKey)
+    window.addEventListener('resize', schedule)
     // Run after parent effects have reset the detail scroll position.
-    schedule()
+    if (!located || width !== currentBounds.width || height !== currentBounds.height) schedule()
     return cleanup
   }, [commentId, listRef, messages, ready, requestKey])
 
@@ -104,6 +133,16 @@ export function useFocusedComment(
   return flashedRequest?.commentId === commentId && flashedRequest?.requestKey === requestKey
     ? commentId
     : null
+}
+
+function commentReadingBounds(viewport: HTMLElement | null) {
+  const rect = viewport?.getBoundingClientRect()
+  const top = rect?.top ?? 0
+  let bottom = rect?.bottom ?? window.innerHeight
+  const composer = viewport?.querySelector<HTMLElement>('.task-detail-comment-bar')
+  const composerRect = composer?.getBoundingClientRect()
+  if (composerRect && composerRect.height > 0) bottom = Math.min(bottom, composerRect.top)
+  return { top, bottom, height: bottom - top, width: rect?.width ?? window.innerWidth }
 }
 
 function commentViewport(list: HTMLElement): HTMLElement | null {

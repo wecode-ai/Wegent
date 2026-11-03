@@ -168,7 +168,10 @@ export function RuntimeInteractionsPage({
             </button>
           ))}
           {!rows.length && (
-            <p className="px-3 py-8 text-sm text-text-secondary">
+            <p
+              data-testid={loading ? 'interactions-loading' : 'interactions-empty'}
+              className="px-3 py-8 text-sm text-text-secondary"
+            >
               {t(loading ? 'interactions.loading' : 'interactions.empty')}
             </p>
           )}
