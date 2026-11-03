@@ -226,6 +226,92 @@ describe('Electron local terminal', () => {
     })
   })
 
+  test('shares an opener discovery in flight and refreshes after it settles', async () => {
+    const available = [{ id: 'vscode', category: 'general', available: true }]
+    let complete!: (value: typeof available) => void
+    mocks.desktopHost.mockReturnValue(new Promise(resolve => (complete = resolve)))
+    const pending = Array.from({ length: 3 }, () => listLocalWorkspaceOpeners())
+    try {
+      expect(mocks.desktopHost).toHaveBeenCalledExactlyOnceWith('workspace.listOpeners')
+    } finally {
+      complete(available)
+      await Promise.all(pending)
+    }
+    expect(await Promise.all(pending)).toEqual([available, available, available])
+
+    mocks.desktopHost.mockResolvedValue([])
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
+  })
+
+  test('shares discovery failure and permits a fresh request afterward', async () => {
+    let fail!: (reason: Error) => void
+    mocks.desktopHost.mockReturnValue(new Promise((_, reject) => (fail = reject)))
+    const pending = Array.from({ length: 3 }, () => listLocalWorkspaceOpeners())
+    const settled = Promise.allSettled(pending)
+    fail(new Error('discovery failed'))
+    expect(await settled).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: 'rejected',
+        reason: new Error('discovery failed'),
+      }))
+    )
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(1)
+
+    mocks.desktopHost.mockResolvedValue([])
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
+  })
+
+  test('a saved opener invalidates old discovery without clearing a newer pending request', async () => {
+    const oldResult = [{ id: 'vscode', category: 'general', available: true }]
+    const freshResult = [{ id: 'custom', category: 'winOnly', available: true }]
+    let finishOld!: (value: typeof oldResult) => void
+    let finishFresh!: (value: typeof freshResult) => void
+    mocks.desktopHost
+      .mockReturnValueOnce(new Promise(resolve => (finishOld = resolve)))
+      .mockResolvedValueOnce('C:\\Tools\\editor.exe')
+      .mockReturnValue(new Promise(resolve => (finishFresh = resolve)))
+    const old = listLocalWorkspaceOpeners()
+    await expect(pickLocalWorkspaceOpenerExe()).resolves.toBe('C:\\Tools\\editor.exe')
+    const fresh = listLocalWorkspaceOpeners()
+    finishOld(oldResult)
+    await expect(old).resolves.toEqual(oldResult)
+    const joined = listLocalWorkspaceOpeners()
+    try {
+      expect(mocks.desktopHost.mock.calls).toEqual([
+        ['workspace.listOpeners'],
+        ['workspace.pickOpener'],
+        ['workspace.listOpeners'],
+      ])
+    } finally {
+      finishFresh(freshResult)
+      await Promise.all([fresh, joined])
+    }
+    expect(await joined).toEqual(freshResult)
+  })
+
+  test.each(['cancelled', 'failed'])('a %s picker retains pending discovery', async outcome => {
+    let complete!: (value: []) => void
+    mocks.desktopHost.mockReturnValueOnce(new Promise(resolve => (complete = resolve)))
+    if (outcome === 'cancelled') mocks.desktopHost.mockResolvedValue(null)
+    else mocks.desktopHost.mockRejectedValue(new Error('picker failed'))
+    const pending = listLocalWorkspaceOpeners()
+    if (outcome === 'cancelled') await expect(pickLocalWorkspaceOpenerExe()).resolves.toBeNull()
+    else await expect(pickLocalWorkspaceOpenerExe()).rejects.toThrow('picker failed')
+    const joined = listLocalWorkspaceOpeners()
+    try {
+      expect(mocks.desktopHost.mock.calls).toEqual([
+        ['workspace.listOpeners'],
+        ['workspace.pickOpener'],
+      ])
+    } finally {
+      complete([])
+      await Promise.allSettled([pending, joined])
+    }
+    await expect(joined).resolves.toEqual([])
+  })
+
   test('rejects empty attachment paths before contacting the desktop host', async () => {
     await expect(openLocalFileInWorkspaceApp('   ')).rejects.toThrow('Local file path is empty')
     expect(mocks.desktopHost).not.toHaveBeenCalled()

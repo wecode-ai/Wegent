@@ -208,8 +208,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
           if (!automatic) {
             assert.deepEqual(await request(`/v1/loop-items/${issue.id}/tasks`), [])
             const start = `[data-testid="notification-stand-in-start-${notice.id}"]`
-            await control.command('waitFor', start)
-            await control.command('click', start)
+            await control.command('clickWhenEnabled', start)
             await until(
               async () =>
                 Number(await control.command('getElementCount', `${start}:not([disabled])`)) +

@@ -942,10 +942,18 @@ fn tree_fingerprint(path: &Path) -> Result<BTreeMap<PathBuf, String>, Capability
                 visit(root, &child?.path(), result)?;
             }
         } else if metadata.is_file() {
-            result.insert(
-                path.strip_prefix(root).unwrap().to_owned(),
-                sha256_digest(&fs::read(path)?),
-            );
+            let relative = path.strip_prefix(root).unwrap();
+            let mut bytes = fs::read(path)?;
+            if [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH]
+                .iter()
+                .any(|manifest| relative == Path::new(manifest))
+            {
+                // Generated manifests can change formatting across executor versions.
+                let mut manifest: Value = serde_json::from_slice(&bytes)?;
+                manifest.sort_all_objects();
+                bytes = serde_json::to_vec(&manifest)?;
+            }
+            result.insert(relative.to_owned(), sha256_digest(&bytes));
         } else {
             return Err(CapabilitySyncError::invalid_payload(
                 "Runtime contains a special file",

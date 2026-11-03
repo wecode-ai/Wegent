@@ -26,7 +26,7 @@ on:
         required: false
         default: ""
       verification_checkpoint:
-        description: "Diagnostic replay only: run one checkpoint without producing upgrade evidence"
+        description: "Run one diagnostic without producing upgrade evidence; refresh requires a prebuilt source"
         type: choice
         options:
           - all
@@ -35,7 +35,13 @@ on:
           - app-rollback-recovery
           - app-upgrade-recovery
           - app-update-full
+          - app-update-refresh
         default: all
+      verification_source_run_id:
+        description: "Immutable source producer for the non-publishing app-update-refresh diagnostic"
+        type: string
+        required: false
+        default: ""
       verification_release_tag:
         description: "Replay using the matching published release archive instead of the original candidate"
         type: string
@@ -43,7 +49,7 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
+  group: ${{ (inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -52,7 +58,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare build
-    if: inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''
+    if: inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
@@ -243,7 +249,18 @@ jobs:
           '
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        id: workspace-install
+        shell: bash
+        run: pnpm install --frozen-lockfile --reporter=ndjson | node .github/scripts/pnpm-install-report.mjs "$RUNNER_TEMP/pnpm-install-diagnostics.json"
+
+      - name: Upload workspace install diagnostics
+        if: always() && (steps.workspace-install.outcome == 'success' || steps.workspace-install.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-install-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/pnpm-install-diagnostics.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Install Wework Electron dependencies
         run: pnpm --dir wework/electron install --frozen-lockfile
@@ -322,6 +339,16 @@ jobs:
           restore-keys: |
             signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-
 
+      - name: Use TCP for Apple ticket delivery on Intel runners
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Intel hosted runners lose HTTP/3 ticket requests (actions/runner-images#14924).
+          # Limit the transport configuration to this disposable CI machine.
+          echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
+          sudo pfctl -E
+
       - name: Build signed Electron release
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -342,11 +369,21 @@ jobs:
           WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WEWORK_RELEASE_DIAGNOSTICS_DIR: ${{ github.workspace }}/.ci-artifacts/release-build
           WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: ${{ needs.prepare-release.outputs.componentized_host_update != 'true' }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
+
+      - name: Retain release build stage diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-release-build-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: .ci-artifacts/release-build/*.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify formal release package
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -451,6 +488,8 @@ jobs:
       verification_sha: ${{ steps.inputs.outputs.verification_sha }}
       diagnostic_checkpoint: ${{ steps.inputs.outputs.diagnostic_checkpoint }}
       published_release_tag: ${{ steps.inputs.outputs.published_release_tag }}
+      source_run_id: ${{ steps.inputs.outputs.source_run_id }}
+      source_version: ${{ steps.inputs.outputs.source_version }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve completed release build artifacts
@@ -464,6 +503,7 @@ jobs:
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
           VERIFICATION_CHECKPOINT: ${{ inputs.verification_checkpoint }}
           PUBLISHED_RELEASE_TAG: ${{ inputs.verification_release_tag }}
+          VERIFICATION_SOURCE_RUN_ID: ${{ inputs.verification_source_run_id }}
         run: node .github/scripts/resolve-wework-upgrade-inputs.mjs
 
   verify-upgrades:
@@ -503,6 +543,15 @@ jobs:
           run-id: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download immutable diagnostic source
+        if: needs.prepare-upgrade-inputs.outputs.source_run_id != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-upgrade-input-${{ needs.prepare-upgrade-inputs.outputs.source_version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/upgrade-source
+          run-id: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Verify declared upgrade and rollback edges on real release packages
         if: (matrix.platform == 'macos' && matrix.arch == 'arm64') || matrix.platform == 'windows'
         shell: bash
@@ -513,6 +562,8 @@ jobs:
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
           WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
+          WEWORK_UPGRADE_SOURCE_ASSETS: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id != '' && format('{0}/upgrade-source/wework-release-assets', runner.temp) || '' }}
+          WEWORK_UPGRADE_SOURCE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.source_version }}
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \

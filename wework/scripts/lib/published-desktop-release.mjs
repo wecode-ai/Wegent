@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { extractRuntimeArchive } from './extract-runtime-archive.mjs'
 import { hashReleaseAsset } from './portable-desktop-release.mjs'
@@ -177,4 +177,26 @@ export async function downloadPublishedDesktopRelease(options) {
     release
   )
   return { ...release, ...installation }
+}
+
+/** Verify and extract an existing producer artifact without changing its identity. */
+export async function readPrebuiltDesktopRelease({
+  directory,
+  version,
+  platform,
+  arch,
+  installation,
+}) {
+  const release = JSON.parse(
+    await readFile(join(directory, `release-${platform}-${arch}.json`), 'utf8')
+  )
+  validateRelease(release, { version, platform, arch })
+  const archive = join(directory, release.name)
+  await verifyArchive(archive, release)
+  await mkdir(dirname(installation), { recursive: true })
+  return {
+    ...release,
+    path: archive,
+    ...(await extractPublishedArchive(archive, installation, release)),
+  }
 }

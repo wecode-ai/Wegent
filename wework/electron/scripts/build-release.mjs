@@ -4,11 +4,14 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import diagnostics from './release-build-diagnostics.cjs'
+
+const { recordReleaseBuildStage } = diagnostics
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 if (isMainModule()) {
-  await prepareSignedComponents()
+  await recordReleaseBuildStage('sign-components', () => prepareSignedComponents())
   await buildRelease()
 }
 
@@ -42,7 +45,11 @@ export async function buildRelease(environment = process.env, runBuild = run) {
     'never',
   ]
   const builds = releaseBuildEnvironments(environment).map(overrides =>
-    runBuild(pnpmCommand, builderArgs, electronRoot, overrides)
+    recordReleaseBuildStage(
+      'electron-builder',
+      () => runBuild(pnpmCommand, builderArgs, electronRoot, overrides),
+      { ...environment, ...overrides }
+    )
   )
   await Promise.all(builds)
 }
@@ -67,9 +74,15 @@ function run(command, args, cwd, environment = {}) {
       stdio: 'inherit',
     })
     child.once('error', reject)
-    child.once('exit', code => {
+    child.once('exit', (code, signal) => {
       if (code === 0) resolvePromise()
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}`))
+      else
+        reject(
+          Object.assign(new Error(`${command} exited with code ${code ?? 'unknown'}`), {
+            exitCode: code,
+            signal,
+          })
+        )
     })
   })
 }

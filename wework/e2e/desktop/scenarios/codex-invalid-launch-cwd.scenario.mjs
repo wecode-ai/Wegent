@@ -256,6 +256,10 @@ async function restartExecutorAfterRemovingCwd(
   launchWorkingDirectory,
   timeoutMs
 ) {
+  // Complete bootstrap before the intentional process exit interrupts the runtime.
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const originalPid = await currentExecutorPid(control)
   assert.ok(originalPid, 'The initial executor process was not running')
   const logOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length

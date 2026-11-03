@@ -1300,6 +1300,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
     execution, _, manager_activity = _make_running_automation_execution(
         test_db, test_user
     )
+    execution.last_event_seq = 12
     issue = test_db.get(LoopItem, execution.loop_item_id)
     assert issue is not None
     issue.status = "in_progress"
@@ -1319,6 +1320,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
             "subagent_id": "worker-1",
             "subagent_name": "Worker",
             "subagent_status": "running",
+            "runtime_event_sequence": "11",
         },
         trigger_message_id=manager_activity.message_id,
         reply_to_message_id=manager_activity.message_id,
@@ -1360,6 +1362,7 @@ def test_manager_cancel_ack_closes_active_native_subagent_activity(
     assert manager_activity.status == "cancelled"
     assert child_activity.status == "cancelled"
     assert child_activity.metadata_json["subagent_status"] == "cancelled"
+    assert child_activity.metadata_json["runtime_event_sequence"] == "12"
     assert issue.status == "in_progress"
 
 

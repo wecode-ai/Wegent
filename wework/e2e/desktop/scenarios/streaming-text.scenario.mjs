@@ -2,6 +2,7 @@ import { createConversationSwitchingChecks } from '../modules/streaming-conversa
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createMarkdownLinkChecks,
   MARKDOWN_LINKS_PROMPT,
@@ -860,6 +861,18 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
+      await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.set',
+        { enabled: true },
+        uiTimeoutMs
+      )
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {
