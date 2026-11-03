@@ -90,7 +90,7 @@ async fn cancelling_history_read_releases_handler_and_preserves_control_requests
     runtime.entered.notified().await;
     write_frame(&mut writer, json!({"type": "cancel", "id": "read"})).await;
     write_frame(&mut writer, request("control", "executor.health")).await;
-    let mut responses = vec![
+    let mut responses = [
         read_response(&mut reader).await,
         read_response(&mut reader).await,
     ];

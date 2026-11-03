@@ -122,6 +122,7 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
         owned.pending_transition
             || (owned.goal_active && codex_thread_terminal_task_status(thread) == Some("done"))
     });
+    let metadata_active_turn_id = codex_thread_in_progress_turn_id(thread);
     let activity = match runtime.as_deref() {
         Some("active") => Activity::Active,
         Some("idle") if awaiting_next_turn => Activity::Active,
@@ -133,6 +134,9 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
             Activity::Idle
         }
         Some("notLoaded") if owned.is_some() => Activity::Active,
+        // Missing runtime status cannot prove completion, but a running turn can
+        // still identify the provider-only execution that an explicit stop targets.
+        None if !awaiting_next_turn && metadata_active_turn_id.is_some() => Activity::Active,
         _ => Activity::Unknown,
     };
     let active_turn_id = (activity == Activity::Active)
@@ -143,7 +147,7 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
             owned
                 .filter(|_| !awaiting_next_turn)
                 .and_then(|owned| owned.turn_id)
-                .or_else(|| codex_thread_in_progress_turn_id(thread))
+                .or(metadata_active_turn_id)
                 .or_else(|| {
                     turn.filter(|turn| {
                         !awaiting_next_turn
@@ -173,6 +177,50 @@ fn control_snapshot(thread: &Value, owned: Option<OwnedControlState>) -> CodexCo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_runtime_status_preserves_only_positive_running_turn_evidence() {
+        for status in ["inProgress", "completed", "failed", "interrupted"] {
+            let thread = json!({"turns":[{
+                "id":"current","status":status,"completedAt":123
+            }]});
+            let snapshot = control_snapshot(&thread, None);
+            assert!(!snapshot.is_idle(), "{status}");
+            assert_eq!(snapshot.terminal_task_status(), None, "{status}");
+            assert_eq!(
+                snapshot.active_turn_id.as_deref(),
+                (status == "inProgress").then_some("current"),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_runtime_facts_and_pending_transition_override_running_history() {
+        for runtime in ["idle", "notLoaded", "unrecognized"] {
+            let thread = json!({"status":{"type":runtime},"turns":[{
+                "id":"current","status":"inProgress"
+            }]});
+            let snapshot = control_snapshot(&thread, None);
+            assert_eq!(snapshot.is_idle(), runtime == "idle", "{runtime}");
+            assert_eq!(snapshot.active_turn_id, None, "{runtime}");
+            assert_eq!(snapshot.terminal_task_status(), None, "{runtime}");
+        }
+        let thread = json!({"turns":[{"id":"old","status":"inProgress"}]});
+        for goal_active in [false, true] {
+            let snapshot = control_snapshot(
+                &thread,
+                Some(OwnedControlState {
+                    turn_id: Some("old".into()),
+                    pending_transition: true,
+                    goal_active,
+                }),
+            );
+            assert!(!snapshot.is_idle());
+            assert_eq!(snapshot.active_turn_id, None);
+            assert_eq!(snapshot.terminal_task_status(), None);
+        }
+    }
 
     #[test]
     fn cancellation_outcome_requires_a_completion_fact() {

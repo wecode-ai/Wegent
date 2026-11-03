@@ -109,29 +109,6 @@ pub(super) fn reconciliation_ids(payload: &Value) -> Result<Option<Vec<String>>,
     Ok(Some(ids))
 }
 
-#[cfg(test)]
-mod receipt_tests {
-    use super::*;
-
-    #[test]
-    fn receipt_queries_preserve_absence_and_reject_invalid_identities() {
-        assert_eq!(reconciliation_ids(&json!({})).unwrap(), None);
-        assert_eq!(
-            reconciliation_ids(&json!({"reconcileClientUserMessageIds":[]})).unwrap(),
-            Some(vec![])
-        );
-        assert_eq!(
-            reconciliation_ids(&json!({"reconcileClientUserMessageIds":["a","a","b"]})).unwrap(),
-            Some(vec!["a".into(), "b".into()])
-        );
-        for invalid in [json!(null), json!([""]), json!([" "]), json!([1])] {
-            let error =
-                reconciliation_ids(&json!({"reconcileClientUserMessageIds":invalid})).unwrap_err();
-            assert_eq!(error.code, "bad_request");
-        }
-    }
-}
-
 fn page_link(
     link: &RuntimeTaskLink,
     thread: &Value,
@@ -274,4 +251,27 @@ fn overlay_message(
     projected.insert("content".to_owned(), json!(""));
     projected.insert("runtimeItems".to_owned(), Value::Array(selected));
     Ok(Some(Value::Object(projected)))
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn receipt_queries_preserve_absence_and_reject_invalid_identities() {
+        assert_eq!(reconciliation_ids(&json!({})).unwrap(), None);
+        assert_eq!(
+            reconciliation_ids(&json!({"reconcileClientUserMessageIds":[]})).unwrap(),
+            Some(vec![])
+        );
+        assert_eq!(
+            reconciliation_ids(&json!({"reconcileClientUserMessageIds":["a","a","b"]})).unwrap(),
+            Some(vec!["a".into(), "b".into()])
+        );
+        for invalid in [json!(null), json!([""]), json!([" "]), json!([1])] {
+            let error =
+                reconciliation_ids(&json!({"reconcileClientUserMessageIds":invalid})).unwrap_err();
+            assert_eq!(error.code, "bad_request");
+        }
+    }
 }
