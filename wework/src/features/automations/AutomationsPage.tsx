@@ -136,7 +136,7 @@ export function AutomationsPage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialAutomationLoadCompletedRef = useRef(false)
+  const initialSelectionHandledRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -175,8 +175,8 @@ export function AutomationsPage({
         return ownerRoleId === '@primary'
       })
       setAutomations(items)
-      const shouldSelectInitialAutomation = !initialAutomationLoadCompletedRef.current
-      initialAutomationLoadCompletedRef.current = true
+      const shouldSelectInitialAutomation = !initialSelectionHandledRef.current
+      initialSelectionHandledRef.current = true
       if (shouldSelectInitialAutomation && items[0]) {
         setSelectedAutomationId(items[0].id)
         setEditing(items[0])
@@ -290,6 +290,7 @@ export function AutomationsPage({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) =>
     requestLeave(() => {
+      initialSelectionHandledRef.current = true
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
         : localDevices.find(canUseForProjectCreation)
