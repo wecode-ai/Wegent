@@ -224,14 +224,17 @@ test.describe('Agent share scope', () => {
     try {
       const dialog = await openQuickCreateDialog(page)
       await dialog.getByTestId('team-display-name-input').fill(agentDisplayName)
-      // The dialog scroll container keeps re-laying out, so Playwright's
-      // stability check never settles for clicks inside it.
-      await dialog.getByTestId('capability-scope-team').click({ force: true })
+      // The dialog scroll container keeps re-laying out, so pointer clicks never
+      // settle; the native controls are keyboard activatable.
+      await dialog.getByTestId('capability-scope-team').focus()
+      await dialog.getByTestId('capability-scope-team').press('Enter')
 
       const groupOption = dialog.getByTestId(`capability-scope-group-${fixture.groupName}`)
       await expect(groupOption).toBeVisible({ timeout: 15000 })
-      await groupOption.click({ force: true })
-      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click({ force: true })
+      await groupOption.focus()
+      await groupOption.press('Space')
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).focus()
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).press('Enter')
       await expect(dialog).toBeHidden({ timeout: 30000 })
 
       await expect
@@ -245,7 +248,8 @@ test.describe('Agent share scope', () => {
 
       await page.reload()
       const reopened = await openQuickCreateDialog(page)
-      await reopened.getByTestId('capability-scope-team').click({ force: true })
+      await reopened.getByTestId('capability-scope-team').focus()
+      await reopened.getByTestId('capability-scope-team').press('Enter')
       await expect(reopened.getByTestId(`capability-scope-group-${fixture.groupName}`)).toBeVisible(
         { timeout: 15000 }
       )
@@ -267,12 +271,14 @@ test.describe('Agent share scope', () => {
     try {
       const dialog = await openQuickCreateDialog(page)
       await dialog.getByTestId('team-display-name-input').fill(agentDisplayName)
-      await dialog.getByTestId('capability-scope-team').click({ force: true })
+      await dialog.getByTestId('capability-scope-team').focus()
+      await dialog.getByTestId('capability-scope-team').press('Enter')
 
       await expect(dialog.getByTestId('capability-scope-groups')).toBeVisible({ timeout: 15000 })
       await expect(dialog.locator('[data-testid^="capability-scope-group-"]')).toHaveCount(0)
 
-      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click({ force: true })
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).focus()
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).press('Enter')
       await expect(
         page
           .locator('[role="status"], [data-sonner-toast]')
