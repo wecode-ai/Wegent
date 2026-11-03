@@ -8,7 +8,7 @@ import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.m
 // Reuse the real plugin/MCP fixture and isolated runtime; no external DingTalk account is needed.
 export function createDesktopScenario(options) {
   const base = createBridgeScenario(options)
-  const { resultDir, electronUserDataDirectory, uiTimeoutMs } = options
+  const { resultDir, electronUserDataDirectory, uiTimeoutMs, workbenchReadyTimeoutMs } = options
   const providerId = '@test/connection-source/records'
   let codexHome
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -34,15 +34,26 @@ export function createDesktopScenario(options) {
       await writeFile(join(resultDir, 'connection-adapter/package.json'), JSON.stringify(manifest))
     },
     async verify(control) {
+      // Both startup paths can write config and restart the shared app-server.
+      await control.command('ensureLocalModelCatalogReady', 'body', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await waitForBundledMarketplaceRegistration(codexHome)
+      await control.command('reconcileLocalPluginCatalog', 'body', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       const root = join(resultDir, 'connection-marketplace')
-      await codex(control, 'marketplace/add', { source: root })
-      await codex(control, 'plugin/install', {
+      const marketplace = await codex(control, 'marketplace/add', { source: root })
+      const installed = await codex(control, 'plugin/install', {
         pluginName: 'source',
         marketplacePath: join(root, '.agents/plugins/marketplace.json'),
       })
       const catalog = await rpc(control, 'runtime.connections.catalog', {})
       const provider = catalog.items.find(item => item.id === providerId)
+      await writeFile(
+        join(resultDir, 'stand-in-alternate-source-dependency-evidence.json'),
+        JSON.stringify({ marketplace, installed, provider }, null, 2)
+      )
       assert.equal(provider.availability.status, 'ready')
       assert.deepEqual(provider.dependencies[0].source, {
         marketplaceId: 'preferred-fixture',
