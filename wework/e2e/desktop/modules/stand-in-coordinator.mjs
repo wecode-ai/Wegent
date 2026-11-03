@@ -217,7 +217,8 @@ export function createStandInCoordinatorVerification({
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
-      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
+      await control.command('waitFor', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('waitFor', '[data-testid="stand-in-save"]')
       const previousWindowSize = JSON.parse(
         await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 960, height: 720 }),
@@ -231,6 +232,7 @@ export function createStandInCoordinatorVerification({
       )
       await captureScreenshot(control, '24c1-role-calendar-dark-compact.png')
       await control.command('click', '[data-testid="create-automation-button"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-save"]'), '0')
       await control.command('fill', '[data-testid="automation-name-input"]', {
         value: '角色的安排草稿',
       })
