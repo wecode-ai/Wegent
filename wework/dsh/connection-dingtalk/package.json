@@ -20,9 +20,15 @@
         "dingtalk": {
           "kind": "codexPlugin",
           "source": {
-            "marketplaceId": "wework",
-            "pluginId": "dingtalk@wework"
+            "marketplaceId": "wegent",
+            "pluginId": "dingtalk@wegent"
           },
+          "alternateSources": [
+            {
+              "marketplaceId": "wework",
+              "pluginId": "dingtalk@wework"
+            }
+          ],
           "version": "*"
         }
       },

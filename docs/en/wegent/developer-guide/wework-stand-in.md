@@ -58,6 +58,12 @@ Publish to project writes only the instruction or conclusion entered by the user
 
 The registered stand-in-profile CI group covers connection timing, durable intake, MCP dispatch, same-conversation follow-up, arrangements and project conversation/memory isolation. Only model services are replaced. Screenshots, logs and temporary verification files remain outside commits.
 
+## Connection plugin sources
+
+Connection dependencies declare exact marketplace and plugin IDs through `source` and optional `alternateSources`. Resolution reuses an installed source first, choosing declaration order when several sources are installed. Disabled or incompatible installations still require explicit action; they are never enabled, upgraded, or replaced automatically. Tool calls carry the selected source's actual ID and version, and the Executor verifies that the connection plugin declared that source.
+
+DingTalk supports both `dingtalk@wegent` and `dingtalk@wework`, preserving existing installations and account configuration without migration or reinstallation. Undeclared marketplaces do not participate in resolution.
+
 ## Model catalog and execution references
 
 Stand-ins and ordinary tasks share the model picker, classification, sorting, and option rules. Cloud models use their original `UnifiedModel` catalog objects directly, without a round trip through execution models or changes to catalog names, labels, or `config.ui`. Native Executor catalogs require only one display adaptation and reuse the common Codex catalog helpers for provider metadata.
