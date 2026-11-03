@@ -23,6 +23,7 @@ vi.mock('../platform/WorkspaceResourceConfiguration', () => ({
     const [selection, setSelection] = useState('')
     return (
       <div>
+        {props.headerActions}
         {props.groups.map(group => group.name).join(', ')}
         <input
           data-testid="editor-selection"
@@ -95,7 +96,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it.each(['success', 'groups', 'configuration'] as const)(
+it.each(['success', 'groups', 'configuration', 'partial'] as const)(
   'imports within the team page without resubmission after a refresh failure (%s)',
   async failure => {
     Object.defineProperties(HTMLDialogElement.prototype, {
@@ -116,7 +117,7 @@ it.each(['success', 'groups', 'configuration'] as const)(
     record.document.metadata.name = 'import-test'
     const configuration = record.document.spec.resources.collaboration
     delete configuration.project.taskAssignment
-    delete configuration.project.board
+    if (failure !== 'partial') delete configuration.project.board
     configuration.groups = [
       {
         ...configuration.groups[0],
@@ -137,7 +138,10 @@ it.each(['success', 'groups', 'configuration'] as const)(
       if (groups.length > 1 && failure === 'configuration') {
         throw new Error('Configuration refresh failed')
       }
-      return { id: 'project-1', name: 'Delivery' } as CollaborationProject
+      return { id: 'project-1', name: 'Delivery', tags: [], version: 1 } as CollaborationProject
+    })
+    api.projects.update = vi.fn(async () => {
+      throw new Error('Board configuration failed')
     })
     vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => {
       if (groups.length > 1 && ++importedReads === 1 && failure === 'groups') {
@@ -161,10 +165,14 @@ it.each(['success', 'groups', 'configuration'] as const)(
     }
     await click('collaboration-project-settings-sharing')
     await click('project-template-import')
+    expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
     await click('template-details-import-test')
+    expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
     await click('template-use')
+    expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
     await click('template-bindings-apply')
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
     expect(view.props!.groups.map(group => group.name)).toEqual(
       failure === 'groups' ? ['Delivery'] : ['Delivery', 'Imported team']
     )
@@ -174,6 +182,16 @@ it.each(['success', 'groups', 'configuration'] as const)(
       ).toContain('Group refresh failed')
     } else {
       expect(container.textContent).toContain('Imported team')
+    }
+    if (failure === 'partial') {
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Groups were added')
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-apply"]')!
+          .disabled
+      ).toBe(true)
+      expect(container.querySelector('[data-testid="template-dialog-back"]')).toBeNull()
+      await click('collaboration-template-close')
+      await click('collaboration-project-settings-sharing')
     }
     expect(
       container.querySelector<HTMLButtonElement>('[data-testid="project-template-export"]')!

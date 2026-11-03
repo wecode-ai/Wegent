@@ -2617,6 +2617,15 @@
   line-height: 1.33;
 }
 
+.collaboration-group-heading-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
 .collaboration-resource-heading p,
 .collaboration-resource-dialog > p {
   margin: 0;

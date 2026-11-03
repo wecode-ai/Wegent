@@ -338,6 +338,7 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
+      await click('collaboration-template-close')
       const configured = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
         project => project.id === projectId
       )

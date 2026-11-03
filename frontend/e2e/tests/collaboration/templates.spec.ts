@@ -234,8 +234,24 @@ test('exports configuration from project settings without task content or member
       'page'
     )
     await expect(page.getByTestId('project-template-export')).toHaveCount(0)
+    const sharing = page.getByTestId('collaboration-project-settings-sharing')
+    const createGroup = page.getByTestId('collaboration-group-open-create')
+    await expect(sharing).toBeVisible()
+    await expect(createGroup).toBeVisible()
+    const sharingBounds = await sharing.boundingBox()
+    const createBounds = await createGroup.boundingBox()
+    expect(sharingBounds).not.toBeNull()
+    expect(createBounds).not.toBeNull()
+    expect(Math.abs(sharingBounds!.y - createBounds!.y)).toBeLessThan(2)
     await page.getByTestId('collaboration-project-settings-sharing').click()
+    const sharingDialog = page.getByTestId('collaboration-template-dialog')
+    await expect(sharingDialog).toHaveCount(1)
+    await expect(sharingDialog).toHaveAttribute('data-size', 'compact')
     await expect(page.getByTestId('project-template-export')).toBeEnabled()
+    const bounds = await sharingDialog.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.width).toBeLessThanOrEqual(420)
+    expect(bounds!.height).toBeLessThan(480)
     await page.screenshot({
       path: testInfo.outputPath('05-configuration-export.png'),
       fullPage: true,
@@ -254,6 +270,9 @@ test('exports configuration from project settings without task content or member
     expect(contents).not.toContain('PRIVATE_TASK_CONTENT_DO_NOT_EXPORT')
     expect(portable.spec.resources.collaboration.groups[0].roles[0]).not.toHaveProperty('id')
     expect(portable.metadata).toEqual({ name: expect.any(String), namespace: 'default' })
+    await page.getByTestId('collaboration-template-close').click()
+    await expect(sharingDialog).toHaveCount(0)
+    await expect(sharing).toBeFocused()
     await page.getByTestId('collaboration-tab-board').click()
     await expect(page.getByTestId('project-template-export')).toHaveCount(0)
     await expect(page.getByTestId('collaboration-board')).toContainText(

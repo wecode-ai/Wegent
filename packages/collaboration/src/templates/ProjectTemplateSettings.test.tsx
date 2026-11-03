@@ -24,6 +24,20 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value: function () {
+        this.open = true
+      },
+    },
+    close: {
+      configurable: true,
+      value: function () {
+        this.open = false
+      },
+    },
+  })
 })
 
 afterEach(async () => {
@@ -75,19 +89,20 @@ async function click(id: string) {
   await act(async () => button(id).click())
 }
 
-it('loads configuration only when expanded and reads a fresh snapshot when reopened', async () => {
+it('opens three actions in a compact dialog and loads a fresh snapshot on reopen', async () => {
   const api = createApi()
   await render(api)
   const toggle = button('collaboration-project-settings-sharing')
-  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(toggle.getAttribute('aria-haspopup')).toBe('dialog')
   expect(api.projects.get).not.toHaveBeenCalled()
   expect(api.projects.listCollaborationGroups).not.toHaveBeenCalled()
   expect(api.automations!.list).not.toHaveBeenCalled()
   expect(container.querySelector('[data-testid="project-template-settings"]')).toBeNull()
 
   await click('collaboration-project-settings-sharing')
-  expect(toggle.getAttribute('aria-expanded')).toBe('true')
-  expect(document.getElementById(toggle.getAttribute('aria-controls')!)?.hidden).toBe(false)
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('dialog')?.dataset.size).toBe('compact')
+  expect(container.querySelectorAll('.collaboration-sharing-action')).toHaveLength(3)
   expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(project.id)
   expect(api.projects.listCollaborationGroups).toHaveBeenCalledExactlyOnceWith(project.id)
   expect(button('project-template-import').disabled).toBe(false)
@@ -96,14 +111,14 @@ it('loads configuration only when expanded and reads a fresh snapshot when reope
   expect(api.members.list).not.toHaveBeenCalled()
   expect(api.agents.list).not.toHaveBeenCalled()
 
-  await click('collaboration-project-settings-sharing')
+  await click('collaboration-template-close')
   expect(container.querySelector('[data-testid="project-template-export"]')).toBeNull()
   await click('collaboration-project-settings-sharing')
   expect(api.projects.get).toHaveBeenCalledTimes(2)
   expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(2)
 })
 
-it('can collapse a pending read and ignores its result after reopening', async () => {
+it('can close a pending read and ignores its result after reopening', async () => {
   const api = createApi()
   let reject!: (reason: Error) => void
   vi.mocked(api.projects.get).mockImplementationOnce(
@@ -115,12 +130,75 @@ it('can collapse a pending read and ignores its result after reopening', async (
   await render(api)
   await click('collaboration-project-settings-sharing')
   expect(button('project-template-export').disabled).toBe(true)
-  await click('collaboration-project-settings-sharing')
+  await click('collaboration-template-close')
   await click('collaboration-project-settings-sharing')
   expect(button('project-template-export').disabled).toBe(false)
   await act(async () => reject(new Error('Obsolete request')))
   expect(container.querySelector('[role="alert"]')).toBeNull()
   expect(button('project-template-export').disabled).toBe(false)
+})
+
+it('replaces the action menu for save, returns without stacking, and restores trigger focus on Escape', async () => {
+  await render(createApi())
+  const trigger = button('collaboration-project-settings-sharing')
+  trigger.focus()
+  await click('collaboration-project-settings-sharing')
+  await click('project-template-save')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="project-template-settings"]')).toBeNull()
+  expect(button('template-save-confirm').disabled).toBe(false)
+  await click('template-dialog-back')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(button('project-template-save').disabled).toBe(false)
+  await click('project-template-save')
+  await act(async () =>
+    container.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true }))
+  )
+  expect(container.querySelector('dialog')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+})
+
+it('uses one dialog through template browsing, preview and YAML import, with a back action per step', async () => {
+  const api = createApi()
+  await render(api)
+  await click('collaboration-project-settings-sharing')
+  await click('project-template-import')
+  expect(api.members.list).toHaveBeenCalledOnce()
+  expect(api.agents.list).toHaveBeenCalledOnce()
+  const singleDialog = () => expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  singleDialog()
+  await click('template-details-product-lifecycle')
+  singleDialog()
+  expect(container.querySelector('dialog h2')).toBe(document.activeElement)
+  expect(container.querySelector('[data-testid="collaboration-template-page"]')).toBeNull()
+  await click('template-dialog-back')
+  await click('template-import-open')
+  singleDialog()
+  expect(container.querySelector('[data-testid="template-import-file"]')).not.toBeNull()
+  await click('template-dialog-back')
+  singleDialog()
+  expect(container.querySelector('[data-testid="collaboration-template-page"]')).not.toBeNull()
+  await click('template-dialog-back')
+  singleDialog()
+  expect(button('project-template-import').disabled).toBe(false)
+})
+
+it('does not enter the picker after closing a pending participant read', async () => {
+  const api = createApi()
+  let resolve!: (members: []) => void
+  vi.mocked(api.members.list).mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  await render(api)
+  await click('collaboration-project-settings-sharing')
+  await click('project-template-import')
+  expect(button('project-template-import').disabled).toBe(true)
+  await click('collaboration-template-close')
+  await act(async () => resolve([]))
+  expect(container.querySelector('dialog')).toBeNull()
 })
 
 it('keeps configuration errors local and recovers through the existing retry action', async () => {

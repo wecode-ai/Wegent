@@ -356,6 +356,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await fillRoles(control, 3)
       await capture(control, '08-import-bindings')
       await applyBindings(control)
+      await click(control, 'collaboration-template-close')
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await wait(control, 'collaboration-project-groups-page', '产品全流程小组')

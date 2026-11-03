@@ -265,6 +265,23 @@ function ScopedProjectCollaborationGroups({
         includeCurrentUserByDefault={false}
         canManage={canManage}
         agentActions={agentActions}
+        headerActions={
+          <ProjectTemplateSettings
+            api={api}
+            projectId={projectId}
+            locale={locale}
+            currentUserId={currentUserId}
+            canManage={canManage}
+            onImported={async () => {
+              await reload().catch(() => {
+                // Reload owns the error; a successful import must not be submitted again.
+              });
+            }}
+            onChange={(project) => {
+              if (active.current) onProjectChanged?.(project);
+            }}
+          />
+        }
         commands={{
           async createTemplateGroups(document, drafts) {
             requireActive();
@@ -354,21 +371,6 @@ function ScopedProjectCollaborationGroups({
             await api.projects.removeCollaborationGroup(projectId, groupId);
             await reload();
           },
-        }}
-      />
-      <ProjectTemplateSettings
-        api={api}
-        projectId={projectId}
-        locale={locale}
-        currentUserId={currentUserId}
-        canManage={canManage}
-        onImported={async () => {
-          await reload().catch(() => {
-            // Reload owns the error; a successful import must not be submitted again.
-          });
-        }}
-        onChange={(project) => {
-          if (active.current) onProjectChanged?.(project);
         }}
       />
     </>

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate, TemplateRecord } from './types'
 import type { CollaborationTemplateStore } from './store'
@@ -14,11 +14,13 @@ export function TemplateSaveDialog({
   store,
   locale,
   onClose,
+  dialogOptions,
 }: {
   document: CollaborationTemplate
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   onClose(): void
+  dialogOptions?: Pick<ComponentProps<typeof TemplateDialog>, 'size' | 'back'>
 }) {
   const m = templateMessages[locale]
   const [name, setName] = useState(document.spec.displayName)
@@ -30,6 +32,7 @@ export function TemplateSaveDialog({
   const [error, setError] = useState<string | null>(null)
   return (
     <TemplateDialog
+      {...dialogOptions}
       title={saved ? (publishing ? m.publishTitle : m.saved) : m.saveTitle}
       description={publishing ? m.publishHint : m.saveHint}
       closeLabel={m.close}

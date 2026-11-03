@@ -173,6 +173,25 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     ).not.toBeNull();
   });
 
+  it('places project actions next to Create group in the collection heading', async () => {
+    await act(async () => root.render(
+      <WorkspaceCollaborationGroupsConfiguration
+        groups={[]}
+        members={[]}
+        agents={[]}
+        locale="en"
+        commands={commands}
+        canManage
+        headerActions={<button data-testid="project-sharing-action">Share configuration</button>}
+      />
+    ))
+    const action = byTestId('project-sharing-action')
+    const create = byTestId('collaboration-group-open-create')
+    expect(action.parentElement).toBe(create.parentElement)
+    expect(action.nextElementSibling).toBe(create)
+    expect(action.closest('.collaboration-resource-heading')).not.toBeNull()
+  })
+
   it("adds the current user by default and labels them as me", async () => {
     commands.createCollaborationGroup = vi.fn(async () => group);
     await act(async () =>

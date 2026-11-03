@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { BookmarkPlus, ChevronRight, Download, Share2, Upload } from 'lucide-react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
@@ -15,6 +15,7 @@ import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBind
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 import { applyProjectTemplate } from './projectConfiguration'
+import { PartialTemplateApplyError } from './apply'
 
 interface ProjectTemplateSettingsProps {
   api: SharedWorkspaceApi
@@ -28,26 +29,29 @@ interface ProjectTemplateSettingsProps {
 
 export function ProjectTemplateSettings(props: ProjectTemplateSettingsProps) {
   const store = useCollaborationTemplateStore()
-  const [expanded, setExpanded] = useState(false)
-  const contentId = useId()
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (wasOpen.current && !open) trigger.current?.focus()
+    wasOpen.current = open
+  }, [open])
   if (!store) return null
   return (
-    <section className="mt-6 border-t border-border pt-4">
+    <>
       <button
         type="button"
-        className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-8"
+        ref={trigger}
+        className="collaboration-secondary-button collaboration-project-sharing-trigger"
         data-testid="collaboration-project-settings-sharing"
-        aria-expanded={expanded}
-        aria-controls={contentId}
-        onClick={() => setExpanded(value => !value)}
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
       >
-        <ChevronRight className={`h-4 w-4 ${expanded ? 'rotate-90' : ''}`} aria-hidden="true" />
+        <Share2 aria-hidden="true" />
         {templateMessages[props.locale].configuration}
       </button>
-      <div id={contentId} hidden={!expanded}>
-        {expanded && <ProjectTemplateSettingsContent {...props} />}
-      </div>
-    </section>
+      {open && <ProjectTemplateSettingsContent {...props} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 
@@ -59,7 +63,8 @@ function ProjectTemplateSettingsContent({
   canManage,
   onImported,
   onChange,
-}: ProjectTemplateSettingsProps) {
+  onClose,
+}: ProjectTemplateSettingsProps & { onClose(): void }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
   const [groups, setGroups] = useState<CollaborationGroup[]>([])
@@ -68,10 +73,10 @@ function ProjectTemplateSettingsContent({
   )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [choosing, setChoosing] = useState(false)
+  const [step, setStep] = useState<
+    { type: 'actions' | 'browse' } | { type: 'bind' | 'save'; document: CollaborationTemplate }
+  >({ type: 'actions' })
   const [candidates, setCandidates] = useState<TemplateParticipant[]>([])
-  const [selected, setSelected] = useState<CollaborationTemplate | null>(null)
-  const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
   const scope = useRef(0)
   const reload = useCallback(async () => {
     const generation = ++scope.current
@@ -114,24 +119,86 @@ function ProjectTemplateSettingsContent({
       locale
     )
   }
+  const back = { label: m.back, onClick: () => setStep({ type: 'actions' }) }
+  if (step.type === 'browse') {
+    return (
+      <CollaborationTemplatePage
+        store={store}
+        locale={locale}
+        dialog={{ onClose, back }}
+        onUse={record => setStep({ type: 'bind', document: record.document })}
+      />
+    )
+  }
+  if (step.type === 'bind') {
+    return (
+      <TemplateBindingsDialog
+        document={step.document}
+        locale={locale}
+        candidates={candidates}
+        currentUserId={currentUserId}
+        existingNames={groups.map(group => group.name)}
+        dialogOptions={{
+          size: 'standard',
+          back: { label: m.back, onClick: () => setStep({ type: 'browse' }) },
+        }}
+        onClose={onClose}
+        onApplied={() => setStep({ type: 'actions' })}
+        onApply={async (drafts, document) => {
+          try {
+            await applyProjectTemplate(api, projectId, document, drafts, locale, m.partial)
+          } catch (error) {
+            // Partial imports have persisted groups even though configuration failed.
+            if (error instanceof PartialTemplateApplyError) await onImported?.()
+            throw error
+          }
+          await onImported?.()
+          const latest = await reload()
+          if (latest) await onChange?.(latest)
+        }}
+      />
+    )
+  }
+  if (step.type === 'save') {
+    return (
+      <TemplateSaveDialog
+        document={step.document}
+        store={store}
+        locale={locale}
+        dialogOptions={{ size: 'standard', back }}
+        onClose={onClose}
+      />
+    )
+  }
   return (
-    <section className="collaboration-template-settings" data-testid="project-template-settings">
-      <p>{m.configurationHint}</p>
-      {error && (
-        <p role="alert">
-          {error}{' '}
-          <button type="button" data-testid="project-template-retry" onClick={() => void reload()}>
-            {m.retry}
-          </button>
-        </p>
-      )}
-      {canManage && api.projects.createCollaborationGroup && (
-        <section>
-          <h3>{m.importProject}</h3>
-          <p>{m.importProjectHint}</p>
+    <TemplateDialog
+      title={m.configuration}
+      description={m.configurationHint}
+      closeLabel={m.close}
+      size="compact"
+      onClose={onClose}
+    >
+      <div
+        className="collaboration-sharing-actions"
+        data-testid="project-template-settings"
+        aria-busy={loading}
+      >
+        {error && (
+          <p role="alert" className="collaboration-template-error">
+            {error}{' '}
+            <button
+              type="button"
+              data-testid="project-template-retry"
+              onClick={() => void reload()}
+            >
+              {m.retry}
+            </button>
+          </p>
+        )}
+        {canManage && api.projects.createCollaborationGroup && (
           <button
             type="button"
-            className="collaboration-template-choice"
+            className="collaboration-sharing-action"
             data-testid="project-template-import"
             disabled={loading || !!error}
             onClick={async () => {
@@ -159,7 +226,7 @@ function ProjectTemplateSettingsContent({
                     responsibility: '',
                   })),
                 ])
-                setChoosing(true)
+                setStep({ type: 'browse' })
               } catch {
                 if (scope.current === generation) setError(m.failed)
               } finally {
@@ -167,29 +234,31 @@ function ProjectTemplateSettingsContent({
               }
             }}
           >
-            {m.importProject}
+            <Upload aria-hidden="true" />
+            <span>
+              <strong>{m.importProject}</strong>
+              <small>{m.sharingImportHint}</small>
+            </span>
+            <ChevronRight aria-hidden="true" />
           </button>
-        </section>
-      )}
-      <section>
-        <h3>{m.saveTitle}</h3>
-        <p>{m.saveHint}</p>
+        )}
         <button
           type="button"
-          className="collaboration-template-choice"
+          className="collaboration-sharing-action"
           data-testid="project-template-save"
           disabled={loading || !!error}
-          onClick={() => setSaving(snapshot())}
+          onClick={() => setStep({ type: 'save', document: snapshot() })}
         >
-          {m.saveTitle}
+          <BookmarkPlus aria-hidden="true" />
+          <span>
+            <strong>{m.saveTitle}</strong>
+            <small>{m.saveHint}</small>
+          </span>
+          <ChevronRight aria-hidden="true" />
         </button>
-      </section>
-      <section>
-        <h3>{m.export}</h3>
-        <p>{m.exportHint}</p>
         <button
           type="button"
-          className="collaboration-template-choice"
+          className="collaboration-sharing-action"
           data-testid="project-template-export"
           disabled={loading || !!error}
           onClick={() => {
@@ -205,52 +274,19 @@ function ProjectTemplateSettingsContent({
             window.setTimeout(() => URL.revokeObjectURL(url), 1000)
           }}
         >
-          {m.export}
+          <Download aria-hidden="true" />
+          <span>
+            <strong>{m.export}</strong>
+            <small>{m.sharingExportHint}</small>
+          </span>
+          <ChevronRight aria-hidden="true" />
         </button>
-      </section>
-      {choosing && (
-        <TemplateDialog
-          title={m.importTitle}
-          closeLabel={m.close}
-          onClose={() => setChoosing(false)}
-        >
-          <CollaborationTemplatePage
-            store={store}
-            locale={locale}
-            onUse={record => {
-              setSelected(record.document)
-              setChoosing(false)
-            }}
-          />
-        </TemplateDialog>
-      )}
-      {selected && (
-        <TemplateBindingsDialog
-          document={selected}
-          locale={locale}
-          candidates={candidates}
-          currentUserId={currentUserId}
-          existingNames={groups.map(group => group.name)}
-          onClose={() => {
-            setSelected(null)
-            void reload()
-          }}
-          onApply={async (drafts, document) => {
-            await applyProjectTemplate(api, projectId, document, drafts, locale, m.partial)
-            await onImported?.()
-            const latest = await reload()
-            if (latest) await onChange?.(latest)
-          }}
-        />
-      )}
-      {saving && (
-        <TemplateSaveDialog
-          document={saving}
-          store={store}
-          locale={locale}
-          onClose={() => setSaving(null)}
-        />
-      )}
-    </section>
+        {loading && (
+          <p role="status" className="collaboration-template-muted">
+            {m.loading}
+          </p>
+        )}
+      </div>
+    </TemplateDialog>
   )
 }
