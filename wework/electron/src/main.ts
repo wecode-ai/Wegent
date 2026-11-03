@@ -2124,9 +2124,13 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
-  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
-    desktopHostEvents.publish('browser.event', { ...event })
-  })
+  embeddedBrowser = new EmbeddedBrowserManager(
+    app.getPath('userData'),
+    event => {
+      desktopHostEvents.publish('browser.event', { ...event })
+    },
+    openSchemeInMainWindow
+  )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
     publish: state => {
