@@ -41,6 +41,7 @@ test('captures post-failure UI and workbench state with metadata', async () => {
 
     const captured = await captureFailureFollowup(control, resultDir, 1)
     assert.equal(captured.delayMs, 1)
+    assert.equal(captured.budgetMs, 10_000)
     assert.equal(captured.uiSnapshot.testIds.length, 1)
     assert.equal(captured.workbenchDebug.workbench.isBootstrapping, false)
     assert.deepEqual(
@@ -51,6 +52,27 @@ test('captures post-failure UI and workbench state with metadata', async () => {
     assert.equal(stored.delayMs, 1)
     assert.ok(stored.capturedAt)
     assert.deepEqual(stored.uiSnapshot, captured.uiSnapshot)
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
+
+test('a hanging control client cannot extend the follow-up past its overall deadline', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  try {
+    const control = {
+      command: () => new Promise(() => {}),
+    }
+    const startedAt = Date.now()
+    await assert.rejects(
+      captureFailureFollowup(control, resultDir, 1),
+      /exceeded its overall deadline/
+    )
+    const elapsed = Date.now() - startedAt
+    assert.ok(
+      elapsed < 12_000,
+      `The follow-up must stay bounded by its deadline, took ${elapsed}ms`
+    )
   } finally {
     await rm(resultDir, { recursive: true, force: true })
   }
