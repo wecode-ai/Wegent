@@ -1874,6 +1874,9 @@ where
                 if self.store.shared_packages {
                     // Retained native caches remain ours after the active install is removed.
                     shared_packages::remember_plugin_runtime_owner(manifest, &key, &plugin);
+                    runtime_recovery::legacy_sources::remember_legacy_plugin_source(
+                        manifest, &key, &plugin,
+                    );
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }

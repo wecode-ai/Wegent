@@ -126,6 +126,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-legacy-upgrade',
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',

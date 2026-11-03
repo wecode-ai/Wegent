@@ -243,26 +243,13 @@ export async function verifyStartupSplashProgress({
     snapshot =>
       snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
   )
-  const observationTiming = snapshot => ({
-    stage: snapshot.progress?.stage.id,
-    step: snapshot.stepCount,
-    startedAt: snapshot.progress?.startedAt,
-    capturedAt: snapshot.capturedAt,
-    slowHidden: snapshot.slowHidden,
-    timeoutHidden: snapshot.timeoutHidden,
-  })
-  const timingEvidence = {
-    slow: observationTiming(slow),
-    timeout: observationTiming(timeoutObservation),
-    observations: timeout.observations.map(observationTiming),
-  }
   await writeFile(
-    join(root, 'timeout-observations.json'),
-    `${JSON.stringify(timingEvidence, null, 2)}\n`
+    join(resultDir, 'startup-timer-observations.json'),
+    `${JSON.stringify({ slow, timeout }, null, 2)}\n`
   )
   assert.ok(
     slow.capturedAt < timeoutObservation.capturedAt,
-    `Startup slow/timeout observations are out of order: ${JSON.stringify(timingEvidence)}`
+    `Startup timer observation order: ${JSON.stringify({ slow, timeoutObservation })}`
   )
   assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)
   assert.equal(timeout.recoveryHidden, true)

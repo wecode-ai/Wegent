@@ -218,6 +218,7 @@ cloud_segments=(
   plugin-composer-long-list
   plugin-collaboration-composer-isolation
   plugin-runtime-path-recovery
+  plugin-legacy-upgrade
   plugin-runtime-route-refresh
   plugin-background-sync-isolation
   plugin-periodic-reconcile
@@ -229,7 +230,7 @@ cloud_segments=(
 # Keep account auth separate from the plugin sync and 24-plugin composer fixtures.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
+  plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-legacy-upgrade,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
   core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets
   plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination
   model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
@@ -1659,6 +1660,13 @@ classify_path() {
   esac
 
   case "$path" in
+    executor/src/local/capabilities/runtime_legacy_sources* | \
+      wework/e2e/desktop/scenarios/plugin-legacy-upgrade.scenario.mjs | \
+      wework/e2e/desktop/modules/legacy-plugin-executor.mjs)
+      select_target "cloud:plugin-legacy-upgrade"
+      select_target "cloud:plugin-runtime-path-recovery"
+      return
+      ;;
     packages/chat-core/test-fixtures/conversation-search-contract.json)
       select_target "core:running-conversation-history"
       select_target "cloud:conversation-state"

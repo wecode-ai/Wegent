@@ -80,6 +80,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-collaboration-composer-isolation':
     './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
+  'plugin-legacy-upgrade': './scenarios/plugin-legacy-upgrade.scenario.mjs',
   'plugin-runtime-route-refresh': './scenarios/plugin-runtime-route-refresh.scenario.mjs',
   'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
   'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
@@ -287,6 +288,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-legacy-upgrade',
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',
