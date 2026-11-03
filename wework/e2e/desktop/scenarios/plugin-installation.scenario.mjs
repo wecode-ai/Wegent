@@ -30,7 +30,9 @@ export function createDesktopScenario(options) {
       const fixture = { ...release, slug }
       try {
         await openPlugin(control, fixture)
-        await control.command('click', testId('plugins-refresh-button'))
+        await control.command('clickWhenEnabled', testId('plugins-refresh-button'), {
+          timeoutMs: options.workbenchReadyTimeoutMs,
+        })
         const install = testId(`plugin-marketplace-install-${release.pluginId}`)
         await control.command('waitFor', install, {
           timeoutMs: options.workbenchReadyTimeoutMs,

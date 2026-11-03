@@ -28,27 +28,54 @@ test("build-only inputs cannot publish or start the serial upgrade verifier", ()
   assert.match(rejection.run, /exit 1/);
 });
 
-test("Intel ticket delivery uses the provider-confirmed TCP transport fix without bypassing notarization", () => {
+test("Intel ticket delivery uses TCP before signing while preserving every notarization gate", () => {
   const steps = jobs.build.steps;
-  const transport = steps.findIndex(
+  const transport = steps.find(
     (step) =>
       step.name === "Use TCP for Apple ticket delivery on Intel runners",
   );
-  const build = steps.findIndex(
-    (step) => step.name === "Build signed Electron release",
-  );
-  assert.ok(transport >= 0 && transport < build);
   assert.equal(
-    steps[transport].if,
+    transport.if,
     "matrix.platform == 'macos' && matrix.arch == 'x64'",
   );
+  assert.match(transport.run, /set -euo pipefail/);
   assert.match(
-    steps[transport].run,
+    transport.run,
     /block return out quick proto udp from any to any port 443/,
   );
+  assert.match(transport.run, /sudo pfctl -f -/);
+  assert.match(transport.run, /sudo pfctl -E/);
+  assert.ok(
+    steps.indexOf(transport) <
+      steps.findIndex((step) => step.name === "Build signed Electron release"),
+  );
+  assert.doesNotMatch(
+    transport.run,
+    /stapler|retry|attempt|timeout|notarytool/,
+  );
   assert.equal(
-    steps[build].env.WEWORK_CUSTOM_MACOS_NOTARIZATION,
+    steps.find((step) => step.name === "Build signed Electron release").env
+      .WEWORK_CUSTOM_MACOS_NOTARIZATION,
     "${{ matrix.platform == 'macos' && 'true' || '' }}",
+  );
+});
+
+test("install diagnostics preserve the failing install gate on every platform", () => {
+  const install = jobs.build.steps.find(
+    (step) => step.id === "workspace-install",
+  );
+  assert.equal(install.shell, "bash");
+  assert.equal(install["continue-on-error"], undefined);
+  assert.match(
+    install.run,
+    /pnpm install --frozen-lockfile --reporter=ndjson \| node/,
+  );
+  const diagnostics = jobs.build.steps.find(
+    (step) => step.name === "Upload workspace install diagnostics",
+  );
+  assert.equal(
+    diagnostics.if,
+    "always() && (steps.workspace-install.outcome == 'success' || steps.workspace-install.outcome == 'failure')",
   );
 });
 
@@ -187,8 +214,38 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   );
   assert.equal(
     jobs["prepare-release"].if,
-    "inputs.verification_run_id == '' && inputs.verification_checkpoint == 'all' && inputs.verification_release_tag == ''",
+    "inputs.verification_run_id == '' && (inputs.verification_checkpoint == 'all' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && inputs.verification_release_tag == ''",
+  );
+  const source = verification.steps.find(
+    (step) => step.name === "Download immutable diagnostic source",
+  );
+  assert.equal(
+    source.if,
+    "needs.prepare-upgrade-inputs.outputs.source_run_id != ''",
+  );
+  assert.equal(
+    source.with["run-id"],
+    "${{ needs.prepare-upgrade-inputs.outputs.source_run_id }}",
+  );
+  assert.match(source.with.name, /outputs.source_version/);
+  const verify = verification.steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.match(
+    verify.env.WEWORK_UPGRADE_SOURCE_ASSETS,
+    /outputs.source_run_id != ''/,
   );
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
+  assert.match(
+    workflow.concurrency.group,
+    /verification_checkpoint == 'app-update-refresh'.*!inputs.publish_release/,
+  );
+  assert.ok(
+    workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
+      "app-update-refresh",
+    ),
+  );
   assert.match(verification.if, /!cancelled\(\)/);
 });

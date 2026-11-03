@@ -11,6 +11,7 @@ import {
   mirrorMacosUpgradePolicy,
   verifiedUpgradeEdge,
   mergeUpgradePolicy,
+  releaseUpgradeChannels,
   releaseUpgradePlan,
   releaseVerificationChannels,
   verifyReleaseUpgradePlan,
@@ -48,6 +49,26 @@ test('channel shards preserve target publication boundaries', () => {
   assert.throws(() => releaseVerificationChannels('beta', 'stable'), /outside/)
   assert.throws(() => releaseVerificationChannels('stable', 'nightly'), /outside/)
   assert.throws(() => releaseVerificationChannels('nightly'), /Invalid/)
+  assert.deepEqual(releaseVerificationChannels('stable', '', '0.6.4-beta.5'), ['beta'])
+  assert.deepEqual(releaseVerificationChannels('stable', 'beta', '0.6.4-beta.5'), ['beta'])
+  assert.throws(() => releaseVerificationChannels('stable', 'stable', '0.6.4-beta.5'), /outside/)
+})
+
+test('a fixed Beta source upgrading to stable uses a catalog that permits Beta history', () => {
+  const source = '0.6.4-beta.5'
+  const channels = releaseUpgradeChannels('stable', source)
+  assert.equal(channels.length, 1)
+  const catalog = publishedCatalog(channels[0], [source, '0.6.4'])
+  assert.doesNotThrow(() => planUpgrade(catalog, source))
+  assert.deepEqual(channels, ['beta'])
+})
+
+test('ordinary release verification retains both channels and stable-source diagnostics stay scoped', () => {
+  assert.deepEqual(releaseUpgradeChannels('stable'), ['stable', 'beta'])
+  assert.deepEqual(releaseUpgradeChannels('beta'), ['beta'])
+  assert.deepEqual(releaseUpgradeChannels('stable', '0.6.3'), ['stable'])
+  assert.deepEqual(releaseUpgradeChannels('beta', '0.6.3'), ['beta'])
+  assert.deepEqual(releaseUpgradeChannels('beta', '0.6.3-beta.1'), ['beta'])
 })
 
 test('release sources are automatic even when only the Beta catalog has history', () => {

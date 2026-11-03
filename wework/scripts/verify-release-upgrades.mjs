@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   downloadPublishedDesktopArchive,
   downloadPublishedDesktopRelease,
+  readPrebuiltDesktopRelease,
 } from './lib/published-desktop-release.mjs'
 import {
   mergeUpgradePolicy,
@@ -18,7 +19,7 @@ import {
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
-  UPGRADE_PACKAGE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   UPGRADE_SUITE_VERSION,
 } from '../e2e/desktop/upgrade-suite.mjs'
 
@@ -28,10 +29,6 @@ if (!assetsDirectory || !platform || !arch || !channel || !repository || !releas
   throw new Error('Expected assets, platform, architecture, channel, repository, and release tag')
 if (!['macos', 'windows'].includes(platform))
   throw new Error('Upgrade verification requires macOS or Windows')
-const releaseChannels = releaseVerificationChannels(
-  channel,
-  process.env.WEWORK_UPGRADE_VERIFY_CHANNEL || ''
-)
 const verificationStarted = performance.now()
 const publishedTarget = process.env.WEWORK_UPGRADE_PUBLISHED_TARGET_TAG || ''
 if (publishedTarget && publishedTarget !== releaseTag)
@@ -48,8 +45,21 @@ if (publishedTarget)
     directory: assets,
   })
 const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
-if (diagnosticCheckpoint && !UPGRADE_PACKAGE_CHECKPOINTS.includes(diagnosticCheckpoint))
+if (diagnosticCheckpoint && !UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(diagnosticCheckpoint))
   throw new Error('Invalid upgrade diagnostic checkpoint')
+const sourceAssets = process.env.WEWORK_UPGRADE_SOURCE_ASSETS || ''
+const sourceVersion = process.env.WEWORK_UPGRADE_SOURCE_VERSION || ''
+if (
+  Boolean(sourceAssets) !== Boolean(sourceVersion) ||
+  (sourceAssets && diagnosticCheckpoint !== 'app-update-refresh') ||
+  (diagnosticCheckpoint === 'app-update-refresh' && !sourceAssets)
+)
+  throw new Error('The refresh diagnostic requires immutable source artifacts and their version')
+const releaseChannels = releaseVerificationChannels(
+  channel,
+  process.env.WEWORK_UPGRADE_VERIFY_CHANNEL || '',
+  sourceVersion
+)
 const diagnostics = resolve(
   process.env.WEWORK_UPGRADE_DIAGNOSTICS_DIR || join(root, 'test-results', 'release-upgrades')
 )
@@ -115,9 +125,13 @@ async function verifyChannel(catalogs, targetChannel) {
   await saveReport()
   try {
     if (diagnosticCheckpoint) {
-      if (!plan?.previous) throw new Error('Diagnostic replay requires a previous release')
+      if (!sourceAssets && !plan?.previous)
+        throw new Error('Diagnostic replay requires a previous release')
       report.checkpoint = diagnosticCheckpoint
-      const passed = await verifySource(plan.previous, targetChannel)
+      const source = sourceAssets ? { version: sourceVersion } : plan.previous
+      report.previousVersion = source.version
+      const passed = await verifySource(source, targetChannel)
+      report.attempts.push({ version: source.version, status: passed ? 'passed' : 'failed' })
       report.status = passed ? 'diagnostic-passed' : 'diagnostic-failed'
       if (!passed) throw new Error('Upgrade diagnostic checkpoint failed')
       return
@@ -168,15 +182,23 @@ async function verifyChannel(catalogs, targetChannel) {
 }
 
 async function downloadSource(source, targetChannel) {
-  const downloaded = await downloadPublishedDesktopRelease({
-    repository,
-    version: source.version,
-    platform,
-    arch,
-    directory: join(temporary, `${targetChannel}-${source.version}`),
-    expected: source,
-  })
-  return { ...downloaded, runtimeCache: join(temporary, 'installed-runtimes', source.sha256) }
+  const downloaded = sourceAssets
+    ? await readPrebuiltDesktopRelease({
+        directory: resolve(sourceAssets),
+        version: source.version,
+        platform,
+        arch,
+        installation: join(temporary, `${targetChannel}-${source.version}`, 'source'),
+      })
+    : await downloadPublishedDesktopRelease({
+        repository,
+        version: source.version,
+        platform,
+        arch,
+        directory: join(temporary, `${targetChannel}-${source.version}`),
+        expected: source,
+      })
+  return { ...downloaded, runtimeCache: join(temporary, 'installed-runtimes', downloaded.sha256) }
 }
 
 async function verifySource(source, targetChannel, previous) {

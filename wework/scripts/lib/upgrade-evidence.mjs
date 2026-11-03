@@ -4,9 +4,9 @@ import {
   validateUpgradeCatalog,
 } from '../../electron/src/runtime/upgrade-policy.mjs'
 
-export function releaseVerificationChannels(channel, selected = '') {
+export function releaseVerificationChannels(channel, selected = '', sourceVersion = '') {
   if (!['stable', 'beta'].includes(channel)) throw new Error('Invalid release channel')
-  const channels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
+  const channels = releaseUpgradeChannels(channel, sourceVersion)
   if (selected && !channels.includes(selected))
     throw new Error('Verification channel is outside the target release channels')
   return selected ? [selected] : channels
@@ -75,6 +75,13 @@ export function upgradeSource(catalogs, version) {
   if (candidates.some(release => release.sha256 !== candidates[0].sha256))
     throw new Error('A published release package is immutable across channels')
   return candidates[0]
+}
+
+/** Select catalog channels independently of the target package's release label. */
+export function releaseUpgradeChannels(targetChannel, sourceVersion) {
+  if (sourceVersion?.includes('-beta.')) return ['beta']
+  if (sourceVersion) return [targetChannel]
+  return targetChannel === 'stable' ? ['stable', 'beta'] : ['beta']
 }
 
 /** Select candidates automatically; only real-package E2E may authorize their edges. */

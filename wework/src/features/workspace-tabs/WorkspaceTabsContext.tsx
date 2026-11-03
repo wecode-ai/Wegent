@@ -44,6 +44,7 @@ import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
 import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
+import { acceptWorkspaceTabTransfer } from './workspaceTabTransfer'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -417,7 +418,10 @@ export function WorkspaceTabsProvider({
         }
         // An expired request must not move a tab whose source is still open.
         if (!localStorage.getItem(key)) return
-        flushSync(() => dispatch({ type: 'receive', tab: receivedTab }))
+        flushSync(() => {
+          dispatch({ type: 'receive', tab: receivedTab })
+          acceptWorkspaceTabTransfer(receivedTab.id)
+        })
         navigateTo(workspaceTabRoute(receivedTab))
         localStorage.removeItem(key)
       })().catch(error => {
