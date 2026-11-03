@@ -155,6 +155,7 @@
         "core:collaboration-remote-group-planning-details",
         "core:collaboration-runtime-reconciliation",
         "core:collaboration-shared-core",
+        "core:collaboration-template-agents",
         "core:collaboration-template-lifecycle",
         "core:collaboration-templates",
         "core:collaboration-worktree-policy",
