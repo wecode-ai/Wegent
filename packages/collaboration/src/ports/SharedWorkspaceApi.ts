@@ -595,6 +595,7 @@ export interface SharedCollaborationWorkspacesApi {
   createTemplateAgent?(
     workspaceId: string,
     agent: import("../templates/types").TemplateAgent,
+    routing: import("../templates/types").TemplateAgentRouting,
   ): Promise<WorkspaceProjectAgent>;
   listAgents(
     workspaceId: string,

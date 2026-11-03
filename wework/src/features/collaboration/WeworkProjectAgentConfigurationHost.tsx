@@ -1,4 +1,4 @@
-import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
+import { runnerModelIdentity, type ProjectAgentConfigurationHost } from '@wegent/collaboration'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
@@ -24,11 +24,42 @@ export function createWeworkProjectAgentConfigurationHost(
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
+    ...(localAgentApi
+      ? {
+          async resolveTemplateAgentRouting(runtime, location, projectId) {
+            const environments = await localAgentApi.listRunnerEnvironments(
+              location === 'local' ? projectId : undefined
+            )
+            if (environments.length !== 1) throw new Error('template_model_default_unavailable')
+            const current = environments[0]
+            const defaults = current.models.filter(
+              model => model.runtime === runtime && model.is_default
+            )
+            if (defaults.length !== 1) throw new Error('template_model_default_unavailable')
+            let environmentId = current.id
+            if (location === 'cloud') {
+              if (!agentResourceApi) throw new Error('template_environment_unavailable')
+              const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
+                environment =>
+                  environment.device_key === current.device_key &&
+                  (!projectId || environment.project_authorized)
+              )
+              if (authorized.length !== 1) throw new Error('template_environment_unavailable')
+              environmentId = authorized[0].id
+            }
+            return {
+              executionPolicy: { mode: 'fixed', environment_id: environmentId },
+              modelPolicy: { mode: 'fixed', model: runnerModelIdentity(defaults[0]) },
+            }
+          },
+        }
+      : {}),
     ...(agentResourceApi
       ? {
           supportsExistingAgentSelection: true,
-          async createTemplateAgent(agent, namespace) {
+          async createTemplateAgent(agent, namespace, routing) {
             const created = await agentResourceApi.createAgent({
+              ...routing,
               name: `template-${crypto.randomUUID()}`,
               displayName: agent.name,
               namespace,

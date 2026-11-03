@@ -272,7 +272,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         modelResponseTimeoutMs
       )
       await control.command('waitFor', selector('cloud-task-activity-list'), {
-        text: '模板智能体自动处理成功',
+        text: '已完成本轮评估',
         timeoutMs: modelResponseTimeoutMs,
       })
       await captureScreenshot(control, 'template-agents-06b-automatic-execution.png', CONTENT)

@@ -8,7 +8,7 @@ import type { ProjectCreateCollaborationGroupDraft } from '../project-create/typ
 import type { CollaborationTemplate, TemplateRoleAssignments as Bindings } from './types'
 import { bindTemplate } from './document'
 import { templateAgentBindings, templateAgentId } from './agents'
-import { templateMessages } from './messages'
+import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
@@ -297,7 +297,16 @@ export function TemplateBindingsDialog({
                 onClose()
               } catch (error) {
                 setFailed(error instanceof PartialTemplateApplyError)
-                setError(error instanceof TemplateConfigurationError ? error.message : m.failed)
+                setError(
+                  [
+                    'template_model_default_unavailable',
+                    'template_environment_unavailable',
+                  ].includes(error instanceof Error ? error.message : '')
+                    ? templateFailureMessage(error, locale)
+                    : error instanceof TemplateConfigurationError
+                      ? error.message
+                      : m.failed
+                )
               } finally {
                 setBusy(false)
               }

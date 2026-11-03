@@ -12,7 +12,7 @@ import type {
 } from "../types";
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
-import { readTemplateAgents } from "../templates/agents";
+import { readTemplateAgents, templateRoutingResolver } from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
 
@@ -282,6 +282,7 @@ function ScopedProjectCollaborationGroups({
               drafts,
               locale,
               templateMessages[locale].partial,
+              templateRoutingResolver(agentConfiguration, location, projectId, locale),
             );
             await reload();
             const latest = await api.projects.get(projectId);

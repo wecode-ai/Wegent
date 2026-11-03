@@ -6,7 +6,12 @@ import type { ProjectAgentConfigurationHost } from '../project-agent-config/type
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationGroup, CollaborationWorkspace } from '../types'
 import type { CollaborationTemplate } from './types'
-import { materializeTemplateAgents, templateAgentReferences, templateAgentId } from './agents'
+import {
+  materializeTemplateAgents,
+  templateAgentReferences,
+  templateAgentId,
+  templateRoutingResolver,
+} from './agents'
 import { applyTemplateGroups, PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 export async function applyWorkspaceTemplate(
@@ -17,7 +22,8 @@ export async function applyWorkspaceTemplate(
   host: ProjectAgentConfigurationHost | undefined,
   partialMessage: string,
   onGroupCreated: (group: CollaborationGroup) => void,
-  unsupportedPolicyMessage = 'This workspace cannot preserve the template Agent approval policy. Apply it directly to a project instead.'
+  unsupportedPolicyMessage = 'This workspace cannot preserve the template Agent approval policy. Apply it directly to a project instead.',
+  locale: 'zh-CN' | 'en' = 'en'
 ): Promise<CollaborationGroup[]> {
   const owner = api.workspaces!
   const referenced = templateAgentReferences(drafts)
@@ -35,18 +41,19 @@ export async function applyWorkspaceTemplate(
     document,
     drafts,
     partialMessage,
-    async agent => {
+    async (agent, routing) => {
       if (workspace.location === 'local' && owner.createTemplateAgent)
-        return owner.createTemplateAgent(workspace.id, agent)
+        return owner.createTemplateAgent(workspace.id, agent, routing)
       if (!host?.createTemplateAgent) throw new Error('template_agent_creation_unavailable')
-      const resource = await host.createTemplateAgent(agent, workspace.namespace)
+      const resource = await host.createTemplateAgent(agent, workspace.namespace, routing)
       try {
         await owner.addAgent(workspace.id, { teamId: Number(resource.id) })
       } catch (cause) {
         throw new PartialTemplateApplyError(partialMessage, { cause })
       }
       return resource
-    }
+    },
+    templateRoutingResolver(host, workspace.location, undefined, locale)
   )
   try {
     return await applyTemplateGroups(

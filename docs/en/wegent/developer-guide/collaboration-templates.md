@@ -58,6 +58,7 @@ templates without definitions still allow manual assignment. Saving YAML into th
 template library alone does not create project Agents; applying it does.
 
 Models, devices, workspaces and tools follow the recipient's execution environment.
+Before creating agents, all required runtimes are checked against the current device's unique default models. Missing defaults or a device not authorized for the destination project block import before any agent is created; import never grants device access.
 Source account model, plugin and device IDs and credentials are excluded. Project
 and group exports load real Agent definitions, preserving prompts with portable
 references that can be imported by another account. Multi-Bot resources that cannot be represented are rejected explicitly. Cloud workspaces reject approval policies they cannot preserve and direct users to apply those templates to a project.

@@ -69,6 +69,8 @@ export const templateMessages = {
     embeddedAgents: '应用时自动创建模板智能体并绑定角色，模型和工具使用当前执行环境的配置。',
     agentsCount: '将创建 {count} 个智能体并绑定角色。',
     environmentHint: '模型和工具使用当前执行环境的配置。',
+    defaultModelRequired: '请先为当前执行环境设置默认模型，再应用此模板。',
+    destinationEnvironmentRequired: '当前设备尚未授权给此项目，请先在项目的执行环境设置中添加。',
     unsupportedAgent: '此智能体的运行时或多机器人配置无法完整保存为模板，请先调整智能体配置。',
     unavailableAgent: '无法读取小组中的智能体配置，请检查智能体是否可用及访问权限。',
     unsupportedPolicy: '当前空间无法保留模板的执行前人工确认设置，请在项目中直接应用此模板。',
@@ -155,6 +157,10 @@ export const templateMessages = {
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
     agentsCount: '{count} Agents will be created and bound to roles.',
     environmentHint: 'Models and tools follow the execution environment.',
+    defaultModelRequired:
+      'Configure a default model in the current execution environment before applying this template.',
+    destinationEnvironmentRequired:
+      'Authorize the current device in the project execution environment settings before applying this template.',
     unsupportedAgent:
       'This Agent runtime or multi-Bot configuration cannot be fully represented in a template. Adjust the Agent configuration first.',
     unavailableAgent:
@@ -189,6 +195,8 @@ export const templateMessages = {
 export function templateFailureMessage(error: unknown, locale: 'zh-CN' | 'en'): string {
   const code = error instanceof Error ? error.message : ''
   const m = templateMessages[locale]
+  if (code === 'template_model_default_unavailable') return m.defaultModelRequired
+  if (code === 'template_environment_unavailable') return m.destinationEnvironmentRequired
   if (code === 'template_agent_multi_bot' || code === 'template_agent_runtime_unsupported')
     return m.unsupportedAgent
   if (code === 'template_agent_definition_unavailable') return m.unavailableAgent

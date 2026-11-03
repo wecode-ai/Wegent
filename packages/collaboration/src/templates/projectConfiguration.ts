@@ -4,7 +4,7 @@
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup } from '../types'
 import type { CollaborationLocale } from '../i18n'
-import type { CollaborationTemplate } from './types'
+import type { TemplateRoutingResolver, CollaborationTemplate } from './types'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import { normalizeCollaborationGroupDraftForPersistence } from '../project-create/collaborationGroupDraft'
 import { materializeTemplateAgents } from './agents'
@@ -114,11 +114,20 @@ export async function applyProjectTemplate(
   document: CollaborationTemplate,
   drafts: ProjectCreateCollaborationGroupDraft[],
   locale: CollaborationLocale,
-  partialMessage: string
+  partialMessage: string,
+  resolveRouting?: TemplateRoutingResolver
 ) {
   if (!api.projects.createCollaborationGroup) throw new Error('template_group_unavailable')
   await prepareTemplateProject(api, projectId, document, locale)
-  const resolved = await materializeTemplateAgents(api, projectId, document, drafts, partialMessage)
+  const resolved = await materializeTemplateAgents(
+    api,
+    projectId,
+    document,
+    drafts,
+    partialMessage,
+    undefined,
+    resolveRouting
+  )
   let groups: CollaborationGroup[]
   try {
     groups = await applyTemplateGroups(

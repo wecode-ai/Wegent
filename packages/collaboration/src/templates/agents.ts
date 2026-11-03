@@ -4,8 +4,15 @@
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import type { CollaborationAgent } from '../types'
-import type { TemplateAgent, CollaborationTemplate, TemplateRoleAssignments } from './types'
-import { PartialTemplateApplyError } from './apply'
+import type {
+  TemplateAgentRouting,
+  TemplateRoutingResolver,
+  TemplateAgent,
+  CollaborationTemplate,
+  TemplateRoleAssignments,
+} from './types'
+import { templateFailureMessage } from './messages'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 const prefix = 'template-agent:'
 export const templateAgentId = (key: string) => `${prefix}${key}`
@@ -44,22 +51,38 @@ export async function materializeTemplateAgents(
   document: CollaborationTemplate,
   drafts: ProjectCreateCollaborationGroupDraft[],
   partialMessage: string,
-  createAgent?: (agent: TemplateAgent) => Promise<CollaborationAgent>
+  createAgent?: (
+    agent: TemplateAgent,
+    routing: TemplateAgentRouting
+  ) => Promise<CollaborationAgent>,
+  resolveRouting: TemplateRoutingResolver = async () => {
+    throw new TemplateConfigurationError('template_model_default_unavailable')
+  }
 ): Promise<{
   drafts: ProjectCreateCollaborationGroupDraft[]
   agentIds: Set<string>
 }> {
   const referenced = templateAgentReferences(drafts)
+  const definitions = (document.spec.resources.collaboration.agents ?? []).filter(agent =>
+    referenced.has(templateAgentId(agent.key))
+  )
+  const routings = new Map(
+    await Promise.all(
+      [...new Set(definitions.map(agent => agent.runtime))].map(
+        async runtime => [runtime, await resolveRouting(runtime)] as const
+      )
+    )
+  )
   const bindings = new Map<string, string>()
   try {
-    for (const agent of document.spec.resources.collaboration.agents ?? []) {
+    for (const agent of definitions) {
       const id = templateAgentId(agent.key)
-      if (!referenced.has(id)) continue
       const { key: _, ...configuration } = agent
       const created = createAgent
-        ? await createAgent(agent)
+        ? await createAgent(agent, routings.get(agent.runtime)!)
         : await api.agents.create(projectId, {
             ...configuration,
+            ...routings.get(agent.runtime),
             capabilityMode: 'follow_device',
             executionEnvironment: 'local',
             executionMode: agent.executionMode ?? 'auto',
@@ -133,4 +156,27 @@ export function templateAgentReferences(
       .filter(member => member.kind === 'agent')
       .map(member => member.id)
   )
+}
+
+export function templateRoutingResolver(
+  host: import('../project-agent-config/types').ProjectAgentConfigurationHost | undefined,
+  location: 'local' | 'cloud',
+  projectId?: string,
+  locale: 'zh-CN' | 'en' = 'en'
+): TemplateRoutingResolver {
+  return async runtime => {
+    try {
+      if (!host?.resolveTemplateAgentRouting) throw new Error('template_model_default_unavailable')
+      return await host.resolveTemplateAgentRouting(runtime, location, projectId)
+    } catch (cause) {
+      if (
+        cause instanceof Error &&
+        ['template_model_default_unavailable', 'template_environment_unavailable'].includes(
+          cause.message
+        )
+      )
+        throw new TemplateConfigurationError(templateFailureMessage(cause, locale), { cause })
+      throw cause
+    }
+  }
 }

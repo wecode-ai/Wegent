@@ -13,7 +13,7 @@ import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
-import { readTemplateAgents } from './agents'
+import { readTemplateAgents, templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
 
 export function ProjectTemplateSettings({
@@ -220,7 +220,20 @@ export function ProjectTemplateSettings({
             void reload()
           }}
           onApply={async (drafts, document) => {
-            await applyProjectTemplate(api, project.id, document, drafts, locale, m.partial)
+            await applyProjectTemplate(
+              api,
+              project.id,
+              document,
+              drafts,
+              locale,
+              m.partial,
+              templateRoutingResolver(
+                agentConfiguration,
+                project.project_store === 'local' ? 'local' : 'cloud',
+                project.id,
+                locale
+              )
+            )
             const latest = await reload()
             if (latest) onChange?.(latest)
           }}

@@ -18,6 +18,13 @@ function fixture() {
   } as unknown as SharedWorkspaceApi
   let id = 100
   const host = {
+    resolveTemplateAgentRouting: vi.fn(async () => ({
+      executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
+      modelPolicy: {
+        mode: 'fixed',
+        model: { runtime: 'codex', provider: 'openai', model_id: 'destination-model' },
+      },
+    })),
     createTemplateAgent: vi.fn(async () => ({ id: String(++id), name: 'Agent' })),
   } as unknown as ProjectAgentConfigurationHost
   return { document, drafts, create, addAgent, api, host }
@@ -37,7 +44,10 @@ it('creates cloud resources in the destination namespace and binds them before t
   expect(host.createTemplateAgent).toHaveBeenCalledTimes(6)
   expect(host.createTemplateAgent).toHaveBeenCalledWith(
     document.spec.resources.collaboration.agents![0],
-    'design'
+    'design',
+    expect.objectContaining({
+      executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
+    })
   )
   expect(addAgent).toHaveBeenCalledWith('space', { teamId: 101 })
   expect(create).toHaveBeenCalledWith(

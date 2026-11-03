@@ -12,9 +12,12 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
+  resolveTemplateAgentRouting?(runtime: 'codex' | 'claude_code', location: 'local' | 'cloud', projectId?: string): Promise<import('../templates/types').TemplateAgentRouting>;
+
   createTemplateAgent?(
     agent: import("../templates/types").TemplateAgent,
     namespace: string,
+    routing: import('../templates/types').TemplateAgentRouting,
   ): Promise<{ id: string; name: string }>;
   readTemplateAgent?(
     teamId: number,

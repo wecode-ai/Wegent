@@ -1,12 +1,14 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { templateMessages } from "../templates/messages";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
+  templateRoutingResolver,
   materializeTemplateAgents,
 } from "../templates/agents";
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1729,6 +1731,7 @@ function RootTeamEditor({
             hasCreatedGroups.current = true;
           },
           templateMessages[locale].unsupportedPolicy,
+          locale,
         );
         return created;
       },
@@ -3400,6 +3403,8 @@ function CollaborationPlatformAppContent({
                           selection.template,
                           selection.collaborationGroupDrafts,
                           templateMessages[locale].partial,
+                          undefined,
+                          templateRoutingResolver(host.projectAgentConfiguration, projectWorkspace.location, project.id, locale),
                         )
                       : {
                           drafts: selection.collaborationGroupDrafts,

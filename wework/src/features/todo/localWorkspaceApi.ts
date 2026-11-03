@@ -677,10 +677,11 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
-      createTemplateAgent: async (_workspaceId, agent) => {
+      createTemplateAgent: async (_workspaceId, agent, routing) => {
         if (!projectAgentApi) return unavailable()
         return toProjectAgent(
           await projectAgentApi.create(DEFAULT_WORK_ITEM_PROJECT_ID, {
+            ...routing,
             name: agent.name,
             runtime: agent.runtime,
             systemPrompt: agent.systemPrompt,

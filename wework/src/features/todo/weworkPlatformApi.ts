@@ -132,10 +132,10 @@ export function createWeworkPlatformApi(
           ? localApi.workspaces!.removeMember(workspaceId, memberUserId)
           : cloudApi.workspaces!.removeMember(workspaceId, memberUserId)
       },
-      async createTemplateAgent(workspaceId, agent) {
+      async createTemplateAgent(workspaceId, agent, routing) {
         if (!isLocalWorkspace(workspaceId) || !localApi.workspaces!.createTemplateAgent)
           throw new Error('Local template Agent storage is unavailable')
-        return localApi.workspaces!.createTemplateAgent(workspaceId, agent)
+        return localApi.workspaces!.createTemplateAgent(workspaceId, agent, routing)
       },
       listAgents(workspaceId, options) {
         const api = isLocalWorkspace(workspaceId) ? localApi : cloudApi

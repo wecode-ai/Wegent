@@ -11,7 +11,16 @@ import { materializeTemplateAgents, readTemplateAgents, templateAgentBindings } 
 import { PartialTemplateApplyError } from './apply'
 import { applyProjectTemplate } from './projectConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { TemplateRoutingResolver } from './types'
 import type { CollaborationGroup } from '../types'
+
+const routing: TemplateRoutingResolver = async runtime => ({
+  executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
+  modelPolicy: {
+    mode: 'fixed',
+    model: { runtime, provider: 'openai', model_id: 'destination-default', source: 'native' },
+  },
+})
 
 function fixture() {
   const document = structuredClone(builtinCollaborationTemplates()[0].document)
@@ -33,7 +42,9 @@ describe('self-contained template Agents', () => {
       'new-account-project',
       document,
       drafts,
-      'partial'
+      'partial',
+      undefined,
+      routing
     )
     expect(create).toHaveBeenCalledTimes(6)
     expect(result.agentIds.size).toBe(6)
@@ -63,7 +74,9 @@ describe('self-contained template Agents', () => {
       'project',
       document,
       [...drafts, { ...drafts[0], name: 'Second group' }],
-      'partial'
+      'partial',
+      undefined,
+      routing
     )
     expect(create).toHaveBeenCalledTimes(6)
     expect(result.drafts[1].leader.id).toBe(result.drafts[0].leader.id)
@@ -75,7 +88,7 @@ describe('self-contained template Agents', () => {
       .mockResolvedValueOnce({ id: 'created', name: 'Coordinator' })
       .mockRejectedValueOnce(new Error('offline'))
     await expect(
-      materializeTemplateAgents(api, 'project', document, drafts, 'partial')
+      materializeTemplateAgents(api, 'project', document, drafts, 'partial', undefined, routing)
     ).rejects.toBeInstanceOf(PartialTemplateApplyError)
     expect(create).toHaveBeenCalledTimes(2)
   })
@@ -88,7 +101,7 @@ describe('self-contained template Agents', () => {
       createCollaborationGroup: vi.fn().mockRejectedValue(new Error('offline')),
     } as unknown as SharedWorkspaceApi['projects']
     await expect(
-      applyProjectTemplate(api, 'project', document, drafts, 'zh-CN', 'partial')
+      applyProjectTemplate(api, 'project', document, drafts, 'zh-CN', 'partial', routing)
     ).rejects.toBeInstanceOf(PartialTemplateApplyError)
   })
 
@@ -99,7 +112,9 @@ describe('self-contained template Agents', () => {
       'first-account',
       document,
       drafts,
-      'partial'
+      'partial',
+      undefined,
+      routing
     )
     const agents = document.spec.resources.collaboration.agents!.map(agent => ({
       ...agent,
@@ -134,7 +149,9 @@ describe('self-contained template Agents', () => {
       'second-account',
       imported,
       bindTemplate(imported, templateAgentBindings(imported)),
-      'partial'
+      'partial',
+      undefined,
+      routing
     )
     expect(create).toHaveBeenCalledTimes(6)
     expect(second.agentIds.size).toBe(6)
@@ -152,7 +169,9 @@ describe('self-contained template Agents', () => {
       'target',
       importTemplate(exportTemplate(document)),
       drafts,
-      'partial'
+      'partial',
+      undefined,
+      routing
     )
     expect(create).toHaveBeenCalledWith(
       'target',
@@ -179,4 +198,18 @@ describe('self-contained template Agents', () => {
     definitions.groups[0].roles[0].defaultKind = 'human'
     expect(() => validateTemplate(document)).toThrow('role.agentKey')
   })
+})
+
+it('resolves every referenced runtime before any Agent is created', async () => {
+  const { document, drafts, create, api } = fixture()
+  document.spec.resources.collaboration.agents![5].runtime = 'claude_code'
+  const resolve = vi.fn(async (runtime: 'codex' | 'claude_code') => {
+    if (runtime === 'claude_code') throw new Error('Missing Claude default')
+    return routing(runtime)
+  })
+  await expect(
+    materializeTemplateAgents(api, 'target', document, drafts, 'partial', undefined, resolve)
+  ).rejects.toThrow('Missing Claude default')
+  expect(resolve).toHaveBeenCalledTimes(2)
+  expect(create).not.toHaveBeenCalled()
 })

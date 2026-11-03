@@ -5064,7 +5064,16 @@ fn dispatch_collaboration_group_assignment(
     );
     execution_payload.insert(
         "projectInstructions".to_owned(),
-        json!(COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS),
+        json!([
+            leader_agent.metadata["system_prompt"]
+                .as_str()
+                .unwrap_or_default(),
+            COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS,
+        ]
+        .into_iter()
+        .filter(|instruction| !instruction.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")),
     );
     execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
@@ -7037,6 +7046,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Reproducible observations"));
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Be careful."));
         assert!(payload["projectInstructions"]
             .as_str()
             .unwrap()

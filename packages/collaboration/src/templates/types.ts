@@ -11,6 +11,15 @@ export interface TemplateRole {
   agentKey?: string
 }
 
+export interface TemplateAgentRouting {
+  executionPolicy: import('../agent-form/runnerRouting').AgentExecutionPolicy
+  modelPolicy: import('../agent-form/runnerRouting').AgentModelPolicy
+}
+
+export type TemplateRoutingResolver = (
+  runtime: TemplateAgent['runtime']
+) => Promise<TemplateAgentRouting>
+
 export interface TemplateAgent {
   key: string
   name: string

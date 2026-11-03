@@ -1,8 +1,9 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import { applyWorkspaceTemplate } from '../templates/workspaceConfiguration'
 import { readTemplateAgents } from '../templates/agents'
 import { templateMessages } from '../templates/messages'
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useMemo } from 'react'
 import type { CollaborationTranslate } from '../i18n'
@@ -125,7 +126,8 @@ export function WorkspaceGroupsPanel({
           agentConfiguration,
           templateMessages[locale].partial,
           group => setData(data => data && [...data, group]),
-          templateMessages[locale].unsupportedPolicy
+          templateMessages[locale].unsupportedPolicy,
+          locale
         ),
       createCollaborationGroup: async input => {
         const group = await commands.createCollaborationGroup(input)
