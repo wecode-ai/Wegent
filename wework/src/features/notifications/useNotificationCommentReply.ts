@@ -25,7 +25,7 @@ export function useNotificationCommentReply<T extends { root: { messageId: strin
   const interactions = useRuntimeInteractions()
   const selected = useRef<string | null>(null)
   const item = interactions?.pending.find(item => item.id === entity?.id)
-  const eligible = !item || item.cached || canQuickReply(item.payload)
+  const eligible = Boolean(item && (item.cached || canQuickReply(item.payload)))
   const scope =
     entity && entity.projectId === projectId && entity.issueId === issueId && entity.store === store
       ? entity
@@ -74,8 +74,6 @@ export function useNotificationCommentDispatch({
     send: () => Promise<TaskCardDispatchResult>
   ): Promise<TaskCardDispatchResult> => {
     if (!reply.interactionId) return send()
-    if (interactions?.history.some(item => item.id === reply.interactionId))
-      return { ok: true, persisted: true }
     const item = interactions?.pending.find(item => item.id === reply.interactionId)
     const binding = item?.project
     if (

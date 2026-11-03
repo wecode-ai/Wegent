@@ -1,4 +1,10 @@
-import { renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { TaskReplyQueueStore } from '@wegent/collaboration/execution/taskReplyQueue'
+import { useTaskReplyQueue } from '@wegent/collaboration/execution/useTaskReplyQueue'
+import type {
+  TaskCardDispatchResult,
+  TaskReplyCard,
+} from '@wegent/collaboration/execution/taskCardReply'
 import { expect, it, vi } from 'vitest'
 import { NotificationEntityContext } from './NotificationEntityContext'
 import {
@@ -123,6 +129,116 @@ it('binds queued answers to their exact request instead of the visible request o
   expect(send).not.toHaveBeenCalled()
   value.history = [{ id: a.id } as never]
   rerender()
-  expect(await result.current('root', reply, send)).toEqual({ ok: true, persisted: true })
+  expect(await result.current('root', reply, send)).toEqual({ ok: false, persisted: false })
   expect(send).not.toHaveBeenCalled()
+})
+
+it.each(['absent', 'handled'])(
+  'leaves the native Issue composer unbound when its request is %s',
+  state => {
+    const entity = {
+      id: 'old-request',
+      projectId: 'project',
+      issueId: 'issue',
+      store: 'backend' as const,
+      rootCommentId: 'root',
+    }
+    const value = {
+      pending: [],
+      history: state === 'handled' ? [{ id: entity.id }] : [],
+      drafts: { [entity.id]: 'Unsent draft' },
+      errors: {},
+      busy: new Set(),
+    } as unknown as RuntimeInteractionsValue
+    const card = { root: { messageId: 'root' } }
+    const selectTarget = vi.fn()
+    const { result } = renderHook(
+      () =>
+        useNotificationCommentReply({
+          projectId: entity.projectId,
+          issueId: entity.issueId,
+          store: entity.store,
+          cards: [card],
+          target: null,
+          selectTarget,
+        }),
+      {
+        wrapper: ({ children }) => (
+          <RuntimeInteractionsContext.Provider value={value}>
+            <NotificationEntityContext.Provider value={entity}>
+              {children}
+            </NotificationEntityContext.Provider>
+          </RuntimeInteractionsContext.Provider>
+        ),
+      }
+    )
+    expect(result.current).toBeNull()
+    expect(selectTarget).not.toHaveBeenCalled()
+    expect(value.drafts[entity.id]).toBe('Unsent draft')
+  }
+)
+
+it('retains a second unsent queued answer when the first answer handles the request', async () => {
+  const [item] = await readRuntimeInteractions(interactionTask, {
+    getRuntimeTranscript: vi.fn(async () => interactionTranscript(interactionQuestion)),
+  } as never)
+  item.project = { projectId: 'project', issueId: 'issue', store: 'backend', rootCommentId: 'root' }
+  const send = vi.fn<(content: string) => Promise<TaskCardDispatchResult>>(async () => ({
+    ok: true,
+    persisted: true,
+  }))
+  const value = {
+    pending: [item],
+    history: [],
+    respond: vi.fn(async (_item, _text, options) => {
+      await options.send()
+      value.pending = []
+      value.history = [{ id: item.id } as never]
+      return true
+    }),
+  } as unknown as RuntimeInteractionsValue
+  const store = new TaskReplyQueueStore()
+  const cards = [{ root: { messageId: 'root' }, replies: [] }] as TaskReplyCard[]
+  const { result } = renderHook(
+    () => {
+      const dispatch = useNotificationCommentDispatch({
+        projectId: 'project',
+        issueId: 'issue',
+        store: 'backend',
+      })
+      return useTaskReplyQueue({
+        store,
+        scope: 'issue',
+        cards,
+        enabled: true,
+        busy: () => false,
+        dispatch: (card, reply) => dispatch(card.root.messageId, reply, () => send(reply.content)),
+        sendFailedText: 'The request is no longer pending',
+      })
+    },
+    {
+      wrapper: ({ children }) => (
+        <RuntimeInteractionsContext.Provider value={value}>
+          {children}
+        </RuntimeInteractionsContext.Provider>
+      ),
+    }
+  )
+  act(() => {
+    result.current.enqueue('root', 'First answer', [], [], item.id)
+    result.current.enqueue('root', 'Second unsent answer', [], [], item.id)
+  })
+  await waitFor(() => {
+    expect(result.current.messages('root')).toHaveLength(1)
+    expect(result.current.messages('root')[0]).toMatchObject({
+      content: 'Second unsent answer',
+      interactionId: item.id,
+      status: 'failed',
+      error: 'The request is no longer pending',
+    })
+  })
+  expect(send).toHaveBeenCalledExactlyOnceWith('First answer')
+  expect(value.respond).toHaveBeenCalledOnce()
+  expect(value.pending).toEqual([])
+  expect(value.history).toEqual([{ id: item.id }])
 })

@@ -1040,7 +1040,9 @@ export function TemporaryChatPanel({
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-        hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
+        hideRequestUserInputBlocks={
+          (focusedRequest !== undefined || Boolean(pendingRequest)) && !readOnly
+        }
         initialScrollPosition={initialScrollPosition}
       />
     </TemporaryConversationLayout>
