@@ -69,6 +69,8 @@ Public seed slugs stay in sync with Wegent `backend/scripts/seed_wework_public_p
 
 ## 4. How the client resolves icons
 
+The desktop task composer shows the plugin picker only before a new task starts. An existing task or conversation messages hide both the entry and any open picker menu. Returning to a new task restores the entry.
+
 Dark theme order: `logoDark` → `logo` → `composerIcon`.  
 Light theme: `logo` → `composerIcon`.  
 None: neutral default icon.

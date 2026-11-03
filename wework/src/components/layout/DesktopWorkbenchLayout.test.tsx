@@ -2920,6 +2920,7 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
+    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
       'flex',
       'min-h-0',
@@ -3293,7 +3294,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveClass('h-7', 'w-7')
+    expect(screen.queryByTestId('composer-plugin-picker-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('composer-plugin-preview-icons')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
