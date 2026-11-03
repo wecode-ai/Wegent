@@ -3,6 +3,7 @@ import { access, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assistantMessage,
+  codexRequestMetadata,
   createSse,
   functionCall,
   isReplyPredictionRequest,
@@ -24,6 +25,7 @@ const CARD = '[data-testid="request-user-input-card"]'
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, modelResponseTimeoutMs, workspacePath, captureScreenshot } = options
   const file = join(workspacePath, 'stand-in-approved.txt')
+  let failedShellRequest = null
   async function createWork(control, taskId) {
     const settings = await requestExecutor(
       control,
@@ -91,6 +93,9 @@ export function createDesktopScenario(options) {
   }
   return {
     requiresCloudEnvironment: true,
+    diagnostics() {
+      return { failedShellRequest }
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -109,11 +114,31 @@ export function createDesktopScenario(options) {
           ),
         ]
       } else {
-        const tool = selectShellToolCommand(
-          body,
-          `touch '${file.replaceAll("'", "'\\''")}'`,
-          workspacePath
-        )
+        let tool
+        try {
+          tool = selectShellToolCommand(
+            body,
+            `touch '${file.replaceAll("'", "'\\''")}'`,
+            workspacePath
+          )
+        } catch (error) {
+          const metadata = codexRequestMetadata(body)
+          failedShellRequest = {
+            model: body.model ?? null,
+            requestKind: metadata?.request_kind ?? null,
+            threadSource: metadata?.thread_source ?? null,
+            toolChoice: body.tool_choice ?? null,
+            tools: body.tools ?? null,
+            input: Array.isArray(body.input)
+              ? body.input.map(item => ({
+                  type: item?.type ?? null,
+                  role: item?.role ?? null,
+                  ...(item?.type === 'additional_tools' ? { tools: item.tools } : {}),
+                }))
+              : { type: typeof body.input },
+          }
+          throw error
+        }
         tool.arguments.sandbox_permissions = 'require_escalated'
         tool.arguments.justification = '确认后创建隔离测试工作区中的验证文件。'
         events = functionCall('stand-in-file-write', tool.name, tool.arguments)
