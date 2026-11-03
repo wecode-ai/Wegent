@@ -223,6 +223,18 @@ export function createDesktopScenario({
         'smtp-port': '1',
       }))
         await control.command('fill', `[data-testid="stand-in-email-${field}"]`, { value })
+      await control.command('fill', '[data-testid="stand-in-email-password"]', {
+        value: 'invalid-mail-password',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-email-save"]')
+      await control.command('waitFor', '[role="alert"]', {
+        text: 'IMAP 登录失败',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await captureScreenshot(control, '01b-imap-login-failure-preserves-form.png')
+      await control.command('fill', '[data-testid="stand-in-email-password"]', {
+        value: mail.config.password,
+      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-email-save"]')
       await control.command('waitFor', '[role="alert"]', {
         text: 'SMTP',
@@ -247,6 +259,15 @@ export function createDesktopScenario({
       const saved = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
+      mail.pauseImap()
+      await control.command('waitFor', '[role="alert"]', {
+        text: '将自动重试',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const interrupted = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
+      assert.equal(interrupted.sourceErrors[0].error.code, 'email_transport_failed')
+      await captureScreenshot(control, '03a-incoming-connection-will-retry.png')
+      mail.resumeImap()
       await mail.deliver(
         '邮箱接入验证',
         `${MARKER}\n请拟定邮件回复，发送前让我确认。`,
@@ -257,6 +278,11 @@ export function createDesktopScenario({
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
       assert.deepEqual(works.sourceErrors, [])
+      assert.equal(
+        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).version,
+        saved.version,
+        'Restored transport must resume intake without saving settings again'
+      )
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
       await captureScreenshot(control, '04a-mail-work-needs-confirmation.png')

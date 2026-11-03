@@ -5733,7 +5733,10 @@
       "stale_context": "项目自动统筹已停止、被接管或权限已变化。请刷新状态后重试。",
       "project_unavailable": "项目或协作小组已不可访问，请返回项目检查权限和配置。",
       "email_account_missing": "邮箱账号已删除，请在连接中重新添加。",
-      "email_connection_failed": "无法连接邮箱，请检查网络和账号配置后重试。",
+      "email_connection_failed": "无法连接邮箱，请检查服务器、端口与加密配置后重试。",
+      "email_transport_failed": "收信连接暂时中断，分身将自动重试。",
+      "email_auth_failed": "邮箱登录失败，请在连接中更新密码或应用授权码，然后点击此处「重新加载」重试收信。",
+      "email_message_invalid": "无法解析新邮件，接收已暂停。请检查原邮件或联系支持后重试。",
       "email_mailbox_reset": "邮箱标识已变化，请移除此收件箱连接后重新添加，以建立新的接收起点。",
       "email_send_unknown": "无法确认投递结果。请先检查已发送邮件并向收件人核实，不要直接重发。",
       "email_smtp_failed": "邮件未发送，请检查发信服务器和登录信息后重新发起发送确认。"
@@ -5779,6 +5782,8 @@
       "verify_connect": "验证账号并添加连接",
       "verified": "邮箱账号已验证，连接已添加。保存分身设置后开始接收新邮件。",
       "email_connection_failed": "无法连接 IMAP。请检查服务器、端口、加密方式和登录信息，然后重试。",
+      "email_transport_failed": "暂时无法连接 IMAP，请检查网络后重试验证。",
+      "email_auth_failed": "IMAP 登录失败，请检查用户名、密码或应用授权码后重试。",
       "email_smtp_failed": "SMTP 验证失败。请检查发信服务器和登录信息，然后重试。",
       "email_invalid_configuration": "邮箱配置无效，请检查邮箱地址、服务器地址和端口。",
       "email_unavailable": "无法读取或保存邮箱账号。请确认本设备的连接服务已启动，然后重试。",
@@ -5796,7 +5801,7 @@
       "discard_title": "放弃邮箱配置？",
       "discard_help": "当前账号尚未验证和保存。是否放弃已填写的配置？",
       "discard": "放弃配置",
-      "updated": "邮箱登录信息已更新，原有分身连接继续有效。",
+      "updated": "邮箱登录信息已更新，原有分身连接继续有效。如收信曾暂停，请返回工作页点击「重新加载」重试。",
       "update_help": "更新会影响本设备所有使用此账号的分身。如需更换邮箱地址或收信服务器，请添加新账号。",
       "verify_update": "验证并更新登录信息"
     }

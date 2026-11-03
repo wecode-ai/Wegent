@@ -3,6 +3,28 @@ import test from 'node:test'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider } from './email-provider.js'
 import { createEmailSender } from './email-send.js'
+import { imapError, mailError } from './email-client.js'
+
+test('distinguishes recoverable IMAP transport from authentication, TLS and message errors', () => {
+  for (const code of ['ECONNRESET', 'NoConnection', 'ClosedAfterConnectTLS', 'ETIMEOUT'])
+    assert.equal(
+      imapError({ code, message: 'private server details' }).code,
+      'email_transport_failed'
+    )
+  assert.equal(
+    imapError({ authenticationFailed: true, code: 'ECONNRESET' }).code,
+    'email_auth_failed'
+  )
+  for (const error of [
+    { code: 'CERT_HAS_EXPIRED' },
+    { code: 42 },
+    new Error('private account details'),
+  ])
+    assert.equal(imapError(error).code, 'email_connection_failed')
+  const invalid = mailError('email_message_invalid')
+  assert.equal(imapError(invalid), invalid)
+  assert.equal(imapError(new Error('private account details')).message, 'email_connection_failed')
+})
 
 function storage() {
   const values = new Map()

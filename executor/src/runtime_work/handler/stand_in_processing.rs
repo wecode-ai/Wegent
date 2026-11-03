@@ -254,6 +254,10 @@ impl RuntimeWorkRpcHandler {
                     state["observedSince"]
                         .as_i64()
                         .is_some_and(|since| link.created_at >= since)
+                        && (link.turn_status.is_some()
+                            || link.interaction_status.is_some()
+                            || link.completed_at.is_some()
+                            || matches!(link.status.as_str(), "done" | "failed" | "cancelled"))
                 },
                 |previous| *previous != signature,
             );

@@ -5738,7 +5738,10 @@
       "stale_context": "Project coordination was stopped, taken over, or its permissions changed. Refresh its status before retrying.",
       "project_unavailable": "The project or group is no longer accessible. Check its permissions and configuration in the project.",
       "email_account_missing": "This mailbox account was removed. Add it again in Connections.",
-      "email_connection_failed": "Could not connect to the mailbox. Check the network and account settings, then retry.",
+      "email_connection_failed": "Could not connect to the mailbox. Check the server, port and encryption settings, then retry.",
+      "email_transport_failed": "The incoming connection was interrupted. Your stand-in will retry automatically.",
+      "email_auth_failed": "Mailbox login failed. Update the password or app password in Connections, then use Reload beside this error to retry intake.",
+      "email_message_invalid": "A new message could not be parsed, so intake is paused. Check the original message or contact support, then retry.",
       "email_mailbox_reset": "The mailbox identity changed. Remove and reconnect this inbox to establish a new intake boundary.",
       "email_send_unknown": "Delivery could not be confirmed. Check Sent mail and the recipient before attempting another send.",
       "email_smtp_failed": "Email was not sent. Check the outgoing server and credentials, then request a new send confirmation."
@@ -5784,6 +5787,8 @@
       "verify_connect": "Verify account and add connection",
       "verified": "Mailbox verified and connection added. Save stand-in settings to start receiving new mail.",
       "email_connection_failed": "Could not connect to IMAP. Check the server, port, encryption and credentials, then retry.",
+      "email_transport_failed": "Could not reach IMAP temporarily. Check the network and retry verification.",
+      "email_auth_failed": "IMAP login failed. Check the username, password or app password, then retry.",
       "email_smtp_failed": "SMTP verification failed. Check the outgoing server and credentials, then retry.",
       "email_invalid_configuration": "Invalid mailbox settings. Check the email address, servers and ports.",
       "email_unavailable": "Could not load or save mailbox accounts. Check that the connection service is running on this device, then retry.",
@@ -5801,7 +5806,7 @@
       "discard_title": "Discard mailbox changes?",
       "discard_help": "This account has not been verified or saved. Discard the entered settings?",
       "discard": "Discard changes",
-      "updated": "Mailbox credentials updated. Existing stand-in connections are preserved.",
+      "updated": "Mailbox credentials updated. Existing stand-in connections are preserved. If intake was paused, return to the work page and use Reload to retry.",
       "update_help": "Updates apply to all stand-ins using this account on this device. To change the mailbox or incoming server, add a new account.",
       "verify_update": "Verify and update credentials"
     }

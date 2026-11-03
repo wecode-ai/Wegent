@@ -26,8 +26,7 @@ export async function imapSession(account, action, signal) {
     await client.connect()
     return await action(client)
   } catch (error) {
-    if (error.code?.startsWith('email_')) throw error
-    throw mailError('email_connection_failed')
+    throw imapError(error)
   } finally {
     signal?.removeEventListener('abort', abort)
     client.close()
@@ -52,7 +51,36 @@ export async function smtpTransport(account) {
 
 export async function parseMail(source) {
   const { simpleParser } = runtimeRequire('mailparser')
-  return simpleParser(source, { skipHtmlToText: false, skipTextToHtml: true })
+  try {
+    return await simpleParser(source, { skipHtmlToText: false, skipTextToHtml: true })
+  } catch {
+    throw mailError('email_message_invalid')
+  }
+}
+
+export function imapError(error) {
+  if (typeof error?.code === 'string' && error.code.startsWith('email_')) return error
+  if (error?.authenticationFailed === true) return mailError('email_auth_failed')
+  const transportCodes = [
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'EPIPE',
+    'ETIMEDOUT',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'EAI_AGAIN',
+    'ETIMEOUT',
+    'CONNECT_TIMEOUT',
+    'GREETING_TIMEOUT',
+    'UPGRADE_TIMEOUT',
+    'NoConnection',
+    'EConnectionClosed',
+    'ClosedAfterConnectTLS',
+    'ClosedAfterConnectText',
+  ]
+  return mailError(
+    transportCodes.includes(error?.code) ? 'email_transport_failed' : 'email_connection_failed'
+  )
 }
 
 export function mailError(code = 'email_invalid_configuration') {

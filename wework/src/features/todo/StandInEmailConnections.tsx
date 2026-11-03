@@ -114,9 +114,13 @@ export function StandInEmailConnections({
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : ''
       setError(
-        ['email_smtp_failed', 'email_connection_failed', 'email_invalid_configuration'].find(code =>
-          message.includes(code)
-        ) ?? 'email_unavailable'
+        [
+          'email_smtp_failed',
+          'email_connection_failed',
+          'email_transport_failed',
+          'email_auth_failed',
+          'email_invalid_configuration',
+        ].find(code => message.includes(code)) ?? 'email_unavailable'
       )
     } finally {
       setBusy(false)

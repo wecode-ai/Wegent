@@ -6,11 +6,52 @@ import { createWriteStream } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { createServer, connect } from 'node:net'
 import { reservePort } from '../port-reservation.mjs'
 
 const run = promisify(execFile)
 const VERSION = '1.6.15'
 const SHA256 = 'e93dc3ed2db0175a4d6e168743bde3c8ac8a7435490bdab3f12da33d491ee24e'
+
+async function startImapProxy(port, targetPort) {
+  let online = true
+  const sockets = new Set()
+  const track = socket => {
+    sockets.add(socket)
+    socket.on('error', () => socket.destroy())
+    socket.once('close', () => sockets.delete(socket))
+  }
+  const server = createServer(socket => {
+    track(socket)
+    if (!online) return socket.destroy()
+    const upstream = connect(targetPort, '127.0.0.1')
+    track(upstream)
+    socket.once('close', () => upstream.destroy())
+    upstream.once('close', () => socket.destroy())
+    socket.pipe(upstream).pipe(socket)
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+  return {
+    pause() {
+      online = false
+      for (const socket of sockets) socket.destroy()
+    },
+    resume() {
+      online = true
+    },
+    async close() {
+      online = false
+      for (const socket of sockets) socket.destroy()
+      await new Promise(resolve => server.close(resolve))
+    },
+  }
+}
 
 // GreenMail is a real, isolated IMAP/SMTP service. No production mailboxes are used.
 export async function startRealMailServer(directory, runtimeRoot) {
@@ -60,9 +101,15 @@ export async function startRealMailServer(directory, runtimeRoot) {
     '-file',
     certificate,
   ])
+  const require = createRequire(join(runtimeRoot, 'package.json'))
+  const { ImapFlow } = require('imapflow')
+  const nodemailer = require('nodemailer')
+  const ca = await readFile(certificate)
   const imapPort = await reservePort()
   const smtpPort = await reservePort(undefined, { excludedPorts: [imapPort] })
   const apiPort = await reservePort(undefined, { excludedPorts: [imapPort, smtpPort] })
+  const proxyPort = await reservePort(undefined, { excludedPorts: [imapPort, smtpPort, apiPort] })
+  const proxy = await startImapProxy(proxyPort, imapPort)
   const log = createWriteStream(join(directory, 'greenmail.log'))
   const child = spawn(
     'java',
@@ -92,15 +139,11 @@ export async function startRealMailServer(directory, runtimeRoot) {
   child.stderr.on('data', chunk => {
     output += chunk.toString()
   })
-  const require = createRequire(join(runtimeRoot, 'package.json'))
-  const { ImapFlow } = require('imapflow')
-  const nodemailer = require('nodemailer')
-  const ca = await readFile(certificate)
   const config = {
     email: 'owner@example.com',
     username: 'owner',
     password: fixturePassword,
-    imap: { host: 'localhost', port: imapPort, secure: true },
+    imap: { host: 'localhost', port: proxyPort, secure: true },
     smtp: { host: 'localhost', port: smtpPort, secure: true },
   }
   const imap = async (username, action) => {
@@ -145,8 +188,9 @@ export async function startRealMailServer(directory, runtimeRoot) {
     observe()
   })
   const stop = async () => {
-    if (child.exitCode === null) {
-      const exited = new Promise(resolve => child.once('exit', resolve))
+    await proxy.close()
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise(resolve => child.once('close', resolve))
       child.kill()
       await exited
     }
@@ -163,6 +207,8 @@ export async function startRealMailServer(directory, runtimeRoot) {
     config,
     certificate,
     stop,
+    pauseImap: () => proxy.pause(),
+    resumeImap: () => proxy.resume(),
     async deliver(subject, text, messageId) {
       const smtp = nodemailer.createTransport({
         ...config.smtp,

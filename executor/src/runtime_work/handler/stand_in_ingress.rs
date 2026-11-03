@@ -70,7 +70,7 @@ impl RuntimeWorkRpcHandler {
                 if state["source"]["enabledAfter"] != source["enabledAfter"] {
                     state = Value::Null;
                 }
-                if state["error"].is_object() && state["version"] == settings["version"] {
+                if collection_error_latched(source, &state, &settings["version"]) {
                     continue;
                 }
                 let outcome = self
@@ -368,6 +368,13 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn collection_error_latched(source: &Value, state: &Value, version: &Value) -> bool {
+    state["error"].is_object()
+        && state["version"] == *version
+        && !(source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
+            && state["error"]["code"] == "email_transport_failed")
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -584,6 +591,55 @@ mod tests {
         }
         assert!(store.list_stand_in_work(7, None).unwrap().is_empty());
         assert!(handler.local_task_links(true).is_empty());
+    }
+
+    #[test]
+    fn email_transport_failure_retains_progress_and_retries_without_settings_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"id":"INBOX","kind":"inbox","profile":"account","providerId":crate::task_runtime::personal_stand_in::EMAIL_PROVIDER});
+        let version = json!(3);
+        let state = json!({"checkpoint":{"partition":"12","sequence":42}});
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &state,
+            Err(AppIpcError::new(
+                "email_transport_failed",
+                "Connection interrupted",
+            )),
+        )
+        .unwrap();
+        let failed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(failed["checkpoint"], state["checkpoint"]);
+        assert_eq!(failed["error"]["code"], "email_transport_failed");
+        assert!(!collection_error_latched(&source, &failed, &version));
+        let mut other_provider = source.clone();
+        other_provider["providerId"] = json!("@test/other");
+        assert!(collection_error_latched(&other_provider, &failed, &version));
+        for code in [
+            "email_auth_failed",
+            "email_message_invalid",
+            "email_connection_failed",
+        ] {
+            let mut permanent = failed.clone();
+            permanent["error"]["code"] = json!(code);
+            assert!(collection_error_latched(&source, &permanent, &version));
+        }
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &failed,
+            Ok(json!({"checkpoint":{"partition":"12","sequence":43}})),
+        )
+        .unwrap();
+        let resumed = store.stand_in_source(7, &source).unwrap();
+        assert!(resumed["error"].is_null());
+        assert_eq!(resumed["checkpoint"]["sequence"], 43);
     }
 
     #[test]
