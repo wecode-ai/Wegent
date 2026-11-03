@@ -162,6 +162,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  'app-update-refresh',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',

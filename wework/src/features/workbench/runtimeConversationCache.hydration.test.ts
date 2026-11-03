@@ -116,4 +116,42 @@ describe('runtime conversation hydration settlement', () => {
     expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([undefined])
     unsubscribe()
   })
+
+  test.each(['message', 'process-message'])(
+    'preserves live classification as %s during an older transcript read',
+    blockId => {
+      const snapshot: RuntimeConversationTurn[] = [
+        {
+          id: 'turn',
+          status: 'streaming',
+          items: [{ id: 'message', type: 'assistant_text', content: 'Working on the task' }],
+        },
+      ]
+      replaceRuntimeConversationSnapshot(address, snapshot)
+      const token = beginRuntimeConversationHydration(address)
+      applyRuntimeConversationAction(address, {
+        type: 'block_created',
+        subtaskId: 'turn',
+        replaceAssistantTextItemId: 'message',
+        block: {
+          id: blockId,
+          type: 'text',
+          content: 'Working on the task',
+          status: 'done',
+          createdAt: 1,
+        },
+      })
+      expect(getRuntimeConversationTurns(address)[0].items[0].type).toBe('block')
+
+      completeRuntimeConversationHydration(address, token, snapshot)
+
+      expect(getRuntimeConversationTurns(address)[0].items).toEqual([
+        expect.objectContaining({
+          id: blockId,
+          type: 'block',
+          block: expect.objectContaining({ type: 'text', status: 'done' }),
+        }),
+      ])
+    }
+  )
 })

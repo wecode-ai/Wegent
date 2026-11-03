@@ -67,6 +67,9 @@ test.each([false, true])(
         return { connectors }
       }
       if (method === 'codex.app_server_request' && payload.method === 'plugin/read') {
+        expect(payload.params.marketplacePath).toBe(
+          '/tmp/enterprise-plugins/.agents/plugins/marketplace.json'
+        )
         return {
           plugin: {
             summary: { id: 'sites@wegent', name: 'sites', installed: true, enabled: true },
@@ -94,9 +97,9 @@ test.each([
     '/tmp/github-marketplace/.agents/plugins/marketplace.json',
     '/tmp/github-marketplace/.agents/plugins/marketplace.json',
   ],
-  ['C:\\plugins\\github', 'C:/plugins/github/.agents/plugins/marketplace.json'],
+  [String.raw`C:\plugins\github`, 'C:/plugins/github/.agents/plugins/marketplace.json'],
   [
-    'C:\\plugins\\github\\.agents\\plugins\\marketplace.json',
+    String.raw`C:\plugins\github\.agents\plugins\marketplace.json`,
     'C:/plugins/github/.agents/plugins/marketplace.json',
   ],
   [
@@ -108,11 +111,11 @@ test.each([
     '/tmp/github-marketplace/.agents/plugins/api_marketplace.json',
   ],
   [
-    'C:\\plugins\\github\\.agents\\plugins\\api_marketplace.json',
+    String.raw`C:\plugins\github\.agents\plugins\api_marketplace.json`,
     'C:/plugins/github/.agents/plugins/api_marketplace.json',
   ],
 ])(
-  'marketplace detail reads the supplied local source %s without a catalog cache',
+  'marketplace detail resolves the supplied local source %s without catalog reads',
   async (source, manifest) => {
     request.mockImplementation(async (method, payload) => {
       if (method === 'executor.plugins.manifest.read') {
@@ -150,4 +153,24 @@ test('a missing local marketplace path fails before requesting a remote catalog'
     )
   ).rejects.toThrow('Local plugin marketplace path is unavailable')
   expect(request).not.toHaveBeenCalled()
+})
+
+test('remote marketplace detail uses its name without a local filesystem request', async () => {
+  request.mockImplementation(async (method, payload) => {
+    expect(method).toBe('codex.app_server_request')
+    expect(payload).toEqual({
+      method: 'plugin/read',
+      params: {
+        marketplacePath: null,
+        remoteMarketplaceName: 'openai-curated-remote',
+        pluginName: 'github',
+      },
+    })
+    return { plugin: { summary: { name: 'github' }, skills: [] } }
+  })
+  await createLocalCodexPluginApi().readMarketplacePluginDetail(
+    { id: 'openai-curated-remote', name: 'Remote', path: 'openai-curated-remote' },
+    'github'
+  )
+  expect(request).toHaveBeenCalledOnce()
 })

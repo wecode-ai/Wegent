@@ -1,4 +1,4 @@
-import { useScopedDraftInput } from './useScopedDraftInput'
+import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
 import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
@@ -198,10 +198,6 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
-import {
-  consumeWorkspaceTabTransfer,
-  publishWorkspaceTabTransferState,
-} from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
@@ -459,14 +455,8 @@ export function WorkbenchProvider({
     inputs: draftInputByScope,
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
-  } = useScopedDraftInput(() =>
-    workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
-  )
+  } = useWorkspaceTabDraftInput(workspaceTabId)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
-  useEffect(() => {
-    if (!workspaceTabId) return
-    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope })
-  }, [draftInputByScope, workspaceTabId])
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
   >({})

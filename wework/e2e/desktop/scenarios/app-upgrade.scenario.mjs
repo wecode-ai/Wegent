@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
+import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
+import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
+import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
+import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
 import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
@@ -98,6 +100,16 @@ export async function createDesktopScenario(options) {
     assert.equal((await stat(asset.path)).size, asset.bytes)
   }
   const channel = pair.channel || (pair.to.version.includes('-beta.') ? 'beta' : 'stable')
+  const verifiesRefreshedUpdate = checkpoint === 'app-update-refresh'
+  let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
+  const unavailablePolicy = () => ({
+    ...unavailableUpdatePolicy(
+      { ...pair.from, appVersion: pair.from.version },
+      { platform: pair.to.platform, arch: pair.to.arch },
+      origin
+    ),
+    channel,
+  })
   let control
   let passed = false
   let origin
@@ -111,6 +123,25 @@ export async function createDesktopScenario(options) {
       range: request.headers.range ?? null,
     })
     if (url.pathname.startsWith('/components-')) {
+      if (offer === 'refresh-failed') {
+        response.writeHead(503)
+        response.end()
+        return
+      }
+      if (offer !== 'target') {
+        const policy = unavailablePolicy()
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            schemaVersion: 1,
+            upgradePolicy:
+              offer === 'withdrawn'
+                ? { ...policy, releases: policy.releases.slice(0, 1), edges: [] }
+                : policy,
+          })
+        )
+        return
+      }
       const releases = [pair.from, pair.to].map(asset => ({
         ...asset,
         url: `${origin}/${asset.name}`,
@@ -145,6 +176,9 @@ export async function createDesktopScenario(options) {
           },
         })
       )
+    } else if (url.pathname === '/unavailable-release.tar.gz') {
+      response.writeHead(503)
+      response.end()
     } else if (url.pathname === `/${pair.to.name}`) {
       response.writeHead(200, {
         'content-type': 'application/gzip',
@@ -226,7 +260,8 @@ export async function createDesktopScenario(options) {
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
-          appProcessStarted: child => routeUpgradeRequests(child, origin),
+          appProcessStarted: child =>
+            routeUpgradeRequests(child, origin, join(resultDir, 'upgrade-transport.log')),
         }
       : {}),
     appEnvironment,
@@ -281,14 +316,15 @@ export async function createDesktopScenario(options) {
         })
       )
       console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      const preparation = promisify(execFile)(
+      const preparation = prepareReleaseProcess(
         pair.from.executable,
         [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
         {
           env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
-          timeout: 300_000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
+          progress: { logPath: join(electronUserDataDirectory, 'logs', 'release-preparation.log') },
+          version: pair.from.version,
+          releaseId: 'source-preparation',
+          stop: stopProcessGroup,
         }
       )
       try {
@@ -305,12 +341,10 @@ export async function createDesktopScenario(options) {
             code: error.code,
             signal: error.signal,
             killed: error.killed,
+            error: { name: error.name, message: error.message },
           })
         )
-        throw new Error(
-          `Source preparation failed: code=${error.code}, signal=${error.signal}, killed=${error.killed}`,
-          { cause: error }
-        )
+        throw new Error(`Source preparation failed: ${error.message}`, { cause: error })
       }
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
     },
@@ -400,14 +434,26 @@ export async function createDesktopScenario(options) {
       }
       await about()
       const updateButton = '[data-testid="about-check-update-button"]'
-      const alreadyAvailable = (await control.command('clickWhenEnabled', updateButton)).includes(
-        pair.to.version
-      )
-      if (!alreadyAvailable) {
-        await control.command('waitFor', '[data-testid="about-update-status"]', {
-          text: pair.to.version,
+      if (verifiesRefreshedUpdate) {
+        await startRefreshedAppUpdate(control, {
+          staleVersion: unavailablePolicy().releases[1].version,
+          targetVersion: pair.to.version,
+          requests,
+          setOffer: value => {
+            offer = value
+          },
+          manifestPath: `/components-${channel}-${pair.to.platform}-${pair.to.arch}.json`,
         })
-        await control.command('clickWhenEnabled', updateButton)
+      } else {
+        const alreadyAvailable = (await control.command('clickWhenEnabled', updateButton)).includes(
+          pair.to.version
+        )
+        if (!alreadyAvailable) {
+          await control.command('waitFor', '[data-testid="about-update-status"]', {
+            text: pair.to.version,
+          })
+          await control.command('clickWhenEnabled', updateButton)
+        }
       }
       const accepted = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       assert.notEqual(
@@ -442,6 +488,21 @@ export async function createDesktopScenario(options) {
         console.log('[upgrade-e2e] Target preparation recovered the unstarted source transaction')
       }
       await control.command('waitFor', '[data-testid="app-update-restart-confirm"]')
+      if (verifiesRefreshedUpdate) {
+        const confirmation = await control.command(
+          'getText',
+          '#app-update-restart-confirm-description'
+        )
+        assert.ok(
+          confirmation.includes(pair.to.version),
+          'Confirmation must show the actual prepared version'
+        )
+        assert.equal(
+          confirmation.includes(unavailablePolicy().releases[1].version),
+          false,
+          'Confirmation must not retain the stale target version'
+        )
+      }
       const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       assert.equal(
         progress.phase,
@@ -537,6 +598,7 @@ export async function createDesktopScenario(options) {
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
       if (
         verifiesUnstartedActivation ||
+        verifiesRefreshedUpdate ||
         checkpoint === 'app-rollback' ||
         checkpoint === 'app-rollback-recovery'
       ) {
@@ -633,6 +695,7 @@ export async function createDesktopScenario(options) {
         upgrade: 'passed',
         rollback:
           verifiesUnstartedActivation ||
+          verifiesRefreshedUpdate ||
           ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
             ? 'passed'
             : 'not-run',
@@ -659,6 +722,9 @@ export async function createDesktopScenario(options) {
           for (const [name, directory] of [
             ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
             ['release-logs', join(electronUserDataDirectory, 'logs')],
+            ...(legacyDataDirectory
+              ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
+              : []),
           ]) {
             await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
               if (error.code !== 'ENOENT') throw error

@@ -197,6 +197,12 @@ export function createDesktopScenario(options) {
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       active = true
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime-chat-stream', value: '1' }),
+      })
+      await control.command('setLocalStorageItem', 'body', {
+        value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+      })
       let address
       let recoveredTranscript
       const recoveryEvidence = {}
@@ -227,6 +233,7 @@ export function createDesktopScenario(options) {
         )
       const goalUser = result =>
         result.messages.find(message => message.role === 'user' && message.content === GOAL)
+      await rpc('runtime.codex.stream_debug.set', { enabled: true })
       try {
         await control.command('click', '[data-testid="new-chat-button"]')
         await createSingleRootLocalProject(control, options.workspacePath, 'output-identity')
@@ -523,6 +530,7 @@ export function createDesktopScenario(options) {
         console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
         try {
           await captureIdentityFailure(control, options.resultDir, {
+            error: { name: error.name, message: error.message, stack: error.stack },
             phase,
             requestTrace,
             recoveredTranscript,

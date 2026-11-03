@@ -9802,6 +9802,7 @@ describe('PluginsWorkspace', () => {
       let rejected = false
       vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
         if (command === 'executor.plugins.manifest.read') {
+          expect(args).toEqual({ marketplacePath: source.path, pluginName: 'github' })
           return Promise.resolve({ connectors: [{ slug: 'github', authPolicy: 'on_use' }] })
         }
         if (command === 'codex.app_server_request') {

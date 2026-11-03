@@ -168,6 +168,7 @@ plugin_segments=(
 )
 formal_release_segments=(
   app-update-full
+  app-update-refresh
 )
 cloud_worktree_segments=(
   cloud-worktree-capability

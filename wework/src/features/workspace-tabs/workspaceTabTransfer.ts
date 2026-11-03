@@ -3,6 +3,7 @@ export interface WorkspaceTabTransferState {
 }
 
 const TRANSFER_STORAGE_PREFIX = 'wework.workspaceTabTransfer.v1:'
+export const WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT = 'wework:workspace-tab-transfer-accepted'
 const liveStateByTabId = new Map<string, WorkspaceTabTransferState>()
 
 function transferStorageKey(tabId: string): string {
@@ -22,6 +23,10 @@ export function stageWorkspaceTabTransfer(tabId: string): void {
   localStorage.setItem(transferStorageKey(tabId), JSON.stringify(state))
 }
 
+export function acceptWorkspaceTabTransfer(tabId: string): void {
+  window.dispatchEvent(new CustomEvent(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, { detail: tabId }))
+}
+
 export function consumeWorkspaceTabTransfer(tabId: string): WorkspaceTabTransferState | null {
   const key = transferStorageKey(tabId)
   const raw = localStorage.getItem(key)
@@ -29,7 +34,14 @@ export function consumeWorkspaceTabTransfer(tabId: string): WorkspaceTabTransfer
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as WorkspaceTabTransferState
-    if (!parsed || typeof parsed.draftInputByScope !== 'object') return null
+    if (
+      !parsed ||
+      !parsed.draftInputByScope ||
+      typeof parsed.draftInputByScope !== 'object' ||
+      Array.isArray(parsed.draftInputByScope) ||
+      Object.values(parsed.draftInputByScope).some(value => typeof value !== 'string')
+    )
+      return null
     return parsed
   } catch {
     return null
