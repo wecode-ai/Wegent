@@ -1,10 +1,26 @@
 import { useRef, useState } from 'react'
-import type { CollaborationMember } from '../types'
-import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
+import type { IssueDetailSearchableSelectOption } from './IssueDetailControls'
+import {
+  issueCommentSubmission,
+  type IssueMentionOption,
+} from './issueCommentMentions'
 
 export interface CommentAssignment {
-  members: CollaborationMember[]
-  assign(userId: number): Promise<void>
+  options: IssueDetailSearchableSelectOption[]
+  assign(target: string): Promise<void>
+}
+
+function firstAssignableMention(
+  mentions: IssueMentionOption[],
+  options: IssueDetailSearchableSelectOption[],
+) {
+  return (
+    mentions
+      .map(mention =>
+        mention.type === 'user' ? mention.id : `agent:${mention.id}`,
+      )
+      .find(target => options.some(option => option.value === target)) ?? ''
+  )
 }
 
 export function useCommentAssignment(
@@ -12,37 +28,85 @@ export function useCommentAssignment(
   assignment: CommentAssignment | undefined,
   onSubmit: (
     body: string,
-    mentions: IssueMentionOption[]
-  ) => void | boolean | Promise<void | boolean>
+    mentions: IssueMentionOption[],
+  ) => void | boolean | Promise<void | boolean>,
 ) {
-  const [manualTarget, setManualTarget] = useState<string | null>(null)
+  const [selectedTarget, setSelectedTarget] = useState('')
+  const [sentSuggestion, setSentSuggestion] = useState('')
+  const [dismissedSuggestion, setDismissedSuggestion] = useState('')
+  const [focusedSuggestion, setFocusedSuggestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submitting = useRef(false)
-  const members =
-    assignment?.members.filter(
-      member => member.can_be_assignee !== false && member.role !== 'Viewer'
-    ) ?? []
-  const mentioned = issueCommentSubmission(value).mentions.find(
+  const options = assignment?.options ?? []
+  const target = assignment ? selectedTarget : ''
+  const mentions = issueCommentSubmission(value).mentions
+  const mentioned = firstAssignableMention(mentions, options)
+  const focused = mentions.some(
     mention =>
-      mention.type === 'user' && members.some(member => String(member.user_id) === mention.id)
+      (mention.type === 'user' ? mention.id : `agent:${mention.id}`) ===
+      focusedSuggestion,
   )
-  const target = assignment ? (manualTarget ?? mentioned?.id ?? '') : ''
+    ? focusedSuggestion
+    : ''
+  const candidate =
+    focused || mentioned || (!value.trim() ? sentSuggestion : '')
+  const suggestion =
+    candidate !== target && candidate !== dismissedSuggestion
+      ? options.find(option => option.value === candidate)
+      : undefined
+
+  function setTarget(next: string) {
+    setError(null)
+    setSelectedTarget(next)
+  }
+
+  function acceptSuggestion() {
+    if (suggestion && !submitting.current) setTarget(suggestion.value)
+  }
+
+  function dismissSuggestion() {
+    setDismissedSuggestion(candidate)
+    setSentSuggestion('')
+  }
+
+  function suggestReference(reference: string): boolean {
+    const next = firstAssignableMention(
+      issueCommentSubmission(reference).mentions,
+      options,
+    )
+    if (!next || submitting.current) return false
+    setFocusedSuggestion(next)
+    setDismissedSuggestion('')
+    return true
+  }
 
   async function submit(draft: string) {
     if (submitting.current) return
+    const { body, mentions } = issueCommentSubmission(draft)
+    if (!body && !target) return
     submitting.current = true
     setBusy(true)
     setError(null)
     try {
-      const { body, mentions } = issueCommentSubmission(draft)
-      if (body && (await onSubmit(body, mentions)) === false) return
-      if (target && assignment) {
-        // Keep the target after the host clears a successfully persisted comment.
-        setManualTarget(target)
-        await assignment.assign(Number(target))
+      if (body) {
+        if ((await onSubmit(body, mentions)) === false) return
+        const submittedSuggestion =
+          candidate || firstAssignableMention(mentions, options)
+        setSentSuggestion(
+          submittedSuggestion === dismissedSuggestion
+            ? ''
+            : submittedSuggestion,
+        )
+        setDismissedSuggestion('')
+        setFocusedSuggestion('')
       }
-      setManualTarget(null)
+      if (target && assignment) {
+        // Only an explicitly selected target participates in submission.
+        await assignment.assign(target)
+        setSelectedTarget('')
+        setSentSuggestion('')
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -51,10 +115,16 @@ export function useCommentAssignment(
     }
   }
 
-  function setTarget(next: string) {
-    setError(null)
-    setManualTarget(next)
+  return {
+    options,
+    target,
+    suggestion,
+    setTarget,
+    acceptSuggestion,
+    dismissSuggestion,
+    suggestReference,
+    busy,
+    error,
+    submit,
   }
-
-  return { members, target, setTarget, busy, error, submit }
 }

@@ -118,6 +118,9 @@ export class TransportFaultProxy {
     this.capabilitySyncGate = null
     this.stopPromise = null
     this.server = createServer((request, response) => this.forward(request, response))
+    // Only configured faults may interrupt healthy traffic. Teardown closes
+    // tracked sockets; an idle timer must not race the next package request.
+    this.server.keepAliveTimeout = 0
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
   }

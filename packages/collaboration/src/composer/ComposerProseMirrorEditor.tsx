@@ -15,6 +15,7 @@ import {
 } from "./composerMarkdownSerializer";
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -41,7 +42,12 @@ import {
   Plugin,
   TextSelection,
 } from "prosemirror-state";
-import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import {
+  Decoration,
+  DecorationSet,
+  EditorView,
+  type NodeViewConstructor,
+} from "prosemirror-view";
 import type { PluginReference } from "@wegent/chat-core/plugin-reference";
 import { ComposerMentionNodeView } from "./ComposerMentionNodeView";
 import { ComposerLinkNodeView } from "./ComposerLinkNodeView";
@@ -110,6 +116,7 @@ export interface ComposerProseMirrorEditorProps {
   onDrop: (event: DragEvent) => boolean;
   onOpenMentionFile?: (path: string) => void;
   onOpenMentionPlugin?: (reference: PluginReference) => void;
+  onActivateMention?: (reference: string) => boolean;
   onEditComposerLink?: (
     payload: ComposerLinkPayload,
     anchor?: HTMLElement,
@@ -154,6 +161,25 @@ export const ComposerProseMirrorEditor = forwardRef<
   useLayoutEffect(() => {
     callbacksRef.current = resolvedProps;
   });
+
+  const canActivateMention = Boolean(props.onActivateMention);
+  const createMentionView = useCallback<NodeViewConstructor>(
+    (node, view, getPos) =>
+      new ComposerMentionNodeView(
+        node,
+        view,
+        getPos,
+        (path) => callbacksRef.current.onOpenMentionFile?.(path),
+        (reference) => callbacksRef.current.onOpenMentionPlugin?.(reference),
+        (href) =>
+          callbacksRef.current.services.resolveMentionIcon?.(href) ?? null,
+        canActivateMention
+          ? (reference) =>
+              callbacksRef.current.onActivateMention?.(reference) ?? false
+          : undefined,
+      ),
+    [canActivateMention],
+  );
 
   useLayoutEffect(() => {
     textareaRefRef.current = props.textareaRef;
@@ -333,18 +359,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       },
       editable: () => !callbacksRef.current.disabled,
       nodeViews: {
-        composer_mention(node, view, getPos) {
-          return new ComposerMentionNodeView(
-            node,
-            view,
-            getPos,
-            (path) => callbacksRef.current.onOpenMentionFile?.(path),
-            (reference) =>
-              callbacksRef.current.onOpenMentionPlugin?.(reference),
-            (href) =>
-              callbacksRef.current.services.resolveMentionIcon?.(href) ?? null,
-          );
-        },
+        composer_mention: createMentionView,
         composer_link(node, view, getPos) {
           return new ComposerLinkNodeView(node, view, getPos, {
             onEditLink: (payload, anchor, range) =>
@@ -511,6 +526,11 @@ export const ComposerProseMirrorEditor = forwardRef<
     );
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.composer-mention-node[role="button"]')
+      )
+        return;
       if (event.key.length === 1) {
         recordComposerDiagnostic("keyboard-text", {
           composerId,
@@ -716,6 +736,17 @@ export const ComposerProseMirrorEditor = forwardRef<
       view.destroy();
     };
   }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.setProps({
+      nodeViews: {
+        ...view.props.nodeViews,
+        composer_mention: createMentionView,
+      },
+    });
+  }, [createMentionView]);
 
   useEffect(() => {
     const viewport = mountRef.current;

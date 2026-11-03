@@ -66,7 +66,11 @@ import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
-import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
+import {
+  consumeNewChatComposerRequest,
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -479,18 +483,29 @@ export function DesktopWorkbenchLayout({
       currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
     )
   }, [])
+  const activateBlankComposer = useCallback(() => {
+    setTaskView('workbench')
+    setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
+  }, [activateSplitPane, blankPaneKey])
+  useEffect(() => {
+    const activateRequestedComposer = () => {
+      if (consumeNewChatComposerRequest(workspaceTabId)) activateBlankComposer()
+    }
+    activateRequestedComposer()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, activateRequestedComposer)
+    }
+  }, [activateBlankComposer, workspaceTabId])
   const startNewChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onNewChat()
-  }, [activateSplitPane, blankPaneKey, onNewChat])
+  }, [activateBlankComposer, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
-    setTaskView('workbench')
-    setActiveLocalHarnessSessionId(null)
-    activateSplitPane(blankPaneKey)
+    activateBlankComposer()
     onStartStandaloneChat()
-  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
+  }, [activateBlankComposer, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setTaskView('workbench')

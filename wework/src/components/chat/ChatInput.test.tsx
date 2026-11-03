@@ -616,6 +616,29 @@ describe('ChatInput', () => {
     expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
+  test('hides the plugin picker after task start and restores it for a new task', async () => {
+    const props = {
+      value: '',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+      projectChat: projectChatControls(),
+    }
+    const { rerender } = render(<ChatInput {...props} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
+
+    rerender(<ChatInput {...props} showPluginPicker={false} />)
+    expect(screen.queryByTestId('composer-plugin-picker-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('composer-plugin-picker')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toBeVisible()
+
+    rerender(<ChatInput {...props} />)
+    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
+    expect(screen.queryByTestId('composer-plugin-picker')).not.toBeInTheDocument()
+  })
+
   test('keeps the plugin picker above runtime plan progress', async () => {
     render(
       <ChatInput
