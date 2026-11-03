@@ -14,6 +14,40 @@ use brz_mysql::MysqlRow;
 // Leave ample headroom below MySQL's 65,535 prepared-statement parameters.
 const SUBTASK_IDS_PER_BATCH: usize = 1_000;
 
+/// Preserve MySQL's ascending message order without sorting large JSON there.
+/// SQL NULL sorts before a message id; equal ids keep their returned order.
+pub fn order_assistant_subtasks(rows: Vec<MysqlRow>) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let index = crate::task_store_statements::subtask_column_index("message_id")
+        .expect("the subtask projection contains message_id");
+    order_subtask_rows(rows, |row| row.get_at::<Option<i64>>(index))
+}
+
+/// Restore the task-detail ordering, including SQL NULLs before non-NULL keys.
+pub fn order_subtasks_by_message(rows: Vec<MysqlRow>) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let message = crate::task_store_statements::subtask_column_index("message_id")
+        .expect("the subtask projection contains message_id");
+    let created = crate::task_store_statements::subtask_column_index("created_at")
+        .expect("the subtask projection contains created_at");
+    order_subtask_rows(rows, |row| {
+        Ok((
+            row.get_at::<Option<i64>>(message)?,
+            row.get_at::<Option<chrono::NaiveDateTime>>(created)?,
+        ))
+    })
+}
+
+fn order_subtask_rows<K: Ord>(
+    rows: Vec<MysqlRow>,
+    mut key: impl FnMut(&MysqlRow) -> brz_mysql::MysqlResult<K>,
+) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let mut keyed = rows
+        .into_iter()
+        .map(|row| Ok((key(&row)?, row)))
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(keyed.into_iter().map(|(_, row)| row).collect())
+}
+
 /// Read the complete owner-filtered conversation without sorting large JSON
 /// columns. All reads use the same handle, including any deployment route.
 pub async fn ordered_subtasks_for_user<M: brz_mysql::Mysql>(
@@ -339,7 +373,8 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
             crate::task_store_statements::subtasks_by_message_ordered_statement(table),
             (task_id,),
         )
-        .await?;
+        .await
+        .and_then(order_subtasks_by_message)?;
     Ok(SubtaskListing {
         rows,
         contexts: None,
@@ -362,7 +397,8 @@ pub async fn ordered_subtasks_by_task_on(
             &crate::task_store_statements::subtasks_by_message_ordered_statement(table),
             vec![crate::task_store_statements::StatementArg::Int(task_id)],
         )
-        .await?;
+        .await
+        .and_then(order_subtasks_by_message)?;
     Ok(SubtaskListing {
         rows,
         contexts: None,

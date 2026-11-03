@@ -10,6 +10,8 @@ mod partial_messages;
 pub(crate) use partial_messages::ClaudePartialMessages;
 mod async_tasks;
 pub use async_tasks::{extract_claude_subagent_update, ClaudeAsyncTaskTracker};
+mod stdout_limits;
+use stdout_limits::{max_buffer_bytes, CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES};
 
 use crate::{
     agents::interactive_mcp::{
@@ -18,8 +20,6 @@ use crate::{
     runner::ExecutionOutcome,
 };
 
-const CLAUDE_STDOUT_MAX_BUFFER_BYTES: usize = 1024 * 1024;
-const CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 const OMITTED_IMAGE_DATA: &str = "[binary image data omitted]";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,10 +133,11 @@ impl ClaudeStdoutJsonBuffer {
             return Err(error);
         }
 
+        let max_buffer_bytes = max_buffer_bytes();
         match serde_json::from_str::<Value>(&self.buffer) {
             Ok(mut value) => {
                 omit_inline_image_data(&mut value);
-                let normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                let normalized_size = if self.buffer.len() > max_buffer_bytes {
                     omit_redundant_task_transcripts(&mut value);
                     serde_json::to_vec(&value)
                         .map(|serialized| serialized.len())
@@ -144,11 +145,11 @@ impl ClaudeStdoutJsonBuffer {
                 } else {
                     self.buffer.len()
                 };
-                if normalized_size > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                if normalized_size > max_buffer_bytes {
                     let error = ClaudeStdoutJsonError {
                         line_number,
                         message: format!(
-                            "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                            "JSON message exceeded maximum buffer size of {max_buffer_bytes} bytes"
                         ),
                         preview: preview_stdout_line(&self.buffer),
                     };
@@ -167,7 +168,7 @@ pub fn compact_claude_stdout_line<'a>(
     line: &'a str,
     line_number: usize,
 ) -> Result<Cow<'a, str>, ClaudeStdoutJsonError> {
-    if line.len() <= CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+    if line.len() <= max_buffer_bytes() {
         return Ok(Cow::Borrowed(line));
     }
 

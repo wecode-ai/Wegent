@@ -15,15 +15,18 @@ type MessageRequest = {
 
 type Scenario = {
   model: string
-  mode: 'complete' | 'stop'
+  mode: 'complete' | 'stop' | 'large-output'
   parentCalls: number
   childCalls: number
   childFinished: boolean
+  parentYielded: boolean
+  completionReceived: boolean
   requests: Array<{ kind: string; timestamp: number; body: MessageRequest }>
 }
 
 const scenarios = new Map<string, Scenario>()
 const pendingChildren = new Map<string, () => void>()
+const LARGE_CHILD_BYTES = 1100 * 1024
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -66,6 +69,80 @@ function startChildWork(res: ServerResponse, body: MessageRequest): void {
   ])
 }
 
+function hasCompletedChildNotification(body: MessageRequest, childMarker: string): boolean {
+  const agentId = JSON.stringify(body.messages).match(/agentId:\s*([\w-]+)/)?.[1]
+  if (!agentId) return false
+  for (const message of body.messages || []) {
+    if (message.role !== 'user') continue
+    const notifications = userText(message.content).matchAll(
+      /<task-notification>[\s\S]*?<\/task-notification>/g
+    )
+    for (const [notification] of notifications) {
+      const taskId = notification.match(/<task-id>([^<]+)<\/task-id>/)?.[1]?.trim()
+      if (
+        taskId === agentId &&
+        notification.includes('<status>completed</status>') &&
+        notification.includes(childMarker)
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function respondLargeOutput(
+  res: ServerResponse,
+  body: MessageRequest,
+  scenario: Scenario,
+  child: boolean
+): void {
+  const childMarker = `BG_LARGE_CHILD_${scenario.model}`
+  if (child) {
+    const finishChild = () => {
+      scenario.childFinished = true
+      // One delta exercises the real CLI's large JSON message without many timers.
+      text(res, body, `${childMarker}${'x'.repeat(LARGE_CHILD_BYTES)}${childMarker}_END`)
+    }
+    if (scenario.parentYielded) finishChild()
+    else {
+      // Keep the child pending until the parent's early end_turn has been sent.
+      pendingChildren.set(scenario.model, finishChild)
+      res.once('close', () => pendingChildren.delete(scenario.model))
+    }
+  } else if (scenario.parentCalls === 1) {
+    const agent = body.tools?.find(tool => tool.name === 'Agent')
+    if (!agent?.input_schema?.properties?.run_in_background) {
+      throw new Error('Real Claude Agent did not offer background execution')
+    }
+    tools(res, body, [
+      {
+        toolName: 'Agent',
+        arguments: {
+          description: 'Large stdout regression worker',
+          subagent_type: 'general-purpose',
+          prompt: `BG_WORKER_${scenario.model}`,
+          run_in_background: true,
+        },
+      },
+    ])
+  } else if (scenario.parentCalls === 2) {
+    res.once('finish', () => {
+      scenario.parentYielded = true
+      const pendingChild = pendingChildren.get(scenario.model)
+      pendingChildren.delete(scenario.model)
+      pendingChild?.()
+    })
+    text(res, body, `BG_LARGE_PARENT_WAITING_${scenario.model}`)
+  } else {
+    scenario.completionReceived = hasCompletedChildNotification(body, childMarker)
+    if (!scenario.completionReceived) {
+      throw new Error('Real background completion notification was not received')
+    }
+    text(res, body, `BG_LARGE_PARENT_DONE_${scenario.model}`)
+  }
+}
+
 function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario): void {
   const workerPrompt = `BG_WORKER_${scenario.model}`
   const child = body.messages?.some(
@@ -73,6 +150,7 @@ function respond(res: ServerResponse, body: MessageRequest, scenario: Scenario):
   )
   const kind = child ? `child-${scenario.childCalls++}` : `parent-${scenario.parentCalls++}`
   scenario.requests.push({ kind, timestamp: Date.now(), body })
+  if (scenario.mode === 'large-output') return respondLargeOutput(res, body, scenario, !!child)
   if (child) {
     // Keep a real child model request pending until the parent stops its agent.
     if (scenario.mode === 'stop') return
@@ -129,7 +207,7 @@ export function handleClaudeBackgroundRequest(
   if (url.pathname === '/claude-background-scenarios') {
     if (req.method === 'POST') {
       const input = JSON.parse(rawBody) as Pick<Scenario, 'model' | 'mode'>
-      if (!input.model || !['complete', 'stop'].includes(input.mode)) {
+      if (!input.model || !['complete', 'stop', 'large-output'].includes(input.mode)) {
         json(res, 400, { error: 'A model and background lifecycle mode are required' })
         return true
       }
@@ -138,6 +216,8 @@ export function handleClaudeBackgroundRequest(
         parentCalls: 0,
         childCalls: 0,
         childFinished: false,
+        parentYielded: false,
+        completionReceived: false,
         requests: [],
       })
       json(res, 200, { configured: true })
