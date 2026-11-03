@@ -4,12 +4,13 @@
 
 // @vitest-environment jsdom
 
-import { act, Children, type ReactElement, type ReactNode } from 'react'
+import { act, Children, useState, type ReactElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import { ProjectBoardCardContext } from './projectBoardCardContext'
+import { createCollaborationTranslator } from '../i18n'
 import { KanbanBoard } from '../kanban/KanbanBoard'
 import {
   ProjectBoardBody,
@@ -101,6 +102,105 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe('ProjectBoardBody', () => {
+  it('distinguishes parents from standalone issues instead of calling every row an Issue', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div'),
+      root = createRoot(container)
+    const options = props()
+    options.parentRows = {
+      rows: [
+        {
+          key: 'p',
+          parentId: 'p',
+          parent: { id: 'p' },
+          items: new Map([['inbox', [{ id: 'child' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+        {
+          key: 'root',
+          parentId: null,
+          parent: null,
+          items: new Map([['inbox', [{ id: 'standalone' }]]]),
+          total: 1,
+          completed: 0,
+          running: 0,
+        },
+      ],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    try {
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个独立事项')
+      options.currentParentId = 'ancestor'
+      options.currentParent = { id: 'ancestor', title: 'Ancestor' }
+      options.parentRows.rows[1].parentId = 'ancestor'
+      act(() => root.render(<ProjectBoardBody {...options} />))
+      expect(container.textContent).toContain('1 个父事项 · 1 个直属子事项')
+      expect(container.textContent).not.toContain('独立事项')
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+  it('opens column quick create and retains the create-first action in parent layout', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    const createFirst = vi.fn()
+    options.parentRows = {
+      rows: [],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    options.getColumnEmptyState = () => ({
+      hint: 'Empty',
+      action: {
+        label: 'Create first',
+        ariaLabel: 'Create first',
+        onClick: createFirst,
+      },
+    })
+    options.renderColumnHeaderActions = (_column, _items, state) => (
+      <button data-testid="quick-add" onClick={() => state.setQuickCreateStatus('inbox')}>
+        +
+      </button>
+    )
+    options.renderColumnFooter = (_column, _items, state) =>
+      state.quickCreateStatus === 'inbox' ? <input data-testid="quick-create-input" /> : null
+    function Harness() {
+      const [quickCreateStatus, setQuickCreateStatus] = useState<string | null>(null)
+      return (
+        <ProjectBoardBody
+          {...options}
+          state={{ ...options.state, quickCreateStatus, setQuickCreateStatus }}
+        />
+      )
+    }
+    try {
+      act(() => root.render(<Harness />))
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-column-empty-add-inbox"]')!
+          .click()
+      )
+      expect(createFirst).toHaveBeenCalledOnce()
+      expect(container.querySelector('[data-testid="quick-create-input"]')).toBeNull()
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="quick-add"]')!.click())
+      expect(container.querySelector('[data-testid="quick-create-input"]')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('keeps card nodes mounted when successful drop feedback moves or clears', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')
