@@ -25,12 +25,20 @@ export function parseConnections(manifest) {
   for (const [alias, dependency] of Object.entries(dependencies)) {
     requireValue(ID.test(alias), 'Invalid dependency alias')
     requireValue(dependency?.kind === 'codexPlugin', 'Unsupported connection dependency')
-    requireValue(record(dependency.source), 'Missing dependency source')
-    for (const key of ['marketplaceId', 'pluginId']) {
-      requireValue(
-        typeof dependency.source[key] === 'string' && dependency.source[key].trim(),
-        `Missing ${key}`
-      )
+    requireValue(
+      dependency.alternateSources === undefined || Array.isArray(dependency.alternateSources),
+      'Invalid alternate dependency sources'
+    )
+    const sources = dependencySources(dependency)
+    const identities = new Set()
+    for (const source of sources) {
+      requireValue(record(source), 'Missing dependency source')
+      for (const key of ['marketplaceId', 'pluginId']) {
+        requireValue(typeof source[key] === 'string' && source[key].trim(), `Missing ${key}`)
+      }
+      const identity = JSON.stringify([source.marketplaceId, source.pluginId])
+      requireValue(!identities.has(identity), 'Duplicate dependency source')
+      identities.add(identity)
     }
     requireValue(
       typeof dependency.version === 'string' && validRange(dependency.version),
@@ -158,16 +166,22 @@ export function parseConnections(manifest) {
   })
 }
 
+export function dependencySources(dependency) {
+  return [dependency.source, ...(dependency.alternateSources ?? [])]
+}
+
 // The caller supplies its existing version implementation; no second resolver is maintained.
 export function dependencyPlan(definition, inventory, satisfies) {
   return Object.entries(definition.dependencies).map(([alias, dependency]) => {
-    const matches = inventory.filter(
-      item =>
-        item.marketplaceId === dependency.source.marketplaceId &&
-        item.pluginId === dependency.source.pluginId
-    )
-    requireValue(matches.length <= 1, `Ambiguous dependency: ${alias}`)
-    const installed = matches[0]
+    const candidates = dependencySources(dependency).flatMap(source => {
+      const matches = inventory.filter(
+        item => item.marketplaceId === source.marketplaceId && item.pluginId === source.pluginId
+      )
+      requireValue(matches.length <= 1, `Ambiguous dependency: ${alias}`)
+      return matches
+    })
+    // Reuse an installed declared source before considering a fresh installation.
+    const installed = candidates.find(item => item.installed) ?? candidates[0]
     const status = !installed?.installed
       ? 'missing'
       : !installed.enabled
