@@ -34,7 +34,7 @@ Use the branch menu in the composer to search and switch local branches, or crea
 
 Selecting a branch performs checkout on the execution device even when its name matches the last displayed branch, so cached UI state cannot prevent recovery from detached HEAD.
 
-If another device still reports `unknown option`, confirm that its Wework executor has been updated. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
+If another device still reports `unknown option`, confirm that its Wework executor has been updated. Cloud connections to cloud or remote devices also require an updated Wegent Backend. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
 
 ## View pull request and merge request status
 
