@@ -345,7 +345,13 @@ async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
     loop_item_execution_service._persist_runtime_request_intent(
         test_db, execution=claimed
     )
-    assert claimed.runtime_request["clientUserMessageId"] == root_comment.message_id
+    root_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
+    )
+    assert root_payload["clientUserMessageId"] == root_comment.message_id
     # Model completion is synthetic here; no real Runtime or model service runs.
     claimed.status = "completed"
     test_db.commit()
@@ -360,7 +366,11 @@ async def test_offline_root_and_early_reply_are_durable_and_keep_one_session(
     assert claimed_reply.id == reply.id
     assert claimed_reply.runtime_task_id == root.runtime_task_id
     assert claimed_reply.runtime_request["newSession"] is False
-    assert (
-        claimed_reply.runtime_request["clientUserMessageId"] == reply_comment.message_id
+    reply_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed_reply,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
     )
+    assert reply_payload["clientUserMessageId"] == reply_comment.message_id
     assert reply_comment.message_id != root_comment.message_id

@@ -677,8 +677,6 @@ class WeworkExecutionProfile:
             taskId=runtime_task_id,
             runtime=runtime,
             message=prompt,
-            clientUserMessageId=origin_context.get("comment_trigger_message_id")
-            or None,
             title=title,
             modelId=self.model or None,
             modelType=self.model_type,

@@ -126,7 +126,6 @@ def apply_continuation(
     ).model_copy(
         update={
             "message": context["comment_prompt"],
-            "client_user_message_id": context["comment_trigger_message_id"],
             "new_session": False,
             "device_id": source["runtime_device_id"],
             "local_task_id": source["runtime_task_id"],
