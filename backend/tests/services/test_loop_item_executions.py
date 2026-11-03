@@ -2472,6 +2472,7 @@ def test_project_agent_runtime_and_capabilities_reach_runtime_request(
     )
 
     assert request.runtime == runtime
+    assert request.client_user_message_id is None
     assert request.project_instructions == "Use the configured project capabilities."
     assert request.additional_skills == [
         {"name": "project-review", "namespace": "default"}

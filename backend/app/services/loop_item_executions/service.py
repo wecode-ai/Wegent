@@ -3655,9 +3655,6 @@ class LoopItemExecutionService:
                     {
                         "runtimeAction": "send",
                         "queueIfBusy": True,
-                        "clientUserMessageId": execution.runtime_origin_context[
-                            "comment_trigger_message_id"
-                        ],
                     }
                 )
                 if execution.runtime_origin_context.get("dispatch_role") == "manager":
