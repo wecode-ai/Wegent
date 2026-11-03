@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { useState } from 'react'
 import { WorkspaceFileToolbar } from './WorkspaceFileToolbar'
@@ -276,7 +276,7 @@ test('shows a generic Git action when the host returns a Git repository target',
   )
 })
 
-test('the opener menu uses Electron capabilities and remembers the selected installed editor', async () => {
+test('the opener menus put the last selected installed editor first across remounts', async () => {
   setup()
   fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
   const cursor = await screen.findByTestId('workspace-file-open-file-option-Cursor')
@@ -295,6 +295,56 @@ test('the opener menu uses Electron capabilities and remembers the selected inst
   fireEvent.click(screen.getByTestId('workspace-file-open-file-button'))
   await waitFor(() => expect(mocks.openRequest).toHaveBeenCalledTimes(2))
   expect(mocks.openRequest).toHaveBeenLastCalledWith({ path: file.path, opener: 'cursor' })
+
+  cleanup()
+  setup()
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  const menu = await screen.findByTestId('workspace-file-open-file-picker-menu')
+  await waitFor(() =>
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map(item => item.dataset.testid)
+    ).toEqual([
+      'workspace-file-open-file-option-Cursor',
+      'workspace-file-open-file-option-VS Code',
+      'workspace-file-reveal-location-button',
+    ])
+  )
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  fireEvent.contextMenu(screen.getByTestId('workspace-file-path'))
+  expect(await screen.findByTestId('workspace-file-open-preferred')).toHaveTextContent('Cursor')
+  fireEvent.pointerEnter(screen.getByTestId('workspace-file-open-with'))
+  const submenu = await screen.findByTestId('workspace-file-open-with-submenu')
+  expect(
+    within(submenu)
+      .getAllByRole('menuitem')
+      .map(item => item.dataset.testid)
+  ).toEqual(['workspace-file-open-file-option-Cursor', 'workspace-file-open-file-option-VS Code'])
+  fireEvent.click(within(submenu).getByTestId('workspace-file-open-file-option-VS Code'))
+  await waitFor(() => expect(getPreferredWorkspaceOpener(target.path)).toBe('vscode'))
+  expect(mocks.openRequest).toHaveBeenLastCalledWith({ path: file.path, opener: 'vscode' })
+})
+
+test('an unavailable preferred editor stays hidden and the main button opens an available editor', async () => {
+  setup()
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  fireEvent.click(await screen.findByTestId('workspace-file-open-file-option-Cursor'))
+  await waitFor(() => expect(getPreferredWorkspaceOpener(target.path)).toBe('cursor'))
+  cleanup()
+  mocks.applications.mockResolvedValue([
+    { id: 'vscode', label: 'VS Code', available: true },
+    { id: 'cursor', label: 'Cursor', available: false },
+  ])
+  setup()
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  await screen.findByTestId('workspace-file-open-file-option-VS Code')
+  expect(screen.queryByTestId('workspace-file-open-file-option-Cursor')).not.toBeInTheDocument()
+  expect(getPreferredWorkspaceOpener(target.path)).toBe('cursor')
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-button'))
+  await waitFor(() => expect(getPreferredWorkspaceOpener(target.path)).toBe('vscode'))
+  expect(mocks.openRequest).toHaveBeenLastCalledWith({ path: file.path, opener: 'vscode' })
 })
 
 test('the context menu shows the preferred editor icon and an actionable open-with submenu', async () => {
@@ -476,10 +526,17 @@ test('remote paths never invoke local file actions', async () => {
 })
 
 test('failed actions show an error without dispatching a file save', async () => {
-  mocks.openRequest.mockRejectedValue(new Error('Open failed'))
   setup()
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  fireEvent.click(await screen.findByTestId('workspace-file-open-file-option-Cursor'))
+  await waitFor(() => expect(getPreferredWorkspaceOpener(target.path)).toBe('cursor'))
+  mocks.openRequest.mockRejectedValue(new Error('Open failed'))
   fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
   fireEvent.click(await screen.findByTestId('workspace-file-open-file-option-VS Code'))
   expect(await screen.findByRole('alert')).toHaveTextContent('Open failed')
+  expect(getPreferredWorkspaceOpener(target.path)).toBe('cursor')
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))
+  const menu = await screen.findByTestId('workspace-file-open-file-picker-menu')
+  expect(within(menu).getAllByRole('menuitem')[0]).toHaveTextContent('Cursor')
   expect(mocks.invoke).not.toHaveBeenCalledWith('workspace.saveFileAs', expect.anything())
 })
