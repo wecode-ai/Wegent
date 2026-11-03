@@ -22,16 +22,17 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
                 bot: json!([{"shell_type": "ClaudeCode"}]),
                 ..ExecutionRequest::default()
             };
-            let turns = async {
+            let turn_client = client.clone();
+            let mut turns = tokio::spawn(async move {
                 tokio::join!(
-                    client.run_turn_with_cancel(
+                    turn_client.run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions::default()
                     ),
-                    client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+                    turn_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
                 )
-            };
-            tokio::pin!(turns);
+            });
+            wait_for_two_turns(&client).await;
             // Both turns remain pending beyond the one-second startup watchdog.
             assert!(
                 tokio::time::timeout(Duration::from_millis(1500), &mut turns)
@@ -44,6 +45,7 @@ fn shared_startup_timeout_preserves_live_turns_and_late_responses() {
             );
             let (first, second) = tokio::time::timeout(Duration::from_secs(5), turns)
                 .await
+                .unwrap()
                 .unwrap();
             for result in [first, second] {
                 assert_eq!(
@@ -73,6 +75,19 @@ fn client(root: &tempfile::TempDir) -> CodexAppServerClient {
     CodexAppServerClient::new(script.display().to_string())
 }
 
+async fn wait_for_two_turns(client: &CodexAppServerClient) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if client.request("test/count", json!({})).await.unwrap()["startupCount"] == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Fake server did not receive both concurrent turns");
+}
+
 #[test]
 fn shared_startup_timeout_can_cancel_without_a_turn_id() {
     shared_test_runtime().block_on(async {
@@ -97,14 +112,15 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
                     .then(|| json!({"objective": "Goal startup", "status": "active"})),
                 ..CodexAppServerTurnOptions::default()
             };
-            let turns = async {
+            let turn_client = client.clone();
+            let mut turns = tokio::spawn(async move {
                 tokio::join!(
-                    client
+                    turn_client
                         .run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
-                    client.run_turn_with_cancel(request, options)
+                    turn_client.run_turn_with_cancel(request, options)
                 )
-            };
-            tokio::pin!(turns);
+            });
+            wait_for_two_turns(&client).await;
             assert!(
                 tokio::time::timeout(Duration::from_millis(1500), &mut turns)
                     .await
@@ -124,6 +140,7 @@ fn shared_startup_timeout_can_cancel_without_a_turn_id() {
             client.request("test/release", json!({})).await.unwrap();
             let (other, cancelled) = tokio::time::timeout(Duration::from_secs(5), turns)
                 .await
+                .unwrap()
                 .unwrap();
             assert!(other.is_ok());
             assert_eq!(
@@ -143,21 +160,43 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
             let root = tempfile::tempdir().unwrap();
             let client = client(&root);
             let request = ExecutionRequest {
-                prompt: json!(if delayed_response { "delay-target" } else { "delay-progress" }),
+                prompt: json!(if delayed_response {
+                    "delay-target"
+                } else {
+                    "delay-progress"
+                }),
                 bot: json!([{"shell_type": "ClaudeCode"}]),
                 ..ExecutionRequest::default()
             };
-            let other_request = ExecutionRequest { prompt: json!("other-turn"), ..request.clone() };
-            let turns = async {
-                tokio::join!(
-                    client.run_turn_with_cancel(other_request, CodexAppServerTurnOptions::default()),
-                    client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
-                )
+            let other_request = ExecutionRequest {
+                prompt: json!("other-turn"),
+                ..request.clone()
             };
-            tokio::pin!(turns);
-            assert!(tokio::time::timeout(Duration::from_millis(1500), &mut turns).await.is_err());
-            client.request("test/finish-first", json!({})).await.unwrap();
-            let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns).await.unwrap();
+            let turn_client = client.clone();
+            let mut turns = tokio::spawn(async move {
+                tokio::join!(
+                    turn_client.run_turn_with_cancel(
+                        other_request,
+                        CodexAppServerTurnOptions::default()
+                    ),
+                    turn_client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+                )
+            });
+            wait_for_two_turns(&client).await;
+            assert!(tokio::time::timeout(Duration::from_millis(1500), &mut turns)
+                .await
+                .is_err());
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                client.request("test/finish-first", json!({})),
+            )
+            .await
+            .expect("Fake server did not finish its healthy sibling")
+            .unwrap();
+            let (first, stalled) = tokio::time::timeout(Duration::from_secs(5), turns)
+                .await
+                .unwrap()
+                .unwrap();
             assert!(first.is_ok());
             assert_eq!(stalled.unwrap_err(), "codex app-server turn made no model or tool progress for 1s; the shared app-server was restarted");
         }
@@ -167,6 +206,7 @@ fn shared_startup_timeout_retries_recovery_after_other_turn_finishes() {
 const SERVER: &str = r#"#!/bin/sh
 thread_count=0
 turn_count=0
+goal_count=0
 delayed_id=
 interrupt_count=0
 empty_interrupt_count=0
@@ -204,6 +244,7 @@ while IFS= read -r line; do
       printf '{"id":%s,"result":{}}\n' "$request_id"
       ;;
     *'"method":"thread/goal/set"'*)
+      goal_count=$((goal_count + 1))
       printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$request_id"
       ;;
     *'"method":"turn/interrupt"'*)
@@ -232,7 +273,7 @@ while IFS= read -r line; do
       printf '{"id":%s,"result":{"turnCount":%s}}\n' "$request_id" "$turn_count"
       ;;
     *'"method":"test/count"'*)
-      printf '{"id":%s,"result":{"turnCount":%s}}\n' "$request_id" "$turn_count"
+      printf '{"id":%s,"result":{"turnCount":%s,"startupCount":%s}}\n' "$request_id" "$turn_count" "$((turn_count + goal_count))"
       ;;
   esac
 done
