@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
+import { captureFailureFollowup, failureFollowupDelayMs } from './failure-followup.mjs'
+
+function controlReturning(uiSnapshot, workbenchDebug) {
+  const commands = []
+  return {
+    commands,
+    command: async (action, selector, options) => {
+      commands.push({ action, selector, options })
+      if (action === 'snapshot') return JSON.stringify(uiSnapshot)
+      if (action === 'getWorkbenchDebugSnapshot') return JSON.stringify(workbenchDebug)
+      throw new Error(`Unexpected control command: ${action}`)
+    },
+  }
+}
+
+test('resolves the follow-up delay from the environment with a safe default', () => {
+  assert.equal(failureFollowupDelayMs(undefined), 3_000)
+  assert.equal(failureFollowupDelayMs(''), 3_000)
+  assert.equal(failureFollowupDelayMs('0'), 0)
+  assert.equal(failureFollowupDelayMs('12000'), 12_000)
+  assert.equal(failureFollowupDelayMs('not-a-number'), 3_000)
+  assert.equal(failureFollowupDelayMs('-5'), 3_000)
+})
+
+test('captures post-failure UI and workbench state with metadata', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  try {
+    const control = controlReturning(
+      { testIds: ['collaboration-project-execution-environment-add'] },
+      { workbench: { isBootstrapping: false } }
+    )
+    const followup = await captureFailureFollowup(control, resultDir, 0)
+    assert.equal(followup, null)
+    assert.deepEqual(control.commands, [])
+
+    const captured = await captureFailureFollowup(control, resultDir, 1)
+    assert.equal(captured.delayMs, 1)
+    assert.equal(captured.uiSnapshot.testIds.length, 1)
+    assert.equal(captured.workbenchDebug.workbench.isBootstrapping, false)
+    assert.deepEqual(
+      control.commands.map(command => command.action),
+      ['snapshot', 'getWorkbenchDebugSnapshot']
+    )
+    const stored = JSON.parse(await readFile(join(resultDir, 'failure-followup.json'), 'utf8'))
+    assert.equal(stored.delayMs, 1)
+    assert.ok(stored.capturedAt)
+    assert.deepEqual(stored.uiSnapshot, captured.uiSnapshot)
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
+
+test('a follow-up capture failure rejects so callers keep the original error separate', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  try {
+    const control = {
+      command: async () => {
+        throw new Error('The WebView can no longer answer diagnostics')
+      },
+    }
+    await assert.rejects(captureFailureFollowup(control, resultDir, 1), /no longer answer/)
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
