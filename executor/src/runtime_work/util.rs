@@ -769,10 +769,14 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     Some((workspace.to_string_lossy().into_owned(), worktree_id))
 }
 
+pub(crate) fn is_managed_restored_workspace(path: &str) -> bool {
+    let restored_root = crate::config::paths::executor_home().join("restored-workspaces");
+    Path::new(path).starts_with(restored_root)
+}
+
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     // Restored workspaces own their execution directory, even inside a worktree.
-    let restored_root = crate::config::paths::executor_home().join("restored-workspaces");
-    if Path::new(path).starts_with(restored_root) {
+    if is_managed_restored_workspace(path) {
         return None;
     }
     if !Path::new(path).exists() {
