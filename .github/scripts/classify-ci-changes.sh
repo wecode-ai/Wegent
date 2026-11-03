@@ -118,6 +118,7 @@ classify_path() {
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)

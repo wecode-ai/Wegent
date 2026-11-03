@@ -14,6 +14,8 @@ on:
       - ".github/scripts/classify-ci-cache-warmup.sh"
       - ".github/scripts/wework-windows-e2e-build-key.mjs"
       - ".github/scripts/archive-wework-core-e2e-build.sh"
+      - ".github/scripts/restore-wework-core-e2e-build.sh"
+      - ".github/scripts/wework-core-e2e-transport.mjs"
       - ".github/scripts/download-actions-artifact.sh"
       - ".github/scripts/publish-wework-core-e2e-build-oci.sh"
       - ".github/scripts/resolve-wework-core-e2e-build-ref.sh"

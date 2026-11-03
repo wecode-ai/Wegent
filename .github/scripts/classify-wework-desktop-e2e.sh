@@ -2007,6 +2007,7 @@ classify_path() {
       .github/scripts/macos-e2e-source-digest.* | \
       .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh | \

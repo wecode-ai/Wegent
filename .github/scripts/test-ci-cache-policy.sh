@@ -87,7 +87,9 @@ assert_warmup_case "Wework source" \
   "wework/src/main.ts"
 for build_input in wework/electron/src/main.ts wework/vite.config.ts \
   wework/public/icon.svg wework/resources/plugins/skills/SKILL.md \
-  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs; do
+  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs \
+  .github/scripts/wework-core-e2e-transport.mjs \
+  .github/scripts/restore-wework-core-e2e-build.sh; do
   assert_warmup_case "Windows build input: $build_input" \
     "${warmup_all_false/wework_target=false/wework_target=true}" "$build_input"
 done
@@ -699,6 +701,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
 fi
 
 node --test "$script_dir/runtime-artifact.test.mjs"
+node --test "$script_dir/wework-core-e2e-transport.test.mjs"
 node --test "$script_dir/ci-prebuilt-images.test.mjs"
 node --test "$script_dir/resolve-ci-image.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"

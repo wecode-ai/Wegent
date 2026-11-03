@@ -479,6 +479,9 @@ assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
 
+assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
+  ".github/scripts/wework-core-e2e-transport.mjs"
+
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
@@ -1709,6 +1712,10 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Core artifact changes retain full coverage" \
   "$full_desktop_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_desktop_case "Core transport changes retain full coverage" \
+  "$full_desktop_expected" \
+  ".github/scripts/wework-core-e2e-transport.mjs"
 
 assert_desktop_case "Core build action changes retain full coverage" \
   "$full_desktop_expected" \

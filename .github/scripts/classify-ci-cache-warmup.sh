@@ -31,6 +31,8 @@ classify_path() {
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
       .github/scripts/wework-windows-e2e-build-key.mjs | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/restore-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \
       .github/scripts/runtime-artifact.* | \

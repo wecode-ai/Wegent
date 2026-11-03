@@ -128,4 +128,9 @@ printf 'changed shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
 (cd "$repo" && git add packages/collaboration/issue.ts)
 test "$reference_after_collaboration" != "$(resolve_reference)"
 
+reference_before_transport="$(resolve_reference)"
+printf 'transport deduplication\n' >"$repo/.github/scripts/wework-core-e2e-transport.mjs"
+(cd "$repo" && git add .github/scripts/wework-core-e2e-transport.mjs)
+test "$reference_before_transport" != "$(resolve_reference)"
+
 echo "Wework Core E2E OCI build tests passed"
