@@ -37,7 +37,8 @@ Extra feature or platform labels explicitly widen coverage. Assertions inside sc
 `ci:windows` adds the selected features' registered Windows Core cases. It does not claim Windows
 parity for Cloud/Plugins. The plan fails only when the selected feature union has no Windows Core coverage.
 `ci:macos` adds the existing Inspector suite, not arbitrary macOS feature parity. Previously required
-path-based Inspector coverage remains. The `ci:memory` name is retained; the full PR plans below trigger the memory suite.
+path-based Inspector coverage remains. The `ci:memory` label is accepted but does not select the memory suite
+on its own; only `ci:all` or automatic full PR coverage for CI policy changes selects it.
 
 ## PR behavior
 

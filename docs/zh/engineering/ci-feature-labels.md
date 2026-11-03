@@ -37,7 +37,8 @@ PR 的 Lint、类型检查、单测和插件 SDK 检查继续按改动路径自�
 `ci:windows` 增加所选功能已有的 Windows Core 场景，不代表 Cloud/Plugins 的 Windows 全覆盖。
 仅当所选功能的并集中没有 Windows Core 场景时，此标签才会导致计划检查失败。
 `ci:macos` 增加现有 macOS Inspector 验证，不代表任意功能的 macOS 等价覆盖。
-路径判定原本必需的 macOS Inspector 仍保留。`ci:memory` 名称保留；内存专项由下述全量 PR 计划触发。
+路径判定原本必需的 macOS Inspector 仍保留。`ci:memory` 标签可被接受，但单独添加不会选择内存专项；
+只有 `ci:all` 或 CI 策略变更触发的自动全量 PR 计划会选择该专项。
 
 ## PR 操作流程
 
