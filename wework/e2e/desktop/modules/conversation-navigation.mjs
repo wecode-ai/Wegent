@@ -82,9 +82,9 @@ function activeTranscriptSelector() {
   )
 }
 
-async function waitForActiveTaskIdle(control) {
+async function waitForActiveTaskIdle(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
   const startedAt = Date.now()
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     const pauseButtonCount = Number(
       await control.command('getElementCount', '[data-testid="pause-response-button"]')
     )
@@ -127,7 +127,7 @@ async function sendPromptWithButton(
   timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   { confirmCloudModelCatalogSync = false } = {}
 ) {
-  await waitForActiveTaskIdle(control)
+  await waitForActiveTaskIdle(control, timeoutMs)
   await control.command('fill', selector, { value: prompt })
   await control.command('waitFor', selector, {
     text: prompt,
