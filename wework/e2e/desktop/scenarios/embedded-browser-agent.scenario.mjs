@@ -351,6 +351,30 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
   assert.equal(await readEditor(), edit.text, 'Rejected edit must not change the editor')
   console.log('[browser-approval] Approved retry succeeded; subsequent edit required new approval')
+
+  const earlier = await bridgeCall({ ...edit, text: 'earlier pending change' })
+  const latestEdit = { ...edit, text: 'latest pending change' }
+  const latest = await bridgeCall(latestEdit)
+  assert.equal(earlier.error?.code, 'approval_required', JSON.stringify(earlier))
+  assert.equal(latest.error?.code, 'approval_required', JSON.stringify(latest))
+  assert.notEqual(earlier.approval.approvalId, latest.approval.approvalId)
+  await bridgeCall({ action: 'inspect' })
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+  const latestRetry = await bridgeCall(latestEdit)
+  assert.equal(latestRetry.ok, true, JSON.stringify(latestRetry))
+  assert.equal(await readEditor(), latestEdit.text)
+  await control.command('waitForDesktopHostEvents', 'body', { timeoutMs })
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
+  )
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
+  assert.equal(await readEditor(), latestEdit.text, 'Rejecting the earlier request must not edit')
+  console.log(
+    '[browser-approval] Latest approval survives inspect; earlier request remains separate'
+  )
 }
 
 async function waitForElementCount(control, selector, expected, timeoutMs, message) {

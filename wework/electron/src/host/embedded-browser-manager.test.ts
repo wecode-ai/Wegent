@@ -78,6 +78,42 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
   )
 
+  test('shows the latest pending approval and restores earlier unresolved requests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    try {
+      const first = manager.registerAgentApproval('workspace-browser', 'fill:first', 'fill', {
+        error: { code: 'approval_required' },
+        approval: { reason: 'First edit' },
+      })!
+      const latest = manager.registerAgentApproval('workspace-browser', 'click:second', 'click', {
+        error: { code: 'approval_required' },
+        approval: { reason: 'Second action' },
+      })!
+      manager.emitAgentState('workspace-browser', 'needs_user', {
+        action: 'click',
+        errorCode: 'approval_required',
+      })
+      expect(events.at(-1)?.payload).toMatchObject({
+        action: 'click',
+        message: 'Second action',
+        approval: latest,
+      })
+      manager.emitAgentState('workspace-browser', 'idle', { action: 'inspect' })
+      expect(events.at(-1)?.payload.approval).toEqual(latest)
+      manager.resolveAgentApproval('workspace-browser', latest.approvalId, true)
+      expect(events.at(-1)?.payload.approval).toEqual(first)
+      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'fill:first')).toBe(false)
+      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:second')).toBe(true)
+      expect(manager.consumeApprovedAgentRisk('workspace-browser', 'click:second')).toBe(false)
+      manager.resolveAgentApproval('workspace-browser', first.approvalId, false)
+      expect(events.at(-1)?.payload.approval).toBeNull()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('does not display or consume expired browser approvals', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
     const events: BrowserHostEvent[] = []

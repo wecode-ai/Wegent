@@ -872,13 +872,16 @@ export class EmbeddedBrowserManager {
   ): void {
     const normalizedLabel = requiredLabel(label)
     if (this.agentControlPaused.has(normalizedLabel)) status = 'paused'
-    const approval = [...this.agentApprovals.values()].find(
-      candidate =>
-        status !== 'paused' &&
-        candidate.label === normalizedLabel &&
-        !candidate.approved &&
-        candidate.payload.expiresAtUnixMs > Date.now()
-    )?.payload
+    // Keep the latest blocked action selected across subsequent read-only events.
+    const approval = [...this.agentApprovals.values()]
+      .reverse()
+      .find(
+        candidate =>
+          status !== 'paused' &&
+          candidate.label === normalizedLabel &&
+          !candidate.approved &&
+          candidate.payload.expiresAtUnixMs > Date.now()
+      )?.payload
     const awaitingApproval =
       approval &&
       (status === 'idle' || status === 'running' || detail.errorCode === 'approval_required')

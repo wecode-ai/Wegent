@@ -28,6 +28,8 @@ bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、
 
 高风险操作返回 `approval_required` 后，浏览器面板显示批准和拒绝按钮。Electron 主进程按 logical label 保存待审批请求；后续 `inspect`、等待或其他操作的状态事件必须携带仍有效的待审批请求，不能让运行状态覆盖审批入口。批准或拒绝后移除入口；批准只允许同一浏览器、同一操作签名重试一次，过期审批不得执行。`embedded-browser` 桌面 checkpoint 覆盖触发审批、再次 inspect、批准和重试的完整链路。
 
+同一浏览器有多个待审批操作时，面板显示最近登记的请求，inspect 保持该选择；处理后继续显示尚未处理的请求，每个批准仍只对应各自的操作签名。
+
 用户接管浏览器时优先显示“恢复 AI”入口，暂停期间的 inspect 不得解除接管状态。恢复 AI 后重新显示仍有效的待审批请求，接管操作本身不批准或拒绝该请求。
 
 其他操作失败时保留错误状态、消息和错误码，包括以 `needs_user` 报告的 `wait_timeout`，同时继续提供待审批请求的批准/拒绝入口。只有空闲、运行中或本次操作确实要求审批时，才能用待审批信息生成状态提示。桌面回归在断言审批入口前，必须确认 renderer 已收到 inspect 后的宿主事件，不能只凭一段稳定时间推断事件已送达。
@@ -169,7 +171,7 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 程序化首次打开必须把“面板已请求打开”和“原生 WebView 已可导航”视为两个不同阶段。bridge 应保存带 request ID 的待处理导航，等任务对应的浏览器宿主获得非零可见尺寸并进入 ready 状态后再执行；监听器晚于请求注册时，前端必须通过待处理请求快照恢复事件。只有原生 WebView 已导航到请求地址后才能向工具返回成功，不能仅因右侧面板或空白 WebView 已创建就报告成功。
 
-`state().url` 在加载期间包含请求意图，不能作为导航完成证据。Electron manager 保存当前 `navigationCompletion`；原生加载 Promise 可能在空白页交接时结束，因此还必须确认实际 URL 已匹配请求且主 frame 已停止加载。bridge 的 `open` 等待完整就绪屏障并检查导航失败后，才允许工具继续 inspect。
+`state().url` 在加载期间包含请求意图，不能作为导航完成证据。Electron manager 保存当前 `navigationCompletion`；原生加载 Promise 可能在空白页交接时结束，因此还必须确认已提交的 URL 与当前请求目标匹配，且主 frame 已停止加载。重定向会把请求目标替换为最终提交的 URL，因此重定向后的 open 可以完成。bridge 的 `open` 等待完整就绪屏障并检查导航失败后，才允许工具继续 inspect。
 
 浏览器 guest 与其他 workbench surface 使用相同的平台后台策略，必须在两类 preload 分支的公共初始化路径设置。macOS/Linux 禁用 guest 后台节流，避免隐藏任务页面暂停脚本执行；Windows 保留默认可见性生命周期，继续使用现有的全局后台计时器策略。`embedded-browser` checkpoint 在后台 inspect 前读取并断言实际 guest 的策略，不能只检查主窗口配置。
 
