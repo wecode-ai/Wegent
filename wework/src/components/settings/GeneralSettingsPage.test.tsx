@@ -393,6 +393,22 @@ describe('GeneralSettingsPage', () => {
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('shows the pending-interactions fixed tab with its localized title', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      fixedWorkspaceTabs: [
+        ...defaultPreferences.fixedWorkspaceTabs,
+        { id: 'pending-interactions', kind: 'auxiliary', contentRoute: '/pending-interactions' },
+      ],
+    })
+    render(<GeneralSettingsPage />)
+
+    expect(await screen.findByTestId('general-fixed-tab-pending-interactions')).toHaveTextContent(
+      '待你处理'
+    )
+    expect(screen.getByTestId('general-fixed-tab-startup-pending-interactions')).toBeEnabled()
+  })
+
   test('shows an unavailable saved friendly title model for replacement', async () => {
     const taskModel = {
       name: 'gpt-5',
