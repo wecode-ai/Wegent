@@ -127,6 +127,9 @@ export async function verifyPluginPartialInventoryResilience({
   const startedAt = Date.now()
   const requestStart = apiProxy.requests.length
   const timeoutMs = Math.min(workbenchReadyTimeoutMs, 30_000)
+  // Parallel checkpoints may keep the host busy; idle admission has its own
+  // budget, separate from UI readiness, and must retain the real pressure gates.
+  const idleAdmissionTimeoutMs = 5 * 60_000
   const root = await realpath(resultDir)
   let manifestPath
   let original
@@ -470,7 +473,8 @@ export async function verifyPluginPartialInventoryResilience({
       },
       Boolean,
       'The real automatic-update coordinator never reached the partial-inventory guard',
-      timeoutMs
+      idleAdmissionTimeoutMs,
+      1000
     )
     await openPlugin(control, fixture)
     await refresh()
