@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, LoopItemTaskBinding
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -51,6 +52,27 @@ def manager_execution(
         "app.services.project_chat.push.push_project_chat_message", MagicMock()
     )
     return project, item, execution
+
+
+@pytest.fixture
+def manager_device_record(test_db: Session, test_user: User) -> str:
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="manager-app",
+        namespace="default",
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "manager-app",
+                "appDeviceId": "cloud-device-1",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    return f"app-record-{device.id}"
 
 
 def test_initial_manager_binding_authorizes_and_projects_the_real_session(
@@ -144,8 +166,14 @@ def test_reopening_manager_activity_refreshes_independently_projected_progress(
 
 
 @pytest.mark.parametrize("event_name", ["response.created", "response.in_progress"])
+@pytest.mark.parametrize("device_identity", ["stored", "record"])
 def test_initial_manager_event_opens_activity_before_transport_acceptance(
-    test_db: Session, test_user: User, manager_execution, event_name: str
+    test_db: Session,
+    test_user: User,
+    manager_execution,
+    manager_device_record: str,
+    event_name: str,
+    device_identity: str,
 ) -> None:
     _, item, execution = manager_execution
     loop_item_execution_service._bind_issue_execution_task(test_db, execution=execution)
@@ -164,7 +192,11 @@ def test_initial_manager_event_opens_activity_before_transport_acceptance(
     )
     projected = project_chat_service.project_runtime_event(
         test_db,
-        device_id=execution.runtime_device_id,
+        device_id=(
+            manager_device_record
+            if device_identity == "record"
+            else execution.runtime_device_id
+        ),
         runtime_task_id=manager_task_id,
         event_name=event_name,
         payload={"data": {}},
@@ -185,16 +217,21 @@ def test_initial_manager_event_opens_activity_before_transport_acceptance(
     activity = test_db.query(ProjectChatMessage).filter_by(task_id=item.id).one()
     assert activity.message_id == projected[0].message_id
     assert activity.runtime_task_id == manager_task_id
+    assert activity.runtime_device_id == execution.runtime_device_id
     assert activity.status == "streaming"
     assert activity.metadata_json["run_status"] == "running"
 
 
 @pytest.mark.parametrize(
     "mismatch",
-    ["device", "owner", "suffix", "nested_suffix", "executor_kind"],
+    ["device", "owner", "record_owner", "suffix", "nested_suffix", "executor_kind"],
 )
 def test_initial_manager_activity_rejects_unowned_or_unrelated_identity(
-    test_db: Session, test_user: User, manager_execution, mismatch: str
+    test_db: Session,
+    test_user: User,
+    manager_execution,
+    manager_device_record: str,
+    mismatch: str,
 ) -> None:
     _, item, execution = manager_execution
     device_id = execution.runtime_device_id
@@ -204,6 +241,9 @@ def test_initial_manager_activity_rejects_unowned_or_unrelated_identity(
         device_id = "unrelated-device"
     elif mismatch == "owner":
         owner_id += 1000
+    elif mismatch == "record_owner":
+        owner_id += 1000
+        device_id = manager_device_record
     elif mismatch == "suffix":
         manager_task_id += "-extra"
     elif mismatch == "nested_suffix":

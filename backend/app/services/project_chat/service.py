@@ -1385,6 +1385,7 @@ class ProjectChatService:
                 db,
                 runtime_device_id=device_id,
                 runtime_task_id=runtime_task_id,
+                device_ids=identities,
                 owner_user_id=owner_user_id,
             )
         if row is None:
@@ -1639,6 +1640,7 @@ class ProjectChatService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        device_ids: list[str],
         owner_user_id: int | None = None,
     ) -> ProjectChatMessage | None:
         """Open the activity message from the owning execution.
@@ -1675,6 +1677,7 @@ class ProjectChatService:
             db,
             runtime_device_id,
             runtime_task_id,
+            device_ids=device_ids,
         )
 
     def finish_runtime_activity(
