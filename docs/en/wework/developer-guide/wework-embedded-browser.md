@@ -28,6 +28,8 @@ The bridge supports limited concurrency. A long `waitFor` request must not block
 
 When a high-risk action returns `approval_required`, the browser panel shows approve and reject controls. The Electron host stores pending requests by logical label. State events from subsequent inspection, waiting, or other operations must carry any unexpired pending approval so activity updates cannot dismiss its controls. Resolving the request removes the controls; approval permits only one retry with the same browser label and action signature, and expired approvals cannot authorize execution. The `embedded-browser` desktop checkpoint covers requesting approval, inspecting again, approving, and retrying the action.
 
+User takeover takes priority and displays the resume control. Inspection while paused must not clear takeover state. Resuming AI restores any unexpired pending approval; takeover neither approves nor rejects it.
+
 ### Multi-tab navigation connection graph
 
 ```mermaid

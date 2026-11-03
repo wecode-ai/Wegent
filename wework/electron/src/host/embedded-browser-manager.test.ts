@@ -78,6 +78,25 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
   })
 
+  test('keeps user takeover resumable while an approval is pending', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-approval-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    try {
+      const approval = manager.registerAgentApproval('workspace-browser', 'fill:editor', 'fill', {
+        error: { code: 'approval_required' },
+      })!
+      manager.setAgentControlPaused('workspace-browser', true)
+      manager.emitAgentState('workspace-browser', 'idle', { action: 'inspect' })
+      expect(events.at(-1)?.payload).toMatchObject({ status: 'paused', approval: null })
+      manager.setAgentControlPaused('workspace-browser', false)
+      expect(events.at(-1)?.payload).toMatchObject({ status: 'needs_user', approval })
+      manager.resolveAgentApproval('workspace-browser', approval.approvalId, false)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('authenticates a Smart app browser session before navigating to the runtime', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-auth-'))
     const manager = new EmbeddedBrowserManager(directory)

@@ -280,7 +280,18 @@ async function waitForControlValue(control, selector, expected, timeoutMs, messa
   throw new Error(message)
 }
 
-async function verifyEditorApprovalPersistence(bridgeCall, control, timeoutMs) {
+async function verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs) {
+  await control.command('setEmbeddedBrowserAgentControlPaused', 'body', {
+    value: JSON.stringify({ label, paused: true }),
+  })
+  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs })
+  await bridgeCall({ action: 'inspect' })
+  await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { stableMs: 500, timeoutMs })
+  await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
+  await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
+async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs) {
   const edit = { action: 'fill', selector: '#script-editor', text: 'pipeline regression fixture' }
   const blocked = await bridgeCall(edit)
   assert.equal(blocked.error?.code, 'approval_required', JSON.stringify(blocked))
@@ -297,6 +308,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, timeoutMs) {
     timeoutMs,
   })
   console.log('[browser-approval] Approval controls remain visible after inspect')
+  await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
   await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
   const edited = await bridgeCall(edit)
@@ -1485,7 +1497,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         screenshotResult = screenshotResponse
       }
 
-      await verifyEditorApprovalPersistence(bridgeCall, control, uiTimeoutMs)
+      await verifyEditorApprovalPersistence(bridgeCall, control, browserLabel, uiTimeoutMs)
 
       // file:// local file support: the bridge renders a local HTML page, and
       // an un-previewable local file surfaces a notice instead of downloading.

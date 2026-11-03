@@ -844,8 +844,10 @@ export class EmbeddedBrowserManager {
     } = {}
   ): void {
     const normalizedLabel = requiredLabel(label)
+    if (this.agentControlPaused.has(normalizedLabel)) status = 'paused'
     const approval = [...this.agentApprovals.values()].find(
       candidate =>
+        status !== 'paused' &&
         candidate.label === normalizedLabel &&
         !candidate.approved &&
         candidate.payload.expiresAtUnixMs > Date.now()
@@ -860,7 +862,7 @@ export class EmbeddedBrowserManager {
     }
     this.emit('agent-state', {
       label: normalizedLabel,
-      status: approval && status !== 'paused' ? 'needs_user' : status,
+      status: approval ? 'needs_user' : status,
       action: approval?.actionKind ?? detail.action ?? null,
       target: approval ? null : (detail.target ?? null),
       message: approval?.reason ?? detail.message ?? null,
