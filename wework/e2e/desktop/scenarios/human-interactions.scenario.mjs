@@ -462,9 +462,7 @@ export function createDesktopScenario({
             `${page} [data-testid="interaction-entity-container"]`
           )
         )
-        const questionRegion = issueFixture
-          ? contextParagraph.replace(' p:first-of-type', '')
-          : `${page} [data-testid="request-user-input-question-question_1"]`
+        const questionRegion = `${page} [data-testid="interaction-question-heading"]`
         assert.ok(
           (await control.command('getText', questionRegion)).includes(QUESTION),
           'The measured original question region must contain the pending question'
@@ -480,7 +478,7 @@ export function createDesktopScenario({
             devicePixelRatio: entity.devicePixelRatio,
           },
           entity,
-          questionRegionKind: issueFixture ? 'original-message-body' : 'original-question',
+          questionRegionKind: 'original-notification-question',
           ...narrowElements,
         }
         await writeFile(
@@ -494,6 +492,22 @@ export function createDesktopScenario({
         await captureScreenshot(control, '05b-entity-narrow.png')
         assert.equal(entity.viewportWidth, 480, 'The actual narrow content width must be 480')
         assert.equal(entity.viewportHeight, 760, 'The actual narrow content height must be 760')
+        assert.equal(
+          narrowElements.questionRegion.length,
+          1,
+          'The selected question must have one detail heading'
+        )
+        const [questionBounds] = narrowElements.questionRegion
+        assert.ok(
+          questionBounds.width > 0 &&
+            questionBounds.height > 0 &&
+            questionBounds.left >= 0 &&
+            questionBounds.top >= 0 &&
+            questionBounds.right <= entity.viewportWidth &&
+            questionBounds.bottom <= entity.viewportHeight &&
+            questionBounds.scrollWidth <= questionBounds.clientWidth + 1,
+          'The original question must be readable inside the narrow detail viewport'
+        )
         assert.equal(narrowElements.submit.length, 1, 'The pending entity must have one submit')
         const [submitBounds] = narrowElements.submit
         assert.ok(

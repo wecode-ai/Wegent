@@ -200,19 +200,24 @@ export function RuntimeInteractionsPage({
         )}
         {row ? (
           <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex min-h-12 items-center gap-3 border-b border-border/60 px-5">
-              <h2
-                ref={heading}
-                tabIndex={-1}
-                className="min-w-0 flex-1 truncate text-base font-medium outline-none"
-                title={row.title}
-              >
-                {row.title}
-              </h2>
+            <header className="flex shrink-0 flex-col gap-2 border-b border-border/60 px-5 py-2 sm:flex-row sm:items-center sm:gap-3">
+              <div className="min-w-0 flex-1">
+                <h2
+                  ref={heading}
+                  tabIndex={-1}
+                  data-testid="interaction-question-heading"
+                  className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-base font-medium outline-none"
+                >
+                  {row.question}
+                </h2>
+                <p className="mt-1 truncate text-sm text-text-secondary" title={row.title}>
+                  {row.title}
+                </p>
+              </div>
               <button
                 type="button"
                 data-testid="interaction-open-original"
-                className="flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-7"
+                className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
                 onClick={() =>
                   openWeworkScheme(
                     originalNavigation?.id === row.id

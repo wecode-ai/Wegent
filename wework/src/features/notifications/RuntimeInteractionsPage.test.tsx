@@ -189,7 +189,7 @@ it('only registers a narrow-screen request as viewed after opening it and restor
   const row = screen.getByTestId('interaction-list-item')
   fireEvent.click(row)
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
-  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
   fireEvent.click(screen.getByTestId('interactions-back-to-list'))
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), null)
   expect(row).toHaveFocus()
@@ -227,7 +227,7 @@ it('restores narrow-screen list heading focus when the handled request no longer
   )
   const { rerender } = render(page(value))
   fireEvent.click(screen.getByTestId('interaction-list-item'))
-  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
   rerender(page({ ...value, pending: [] }))
   fireEvent.click(screen.getByTestId('interactions-back-to-list'))
   expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
@@ -244,9 +244,9 @@ it('focuses a narrow-screen deep-linked question when its pending data arrives l
     </RuntimeInteractionsContext.Provider>
   )
   const { rerender } = render(page(null))
-  expect(screen.queryByRole('heading', { name: approval.task.task.title })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: approval.question })).not.toBeInTheDocument()
   rerender(page(value))
-  expect(screen.getByRole('heading', { name: approval.task.task.title })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: approval.question })).toHaveFocus()
   expect(value.registerView).toHaveBeenLastCalledWith(expect.any(String), approval.id)
 })
 
@@ -263,5 +263,35 @@ it.each(['interactions.load_failed', 'interactions.failed', 'interactions.expire
   error => {
     view(undefined, { 'old-request': error })
     expect(screen.getByRole('alert')).toHaveTextContent(new RegExp('^' + error + '$'))
+  }
+)
+
+it.each(['task', 'issue'])(
+  'keeps the original question visible in the %s detail when the narrow list is hidden',
+  kind => {
+    viewport.twoPanes = false
+    const question = 'Original question\nwith the complete decision and no generated summary'
+    const item = {
+      ...approval,
+      question,
+      ...(kind === 'issue'
+        ? {
+            project: {
+              projectId: 'project',
+              issueId: 'issue',
+              store: 'backend' as const,
+              rootCommentId: 'root',
+            },
+          }
+        : {}),
+    }
+    view(item.id, {}, { pending: [item] })
+    const heading = screen.getByTestId('interaction-question-heading')
+    expect(heading.textContent).toBe(question)
+    expect(heading).toHaveFocus()
+    expect(heading.closest('section')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('interaction-list-item').closest('section')).toHaveClass('hidden')
+    expect(screen.getByTestId('interaction-open-original')).toBeVisible()
+    expect(screen.getByTestId('test-original-entity')).toBeVisible()
   }
 )
