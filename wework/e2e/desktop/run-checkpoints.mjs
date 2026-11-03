@@ -56,6 +56,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
   'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
+  'follow-up-task-switch': './scenarios/follow-up-task-switch.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'responses-api-gateway': './scenarios/responses-api-gateway.scenario.mjs',
@@ -258,6 +259,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
 
   'native-lifecycle',
   'goal-state-sync',
+  'follow-up-task-switch',
   'model-settings',
   'codex-native-catalog',
   'runtime-input-answer-persistence',

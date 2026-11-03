@@ -38,7 +38,7 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
-import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
+import { DshExecutorTransportError, reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
@@ -485,6 +485,8 @@ async function reconcilePendingLocalModelCatalog(
   try {
     await reconciliation
   } catch (error) {
+    // A transport interruption must not suppress synchronization after recovery.
+    if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
     console.error('Local model catalog reconciliation failed', error)
   } finally {
     if (tracker.inFlight === reconciliation) tracker.inFlight = null
