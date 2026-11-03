@@ -193,8 +193,16 @@ export function ActionMenu({
     },
     [cancelSubmenuClose, contextMenuPosition, onContextMenuClose, onOpenChange],
   );
-  const menuOpen = open || Boolean(contextMenuPosition);
+  const contextMenuOpen = Boolean(contextMenuPosition);
+  const menuOpen = open || contextMenuOpen;
   const openSubmenuItem = items.find((item) => item.testId === openSubmenuId);
+
+  useLayoutEffect(() => {
+    contextMenuPreviousFocusRef.current =
+      contextMenuOpen && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  }, [contextMenuOpen]);
 
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -426,12 +434,6 @@ export function ActionMenu({
         submenuRef.current?.contains(document.activeElement)
       )
         return;
-      if (contextMenuPosition) {
-        contextMenuPreviousFocusRef.current =
-          document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
-      }
       const items = menuRef.current?.querySelectorAll<HTMLButtonElement>(
         '[role^="menuitem"]:not(:disabled)',
       );

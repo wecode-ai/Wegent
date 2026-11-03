@@ -96,20 +96,30 @@ describe('ActionMenu', () => {
     expect(outsideAction).toHaveFocus()
   })
 
-  test('dismisses a context menu with Escape and restores the previous focus', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(<ContextMenuFixture />)
-    const previousFocus = screen.getByTestId('previous-focus')
-    await user.click(previousFocus)
-    fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
-    await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
-    rerender(<ContextMenuFixture />)
-    await act(() => new Promise(resolve => requestAnimationFrame(resolve)))
+  test.each(['menu', 'closed submenu'])(
+    'restores the pre-menu target after a render following %s',
+    async focusTarget => {
+      const user = userEvent.setup()
+      const { rerender } = render(<ContextMenuFixture />)
+      const previousFocus = screen.getByTestId('previous-focus')
+      await user.click(previousFocus)
+      fireEvent.contextMenu(screen.getByTestId('context-target'), { clientX: 20, clientY: 10 })
+      await waitFor(() => expect(screen.getByRole('menu')).toHaveFocus())
+      if (focusTarget === 'closed submenu') {
+        await user.hover(screen.getByTestId('move'))
+        await waitFor(() => expect(screen.getByTestId('project')).toHaveFocus())
+        await user.hover(screen.getByTestId('outside-action'))
+        await waitFor(() => expect(screen.queryByTestId('move-submenu')).not.toBeInTheDocument())
+        expect(document.body).toHaveFocus()
+      }
+      rerender(<ContextMenuFixture />)
+      await act(() => new Promise(resolve => requestAnimationFrame(resolve)))
 
-    await user.keyboard('{Escape}')
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
-    await waitFor(() => expect(previousFocus).toHaveFocus())
-  })
+      await user.keyboard('{Escape}')
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      await waitFor(() => expect(previousFocus).toHaveFocus())
+    }
+  )
 
   test('dismisses a context menu when its window loses focus', async () => {
     const user = userEvent.setup()
