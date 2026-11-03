@@ -30,7 +30,7 @@ export async function authenticatedBrowserRequest(processHandle, origin) {
 }
 
 export async function terminate(processHandle) {
-  if (processHandle.exitCode !== null) return
+  if (processHandle.exitCode !== null || processHandle.signalCode !== null) return
   const exited = new Promise(resolvePromise => processHandle.once('exit', resolvePromise))
   try {
     if (process.platform === 'win32') processHandle.kill()

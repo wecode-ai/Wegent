@@ -16,6 +16,7 @@ if (!runtimeRoot || !packagePath) {
 
 const root = await mkdtemp(join(tmpdir(), 'wework-workbench-runtime-'))
 let runtime = null
+let stderr = ''
 try {
   const manifest = JSON.parse(
     await readFile(join(resolve(packagePath), 'plugin-manifest.json'), 'utf8')
@@ -40,6 +41,10 @@ try {
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'pipe', 'ignore', 'ignore', 'pipe'],
   })
+  runtime.stderr.setEncoding('utf8')
+  runtime.stderr.on('data', chunk => {
+    stderr += String(chunk)
+  })
   const browserRequest = await authenticatedBrowserRequest(runtime, new URL(launch.url).origin)
   const html = await waitForApplication(runtime, launch.url, browserRequest)
   const unauthenticated = await fetch(new URL('/api/settings.describe', launch.url))
@@ -61,6 +66,9 @@ try {
       2
     )
   )
+} catch (error) {
+  if (stderr.trim()) console.error(stderr.trim())
+  throw error
 } finally {
   if (runtime) await terminate(runtime)
   await rm(root, { recursive: true, force: true })
