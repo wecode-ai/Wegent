@@ -773,8 +773,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
                 services={services}
                 user={user}
                 workspaceTabId={tab.id}
-                loadTaskComposerCatalogs={false}
-                composerAppsSourceActive={false}
+                loadTaskComposerCatalogs={tab.id === workspaceTabs.activeTabId}
+                composerAppsSourceActive={tab.id === workspaceTabs.activeTabId}
                 debugSnapshotEnabled={false}
                 publishDebugSnapshots={false}
                 consumePluginTrials={false}

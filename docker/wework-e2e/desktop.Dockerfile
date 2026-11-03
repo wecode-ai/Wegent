@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    fontconfig \
+    fonts-noto-cjk \
     gnupg \
     gh \
     git \
@@ -66,4 +68,6 @@ RUN node --version \
   && skopeo --version \
   && umoci --version \
   && rustc --version \
-  && cargo --version
+  && cargo --version \
+  && fc-match --format '%{family}\n' 'sans-serif:lang=zh-cn' \
+  && fc-list :lang=zh family | grep -F 'Noto Sans CJK'

@@ -18,8 +18,13 @@ interface WorkItemContextPanelProps {
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   deviceNamesById?: Readonly<Record<string, string>>
-  onOpenBoard: () => void
+  onOpenBoard?: () => void
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
+  onOpenChildTask?: (item: CloudLoopItem) => void
+  focusedCommentId?: string
+  focusedCommentRequestKey?: string
+  readFirst?: boolean
 }
 
 export function WorkItemContextPanel({
@@ -33,6 +38,11 @@ export function WorkItemContextPanel({
   deviceNamesById,
   onOpenBoard,
   onOpenTask,
+  onOpenRuntimeTask,
+  onOpenChildTask,
+  focusedCommentId,
+  focusedCommentRequestKey,
+  readFirst,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -66,19 +76,26 @@ export function WorkItemContextPanel({
         <TodoEditor
           getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
           mode="edit"
+          focusedCommentId={focusedCommentId}
+          focusedCommentRequestKey={focusedCommentRequestKey}
+          readFirst={readFirst}
           presentation="workspace-panel"
           workspacePanelFill
           showPanelControls={false}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onOpenChildTask={onOpenChildTask}
           headerActions={
-            <button
-              type="button"
-              data-testid="work-item-open-board"
-              onClick={onOpenBoard}
-              className="flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            >
-              {t('workbench.open_workspace', '打开工作空间')}
-              <ArrowUpRight className="h-3.5 w-3.5" />
-            </button>
+            onOpenBoard && (
+              <button
+                type="button"
+                data-testid="work-item-open-board"
+                onClick={onOpenBoard}
+                className="flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                {t('workbench.open_workspace', '打开工作空间')}
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </button>
+            )
           }
           selectedTaskId={currentTask.taskId}
           deviceNamesById={deviceNamesById}

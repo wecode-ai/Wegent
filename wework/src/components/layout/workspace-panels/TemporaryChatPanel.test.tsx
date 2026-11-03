@@ -20,6 +20,7 @@ import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRe
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
@@ -43,6 +44,17 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  renderToolBlocks: false,
+  inputHost: undefined as
+    | undefined
+    | {
+        getError: () => undefined
+        isDisabled: () => boolean
+        isSubmitting: () => boolean
+        getDraft: () => Record<string, string>
+        setDraft: ReturnType<typeof vi.fn>
+        submit: ReturnType<typeof vi.fn>
+      },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
   readCatalog: vi.fn(),
   mainListApps: vi.fn(),
@@ -89,6 +101,10 @@ function CatalogBindingProbe({ scope }: { scope?: string }) {
   return null
 }
 
+vi.mock('@/features/notifications/useRuntimeInteractionInputHost', () => ({
+  useRuntimeInteractionInputHost: () => mocks.inputHost,
+}))
+
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
   ScrollableMessageArea: ({
     messages,
@@ -104,6 +120,8 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore,
     transcriptError,
     onRetryTranscript,
+    messageTarget,
+    hideRequestUserInputBlocks,
   }: {
     messages: Array<{
       id: string
@@ -111,6 +129,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
       role?: string
       content?: string
       status?: string
+      blocks?: WorkbenchMessage['blocks']
     }>
     onRetryFailedMessage?: (message: unknown) => void
     onSwitchModelForFailedMessage?: (message: unknown) => void
@@ -127,11 +146,22 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onLoadMoreBefore?: () => void
     transcriptError?: string | null
     onRetryTranscript?: () => void
+    messageTarget?: { messageId: string; requestKey: string }
+    hideRequestUserInputBlocks?: boolean
   }) => (
-    <div data-testid="mock-message-list">
+    <div data-testid="mock-message-list" data-target-message={messageTarget?.messageId}>
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
+      {mocks.renderToolBlocks &&
+        messages.map(message => (
+          <ToolBlocksDisplay
+            key={message.id}
+            blocks={message.blocks ?? []}
+            isStreaming
+            hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+          />
+        ))}
       {hasMoreBefore && (
         <button
           data-testid="mock-load-older"
@@ -476,6 +506,8 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 
 describe('TemporaryChatPanel', () => {
   beforeEach(() => {
+    mocks.renderToolBlocks = false
+    mocks.inputHost = undefined
     mocks.catalogBindings.clear()
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
@@ -1410,6 +1442,121 @@ describe('TemporaryChatPanel', () => {
 
     await userEvent.click(screen.getByTestId('mock-ignore-input'))
     expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+  })
+
+  it('shows the selected older question and targets its original turn instead of the latest request', async () => {
+    const older = {
+      kind: 'request_user_input' as const,
+      itemId: 'older',
+      questions: [{ id: 'old', question: 'Older decision?', is_other: true }],
+    }
+    mocks.conversationMessages = [
+      { id: 'original-source', role: 'user', content: 'Earlier context', status: 'done' },
+      {
+        id: 'later',
+        role: 'assistant',
+        content: 'Unrelated later work',
+        status: 'done',
+        blocks: [
+          {
+            id: 'latest-block',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: {
+              kind: 'request_user_input',
+              itemId: 'latest',
+              questions: [{ id: 'new', question: 'Later decision?', is_other: true }],
+            },
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="selected-question"
+        focusedRequest={older}
+        sourceMessageIds={['original-source']}
+        focusRequestKey="older-notification"
+      />
+    )
+    expect(screen.getByText('Older decision?')).toBeInTheDocument()
+    expect(screen.queryByText('Later decision?')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-target-message',
+      'original-source'
+    )
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+    expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+    expect(screen.queryByText('Older decision?')).not.toBeInTheDocument()
+  })
+
+  it('restores only the selected controlled question after notification revalidation', () => {
+    mocks.renderToolBlocks = true
+    const question = {
+      kind: 'request_user_input' as const,
+      itemId: 'restored-request',
+      questions: [{ id: 'question_1', question: 'Which rule applies?', is_other: true }],
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'question-message',
+        role: 'assistant',
+        content: 'Original context',
+        status: 'done',
+        createdAt: '2026-09-10T00:00:00Z',
+        blocks: [
+          {
+            id: 'question-tool',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: question,
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    mocks.inputHost = {
+      getError: () => undefined,
+      isDisabled: () => false,
+      isSubmitting: () => false,
+      getDraft: () => ({ question_1: 'Keep the old rule for existing customers.' }),
+      setDraft: vi.fn(),
+      submit: vi.fn(),
+    }
+    const panel = (focusedRequest: typeof question | null | undefined) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="restored-notification"
+        focusedRequest={focusedRequest}
+        coordinateUserInput
+      />
+    )
+    const { rerender } = render(panel(null))
+    expect(screen.queryByTestId('request-user-input-custom-question_1')).not.toBeInTheDocument()
+    rerender(panel(question))
+    expect(screen.getAllByTestId('request-user-input-custom-question_1')).toHaveLength(1)
+    expect(screen.getByTestId('request-user-input-custom-question_1')).toHaveValue(
+      'Keep the old rule for existing customers.'
+    )
+    expect(screen.queryByTestId('runtime-input-submitting')).not.toBeInTheDocument()
+    mocks.inputHost.isSubmitting = () => true
+    mocks.inputHost.isDisabled = () => true
+    rerender(panel(question))
+    expect(screen.getByTestId('runtime-input-submitting')).toHaveTextContent(/正在发送|Sending/)
+    expect(screen.getByTestId('request-user-input-submit-button')).toBeDisabled()
+    rerender(panel(null))
+    expect(screen.queryByTestId('request-user-input-custom-question_1')).not.toBeInTheDocument()
+    rerender(panel(undefined))
+    expect(screen.getAllByTestId('request-user-input-custom-question_1')).toHaveLength(1)
+    expect(screen.getByTestId('request-user-input-custom-question_1')).toHaveValue(
+      'Keep the old rule for existing customers.'
+    )
   })
 
   it('returns task-page actions to the current runtime task', async () => {
