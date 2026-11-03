@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fetchJson } from '../modules/shared.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import {
   shellCommandResponse,
@@ -105,6 +106,11 @@ export function createDesktopScenario({
   const wait = (name, text) =>
     control.command('waitFor', selector(name), { text, timeoutMs: uiTimeoutMs })
   const capture = async (name, description) => {
+    assert.equal(
+      await control.command('getElementCount', selector('collaboration-navigation-error')),
+      0,
+      'Lifecycle evidence must not contain a navigation load failure'
+    )
     await captureScreenshot(control, `template-lifecycle-${name}.png`, CONTENT)
     evidence.push({ file: `template-lifecycle-${name}.png`, description })
   }
@@ -112,6 +118,13 @@ export function createDesktopScenario({
     requestExecutor(control, 'todos.get', { project_id: projectId, task_id: task.id }, uiTimeoutMs)
 
   return {
+    requiresCloudEnvironment: true,
+    async prepareCloud(environment) {
+      await fetchJson(`${environment.backendUrl}/api/admin/setup-complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${environment.authToken}` },
+      })
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
