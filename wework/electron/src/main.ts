@@ -1535,7 +1535,6 @@ async function holdStartupSplashForDesktopE2e(): Promise<void> {
 async function startupSplashInspection() {
   return {
     ...(await inspectStartupSplash(startupSplashWindow)),
-    progress: startupProgress.currentUpdate(),
     failure: lastStartupFailure,
     logDirectory: app.getPath('logs'),
   }
