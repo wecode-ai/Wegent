@@ -46,7 +46,7 @@ flowchart LR
     Control[Status, discovery, send acceptance] --> Runtime[Runtime control]
     Transport[Reconnect and token refresh] --> Generation[Replace request generation and cancel old reads]
     Generation --> Preserve[Same backend and account retain navigation and user state]
-    Owner[Backend or account change] --> Reset[Clear old snapshots]
+    Owner[Backend or account change] --> Reset[Recreate workbench state and lifecycle cache]
     Profile[Explicit profile and preference updates] --> UserState[Current user state]
 ```
 
@@ -123,6 +123,11 @@ flowchart LR
   Navigation refresh uses the same workbench identity as runtime services; it must
   not write the local authentication user into connected-account state and rely on
   a later effect to correct it.
+  The workbench component, shared lifecycle store, and persisted lifecycle namespace
+  use the same backend/account identity. Replace them together on an owner change
+  so summary lookup cannot recover an old task or seed a new store from old reducer
+  state. Same-owner token refresh retains them. Do not migrate old lifecycle storage
+  that lacks backend/account ownership.
 
 ## Verification contract
 

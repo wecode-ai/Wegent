@@ -230,7 +230,24 @@ function findFirstSelectableProject(
   return null
 }
 
-export function WorkbenchProvider({
+export function WorkbenchProvider(props: WorkbenchProviderProps) {
+  const cloudConnection = useOptionalCloudConnection()
+  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
+  const workbenchIdentity = usesFallbackCloudConnection
+    ? props.user
+    : (cloudConnection.user ?? props.user)
+  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity.id])
+  return (
+    <OwnedWorkbenchProvider
+      key={ownershipKey}
+      {...props}
+      workbenchIdentity={workbenchIdentity}
+      ownershipKey={ownershipKey}
+    />
+  )
+}
+
+function OwnedWorkbenchProvider({
   children,
   user,
   services,
@@ -246,7 +263,9 @@ export function WorkbenchProvider({
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
   workspaceTabRevealRevision = 0,
-}: WorkbenchProviderProps) {
+  workbenchIdentity,
+  ownershipKey,
+}: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
@@ -256,8 +275,6 @@ export function WorkbenchProvider({
   // Preferences can change while a turn is running. Runtime transports only
   // need the account identity, so keep their service graph stable across those
   // updates and avoid an event-subscription gap during terminal delivery.
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const runtimeServiceUser = useMemo<User>(
     () => ({
       id: workbenchIdentity.id,
@@ -293,8 +310,8 @@ export function WorkbenchProvider({
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
   const sharedLifecycleStore = useMemo(
-    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
-    [providedLifecycleStore, user.id]
+    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(ownershipKey),
+    [ownershipKey, providedLifecycleStore]
   )
   const canSyncRuntimeTaskLifecycle = useStableEvent(() => syncRuntimeTaskLifecycle)
   const lifecycleStore = useMemo(
@@ -1099,7 +1116,7 @@ export function WorkbenchProvider({
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
     user: workbenchIdentity,
-    ownershipKey: JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity.id]),
+    ownershipKey,
     state,
     dispatch,
     executorClient,

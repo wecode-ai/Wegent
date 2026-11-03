@@ -568,10 +568,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
-  useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
   const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const ownershipKey = JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity?.id])
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(ownershipKey), [ownershipKey])
+  useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const workbenchIdentityId = workbenchIdentity?.id
   const workbenchIdentityName = workbenchIdentity?.user_name
   const workbenchIdentityEmail = workbenchIdentity?.email
