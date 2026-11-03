@@ -1,76 +1,106 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef } from 'react'
-import { beforeEach, expect, it, vi } from 'vitest'
-import type { Automation, AutomationListResponse } from '@/types/automation'
-import '@/i18n'
+import { beforeEach, expect, test, vi } from 'vitest'
+import type { Automation } from '@/types/automation'
 import { AutomationsPage, type AutomationNavigationHandle } from './AutomationsPage'
 
-const api = vi.hoisted(() => ({
-  listAutomations: vi.fn(),
-  listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
-}))
+const { listAutomations, listAutomationRuns, workbench } = vi.hoisted(() => {
+  const listAutomations = vi.fn()
+  const listAutomationRuns = vi.fn().mockResolvedValue({ items: [] })
+  return {
+    listAutomations,
+    listAutomationRuns,
+    workbench: {
+      state: { devices: [], projects: [], runtimeWork: null, currentRuntimeTask: null },
+      services: { automationApi: { listAutomations, listAutomationRuns } },
+      projectChat: { models: [], selectedModel: null, selectedModelOptions: {} },
+      refreshWorkLists: vi.fn(),
+    },
+  }
+})
+
+vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => workbench }))
 vi.mock('@/features/auth/useAuth', () => ({ useAuth: () => ({ logout: vi.fn() }) }))
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({
-    state: { devices: [], projects: [], runtimeWork: null, currentRuntimeTask: null },
-    services: { automationApi: api },
-    projectChat: { models: [], selectedModel: null, selectedModelOptions: null },
-    refreshWorkLists: vi.fn().mockResolvedValue(undefined),
-  }),
-}))
 vi.mock('@/components/layout/WorkbenchSearchDialog', () => ({ WorkbenchSearchDialog: () => null }))
 
-const saved: Automation = {
-  id: 'saved-calendar',
+const savedAutomation: Automation = {
+  id: 'saved-schedule',
   version: 1,
   source: 'local',
-  name: 'Saved calendar',
+  name: '已保存的日历',
   description: '',
-  prompt: 'Existing work',
+  prompt: '原任务说明',
+  schedule: { type: 'cron', expression: '0 9 * * *' },
+  timezone: 'Asia/Shanghai',
   enabled: true,
   conversationMode: 'independent',
   notificationPolicy: 'all_runs',
-  schedule: { type: 'cron', expression: '0 9 * * 1-5' },
-  timezone: 'Asia/Shanghai',
-  createdAt: '2026-11-03T00:00:00Z',
-  updatedAt: '2026-11-03T00:00:00Z',
+  createdAt: '2026-11-03T00:00:00.000Z',
+  updatedAt: '2026-11-03T00:00:00.000Z',
 }
 
-beforeEach(() => {
-  api.listAutomations.mockReset()
-  api.listAutomationRuns.mockClear()
+beforeEach(() => vi.clearAllMocks())
+
+function holdInitialList() {
+  let resolveList!: (value: { items: Automation[] }) => void
+  const response = new Promise<{ items: Automation[] }>(resolve => {
+    resolveList = resolve
+  })
+  listAutomations.mockReturnValue(response)
+  return resolveList
+}
+
+test('a delayed initial list cannot replace a new draft or restore it after discard', async () => {
+  const resolveList = holdInitialList()
+  const onDirtyChange = vi.fn()
+  const ref = createRef<AutomationNavigationHandle>()
+  render(<AutomationsPage embedded ref={ref} onDirtyChange={onDirtyChange} />)
+  await waitFor(() => expect(listAutomations).toHaveBeenCalled())
+  fireEvent.click(screen.getByTestId('create-automation-button'))
+  fireEvent.change(screen.getByTestId('automation-name-input'), { target: { value: '未保存日历' } })
+  fireEvent.change(screen.getByTestId('automation-prompt-input'), {
+    target: { value: '新的任务说明' },
+  })
+
+  await act(async () => resolveList({ items: [savedAutomation] }))
+  expect(screen.getByTestId('automation-name-input')).toHaveValue('未保存日历')
+  expect(screen.getByTestId('automation-prompt-input')).toHaveValue('新的任务说明')
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  expect(listAutomationRuns).not.toHaveBeenCalled()
+
+  const leave = vi.fn()
+  act(() => ref.current!.requestLeave(leave))
+  fireEvent.click(screen.getByTestId('automation-discard'))
+  expect(leave).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+  expect(screen.getByText(savedAutomation.name)).toBeVisible()
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false)
 })
 
-it.each([false, true])(
-  'preserves user selection when the initial list arrives late (discard=%s)',
-  async discard => {
-    let finish!: (response: AutomationListResponse) => void
-    const response = new Promise<AutomationListResponse>(resolve => {
-      finish = resolve
-    })
-    api.listAutomations.mockReturnValue(response)
-    const ref = createRef<AutomationNavigationHandle>()
-    const leave = vi.fn()
-    const user = userEvent.setup()
-    render(<AutomationsPage embedded standInOwner={{ userId: 1, roleId: '@primary' }} ref={ref} />)
-    await waitFor(() => expect(api.listAutomations).toHaveBeenCalled())
-    await user.click(screen.getByTestId('create-automation-button'))
-    await user.type(screen.getByTestId('automation-name-input'), 'Unsaved calendar')
-    if (discard) {
-      await act(async () => ref.current!.requestLeave(leave))
-      await user.click(screen.getByTestId('automation-discard'))
-      expect(leave).toHaveBeenCalledOnce()
-    }
-    await act(async () => finish({ items: [saved] }))
-    if (discard) expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
-    else expect(screen.getByTestId('automation-name-input')).toHaveValue('Unsaved calendar')
-    expect(screen.getByTestId('automation-row-saved-calendar')).toBeInTheDocument()
-  }
-)
+test('a late list cannot reopen a draft that the user already discarded', async () => {
+  const resolveList = holdInitialList()
+  const ref = createRef<AutomationNavigationHandle>()
+  render(<AutomationsPage embedded ref={ref} />)
+  await waitFor(() => expect(listAutomations).toHaveBeenCalled())
+  fireEvent.click(screen.getByTestId('create-automation-button'))
+  fireEvent.change(screen.getByTestId('automation-name-input'), { target: { value: '未保存日历' } })
+  act(() => ref.current!.requestLeave(vi.fn()))
+  fireEvent.click(screen.getByTestId('automation-discard'))
 
-it('selects the first saved automation when the user has not chosen a draft', async () => {
-  api.listAutomations.mockResolvedValue({ items: [saved] })
-  render(<AutomationsPage embedded standInOwner={{ userId: 1, roleId: '@primary' }} />)
-  expect(await screen.findByTestId('automation-name-input')).toHaveValue('Saved calendar')
+  await act(async () => resolveList({ items: [savedAutomation] }))
+  expect(screen.queryByTestId('automation-name-input')).not.toBeInTheDocument()
+  expect(screen.getByText(savedAutomation.name)).toBeVisible()
+  expect(listAutomationRuns).not.toHaveBeenCalled()
+})
+
+test('selects the first saved automation when the user has not chosen another view', async () => {
+  listAutomations.mockResolvedValue({ items: [savedAutomation] })
+  const onDirtyChange = vi.fn()
+  render(<AutomationsPage embedded onDirtyChange={onDirtyChange} />)
+
+  await waitFor(() =>
+    expect(screen.getByTestId('automation-name-input')).toHaveValue(savedAutomation.name)
+  )
+  expect(screen.getByTestId('automation-prompt-input')).toHaveValue(savedAutomation.prompt)
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false)
 })

@@ -136,7 +136,7 @@ export function AutomationsPage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialSelectionHandledRef = useRef(false)
+  const initialSelectionResolvedRef = useRef(false)
   const runListSignatureRef = useRef('')
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
@@ -175,8 +175,8 @@ export function AutomationsPage({
         return ownerRoleId === '@primary'
       })
       setAutomations(items)
-      const shouldSelectInitialAutomation = !initialSelectionHandledRef.current
-      initialSelectionHandledRef.current = true
+      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
+      initialSelectionResolvedRef.current = true
       if (shouldSelectInitialAutomation && items[0]) {
         setSelectedAutomationId(items[0].id)
         setEditing(items[0])
@@ -290,7 +290,6 @@ export function AutomationsPage({
     template?: Pick<AutomationDraft, 'name' | 'prompt' | 'cronExpression' | 'cronTime'>
   ) =>
     requestLeave(() => {
-      initialSelectionHandledRef.current = true
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
         : localDevices.find(canUseForProjectCreation)
@@ -303,6 +302,7 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
@@ -311,6 +311,7 @@ export function AutomationsPage({
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -498,6 +499,7 @@ export function AutomationsPage({
 
   const closeDetail = () =>
     requestLeave(() => {
+      initialSelectionResolvedRef.current = true
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)

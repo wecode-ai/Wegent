@@ -408,7 +408,6 @@ describe('WorkspaceTabStrip', () => {
               task: interactionTask,
               payload: interactionQuestion,
               question: 'Review?',
-              context: '',
               createdAt: index,
               answered: false,
             })),

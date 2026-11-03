@@ -125,7 +125,8 @@
 .task-detail-workspace-panel-shell {
   width: 460px;
   min-width: 460px;
-  overflow: hidden;
+  /* Only the inner content scrolls; focus must not move the panel header. */
+  overflow: clip;
   border-radius: 16px;
   background: rgb(var(--color-bg-base));
   box-shadow:
@@ -2603,11 +2604,6 @@
   flex: 0 1 auto;
   max-width: 50%;
   color: rgb(var(--color-text-primary));
-}
-
-.task-detail-comment-assignee > span:first-child {
-  flex-shrink: 0;
-  color: rgb(var(--color-text-muted));
 }
 
 .task-detail-comment-settings {

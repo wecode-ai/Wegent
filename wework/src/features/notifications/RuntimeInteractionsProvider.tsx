@@ -175,6 +175,7 @@ function RuntimeInteractionsState({
           question: item.question,
           address: item.task.address,
           originalUrl: interactionOriginalScheme(item),
+          sourceMessageIds: item.sourceMessageIds,
           answeredAt,
         })
         saveInteractionState(historyKey, next)
@@ -317,7 +318,6 @@ function RuntimeInteractionsState({
                               task: item,
                               payload: { kind: 'request_user_input' },
                               question: t('interactions.needs_reply'),
-                              context: t('interactions.load_failed'),
                               createdAt: new Date(item.task.updatedAt ?? 0).getTime() || 0,
                               answered: false,
                             },
@@ -390,7 +390,7 @@ function RuntimeInteractionsState({
     async (
       item: RuntimeInteraction,
       answer: string,
-      clientMessageId?: string
+      options?: { clientMessageId?: string; send?: () => Promise<boolean> }
     ): Promise<boolean> => {
       const api = sourceRef.current?.services?.runtimeWorkApi
       if (!api || !answer.trim() || !canReplyToInteraction(item) || inFlight.current.has(item.id))
@@ -432,45 +432,47 @@ function RuntimeInteractionsState({
           })
           const previousClient = clientIds.current.get(item.id)
           const id =
-            clientMessageId ??
+            options?.clientMessageId ??
             (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
           clientIds.current.set(item.id, { answer, id })
           const message = requestUserInputResponseText(response)
           const asyncInput = isAsyncRequestUserInputPayload(live.payload)
-          const result = live.project
-            ? await replyToInteractionProject(
-                live,
-                message,
-                id,
-                sourceRef.current!.services!,
-                t('interactions.failed')
-              ).then(() => ({ accepted: true, error: undefined }))
-            : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-              ? await api.guideRuntimeTask({
-                  address: live.task.address,
+          const result = options?.send
+            ? { accepted: await options.send(), error: undefined }
+            : live.project
+              ? await replyToInteractionProject(
+                  live,
                   message,
-                  clientGuidanceId: id,
-                })
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
-                    {
-                      address: live.task.address,
-                      message,
-                      ...(asyncInput
-                        ? {
-                            queueIfBusy: true,
-                          }
-                        : { requestUserInputResponse: response }),
-                      clientUserMessageId: id,
-                    },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
+                  id,
+                  sourceRef.current!.services!,
+                  t('interactions.failed')
+                ).then(() => ({ accepted: true, error: undefined }))
+              : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
+                ? await api.guideRuntimeTask({
+                    address: live.task.address,
+                    message,
+                    clientGuidanceId: id,
+                  })
+                : await api.sendRuntimeMessage(
+                    await prepareRuntimeContinuationModel(
+                      {
+                        address: live.task.address,
+                        message,
+                        ...(asyncInput
+                          ? {
+                              queueIfBusy: true,
+                            }
+                          : { requestUserInputResponse: response }),
+                        clientUserMessageId: id,
+                      },
+                      {
+                        projects: [],
+                        chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                        totalTasks: 1,
+                      },
+                      () => api.listRuntimeWork()
+                    )
                   )
-                )
           const accepted = result.accepted ?? ('success' in result && result.success)
           if (!accepted) throw new Error(result.error || t('notifications.failed'))
           saveInteractionState(acceptancePrefix + item.id, true)
@@ -610,7 +612,7 @@ function RuntimeInteractionsState({
           // Cached entries cannot authorize a response; leave the host reply queued.
           if (!item || item.cached || inFlight.current.has(item.id)) continue
           setDraft(item.id, reply.text)
-          const accepted = await respond(item, reply.text, reply.id)
+          const accepted = await respond(item, reply.text, { clientMessageId: reply.id })
           // Accepted sends must be acknowledged even if a refresh replaced this effect.
           // Failed sends remain editable drafts, unless their account has unmounted.
           if (accepted || mounted.current) {
@@ -650,6 +652,13 @@ function RuntimeInteractionsState({
   const notice = focused
     ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)
     : null
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E === 'true')
+      console.info(
+        '[interaction-focus-state]',
+        JSON.stringify({ focused, pendingIds: pending.map(item => item.id), noticeIds })
+      )
+  }, [focused, pending, noticeIds])
   const dismissNotice = useCallback(
     () => setNoticeIds(current => current.filter(id => id !== notice?.id)),
     [notice?.id]

@@ -36,7 +36,13 @@ Operation approvals appear in **Needs your input** and link to the original conv
 
 ## Shared human decisions
 
-Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab with the question, supporting context, and original conversation. Work lists and notification entries no longer contain independent reply forms.
+Structured questions from stand-ins and ordinary tasks share one pending request. While the app is in the foreground, a compact reminder appears in the upper right; expand it to answer simple questions. The title-bar bell's **Needs your input** entry opens the shared tab to view and handle the original task or Issue in its own interface. Work lists and notification entries no longer contain independent reply forms.
+
+The detail header shows the selected notification’s original question and entity name, keeping the question readable when narrow windows hide the list. Needs your input hosts the original entity: tasks navigate to the selected question's original conversation turn and show its native input card. Issues use the native execution and message IDs to focus the AI message that raised the question and its context, rather than the thread's initial comment. Opening a notification preserves the reading position; clicking Reply focuses the composer. Context, questions, forms, approvals, and authorization use the original interface and handlers. The inbox does not extract or summarize conversation content or create another reply form.
+
+The container header's **Open in original view** action opens the owning task or Issue and preserves the source comment target. Files, reviews, plans, and execution details that require the full workspace open in the original task. Child Issues open their own detail page rather than adding workspace sidebars inside the inbox.
+
+Opening an original task restores its title, model, and workspace so you can continue the conversation, even when the task is absent from the sidebar. Opening it preserves the sidebar's existing visibility rules.
 
 Background delivery follows the notification channel settings. Eligible simple asynchronous questions support text replies through system notifications. Manage channels in the title-bar bell's settings; the account area no longer has a separate global IM notification menu. System delivery also depends on operating-system permissions and notification settings.
 
@@ -49,7 +55,6 @@ Disable **Receive new work** and save to pause new intake while retaining existi
 Inside the assignee dropdown control, an outlined person with a check marks **Read by recipient** and a filled person with a check marks **Received by stand-in**. Hover to view the status and timestamp. A successful detail open records the human receipt; a stand-in records reception once its task is accepted, before execution completes. Both receipts retain their own timestamps and do not complete the Issue. Notification previews, marking all notifications as read, and background reads do not record a human receipt.
 
 Assigners and recipients can view the receipts, which refresh while details remain open. The latest active assignment in the activity timeline shows the same receipts and updates together with the assignee control, without polling historical entries separately. Reassignment moves the displayed receipts to the latest assignment activity; unassignment removes the former recipient's receipts. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.
-
 
 ## Calendar arrangements and project leaders
 
