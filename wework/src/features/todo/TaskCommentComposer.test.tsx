@@ -179,6 +179,45 @@ describe('TaskCommentComposer', () => {
     expect(assign).not.toHaveBeenCalled()
   })
 
+  it('updates mention activation when assignment becomes available or blocked', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn()
+    const { container, props, rerender } = setup({
+      disabled: true,
+      value: '[$@User 1](wework-member://1) [$@User 2](wework-member://2)',
+      assignment: {
+        options: [
+          { value: '1', label: 'User 1' },
+          { value: '2', label: 'User 2' },
+        ],
+        assign,
+      },
+    })
+    const second = () =>
+      container.querySelector<HTMLElement>(
+        '[data-composer-reference-kind="member"][data-composer-skill-reference*="wework-member://2"]'
+      )!
+    expect(second()).not.toHaveAttribute('role', 'button')
+    rerender(<TaskCommentComposer {...props} disabled={false} />)
+    expect(second()).toHaveAttribute('role', 'button')
+    expect(second()).toHaveAttribute('tabindex', '0')
+    await user.click(second())
+    expect(screen.getByRole('group', { name: '转派建议：User 2' })).toBeInTheDocument()
+    await user.click(screen.getByTestId('task-comment-form-assignee-dismiss'))
+    second().focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('group', { name: '转派建议：User 2' })).toBeInTheDocument()
+    expect(props.onSubmit).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('task-comment-form-assignee-dismiss'))
+    rerender(<TaskCommentComposer {...props} disabled />)
+    expect(second()).not.toHaveAttribute('role', 'button')
+    expect(second()).not.toHaveAttribute('tabindex', '0')
+    await user.click(second())
+    expect(screen.queryByRole('group', { name: '转派建议：User 2' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
   it('keeps execution settings collapsed without replacing the draft when toggled', async () => {
     const user = userEvent.setup()
     const { input } = setup()
