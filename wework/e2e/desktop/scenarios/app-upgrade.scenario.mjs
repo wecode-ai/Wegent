@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile, rename, lstat, realpath, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -11,8 +10,9 @@ import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mj
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
-import { acquireProcessLock } from '../../../scripts/lib/process-lock.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
+import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
@@ -72,7 +72,12 @@ export async function createDesktopScenario(options) {
   assert.ok(pairFile, 'Upgrade checkpoints require an independently built source/target pair')
   const pair = JSON.parse(await readFile(pairFile, 'utf8'))
   const usesDefaultUserData = options.usesDefaultUserData === true
-  let releaseFeedLock
+  assert.equal(pair.transport, 'default-update-route')
+  assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
+  const verifiesUnstartedActivation =
+    usesDefaultUserData &&
+    checkpoint === 'app-upgrade' &&
+    (pair.kind === 'regression' || Boolean(pair.from.installedSource))
   let legacyDataDirectory
   assert.equal(pair.schemaVersion, 1)
   assert.equal(
@@ -156,31 +161,14 @@ export async function createDesktopScenario(options) {
       response.end()
     }
   })
-  const ownsDefaultFeed = usesDefaultUserData && !options.preparationOnly
-  if (ownsDefaultFeed) {
-    assert.ok(pair.fixtureApplicationId?.startsWith('io.wecode.wework.upgrade-fixture.'))
-    assert.ok(pair.fixtureUpdateBaseUrl)
-    releaseFeedLock = await acquireProcessLock(join(tmpdir(), 'wework-upgrade-fixture-feed.lock'))
-  }
   await new Promise((accept, reject) => {
     server.once('error', reject)
-    server.listen(
-      ownsDefaultFeed ? Number(new URL(pair.fixtureUpdateBaseUrl).port) : 0,
-      '127.0.0.1',
-      accept
-    )
+    server.listen(0, '127.0.0.1', accept)
   })
   origin = `http://127.0.0.1:${server.address().port}`
   const root = join(electronUserDataDirectory, 'releases')
-  const sourceRuntimeRoot = usesDefaultUserData
-    ? join(electronUserDataDirectory, 'managed-runtimes/dsh')
-    : join(root, 'source-runtime-cache')
-  const appEnvironment = usesDefaultUserData
-    ? {}
-    : {
-        WEWORK_UPDATE_BASE_URL: origin,
-        WEWORK_HARNESS_RUNTIME_ROOT: sourceRuntimeRoot,
-      }
+  const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
+  const appEnvironment = {}
   if (checkpoint === 'app-upgrade-recovery')
     appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
   if (checkpoint === 'app-rollback-recovery')
@@ -213,6 +201,10 @@ export async function createDesktopScenario(options) {
     }
     compositions.push({ version, ...actual, coreDsh: components.coreDsh })
     await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
+    if (process.platform === 'darwin') {
+      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
+      await assertMacosStatusItem(control, pid, resultDir, version)
+    }
   }
   const about = async () => {
     await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
@@ -231,6 +223,12 @@ export async function createDesktopScenario(options) {
   }
   return {
     usesReleasePackageRuntimeAssets: true,
+    ...(!options.preparationOnly
+      ? {
+          electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
+          appProcessStarted: child => routeUpgradeRequests(child, origin),
+        }
+      : {}),
     appEnvironment,
     async prepareApp({ appEnvironment: sourceEnvironment }) {
       // Exercise each delivered package's own executor and coding CLIs. Fixed
@@ -297,6 +295,10 @@ export async function createDesktopScenario(options) {
         await preparation
       } catch (error) {
         await writeFile(
+          join(resultDir, 'source-preparation.log'),
+          `${error.stdout ?? ''}\n${error.stderr ?? ''}`
+        )
+        await writeFile(
           join(resultDir, 'source-preparation-result.json'),
           JSON.stringify({
             pid: preparation.child?.pid,
@@ -318,7 +320,8 @@ export async function createDesktopScenario(options) {
         // migration, bootstrap and updater must agree on the resulting userData.
         const applicationData = options.upgradeHome?.applicationData
         assert.ok(applicationData)
-        const legacyTarget = join(applicationData, pair.fixtureApplicationId)
+        assert.match(pair.applicationId, /^io\.wecode\.wework(?:\.[a-z0-9-]+)*$/)
+        const legacyTarget = join(applicationData, pair.applicationId)
         await assert.rejects(stat(legacyTarget), { code: 'ENOENT' })
         await rename(electronUserDataDirectory, legacyTarget)
         legacyDataDirectory = legacyTarget
@@ -366,7 +369,7 @@ export async function createDesktopScenario(options) {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
       let stalled
-      if (usesDefaultUserData) {
+      if (verifiesUnstartedActivation) {
         assert.ok(compareVersions(pair.from.version, pair.from.installedSource.version) < 0)
         const { release: running } = JSON.parse(
           await control.command('getDesktopRuntimeDiagnostics', 'body')
@@ -533,7 +536,7 @@ export async function createDesktopScenario(options) {
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
       if (
-        usesDefaultUserData ||
+        verifiesUnstartedActivation ||
         checkpoint === 'app-rollback' ||
         checkpoint === 'app-rollback-recovery'
       ) {
@@ -629,14 +632,19 @@ export async function createDesktopScenario(options) {
         toSourceSha: pair.to.sourceSha,
         upgrade: 'passed',
         rollback:
-          usesDefaultUserData || ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
+          verifiesUnstartedActivation ||
+          ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
             ? 'passed'
             : 'not-run',
         requests,
         compositions,
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
-      if (process.env.WEWORK_E2E_UPGRADE_EVIDENCE)
+      if (
+        process.env.WEWORK_E2E_UPGRADE_EVIDENCE &&
+        (!process.env.WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT ||
+          process.env.WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT === checkpoint)
+      )
         await writeFile(process.env.WEWORK_E2E_UPGRADE_EVIDENCE, evidence)
       passed = true
     },
@@ -740,12 +748,7 @@ export async function createDesktopScenario(options) {
       } catch (error) {
         errors.push(error)
       }
-      try {
-        await releaseFeedLock?.()
-      } catch (error) {
-        errors.push(error)
-      }
-      if (errors.length) throw new AggregateError(errors, 'Upgrade fixture cleanup failed')
+      if (errors.length) throw new AggregateError(errors, 'Upgrade verification cleanup failed')
     },
   }
 }

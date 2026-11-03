@@ -167,6 +167,11 @@ export function AssistantMessage({
     conversationKey,
     message,
   );
+  // Guidance reconciliation can reanchor an assistant view within the same turn.
+  // Tool and group state belongs to stable turn members, not that view's ID.
+  const processingItemScopeKey = message.turnId
+    ? `${conversationKey ?? "default"}:turn:${message.turnId}`
+    : processingStateKey;
   const [finalProcessingExpanded, setFinalProcessingExpanded] =
     usePersistentProcessingExpansion(`${processingStateKey}:final-processing`);
   const isProcessingOnlyBeforeGuidance =
@@ -177,7 +182,7 @@ export function AssistantMessage({
   const orderedRuntimeSegments = renderProjection.segments;
   const hasProcessingAfterContent = renderProjection.interleaved;
   const expandedToolDetailStateKeys = displayBlocks.map((block) =>
-    getProcessingDetailStateKey(processingStateKey, block.id),
+    getProcessingDetailStateKey(processingItemScopeKey, block.id),
   );
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
     expandedToolDetailStateKeys,
@@ -272,7 +277,7 @@ export function AssistantMessage({
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
           stateKey={`${processingStateKey}:${segment.blocks[0]?.id}`}
-          detailStateScopeKey={processingStateKey}
+          detailStateScopeKey={processingItemScopeKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -333,7 +338,7 @@ export function AssistantMessage({
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
                 stateKey={`${processingStateKey}:ordered:${processingSegment.blocks[0]?.id}`}
-                detailStateScopeKey={processingStateKey}
+                detailStateScopeKey={processingItemScopeKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}

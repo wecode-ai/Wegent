@@ -4,6 +4,8 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { UPGRADE_PACKAGE_CHECKPOINTS } from '../upgrade-suite.mjs'
+import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1098,9 +1100,7 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
-  const usesDefaultUserData =
-    DESKTOP_SEGMENT === 'app-upgrade' &&
-    JSON.parse(await readFile(process.env.WEWORK_E2E_UPGRADE_PAIR, 'utf8')).kind === 'regression'
+  const usesDefaultUserData = UPGRADE_PACKAGE_CHECKPOINTS.includes(DESKTOP_SEGMENT)
   const nativeApplicationData = usesDefaultUserData ? desktopApplicationDataDirectory() : null
   if (nativeApplicationData) await mkdir(nativeApplicationData, { recursive: true })
   const upgradeHome = nativeApplicationData
@@ -1475,13 +1475,13 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
-    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    await desktopScenario?.prepareUserDataLaunch?.()
     if (usesDefaultUserData) {
       const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
     }
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
+    await desktopScenario?.prepareUserDataLaunch?.()
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(process.platform === 'win32'
@@ -1502,6 +1502,9 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
+      // Observe early failure now; the await below still propagates it after log setup.
+      scenarioStartup?.catch(() => undefined)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
@@ -1538,6 +1541,12 @@ async function main() {
         })
         child.once('exit', stopObserving)
       }
+      try {
+        await scenarioStartup
+      } catch (error) {
+        await stopDesktopAppProcess(child)
+        throw error
+      }
       return child
     }
     app = await startDesktopAppProcess()
@@ -1553,7 +1562,16 @@ async function main() {
         'Wework did not persist a valid Electron device identity before restart'
       )
       const readyCountBeforeRestart = control.readyCount
-      await stopDesktopAppProcess(app)
+      const forceSnapshot = options?.forceStop
+        ? JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+        : null
+      if (forceSnapshot) {
+        await writeFile(
+          join(resultDir, 'forced-restart-process-tree.json'),
+          JSON.stringify(forceSnapshot, null, 2)
+        )
+      }
+      await stopDesktopAppProcess(app, { forceSnapshot })
       await beforeStart?.()
       if (typeof options === 'object' && options?.appEnvironmentOverrides) {
         activeAppEnvironment = {
@@ -1603,11 +1621,16 @@ async function main() {
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
-    const ready = await withTimeout(
-      control.awaitReady(),
-      DESKTOP_READY_TIMEOUT_MS,
-      'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-    )
+    const readiness = control.awaitReady()
+    const ready = desktopScenario?.usesColdPackageStartup
+      ? await waitForColdPackageStartup(readiness, appLogPath, {
+          phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+        })
+      : await withTimeout(
+          readiness,
+          DESKTOP_READY_TIMEOUT_MS,
+          'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+        )
     assert.match(
       String(ready.location ?? ''),
       /^https?:/,

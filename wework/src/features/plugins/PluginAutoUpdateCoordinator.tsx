@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { createHttpClient } from '@/api/http'
 import {
   clearLocalCodexPluginsReadStateCache,
@@ -26,12 +26,25 @@ export function PluginAutoUpdateCoordinator() {
   const cloud = useOptionalCloudConnection()
   const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const accountController = useRef<AbortController | null>(null)
   const runtimeConnected =
     localExecutorCloudConnection.connected &&
     localExecutorCloudConnection.apiBaseUrl === (cloud.apiBaseUrl || '')
 
+  // An accepted sync must survive an Executor disconnect until its HTTP request settles.
   useEffect(() => {
+    const controller = new AbortController()
+    accountController.current = controller
+    return () => {
+      controller.abort()
+      if (accountController.current === controller) accountController.current = null
+    }
+  }, [cloud.apiBaseUrl, cloud.isConnected, cloud.token])
+
+  useEffect(() => {
+    const controller = accountController.current
     if (
+      !controller ||
       !cloud.isConnected ||
       !cloud.apiBaseUrl ||
       !cloud.socketBaseUrl ||
@@ -43,7 +56,6 @@ export function PluginAutoUpdateCoordinator() {
     }
 
     const token = cloud.token
-    const controller = new AbortController()
     const cloudPluginApi = createPluginApi(
       createHttpClient({
         baseUrl: cloud.apiBaseUrl,
@@ -66,9 +78,11 @@ export function PluginAutoUpdateCoordinator() {
     let pending = false
     let connectedTriggerSeen = false
     let cancelScheduledUpdate: (() => void) | null = null
+    const waiting = new AbortController()
 
     const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
+        signal: waiting.signal,
         listLocalInstalledPlugins: () =>
           localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
@@ -151,7 +165,7 @@ export function PluginAutoUpdateCoordinator() {
 
     return () => {
       disposed = true
-      controller.abort()
+      waiting.abort()
       cancelScheduledUpdate?.()
       socketClient.socket.off('connect', handleConnect)
       socketClient.socket.off(PLUGIN_RELEASE_AVAILABLE_EVENT, handleReleaseAvailable)

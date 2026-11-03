@@ -54,6 +54,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
+  'responses-api-gateway': './scenarios/responses-api-gateway.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
   'plugin-account-auth-password': './scenarios/plugin-account-auth.scenario.mjs',
@@ -151,6 +152,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-runtime-reconciliation.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
+  'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
@@ -198,6 +201,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -215,6 +219,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-parent-board',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
@@ -246,6 +253,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'reply-prediction-auth',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
+  'responses-api-gateway',
   'task-model-deletion',
   'cloud-model-presets',
   'plugin-account-auth-password',
@@ -494,13 +502,6 @@ function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
     nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
-    if (
-      ['app-upgrade', 'app-rollback', 'app-upgrade-recovery'].includes(checkpoint) &&
-      env.WEWORK_E2E_UPGRADE_THIN_PAIR
-    ) {
-      nextEnv.WEWORK_E2E_UPGRADE_PAIR = env.WEWORK_E2E_UPGRADE_THIN_PAIR
-      nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN
-    }
   }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
@@ -577,6 +578,16 @@ async function runDesktopBuild({
   )
 }
 
+function requirePrebuiltUpgradePair(checkpoints, environment) {
+  if (
+    checkpoints.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value)) &&
+    !environment.WEWORK_E2E_UPGRADE_PAIR
+  )
+    throw new Error(
+      'Upgrade checkpoints require a prebuilt source/target pair; this test task never builds packages'
+    )
+}
+
 async function sharedBuildEnvironment(environment = process.env, selectedCheckpoints) {
   let nextEnvironment = environment
   const selected =
@@ -585,20 +596,9 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     requestedCheckpointRange(requestedArgs) ??
     []
   const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
-  if (upgradeRequested && !environment.WEWORK_E2E_UPGRADE_PAIR) {
-    await runDesktopBuild({
-      command: process.execPath,
-      args: ['scripts/build-upgrade-fixtures.mjs'],
-      cwd: weworkDir,
-      environment,
-      label: 'Upgrade fixture build',
-      logPath: join(weworkDir, 'test-results', 'upgrade-fixtures-build.log'),
-    })
-    const pairPath = resolve(
-      environment.WEWORK_UPGRADE_FIXTURE_OUTPUT ||
-        join(weworkDir, 'test-results', 'upgrade-fixtures'),
-      'pair.json'
-    )
+  requirePrebuiltUpgradePair(selected, environment)
+  if (upgradeRequested) {
+    const pairPath = resolve(environment.WEWORK_E2E_UPGRADE_PAIR)
     const pair = JSON.parse(await readFile(pairPath, 'utf8'))
     nextEnvironment = {
       ...environment,
@@ -606,6 +606,7 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
         ? {
             WEWORK_E2E_APP_BIN: pair.from.executable,
             WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
+            WEWORK_E2E_CODEX_BIN: pair.from.codex,
           }
         : {}),
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
@@ -613,23 +614,17 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
     }
   }
-  if (upgradeRequested && nextEnvironment.WEWORK_E2E_UPGRADE_PAIR) {
-    const pair = JSON.parse(await readFile(nextEnvironment.WEWORK_E2E_UPGRADE_PAIR, 'utf8'))
-    if (pair.kind === 'regression' && pair.thinPairFile && pair.thinSource?.executable) {
-      nextEnvironment = {
-        ...nextEnvironment,
-        WEWORK_E2E_UPGRADE_THIN_PAIR: pair.thinPairFile,
-        WEWORK_E2E_UPGRADE_THIN_SOURCE_APP_BIN: pair.thinSource.executable,
-      }
-    }
-  }
   const [build, codexBinary] = await Promise.all([
     prepareDesktopE2EBuild({
       environment: nextEnvironment,
-      runBuild: runDesktopBuild,
+      runBuild: upgradeRequested
+        ? () => {
+            throw new Error('Upgrade checkpoints require prebuilt desktop binaries')
+          }
+        : runDesktopBuild,
       weworkDir,
     }),
-    resolveDesktopCodexBinary(),
+    resolveDesktopCodexBinary(nextEnvironment),
   ])
   console.log(
     `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
@@ -923,6 +918,10 @@ async function runAllCheckpoints() {
   await runCheckpoints(DEFAULT_DESKTOP_CHECKPOINTS)
 }
 
+requirePrebuiltUpgradePair(
+  requestedParallelCheckpoints(requestedArgs) ?? requestedCheckpointRange(requestedArgs) ?? [],
+  process.env
+)
 const previousResults = await compactInactiveDesktopE2EResults(
   resolveDesktopE2EResultRoot(weworkDir)
 )
