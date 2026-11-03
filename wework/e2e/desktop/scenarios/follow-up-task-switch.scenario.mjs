@@ -136,6 +136,7 @@ export function createDesktopScenario(options) {
   })
   let released = false
   return {
+    diagnostics: () => ({ reusedAgent: agentHistory.diagnostics() }),
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     async handleHttp(request, response, url) {
       if (url.pathname === '/follow-up-browser-fixture') {

@@ -14,6 +14,7 @@ import {
   toolOutputText,
 } from './response-protocol.mjs'
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 const INITIAL = 'WeworkReusedAgentHistory'
 const FOLLOW_UP = 'WeworkReusedAgentFollowUp'
@@ -63,6 +64,7 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
     return false
   }
   return {
+    diagnostics: () => ({ spawned, resumed, pending, initialReady, resumedReady, statusSequence }),
     async handle(request, body, response) {
       if (isCollaborationSubagentRequest(request.headers)) {
         reply(response, `child-${Date.now()}`, [assistantMessage('Child work completed')])
@@ -160,10 +162,19 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
           value: 'data-message-id',
         })
         await send(FOLLOW_UP)
-        await waitForWorkbenchDebugState(
-          control,
+        // Native history preparation uses the runner's model-response budget.
+        // The command-start check begins only once Codex requests that command.
+        await waitForValue(
+          () => pending,
+          requested => requested,
+          'Native history preparation must reach the parent command request',
+          options.modelResponseTimeoutMs
+        )
+        await waitForValue(
           () => existsSync(startedFile),
-          'The resumed child and the real parent command must run before switching'
+          started => started,
+          'The resumed child and the real parent command must run before switching',
+          options.uiTimeoutMs
         )
         await control.command(
           'click',
