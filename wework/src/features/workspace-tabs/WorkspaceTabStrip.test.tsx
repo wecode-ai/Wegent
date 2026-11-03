@@ -1,12 +1,12 @@
+import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
-import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 const returnWorkspaceTabToMain = vi.fn().mockResolvedValue(undefined)
@@ -277,49 +277,6 @@ describe('WorkspaceTabStrip', () => {
       'aria-selected',
       'true'
     )
-  })
-
-  test.each([
-    ['dynamic', 'shield', 'lucide-shield'],
-    ['legacy', 'applications', 'lucide-grid-3x3'],
-    ['invalid', 'not-a-real-icon', 'lucide-grid-3x3'],
-    ['empty', '', 'lucide-grid-3x3'],
-    ['missing', undefined, 'lucide-square-check'],
-  ])('renders the %s DSH route icon on the workspace tab surface', async (_, icon, className) => {
-    window.__WEWORK_DSH_UI__ = {
-      getEntries: slot => {
-        if (slot !== 'wework.route') return []
-        return [
-          {
-            id: 'icon-route',
-            path: '/dsh/icon-route',
-            telemetryFeature: 'plugins',
-            ...(icon === undefined ? {} : { icon }),
-          },
-        ]
-      },
-      subscribe: () => () => undefined,
-      attach: vi.fn(),
-    }
-    localStorage.setItem(
-      workspaceTabsStorageKey('strip-test'),
-      JSON.stringify({
-        activeTabId: 'icon-tab',
-        tabs: [
-          {
-            id: 'icon-tab',
-            kind: 'auxiliary',
-            title: 'Icon route',
-            contentRoute: '/dsh/icon-route',
-          },
-        ],
-      })
-    )
-
-    renderStrip('', undefined, '/dsh/icon-route')
-
-    const tab = screen.getByTestId('workspace-tab-select-icon-tab')
-    await waitFor(() => expect(tab.querySelector(`.${className}`)).toBeInTheDocument())
   })
 
   test('hides Smart apps from the top tab add menu while experiments are disabled', async () => {

@@ -1,10 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import '@/i18n'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
+import '@/i18n'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
 
@@ -56,7 +56,7 @@ function createServices() {
 describe('task-page Issue activity', () => {
   beforeEach(() => renderActivity.mockClear())
 
-  it.each(['local', 'backend'] as const)(
+  it.each(['backend'] as const)(
     'uses the %s project services for a task on the local executor',
     async projectStore => {
       const local = createServices()

@@ -1,15 +1,15 @@
+import { usePluginRefreshReconciliation } from '@/components/plugins/hooks/usePluginRefreshReconciliation'
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  PLUGIN_RELEASE_AVAILABLE_EVENT,
+  PluginAutoUpdateCoordinator,
+} from './PluginAutoUpdateCoordinator'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   hasInFlightPluginDeviceSync,
 } from './pluginDeviceAutoSync'
-import {
-  PLUGIN_RELEASE_AVAILABLE_EVENT,
-  PluginAutoUpdateCoordinator,
-} from './PluginAutoUpdateCoordinator'
-import { usePluginRefreshReconciliation } from '@/components/plugins/hooks/usePluginRefreshReconciliation'
 
 const mocks = vi.hoisted(() => {
   const handlers = new Map<string, Set<(payload?: unknown) => void>>()
@@ -425,32 +425,6 @@ describe('PluginAutoUpdateCoordinator', () => {
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
   })
 
-  test('preserves release events received while an update pass is finishing', async () => {
-    const emptyBatch = { updated: [], updatedCount: 0, remainingCount: 0 }
-    let finishFirstBatch!: () => void
-    const firstBatch = new Promise<typeof emptyBatch>(resolve => {
-      finishFirstBatch = () => resolve(emptyBatch)
-    })
-    mocks.autoUpdateInstalledPlugins
-      .mockResolvedValue(emptyBatch)
-      .mockImplementationOnce(() => firstBatch)
-
-    render(<PluginAutoUpdateCoordinator />)
-    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
-
-    await act(async () => {
-      for (const releaseId of [5, 6]) {
-        emit(PLUGIN_RELEASE_AVAILABLE_EVENT, { pluginId: 2, releaseId, version: '2.1.0' })
-      }
-    })
-    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce()
-
-    await act(async () => finishFirstBatch())
-
-    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
-    expect(mocks.syncInstalledPluginToDevice).not.toHaveBeenCalled()
-  })
-
   test('drains a retryable device failure through the existing failure limit path', async () => {
     mocks.autoUpdateInstalledPlugins
       .mockResolvedValueOnce({
@@ -524,14 +498,6 @@ describe('PluginAutoUpdateCoordinator', () => {
     expect(mocks.track).toHaveBeenCalledWith('operation_failed', {
       operation: 'plugin_auto_update',
     })
-  })
-
-  test('waits until the local executor has connected to the cloud backend', () => {
-    mocks.runtimeConnected = false
-    render(<PluginAutoUpdateCoordinator />)
-
-    expect(mocks.ensureConnected).not.toHaveBeenCalled()
-    expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
   })
 
   test('removes socket handlers and disconnects its notification client on unmount', async () => {

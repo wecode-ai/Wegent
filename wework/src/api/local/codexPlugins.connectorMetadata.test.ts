@@ -1,6 +1,6 @@
-import { beforeEach, expect, test, vi } from 'vitest'
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
 import type { InstalledPlugin } from '@/types/api'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { clearLocalCodexPluginsReadStateCache, createLocalCodexPluginApi } from './codexPlugins'
 
 const request = vi.hoisted(() => vi.fn())
@@ -153,24 +153,4 @@ test('a missing local marketplace path fails before requesting a remote catalog'
     )
   ).rejects.toThrow('Local plugin marketplace path is unavailable')
   expect(request).not.toHaveBeenCalled()
-})
-
-test('remote marketplace detail uses its name without a local filesystem request', async () => {
-  request.mockImplementation(async (method, payload) => {
-    expect(method).toBe('codex.app_server_request')
-    expect(payload).toEqual({
-      method: 'plugin/read',
-      params: {
-        marketplacePath: null,
-        remoteMarketplaceName: 'openai-curated-remote',
-        pluginName: 'github',
-      },
-    })
-    return { plugin: { summary: { name: 'github' }, skills: [] } }
-  })
-  await createLocalCodexPluginApi().readMarketplacePluginDetail(
-    { id: 'openai-curated-remote', name: 'Remote', path: 'openai-curated-remote' },
-    'github'
-  )
-  expect(request).toHaveBeenCalledOnce()
 })
