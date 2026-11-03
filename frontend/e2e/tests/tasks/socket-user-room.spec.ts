@@ -130,7 +130,7 @@ for (const reloadObserver of [false, true]) {
           .toBe('COMPLETED')
         expect(new URL(observer.url()).searchParams.has('taskId')).toBe(false)
         expect(
-          observerTraffic.sent.filter(([event]) => event === 'chat:join' || event === 'chat:send')
+          observerTraffic.sent.filter(([event]) => event === 'task:join' || event === 'chat:send')
         ).toEqual([])
         expect(
           observerTraffic.received.filter(
