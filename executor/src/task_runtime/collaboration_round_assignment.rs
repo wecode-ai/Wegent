@@ -11,6 +11,7 @@ pub(super) fn apply_round_assignee(
     connection: &Connection,
     item_id: &str,
     dispatched: &[Value],
+    actor: i64,
 ) -> Result<(), TaskRuntimeError> {
     let Some(target) = dispatched
         .iter()
@@ -88,7 +89,7 @@ pub(super) fn apply_round_assignee(
     }
     record_assignment_change(
         &mut metadata,
-        0,
+        actor,
         Some(to_type),
         Some(&to_id),
         to_name.as_deref(),

@@ -79,7 +79,8 @@ export function createDesktopScenario(options) {
   }
   async function openList(control, roleId, taskId) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', ROOT)
     await control.command('click', `[data-testid="stand-in-overview-role-${roleId}"]`)
     await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`, {
@@ -150,7 +151,8 @@ export function createDesktopScenario(options) {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', ROOT)
       const taskId = 'stand-in-list-approve'
       const roleId = await createWork(control, taskId)

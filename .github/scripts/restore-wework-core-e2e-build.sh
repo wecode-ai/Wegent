@@ -41,3 +41,6 @@ test -x "$backend_rs_binary"
 test -s "$build_dir/e2e-client/socket.io-client.cjs"
 test -s "$build_dir/e2e-client/lz-string.cjs"
 test -s "$build_dir/e2e-client/yaml.cjs"
+
+# Consumers use the validated extracted build; retain failed archives for diagnostics.
+rm "$archive"

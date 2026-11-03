@@ -250,6 +250,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
 
 vi.mock('@/components/layout/BufferedChatInput', () => ({
   BufferedChatInput: ({
+    value,
+    replaceDraftKey,
+    onDraftEdit,
     onSubmit,
     disabled,
     error,
@@ -261,6 +264,9 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     queuedMessages,
     onSendQueuedAsGuidance,
   }: {
+    value: string
+    replaceDraftKey?: number
+    onDraftEdit?: (value: string) => void
     onSubmit: (
       valueOverride?: string,
       options?: { interruptWhenBusy?: boolean }
@@ -284,12 +290,21 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
   }) => (
     <div
       data-testid="mock-composer"
+      data-draft-value={value}
+      data-replace-draft-key={replaceDraftKey}
       data-collapse-when-idle={String(collapseWhenIdle)}
       data-selected-model={projectChat?.selectedModel?.name}
       data-context-tokens={projectChat?.contextUsage?.last.totalTokens}
       data-trial-plugin={projectChat?.trialPluginName}
     >
       <CatalogBindingProbe scope={projectChat?.scopeKey} />
+      <button
+        type="button"
+        data-testid="mock-edit-unpublished-draft"
+        onClick={() => onDraftEdit?.('newer draft')}
+      >
+        Edit draft
+      </button>
       <button
         type="button"
         data-testid="mock-select-plugin"
@@ -1160,6 +1175,150 @@ describe('TemporaryChatPanel', () => {
       expect.any(Object)
     )
   })
+
+  it.each(['runtime', 'creation'] as const)(
+    'leaves a rejected %s submission for the buffered input to restore',
+    async failure => {
+      mocks.activeModelSelection = {
+        modelName: 'gpt-5.6-codex',
+        modelType: 'public',
+        options: {},
+      }
+      mocks.sendRuntimePaneMessage.mockResolvedValue(false)
+      mocks.createTask.mockResolvedValue(false)
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          instanceId="buffered-submit-recovery"
+          initialAddress={failure === 'runtime' ? address : null}
+          initialInput="initial draft"
+          createTask={failure === 'creation' ? mocks.createTask : undefined}
+        />
+      )
+
+      await userEvent.click(screen.getByTestId('mock-send'))
+
+      expect(
+        failure === 'runtime' ? mocks.sendRuntimePaneMessage : mocks.createTask
+      ).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-replace-draft-key', '0')
+    }
+  )
+
+  it.each(['false', 'rejection'] as const)(
+    'restores the initial draft explicitly after automatic submission returns %s',
+    async outcome => {
+      mocks.activeModelSelection = {
+        modelName: 'gpt-5.6-codex',
+        modelType: 'public',
+        options: {},
+      }
+      let finishSend!: () => void
+      mocks.sendRuntimePaneMessage.mockImplementation(
+        () =>
+          new Promise<boolean>((resolve, reject) => {
+            finishSend = () =>
+              outcome === 'false' ? resolve(false) : reject(new Error('send failed'))
+          })
+      )
+      render(
+        <TemporaryChatPanel
+          autoSubmitInitialInput
+          currentProject={null}
+          source={address}
+          instanceId="automatic-submit-recovery"
+          initialAddress={address}
+          initialInput="initial draft"
+        />
+      )
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+
+      await act(async () => finishSend())
+
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+        'data-draft-value',
+        'initial draft'
+      )
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-replace-draft-key', '1')
+    }
+  )
+
+  it('keeps an unpublished edit when automatic submission fails', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'gpt-5.6-codex',
+      modelType: 'public',
+      options: {},
+    }
+    let finishSend!: () => void
+    mocks.sendRuntimePaneMessage.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          finishSend = () => resolve(false)
+        })
+    )
+    render(
+      <TemporaryChatPanel
+        autoSubmitInitialInput
+        currentProject={null}
+        source={address}
+        instanceId="automatic-submit-newer-draft"
+        initialAddress={address}
+        initialInput="initial draft"
+      />
+    )
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+    await userEvent.click(screen.getByTestId('mock-edit-unpublished-draft'))
+
+    await act(async () => finishSend())
+
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-replace-draft-key', '0')
+  })
+
+  it.each(['instance', 'address'] as const)(
+    'does not restore an automatic draft after its %s changes',
+    async changedTarget => {
+      mocks.activeModelSelection = {
+        modelName: 'gpt-5.6-codex',
+        modelType: 'public',
+        options: {},
+      }
+      let finishSend!: () => void
+      mocks.sendRuntimePaneMessage.mockImplementation(
+        () =>
+          new Promise<boolean>(resolve => {
+            finishSend = () => resolve(false)
+          })
+      )
+      const props = {
+        autoSubmitInitialInput: true,
+        currentProject: null,
+        source: address,
+        instanceId: 'automatic-submit-original-target',
+        initialAddress: address,
+        initialInput: 'initial draft',
+      }
+      const { rerender } = render(<TemporaryChatPanel {...props} />)
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      rerender(
+        <TemporaryChatPanel
+          {...props}
+          instanceId={changedTarget === 'instance' ? 'another-instance' : props.instanceId}
+          initialAddress={
+            changedTarget === 'address' ? { ...address, taskId: 'another-task' } : address
+          }
+        />
+      )
+
+      await act(async () => finishSend())
+
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-replace-draft-key', '0')
+    }
+  )
 
   it('replaces the composer with pending confirmation and submits its native response', async () => {
     mocks.conversationMessages = [

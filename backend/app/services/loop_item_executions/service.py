@@ -48,6 +48,7 @@ from app.services.loop_item_executions.profile import (
 )
 from app.services.loop_item_executions.runtime_identity import (
     bind_comment_user_identity,
+    execution_actor_options,
     execution_conversation_task_id,
     execution_runtime_task_id,
     execution_runtime_turn_id,
@@ -1961,8 +1962,13 @@ class LoopItemExecutionService:
         runtime_device_id: str,
         runtime_task_id: str,
         owner_user_id: int | None = None,
+        include_initial_manager: bool = False,
     ) -> Optional[LoopItemExecution]:
-        """Resolve the active execution owned by a Runtime task identity."""
+        """Resolve a Runtime identity; activity recovery may include its manager.
+
+        Lifecycle write-back keeps exact dispatch identities so finishing the
+        manager conversation cannot settle its parent group execution.
+        """
 
         device_ids = runtime_device_identity_ids(
             db,
@@ -1971,16 +1977,30 @@ class LoopItemExecutionService:
         )
         if not device_ids:
             return None
+        task_ids = {runtime_task_id}
+        if include_initial_manager and runtime_task_id.endswith("-manager-initial"):
+            task_ids.add(runtime_task_id.removesuffix("-manager-initial"))
         query = db.query(LoopItemExecution).filter(
             LoopItemExecution.runtime_device_id.in_(device_ids),
-            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.runtime_task_id.in_(task_ids),
             LoopItemExecution.status.in_(CAPACITY_STATUSES),
         )
         if owner_user_id is not None:
             query = query.filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id
             )
-        return query.order_by(LoopItemExecution.id.desc()).first()
+        query = query.order_by(LoopItemExecution.id.desc())
+        if not include_initial_manager:
+            return query.first()
+        return next(
+            (
+                row
+                for row in query.all()
+                if runtime_task_id
+                in {row.runtime_task_id, execution_conversation_task_id(row)}
+            ),
+            None,
+        )
 
     def reconciled_activity_for_runtime(
         self,
@@ -2155,6 +2175,25 @@ class LoopItemExecutionService:
                 row.status,
             )
             return project_chat_service.to_view(row, db=db)
+        if (
+            execution.status == STATUS_CLAIMED
+            and row is not None
+            and row.status == "streaming"
+            and row.runtime_device_id == execution.runtime_device_id
+            and row.runtime_task_id == conversation_task_id
+            and (row.metadata_json or {}).get("execution_id") == execution.id
+            and (row.metadata_json or {}).get("run_status") == "running"
+        ):
+            # A claimed group may already have a running manager conversation.
+            activity_status = "streaming"
+            run_status = "running"
+            logger.info(
+                "[LoopItemExecution] Activity open preserved running conversation "
+                "execution=%s message=%s runtime_task=%s",
+                execution.id,
+                row.message_id,
+                conversation_task_id,
+            )
         if row is None:
             task = db.get(LoopItem, execution.loop_item_id)
             if task is not None and task.status == "completed":
@@ -2603,12 +2642,19 @@ class LoopItemExecutionService:
             db.refresh(execution)
             self._push_activity_after_commit(db, activity)
         logger.info(
-            "[LoopItemExecution] Terminal outcome execution=%s status=%s "
-            "event_seq=%s reconciled=%s content_length=%s",
-            execution.id,
-            execution.status,
+            "[LoopItemExecution] Terminal transition execution=%s status=%s "
+            "expected_status=%s expected_version=%s reason=%s event_seq=%s "
+            "reconciled=%s device=%s task=%s committed=%s content_length=%s",
+            execution_id,
+            terminal_status,
+            expected_status,
+            expected_version,
+            termination_reason,
             event_seq,
             reconciled,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+            commit,
             len(content or ""),
         )
         return execution
@@ -3535,11 +3581,7 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             ).payload
             member_runtime_profiles = self._collaboration_member_runtime_profiles(
                 db,
@@ -3601,11 +3643,7 @@ class LoopItemExecutionService:
                 db=db,
                 user_id=execution.executor_owner_user_id,
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             )
             execution_request = compiled.payload.get("executionRequest")
             model_config = (
@@ -3866,11 +3904,7 @@ class LoopItemExecutionService:
                     )
                 ),
                 request=request,
-                **(
-                    {"execution_user_id": execution.assigner_user_id}
-                    if execution.uses_runner_routing
-                    else {}
-                ),
+                **execution_actor_options(execution),
             ).payload
             self._detach_collaboration_member_payload(payload)
             profiles.append(
@@ -4408,12 +4442,24 @@ class LoopItemExecutionService:
         runtime_status: str,
         running: bool,
         turn_status: Optional[str] = None,
+        source: str = "device_scan",
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row
+        logger.info(
+            "[LoopItemExecution] Snapshot reconciliation source=%s execution=%s "
+            "status=%s version=%s runtime_status=%s running=%s turn_status=%s",
+            source,
+            execution_id,
+            row.status,
+            row.version,
+            runtime_status,
+            running,
+            turn_status,
+        )
         normalized = runtime_status.lower().strip()
         normalized_turn = (turn_status or "").lower().strip()
         if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:

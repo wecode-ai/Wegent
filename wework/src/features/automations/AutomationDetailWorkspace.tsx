@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   ChevronDown,
@@ -55,6 +55,7 @@ import {
 
 interface AutomationDetailWorkspaceProps {
   draft: AutomationDraft
+  inheritStandIn?: boolean
   automation: Automation | null
   runs: AutomationRun[]
   locale: string
@@ -76,10 +77,13 @@ interface AutomationDetailWorkspaceProps {
   onRun: () => void
   onToggle: () => void
   onDelete: () => void
+  onOpenRun?: (run: AutomationRun) => void
+  validationError?: string | null
 }
 
 export function AutomationDetailWorkspace({
   draft,
+  inheritStandIn = false,
   automation,
   runs,
   locale,
@@ -101,9 +105,18 @@ export function AutomationDetailWorkspace({
   onRun,
   onToggle,
   onDelete,
+  onOpenRun,
+  validationError,
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!validationError) return
+    if (!draft.name.trim()) nameRef.current?.focus()
+    else if (!draft.prompt.trim()) promptRef.current?.focus()
+  }, [validationError, draft.name, draft.prompt])
   const localDeviceIdSet = new Set(localDeviceIds)
   const taskOptions: AutomationTaskMenuOption[] = buildAutomationTaskOptions(runtimeWork).map(
     option => {
@@ -156,6 +169,9 @@ export function AutomationDetailWorkspace({
               : t('workbench.automation_status_new', '新建')}
           </span>
           <input
+            ref={nameRef}
+            aria-label={t('workbench.automation_name', '名称')}
+            aria-invalid={Boolean(validationError && !draft.name.trim())}
             data-testid="automation-name-input"
             value={draft.name}
             onChange={event => onChange('name', event.target.value)}
@@ -241,12 +257,21 @@ export function AutomationDetailWorkspace({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-28 pt-3">
         <textarea
+          ref={promptRef}
+          aria-label={t('workbench.automation_prompt', '任务说明')}
+          aria-invalid={Boolean(validationError && !draft.prompt.trim())}
           data-testid="automation-prompt-input"
           value={draft.prompt}
           onChange={event => onChange('prompt', event.target.value)}
           className="min-h-24 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
           placeholder={t('workbench.automation_prompt', '任务说明')}
         />
+
+        {validationError && (
+          <p role="alert" data-testid="automation-draft-error" className="mt-2 text-sm text-error">
+            {validationError}
+          </p>
+        )}
 
         <SectionTitle
           title={t('workbench.automation_details', '详情')}
@@ -324,6 +349,10 @@ export function AutomationDetailWorkspace({
                 options={taskOptions}
               />
             </SettingsRow>
+          ) : inheritStandIn ? (
+            <p className="px-3 py-2 text-xs text-text-muted">
+              {t('standIn.workspace.schedule_inherits_settings')}
+            </p>
           ) : (
             <>
               <SettingsRow label={t('workbench.automation_location', '运行位置')}>
@@ -443,7 +472,7 @@ export function AutomationDetailWorkspace({
         />
         <FrequencySettings draft={draft} onChange={onChange} />
 
-        {automation ? <RunHistory runs={runs} locale={locale} /> : null}
+        {automation ? <RunHistory runs={runs} locale={locale} onOpenRun={onOpenRun} /> : null}
       </div>
 
       {!automation || dirty ? (
@@ -735,7 +764,15 @@ type AutomationTaskMenuOption = ReturnType<typeof buildAutomationTaskOptions>[nu
   disabled: boolean
 }
 
-function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string }) {
+function RunHistory({
+  runs,
+  locale,
+  onOpenRun,
+}: {
+  runs: AutomationRun[]
+  locale: string
+  onOpenRun?(run: AutomationRun): void
+}) {
   const { t } = useTranslation('common')
   return (
     <div className="mt-8" data-testid="automation-run-history">
@@ -765,6 +802,16 @@ function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string })
                   {run.error}
                 </span>
               ) : null}
+              {run.taskId && run.deviceId && onOpenRun && (
+                <button
+                  type="button"
+                  data-testid={`automation-run-open-${run.id}`}
+                  onClick={() => onOpenRun(run)}
+                  className="min-h-8 shrink-0 rounded-md px-2 text-sm underline hover:bg-surface"
+                >
+                  {t('standIn.workspace.open_work')}
+                </button>
+              )}
             </div>
           ))
         )}

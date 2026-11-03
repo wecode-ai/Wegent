@@ -42,6 +42,7 @@ impl LocalTaskStore {
                     "submit_workflow_plan requires a collaboration manager execution".to_owned(),
                 )
             })?;
+        super::project_coordination_commands::authorize_execution_on(&transaction, &manager)?;
         let round_id = required_string(plan, "round_id")?;
         let assignments = plan
             .get("items")
@@ -87,7 +88,7 @@ impl LocalTaskStore {
                         assignee_id,
                         selected_model_id,
                     )?;
-                    let payload = json!({
+                    let mut payload = json!({
                         "runtimePayload": runtime_payload,
                         "message": collaboration_assignment_prompt(title, instructions),
                         "workflow_task_title": title,
@@ -101,6 +102,9 @@ impl LocalTaskStore {
                         "collaboration_group": group,
                         "project_workspace_roots": manager_payload.get("project_workspace_roots"),
                     });
+                    if let Some(context) = manager_payload.get("project_coordination") {
+                        payload["project_coordination"] = context.clone();
+                    }
                     let execution_id = create_local_execution(
                         &transaction,
                         &manager.loop_item_id,
@@ -169,7 +173,12 @@ impl LocalTaskStore {
              WHERE id = ?3",
             params![updated_payload.to_string(), now(), manager_execution_id],
         )?;
-        apply_round_assignee(&transaction, &manager.loop_item_id, &dispatched)?;
+        apply_round_assignee(
+            &transaction,
+            &manager.loop_item_id,
+            &dispatched,
+            manager.assigner_user_id,
+        )?;
         let dispatch_id = manager
             .execution_payload
             .as_ref()
@@ -258,6 +267,17 @@ impl LocalTaskStore {
             .execution_payload
             .as_ref()
             .ok_or_else(|| TaskRuntimeError::Invalid("manager payload is missing".to_owned()))?;
+        match super::project_coordination_commands::authorize_execution_on(
+            &transaction,
+            &source_manager,
+        ) {
+            Ok(()) => {}
+            Err(error @ TaskRuntimeError::Database(_)) => return Err(error),
+            Err(_) => {
+                transaction.rollback()?;
+                return Ok(());
+            }
+        }
         let manager_context = source_payload
             .get("collaboration_manager_context")
             .and_then(Value::as_str)
@@ -650,7 +670,7 @@ fn create_human_assignment_task(
     });
     connection.execute(
         "UPDATE loop_items
-         SET next_item_number = ?1, version = version + 1, updated_at = ?2
+         SET next_item_number = ?1, updated_at = ?2
          WHERE id = ?3",
         params![sequence + 1, timestamp, manager.cloud_project_id],
     )?;
@@ -658,9 +678,9 @@ fn create_human_assignment_task(
         "INSERT INTO loop_items (
             id, resource_type, project_space, cloud_project_id, parent_id,
             title, description, sequence_number, status, priority, sort_order,
-            metadata, version, created_at, updated_at, assignee_user_id
+            metadata, version, created_at, updated_at, assignee_user_id, created_by_user_id
          ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, 'inbox', ?7,
-                   0, ?8, 1, ?9, ?9, ?10)",
+                   0, ?8, 1, ?9, ?9, ?10, ?11)",
         params![
             task_id,
             manager.cloud_project_id,
@@ -672,6 +692,7 @@ fn create_human_assignment_task(
             metadata.to_string(),
             timestamp,
             assignee_user_id,
+            manager.assigner_user_id,
         ],
     )?;
     refresh_runtime_projection_additional_context(connection, &manager.loop_item_id)?;

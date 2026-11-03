@@ -128,7 +128,25 @@ describe('application menu workspace actions', () => {
   test('routes plugin, automation, and application items through navigation', () => {
     const { send } = setup()
     for (const action of ['open-plugins', 'open-automations', 'open-applications']) send(action)
-    expect(mocks.navigate.mock.calls).toEqual([['/plugins'], ['/automations'], ['/sites']])
+    expect(mocks.navigate.mock.calls).toEqual([
+      ['/plugins'],
+      ['/stand-in?view=scheduled'],
+      ['/sites'],
+    ])
+  })
+
+  test('preserves the active identity and device when opening schedules from settings', () => {
+    const original = window.location.href
+    window.history.replaceState({}, '', '/stand-in?profileId=reviewer&deviceId=device-a')
+    try {
+      const { send } = setup({ pathname: '/stand-in' })
+      send('open-automations')
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        '/stand-in?view=scheduled&profileId=reviewer&deviceId=device-a'
+      )
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
   })
 
   test('ignores actions addressed to another window', () => {

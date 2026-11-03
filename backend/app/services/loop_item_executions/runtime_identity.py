@@ -20,6 +20,16 @@ def bind_comment_user_identity(
     return request.model_copy(update={"client_user_message_id": message_id})
 
 
+def execution_actor_options(execution: LoopItemExecution) -> dict[str, int]:
+    """Keep the enabling member as actor, independently of device/definition ownership."""
+    if (
+        execution.uses_runner_routing
+        or "project_coordination" in execution.runtime_origin_context
+    ):
+        return {"execution_user_id": execution.assigner_user_id}
+    return {}
+
+
 def runtime_task_id_for(execution_id: int) -> str:
     """Return the canonical runtime task id for one execution."""
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
