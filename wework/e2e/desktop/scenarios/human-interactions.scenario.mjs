@@ -22,6 +22,7 @@ import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { waitForElementInsideScroller } from '../modules/conversation-layout.mjs'
 import {
   startHumanInteractionIssue,
   verifyHumanInteractionIssueReply,
@@ -330,6 +331,38 @@ export function createDesktopScenario({
           visible: true,
         })
       }
+      const contextParagraph = issueFixture
+        ? `${page} [data-testid="task-activity-content-${issueDiagnostics.find(message => message.senderType === 'agent' && message.runtimeAddress).id}"] .task-activity-content-body p:first-of-type`
+        : `${page} [data-testid="assistant-message-content"] p:first-of-type`
+      await control.command('waitFor', contextParagraph, { text: CONTEXT, visible: true })
+      assert.equal(
+        Number(await control.command('getElementCount', contextParagraph)),
+        1,
+        'The context fixture must identify exactly one original paragraph'
+      )
+      assert.ok(
+        (await control.command('getText', contextParagraph)).includes(CONTEXT),
+        'The measured paragraph must contain the original context'
+      )
+      const { element: contextBounds, scroller: readingBounds } =
+        await waitForElementInsideScroller(
+          control,
+          contextParagraph,
+          `${page} [data-testid="${issueFixture ? 'cloud-todo-detail-scroll' : 'right-workspace-chat-scroll-area'}"]`,
+          'Opening the pending entity must bring its original context paragraph into the reading viewport',
+          uiTimeoutMs
+        )
+      assert.ok(
+        contextBounds.height > 0 &&
+          contextBounds.left >= readingBounds.left - 1 &&
+          contextBounds.right <= readingBounds.right + 1,
+        'The original context paragraph must be readable without horizontal clipping'
+      )
+      focusDiagnostics.initialContext = { contextBounds, readingBounds }
+      await writeFile(
+        join(resultDir, 'initial-context-metrics.json'),
+        JSON.stringify(focusDiagnostics.initialContext, null, 2)
+      )
       assert.equal(await control.command('getValue', input), ANSWER)
       assert.equal(
         Number(
