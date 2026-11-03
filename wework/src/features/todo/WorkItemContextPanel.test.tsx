@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
-import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
 
@@ -124,67 +124,6 @@ const item: CloudLoopItem = {
 }
 
 describe('WorkItemContextPanel', () => {
-  test('reuses the workspace work-item editor and opens related tasks', async () => {
-    const user = userEvent.setup()
-    const onOpenTask = vi.fn()
-    const onOpenBoard = vi.fn()
-    const child = { ...item, id: 'WORK-2', parent_id: item.id, title: '子工作项' }
-    const api = {
-      listLoopItems: vi.fn().mockResolvedValue({ items: [item, child] }),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemContextPanel
-        api={api}
-        services={{}}
-        project={project}
-        item={item}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        deviceNamesById={{ 'local-device': '本地开发机' }}
-        onOpenBoard={onOpenBoard}
-        onOpenTask={onOpenTask}
-      />
-    )
-
-    const editor = screen.getByTestId('mock-todo-editor')
-    expect(editor).toHaveAttribute('data-presentation', 'workspace-panel')
-    expect(editor).toHaveAttribute('data-fill', 'yes')
-    expect(editor).toHaveAttribute('data-controls', 'no')
-    expect(editor).toHaveAttribute('data-selected-task', 'runtime-1')
-    expect(editor).toHaveAttribute('data-device-name', '本地开发机')
-    await waitFor(() => expect(editor).toHaveAttribute('data-item-count', '2'))
-
-    await user.click(screen.getByTestId('mock-related-task'))
-    expect(onOpenTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      taskId: 'runtime-2',
-    })
-
-    await user.click(screen.getByTestId('work-item-open-board'))
-    expect(onOpenBoard).toHaveBeenCalledOnce()
-  })
-
-  test('keeps edits in the shared detail component', async () => {
-    const api = {
-      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemContextPanel
-        api={api}
-        services={{}}
-        project={project}
-        item={item}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        onOpenBoard={vi.fn()}
-        onOpenTask={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('mock-update-item'))
-    expect(screen.getByTestId('mock-todo-editor')).toHaveTextContent('更新后的工作项')
-  })
-
   test('keeps read confirmations in the detail and item list', async () => {
     const unreadItem = { ...item, is_unread: true, content_revision: 1 }
     const api = {

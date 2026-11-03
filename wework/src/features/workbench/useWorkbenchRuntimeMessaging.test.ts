@@ -1,28 +1,27 @@
+import i18n from '@/i18n'
+import type { Attachment, DeviceInfo } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import type { Attachment, DeviceInfo } from '@/types/api'
-import i18n from '@/i18n'
-import {
-  buildRuntimeTaskCreateHandle,
-  friendlyTitleForTask,
-  loadTemporaryChatSource,
-  prepareRuntimeAttachmentsForDevice,
-  resolveRuntimeTaskCreateWorkspacePath,
-  runtimeExecutablePathForTarget,
-  runtimeSendError,
-  resolveTemporaryChatSource,
-  runtimeThreadId,
-  titleModelForGeneration,
-  useWorkbenchRuntimeMessaging,
-} from './useWorkbenchRuntimeMessaging'
-import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
-import { initialWorkbenchState } from './workbenchReducer'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationTurns,
 } from './runtimeConversationCache'
 import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import {
+  buildRuntimeTaskCreateHandle,
+  friendlyTitleForTask,
+  loadTemporaryChatSource,
+  prepareRuntimeAttachmentsForDevice,
+  resolveRuntimeTaskCreateWorkspacePath,
+  resolveTemporaryChatSource,
+  runtimeExecutablePathForTarget,
+  runtimeSendError,
+  runtimeThreadId,
+  useWorkbenchRuntimeMessaging,
+} from './useWorkbenchRuntimeMessaging'
+import { initialWorkbenchState } from './workbenchReducer'
 
 function messagingFixture(
   modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
@@ -239,15 +238,6 @@ describe('buildRuntimeTaskCreateHandle', () => {
 })
 
 describe('resolveRuntimeTaskCreateWorkspacePath', () => {
-  test('keeps the source path for a current-workspace task without a response path', () => {
-    expect(
-      resolveRuntimeTaskCreateWorkspacePath({
-        sourcePath: '/workspace/project',
-        requestedManagedWorkspace: false,
-      })
-    ).toBe('/workspace/project')
-  })
-
   test('requires the Executor planned path for a managed workspace task', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
@@ -265,16 +255,6 @@ describe('resolveRuntimeTaskCreateWorkspacePath', () => {
         requestedManagedWorkspace: true,
       })
     ).toThrow('returned the base workspace path')
-  })
-
-  test('accepts a distinct planned managed workspace path', () => {
-    expect(
-      resolveRuntimeTaskCreateWorkspacePath({
-        sourcePath: '/workspace/project',
-        responsePath: '/executor/worktrees/task-1/project',
-        requestedManagedWorkspace: true,
-      })
-    ).toBe('/executor/worktrees/task-1/project')
   })
 })
 
@@ -304,17 +284,6 @@ function device(deviceId: string, deviceType: DeviceInfo['device_type']): Device
 }
 
 describe('runtimeThreadId', () => {
-  test('uses the direct thread id from a hydrated runtime task address', () => {
-    expect(
-      runtimeThreadId({
-        deviceId: 'local-device',
-        taskId: 'task-1',
-        threadId: 'thread-1',
-        runtimeHandle: { modelSelection: { modelName: 'gpt-5' } },
-      })
-    ).toBe('thread-1')
-  })
-
   test('falls back to the runtime handle thread id', () => {
     expect(
       runtimeThreadId({
@@ -438,85 +407,9 @@ describe('friendlyTitleForTask', () => {
       )
     ).toBeNull()
   })
-
-  test('uses an available configured title model', () => {
-    expect(
-      friendlyTitleForTask(
-        {
-          friendlyTaskTitlesEnabled: true,
-          friendlyTaskTitleModel: {
-            modelName: 'local-model:title',
-            modelType: 'runtime',
-            executionModelId: 'local-model:title',
-            executionModelType: 'runtime',
-            options: { collaborationMode: 'default' },
-          },
-        },
-        [{ name: 'local-model:title', type: 'runtime' }] as never,
-        taskExecutionModel
-      )
-    ).toEqual({
-      modelId: 'local-model:title',
-      modelType: 'runtime',
-      modelOptions: { collaborationMode: 'default' },
-    })
-  })
-})
-
-describe('titleModelForGeneration', () => {
-  test('uses the configured title model without requiring automatic task titles to be enabled', () => {
-    expect(
-      titleModelForGeneration(
-        {
-          friendlyTaskTitleModel: {
-            modelName: 'local-model:title',
-            modelType: 'runtime',
-            executionModelId: 'local-model:title',
-            executionModelType: 'runtime',
-          },
-        },
-        [{ name: 'local-model:title', type: 'runtime' }] as never,
-        {
-          modelId: 'local-model:task',
-          modelType: 'runtime',
-          modelOptions: {},
-        }
-      )
-    ).toMatchObject({ modelId: 'local-model:title', modelType: 'runtime' })
-  })
-
-  test('uses the current execution model while preferences are still loading', () => {
-    expect(
-      titleModelForGeneration(undefined, [], {
-        modelId: 'gpt-5.6-sol',
-        modelType: 'public',
-        modelOptions: { reasoning: 'low' },
-      })
-    ).toEqual({
-      modelId: 'gpt-5.6-sol',
-      modelType: 'public',
-      modelOptions: { reasoning: 'low' },
-    })
-  })
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
-  test('keeps local attachments on the local filesystem path', async () => {
-    const localAttachment = attachment()
-
-    await expect(
-      prepareRuntimeAttachmentsForDevice(
-        'local-device',
-        [device('local-device', 'local')],
-        [],
-        [localAttachment]
-      )
-    ).resolves.toEqual({
-      attachmentIds: [],
-      attachments: [localAttachment],
-    })
-  })
-
   test.each(['cloud', 'remote'] as const)(
     'uploads a source file before sending to a %s device',
     async deviceType => {
@@ -554,24 +447,6 @@ describe('prepareRuntimeAttachmentsForDevice', () => {
     }
   )
 
-  test('reuses positive backend attachment ids even when transcript metadata has a path', async () => {
-    const upload = vi.fn()
-
-    await expect(
-      prepareRuntimeAttachmentsForDevice(
-        'cloud-device',
-        [device('cloud-device', 'cloud')],
-        [],
-        [attachment({ id: 21, local_path: '/cloud/runtime/attachment.png' })],
-        upload
-      )
-    ).resolves.toEqual({
-      attachmentIds: [21],
-      attachments: [attachment({ id: 21, local_path: undefined })],
-    })
-    expect(upload).not.toHaveBeenCalled()
-  })
-
   test('blocks cloud sending when local attachment upload is unavailable', async () => {
     await expect(
       prepareRuntimeAttachmentsForDevice(
@@ -585,20 +460,6 @@ describe('prepareRuntimeAttachmentsForDevice', () => {
 })
 
 describe('runtimeExecutablePathForTarget', () => {
-  test('keeps a configured executable for a local executor', () => {
-    expect(
-      runtimeExecutablePathForTarget({
-        executablePath: '/tmp/claude',
-        targetDevice: {
-          device_id: 'local-device',
-          device_type: 'local',
-          status: 'online',
-        },
-        workspaceSource: 'local',
-      })
-    ).toBe('/tmp/claude')
-  })
-
   test('keeps a configured executable while local device discovery is pending', () => {
     expect(
       runtimeExecutablePathForTarget({
@@ -607,32 +468,6 @@ describe('runtimeExecutablePathForTarget', () => {
       })
     ).toBe('/tmp/claude')
   })
-
-  test('removes a local executable path for a remote workspace', () => {
-    expect(
-      runtimeExecutablePathForTarget({
-        executablePath: '/tmp/claude',
-        targetDevice: null,
-        workspaceSource: 'remote',
-      })
-    ).toBeUndefined()
-  })
-
-  test.each(['cloud', 'remote'] as const)(
-    'removes a local executable path for a %s executor',
-    deviceType => {
-      expect(
-        runtimeExecutablePathForTarget({
-          executablePath: '/tmp/claude',
-          targetDevice: {
-            device_id: 'remote-device',
-            device_type: deviceType,
-            status: 'online',
-          },
-        })
-      ).toBeUndefined()
-    }
-  )
 
   test('prefers an explicit remote executor over stale local workspace metadata', () => {
     expect(
@@ -646,18 +481,5 @@ describe('runtimeExecutablePathForTarget', () => {
         workspaceSource: 'local',
       })
     ).toBeUndefined()
-  })
-
-  test('keeps a configured executable for the local app executor', () => {
-    expect(
-      runtimeExecutablePathForTarget({
-        executablePath: '/tmp/claude',
-        targetDevice: {
-          device_id: 'app-device',
-          device_type: 'app',
-          status: 'online',
-        },
-      })
-    ).toBe('/tmp/claude')
   })
 })

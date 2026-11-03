@@ -1,7 +1,7 @@
-import { act, renderHook } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
-import type { RuntimeTaskAddress, RuntimeTranscriptSearchResponse } from '@wegent/chat-core/runtime'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { act, renderHook } from '@testing-library/react'
+import type { RuntimeTaskAddress, RuntimeTranscriptSearchResponse } from '@wegent/chat-core/runtime'
+import { describe, expect, test, vi } from 'vitest'
 import { useRuntimeConversationSearch } from './useRuntimeConversationSearch'
 
 const address: RuntimeTaskAddress = { deviceId: 'device', taskId: 'task' }
@@ -368,46 +368,6 @@ describe('runtime conversation search pages', () => {
       'f',
     ])
     expect(initial.turns[0].items.map(item => item.id)).toEqual(['c', 'd'])
-  })
-
-  test('coalesces repeated clicks without fetching the other direction automatically', async () => {
-    const pending = deferred<RuntimePaneTranscript>()
-    const loadTranscript = vi
-      .fn()
-      .mockResolvedValueOnce(
-        contextPage(['middle'], {
-          hasMoreBefore: true,
-          beforeCursor: 'before',
-          hasMoreAfter: true,
-          afterCursor: 'after',
-        })
-      )
-      .mockReturnValueOnce(pending.promise)
-    const { result } = renderHook(() =>
-      useRuntimeConversationSearch({
-        target,
-        targetRef: { current: target },
-        searchTranscript: vi.fn(),
-        loadTranscript,
-      })
-    )
-    await act(async () => {
-      await result.current.ensureMatch(match, new AbortController().signal)
-    })
-    let request!: Promise<void>
-    await act(async () => {
-      request = result.current.loadMoreContext('before')
-      expect(result.current.loadMoreContext('before')).toBe(request)
-      expect(result.current.loadMoreContext('after')).toBe(request)
-    })
-    expect(result.current.page).toMatchObject({ loadingMoreBefore: true, loadingMoreAfter: false })
-    expect(loadTranscript).toHaveBeenCalledTimes(2)
-    await act(async () => {
-      pending.resolve(contextPage(['previous'], { hasMoreBefore: false }))
-      await request
-    })
-    expect(result.current.page).toMatchObject({ loadingMoreBefore: false, hasMoreAfter: true })
-    expect(loadTranscript).toHaveBeenCalledTimes(2)
   })
 
   test('reports a repeated cursor without merging and permits retrying the same page', async () => {

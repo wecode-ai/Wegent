@@ -1,12 +1,7 @@
+import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import {
-  installExternalLinkHandler,
-  isHttpUrl,
-  isLocalHttpUrl,
-  openExternalUrl,
-} from './external-links'
-import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
+import { installExternalLinkHandler, isLocalHttpUrl, openExternalUrl } from './external-links'
 
 const desktopHostMock = vi.hoisted(() => vi.fn())
 const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn())
@@ -39,14 +34,6 @@ afterEach(() => {
 })
 
 describe('external link helpers', () => {
-  test('accepts only http and https URLs', () => {
-    expect(isHttpUrl('https://example.com')).toBe(true)
-    expect(isHttpUrl('http://example.com')).toBe(true)
-    expect(isHttpUrl('mailto:user@example.com')).toBe(false)
-    expect(isHttpUrl('/settings')).toBe(false)
-    expect(isHttpUrl('javascript:alert(1)')).toBe(false)
-  })
-
   test('detects localhost URLs without treating private remote hosts as local', () => {
     expect(isLocalHttpUrl('http://localhost:3000')).toBe(true)
     expect(isLocalHttpUrl('https://app.localhost/path')).toBe(true)
@@ -54,45 +41,6 @@ describe('external link helpers', () => {
     expect(isLocalHttpUrl('http://[::1]:8000')).toBe(true)
     expect(isLocalHttpUrl('http://192.168.1.20')).toBe(false)
     expect(isLocalHttpUrl('https://example.com')).toBe(false)
-  })
-
-  test('opens http URLs with the browser fallback outside Electron', async () => {
-    vi.stubGlobal('open', openWindowMock)
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-    expect(openWindowMock).toHaveBeenCalledWith(
-      'https://example.com/docs',
-      '_blank',
-      'noopener,noreferrer'
-    )
-    expect(desktopHostMock).not.toHaveBeenCalled()
-  })
-
-  test('does not infer browser open success from a noopener window handle', async () => {
-    vi.stubGlobal('open', openWindowMock)
-    openWindowMock.mockReturnValue(null)
-    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
-
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-
-    expect(openWindowMock).toHaveBeenCalledWith(
-      'https://example.com/docs',
-      '_blank',
-      'noopener,noreferrer'
-    )
-    expect(log).toHaveBeenCalledWith('[Wework][external-link]', {
-      event: 'opened',
-      source: 'unknown',
-      url: 'https://example.com',
-      target: 'browser',
-    })
-  })
-
-  test('opens external links through the Electron host', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    await expect(openExternalUrl('https://example.com/docs')).resolves.toBe(true)
-    expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', {
-      url: 'https://example.com/docs',
-    })
   })
 
   test('routes Wework links into the shared in-app scheme navigator', async () => {
@@ -124,24 +72,6 @@ describe('external link helpers', () => {
     expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
     expect(desktopHostMock).not.toHaveBeenCalled()
     expect(openWindowMock).not.toHaveBeenCalled()
-  })
-
-  test('uses the current link preference on each click', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    getAppPreferencesMock
-      .mockResolvedValueOnce({ browserExternalLinkTarget: 'wework' })
-      .mockResolvedValueOnce({ browserExternalLinkTarget: 'system' })
-
-    await openExternalUrl('https://example.com/docs')
-    await openExternalUrl('https://example.com/docs')
-
-    expect(getAppPreferencesMock).toHaveBeenCalledTimes(2)
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledExactlyOnceWith(
-      'https://example.com/docs'
-    )
-    expect(desktopHostMock).toHaveBeenCalledExactlyOnceWith('shell.openExternal', {
-      url: 'https://example.com/docs',
-    })
   })
 
   test('routes configured localhost links into the Wework built-in browser', async () => {

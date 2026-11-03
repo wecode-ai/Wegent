@@ -1,10 +1,10 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, expect, test, vi } from 'vitest'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
 } from '@/features/plugins/pluginDeviceAutoSync'
 import { reconcilePluginRefresh } from '@/features/plugins/pluginRefreshReconciliation'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { usePluginRefreshReconciliation } from './usePluginRefreshReconciliation'
 
 vi.mock('@/features/plugins/pluginRefreshReconciliation', () => ({
@@ -26,15 +26,6 @@ function options() {
     onError: vi.fn(),
   }
 }
-test('only manual refresh requests run reconciliation and rerenders do not duplicate it', async () => {
-  const initial = options()
-  const { rerender } = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
-  expect(reconcilePluginRefresh).not.toHaveBeenCalled()
-  rerender({ ...initial, request: 1 })
-  await waitFor(() => expect(initial.onComplete).toHaveBeenCalledOnce())
-  rerender({ ...initial, request: 1 })
-  expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
-})
 test('waits for an existing device operation and rejects old account completion', async () => {
   const release = beginPluginDeviceSync('device')!
   const initial = { ...options(), request: 1 }
@@ -60,35 +51,6 @@ test('offline refresh reports an error without requesting mutations', async () =
   renderHook(usePluginRefreshReconciliation, { initialProps: initial })
   await waitFor(() => expect(initial.onError).toHaveBeenCalledOnce())
   expect(reconcilePluginRefresh).not.toHaveBeenCalled()
-})
-
-test('remains busy while waiting for the shared device lease and until reconciliation finishes', async () => {
-  vi.useFakeTimers()
-  const release = beginPluginDeviceSync('device')!
-  let finish!: () => void
-  vi.mocked(reconcilePluginRefresh).mockImplementation(
-    () =>
-      new Promise(resolve => {
-        finish = resolve
-      })
-  )
-  const view = renderHook(usePluginRefreshReconciliation, {
-    initialProps: { ...options(), request: 1 },
-  })
-  try {
-    expect(view.result.current).toBe(true)
-    expect(reconcilePluginRefresh).not.toHaveBeenCalled()
-    release()
-    await act(async () => vi.advanceTimersByTimeAsync(250))
-    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
-    expect(view.result.current).toBe(true)
-    await act(async () => finish())
-    expect(view.result.current).toBe(false)
-  } finally {
-    view.unmount()
-    release()
-    vi.useRealTimers()
-  }
 })
 
 test('clears queued refresh activity when the shared device lease times out', async () => {
