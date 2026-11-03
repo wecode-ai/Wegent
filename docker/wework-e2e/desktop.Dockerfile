@@ -60,6 +60,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
+  && fc-match --format '%{family}\n' ':lang=zh-cn' | grep -F 'Noto Sans CJK' \
   && pnpm --version \
   && gh --version \
   && python3 --version \
