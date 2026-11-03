@@ -16,7 +16,7 @@ afterEach(async () => {
   await exited
 })
 
-async function start() {
+async function start(failFirstConnection = false) {
   child = spawn(
     process.execPath,
     [
@@ -26,6 +26,9 @@ async function start() {
       `
       const server = require('node:http').createServer((req, res) => res.end('application'))
       server.on('upgrade', (req, socket) => socket.end('HTTP/1.1 101 Switching Protocols\\r\\nConnection: close\\r\\n\\r\\n'))
+      if (${JSON.stringify(failFirstConnection)}) server.once('connection', socket => {
+        socket.once('data', () => queueMicrotask(() => socket.destroy(new Error('Peer disconnected during rejection'))))
+      })
       server.listen(0, '127.0.0.1')
     `,
     ],
@@ -129,6 +132,14 @@ test('requires the same browser authentication for WebSocket upgrades', async ()
 test('does not consume the bootstrap credential on a cross-origin request', async () => {
   const { origin, bootstrap } = await start()
   expect((await fetch(bootstrap, { headers: { Origin: 'https://evil.test' } })).status).toBe(401)
+  const cookie = await authenticate(bootstrap)
+  expect((await fetch(origin, { headers: { cookie } })).status).toBe(200)
+})
+
+test('survives a socket error while rejecting an unauthenticated upgrade', async () => {
+  const { origin, bootstrap } = await start(true)
+  // A reset can arrive before the client receives the rejection response.
+  await upgrade(origin).catch(() => undefined)
   const cookie = await authenticate(bootstrap)
   expect((await fetch(origin, { headers: { cookie } })).status).toBe(200)
 })

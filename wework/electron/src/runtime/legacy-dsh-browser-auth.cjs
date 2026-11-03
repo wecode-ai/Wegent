@@ -91,6 +91,8 @@ Server.prototype.emit = function (event, ...args) {
       }
     }
     if (event === 'upgrade') {
+      // Node removes its HTTP socket error handler before emitting upgrades.
+      target.once('error', () => target.destroy())
       target.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
     } else {
       target.writeHead(401, { 'Cache-Control': 'no-store' })
