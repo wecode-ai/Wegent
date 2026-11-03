@@ -40,6 +40,8 @@ Structured questions from stand-ins and ordinary tasks share one pending request
 
 Needs your input hosts the original entity: tasks show their existing conversation, while Issues show their existing interface focused on the owning comment. Context, questions, forms, approvals, and authorization use the original interface and handlers. The inbox does not extract or summarize conversation content or create another reply form.
 
+The container header's **Open in original view** action opens the owning task or Issue and preserves the source comment target. Files, reviews, plans, and execution details that require the full workspace open in the original task. Child Issues open their own detail page rather than adding workspace sidebars inside the inbox.
+
 Background delivery follows the notification channel settings. Eligible simple asynchronous questions support text replies through system notifications. Manage channels in the title-bar bell's settings; the account area no longer has a separate global IM notification menu. System delivery also depends on operating-system permissions and notification settings.
 
 Reading a notification, dismissing a reminder, or marking it read does not resolve a request. Accepted replies or an already resolved original question move it into history; failed sends retain the draft. Offline devices retain last-known questions and drafts, with replies enabled only after reconnecting and revalidating. Execution approvals, connector login, and complex forms remain in their original context; ordinary business answers never grant operation permissions. Issue answers persist in the owning comment thread before continuing its execution.

@@ -4058,6 +4058,54 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
   })
 
+  it.each([
+    { linear: false, issueTimeline: false },
+    { linear: true, issueTimeline: false },
+    { linear: true, issueTimeline: true },
+  ])(
+    'returns embedded execution actions to their original task (linear=$linear, timeline=$issueTimeline)',
+    async ({ linear, issueTimeline }) => {
+      const user = userEvent.setup()
+      const onOpenRuntimeTask = vi.fn()
+      const address = { deviceId: 'device-1', taskId: 'original-execution' }
+      const message: ProjectChatMessage = {
+        ...agentMessage,
+        status: 'completed',
+        runtimeAddress: address,
+      }
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: { messages: [message], latestSequence: 2, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: 'Inspect', status: 'in_progress', version: 1 } as never}
+          linear={linear}
+          issueTimeline={issueTimeline}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+        />
+      )
+      await user.click(
+        await screen.findByTestId(
+          linear
+            ? 'cloud-task-activity-execution-badge-message-2'
+            : 'cloud-task-activity-open-execution-message-2'
+        )
+      )
+      expect(onOpenRuntimeTask).toHaveBeenCalledExactlyOnceWith(address)
+      expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
+    }
+  )
+
   it('shows the stop action for a running AI run inside the floating panel', async () => {
     paneExecution.running = true
     runtimeWorkMock.value = {

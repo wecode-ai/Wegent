@@ -5679,7 +5679,7 @@
     "loading": "正在加载待处理事项…",
     "empty": "暂无待处理事项",
     "load_failed": "部分事项加载失败，请刷新重试。",
-    "open_original": "打开原位置",
+    "open_original": "在原界面中打开",
     "context": "判断依据",
     "back_to_list": "返回列表",
     "your_reply": "你的判断",

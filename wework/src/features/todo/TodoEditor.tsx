@@ -24,6 +24,7 @@ import type { AITableApi } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
@@ -110,6 +111,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   deleteLabel?: string
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
   /** Starts the work item a manager assigned this member, from a reply. */
   onStartHumanTaskFromReply?: (input: StartHumanTaskFromReplyInput) => void | Promise<void>
@@ -243,6 +245,7 @@ export function TodoEditor(props: TodoEditorProps) {
           projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
+          onOpenRuntimeTask={props.onOpenRuntimeTask}
           onStartHumanTaskFromReply={props.onStartHumanTaskFromReply}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           members={context.members}

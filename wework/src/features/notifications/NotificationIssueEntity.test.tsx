@@ -2,6 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { NotificationIssueEntity } from './NotificationIssueEntity'
 import '@/i18n'
+import { openWeworkScheme } from './schemeEvents'
+
+vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
 const host = vi.hoisted(() => ({
   local: { listCloudProjects: vi.fn(), getLoopItem: vi.fn() },
@@ -55,6 +58,23 @@ it('rejects an Issue returned from a different project', async () => {
   render(<NotificationIssueEntity {...props} />)
   await screen.findByRole('alert')
   expect(host.render).not.toHaveBeenCalled()
+})
+
+it('hands execution and child Issue navigation to original pages without a duplicate header action', async () => {
+  render(<NotificationIssueEntity {...props} />)
+  await screen.findByTestId('real-issue')
+  const panel = host.render.mock.lastCall?.[0] as {
+    onOpenBoard?: () => void
+    onOpenRuntimeTask: (address: { deviceId: string; taskId: string }) => void
+    onOpenChildTask: (item: { id: string }) => void
+  }
+  expect(panel.onOpenBoard).toBeUndefined()
+  panel.onOpenRuntimeTask({ deviceId: 'another-device', taskId: 'actual-execution' })
+  expect(openWeworkScheme).toHaveBeenLastCalledWith(
+    'wework://tasks/another-device/actual-execution'
+  )
+  panel.onOpenChildTask({ id: 'CHILD-2' })
+  expect(openWeworkScheme).toHaveBeenLastCalledWith('wework://boards/local/project/issues/CHILD-2')
 })
 it('does not start entity requests from an inactive notification page', async () => {
   const { rerender } = render(<NotificationIssueEntity {...props} active={false} />)

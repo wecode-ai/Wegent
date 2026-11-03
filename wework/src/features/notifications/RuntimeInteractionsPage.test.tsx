@@ -7,6 +7,9 @@ import {
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { interactionTask } from './runtimeInteractions.fixtures'
 import type { RuntimeInteraction } from './runtimeInteractions'
+import { openWeworkScheme } from './schemeEvents'
+
+vi.mock('./schemeEvents', () => ({ openWeworkScheme: vi.fn() }))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -100,6 +103,41 @@ it('hosts an Issue destination including its owning comment', () => {
   expect(screen.getByTestId('test-original-entity')).toHaveTextContent(
     'wework://boards/local/12/issues/ISSUE-1/comments/root'
   )
+})
+
+it.each(['local', 'backend'] as const)(
+  'opens the original %s Issue at its owning comment from the container header',
+  store => {
+    vi.mocked(openWeworkScheme).mockClear()
+    view(
+      undefined,
+      {},
+      {
+        pending: [
+          {
+            ...approval,
+            project: {
+              projectId: '12',
+              issueId: 'ISSUE-1',
+              rootCommentId: 'root',
+              store,
+            },
+          },
+        ],
+      }
+    )
+    fireEvent.click(screen.getByTestId('interaction-open-original'))
+    expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith(
+      `wework://boards/${store === 'local' ? 'local/' : ''}12/issues/ISSUE-1/comments/root`
+    )
+  }
+)
+
+it('opens the exact original task from the container header', () => {
+  vi.mocked(openWeworkScheme).mockClear()
+  view()
+  fireEvent.click(screen.getByTestId('interaction-open-original'))
+  expect(openWeworkScheme).toHaveBeenCalledExactlyOnceWith('wework://tasks/device/review')
 })
 
 it('only registers a narrow-screen request as viewed after opening it and restores list focus', () => {

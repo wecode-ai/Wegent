@@ -5684,7 +5684,7 @@
     "loading": "Loading pending requests…",
     "empty": "Nothing needs your input",
     "load_failed": "Could not load some requests. Retry to refresh.",
-    "open_original": "Open original",
+    "open_original": "Open in original view",
     "context": "Context",
     "back_to_list": "Back to list",
     "your_reply": "Your reply",

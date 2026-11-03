@@ -123,6 +123,8 @@ interface TaskActivityViewProps {
   projectMembers?: CloudProjectMember[]
   issueTimeline?: boolean
   onOpenTask?: (task: LoopItemTaskBinding) => void
+  /** Embedded hosts hand workspace-dependent execution details back to the task page. */
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
   onRefreshExecutionArtifacts?: () => void | Promise<void>
   /** Project members and robots that the comment composers can mention. */
   members?: CollaborationMember[]
@@ -244,6 +246,7 @@ export function TaskActivityView({
   projectMembers = [],
   issueTimeline = false,
   onOpenTask,
+  onOpenRuntimeTask,
   onRefreshExecutionArtifacts,
   members = [],
   agents = [],
@@ -1100,23 +1103,27 @@ export function TaskActivityView({
         taskSummary={taskSummaryForMessage(message)}
         hideTime={hideTime}
         onOpenExecution={
-          issueTimeline
-            ? binding && onOpenTask
-              ? () => onOpenTask(binding)
-              : undefined
-            : address
-              ? () =>
-                  setExecutionDetail({
-                    address,
-                    messageId: message.messageId,
-                    senderName: message.sender.name,
-                    runId:
-                      typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
-                    modelName:
-                      typeof message.metadata.model === 'string' ? message.metadata.model : null,
-                    runStatus: resolveMessageRunStatus(task.ai_state, message),
-                  })
-              : undefined
+          address && onOpenRuntimeTask
+            ? () => onOpenRuntimeTask(address)
+            : issueTimeline
+              ? binding && onOpenTask
+                ? () => onOpenTask(binding)
+                : undefined
+              : address
+                ? () =>
+                    setExecutionDetail({
+                      address,
+                      messageId: message.messageId,
+                      senderName: message.sender.name,
+                      runId:
+                        typeof message.metadata.run_id === 'string'
+                          ? message.metadata.run_id
+                          : null,
+                      modelName:
+                        typeof message.metadata.model === 'string' ? message.metadata.model : null,
+                      runStatus: resolveMessageRunStatus(task.ai_state, message),
+                    })
+                : undefined
         }
         onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
         stopping={cancellingMessageId === message.messageId}
@@ -1373,7 +1380,11 @@ export function TaskActivityView({
                         message={card.root}
                         task={task}
                         onOpenExecution={
-                          binding && onOpenTask ? () => onOpenTask(binding) : undefined
+                          address && onOpenRuntimeTask
+                            ? () => onOpenRuntimeTask(address)
+                            : binding && onOpenTask
+                              ? () => onOpenTask(binding)
+                              : undefined
                         }
                       />
                     </div>
@@ -1482,7 +1493,11 @@ export function TaskActivityView({
                   taskSummary={taskSummaryForMessage(message)}
                   onOpenExecution={
                     runtimeAddress
-                      ? () =>
+                      ? () => {
+                          if (onOpenRuntimeTask) {
+                            onOpenRuntimeTask(runtimeAddress)
+                            return
+                          }
                           setExecutionDetail({
                             address: runtimeAddress,
                             messageId: message.messageId,
@@ -1497,6 +1512,7 @@ export function TaskActivityView({
                                 : null,
                             runStatus: resolveMessageRunStatus(task.ai_state, message),
                           })
+                        }
                       : undefined
                   }
                   onStopExecution={runtimeAddress ? () => void stopRuntimeTask(message) : undefined}

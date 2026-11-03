@@ -95,7 +95,12 @@ export function NotificationIssueEntity({
       deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
       focusedCommentId={commentId}
       focusedCommentRequestKey={url}
-      onOpenBoard={() => openWeworkScheme(weworkIssueScheme(projectId, issueId, store))}
+      onOpenChildTask={item => {
+        openWeworkScheme(weworkIssueScheme(projectId, item.id, store))
+      }}
+      onOpenRuntimeTask={task => {
+        openWeworkScheme(weworkTaskScheme(task))
+      }}
       onOpenTask={task => {
         openWeworkScheme(weworkTaskScheme(task))
       }}
