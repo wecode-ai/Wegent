@@ -1,3 +1,4 @@
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   recordPluginInstallationAccepted,
   reconcilePluginInstallation,
@@ -654,6 +655,16 @@ export function PluginsWorkspace({
         ?.id ?? null
   )
   const activeConnectorDetailRef = useRef<string | number | null>(null)
+  const [localAuthRevision, setLocalAuthRevision] = useState(0)
+  useEffect(() => {
+    const refresh = () => setLocalAuthRevision(value => value + 1)
+    window.addEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.removeEventListener(LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const connectorAuthRevisionRef = useRef(0)
   activeConnectorDetailRef.current = selectedMarketplacePluginId ?? selectedPluginId
   useEffect(
@@ -4850,7 +4861,13 @@ export function PluginsWorkspace({
     return () => {
       cancelled = true
     }
-  }, [installedPlugins, selectedMarketplacePlugin, selectedMarketplacePluginDetail, selectedPlugin])
+  }, [
+    installedPlugins,
+    localAuthRevision,
+    selectedMarketplacePlugin,
+    selectedMarketplacePluginDetail,
+    selectedPlugin,
+  ])
 
   const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)
   selectedMarketplacePluginRef.current = selectedMarketplacePlugin

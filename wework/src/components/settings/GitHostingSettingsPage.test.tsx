@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { notifyLocalConnectorAuthChanged } from '@/api/local/localConnectorAuthEvents'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
@@ -53,6 +54,28 @@ vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard }))
 vi.mock('@/lib/external-links', () => ({ openExternalUrl }))
 
 describe('GitHostingSettingsPage', () => {
+  test('refreshes after local authentication changes and external CLI changes on focus', async () => {
+    render(<GitHostingSettingsPage />)
+    await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2))
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: false,
+      detectionError: null,
+    })
+    act(() => notifyLocalConnectorAuthChanged())
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
+    )
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+  })
   beforeEach(() => {
     cloudConnection.isConnected = true
     cloudConnection.apiBaseUrl = 'https://cloud.example.com/api'

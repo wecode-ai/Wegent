@@ -5978,6 +5978,17 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
   })
 
+  test('refreshes the GitHub CLI connection after returning from an external account change', async () => {
+    const health = vi.fn().mockResolvedValue({ status: 'ok' })
+    await openGithubConnection(health, undefined, false)
+    const button = screen.getByTestId('plugin-connection-manage-connector:github')
+    await waitFor(() => expect(button).toHaveTextContent('退出登录'))
+    health.mockResolvedValue({ status: 'need_login' })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(button).toHaveTextContent('登录'))
+    expect(screen.queryByTestId('plugin-github-cli-auth-dialog')).not.toBeInTheDocument()
+  })
+
   test('logs out through the existing local connector flow and then offers login', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const health = vi.fn().mockResolvedValue({ status: 'ok' })
