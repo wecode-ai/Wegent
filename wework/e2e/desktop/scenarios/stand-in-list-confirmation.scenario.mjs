@@ -133,7 +133,7 @@ export function createDesktopScenario(options) {
       await captureScreenshot(control, '01-list-awaiting-confirmation.png', ROOT)
       await control.command('click', '[data-testid="stand-in-work-open-pending"]')
       await control.command('waitFor', '[data-testid="runtime-interactions-page"]')
-      await control.command('waitFor', '[data-testid="interaction-open-original-action"]')
+      await control.command('waitFor', '[data-testid="interaction-open-original"]')
       assert.equal(
         Number(await control.command('getElementCount', '[data-testid="interaction-answer-0"]')),
         0
@@ -151,8 +151,10 @@ export function createDesktopScenario(options) {
         'Approval list summary must stay within two lines'
       )
       await captureScreenshot(control, '02-pending-links-to-native-approval.png')
-      await control.command('click', '[data-testid="interaction-open-original-action"]')
+      await control.command('click', '[data-testid="interaction-open-original"]')
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
+      const destination = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+      assert.equal(destination.searchParams.get('taskId'), taskId)
       await assert.rejects(access(file), { code: 'ENOENT' })
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {

@@ -52,9 +52,22 @@ export function createDesktopScenario({
   let issueFixture
   let issueDiagnostics
   let focusDiagnostics
+  let contextItemId
   let toolRequested = false
   const callId = 'human-interactions-business-question'
   const responseId = 'human-interactions-review'
+  const releaseQuestion = () => {
+    const context = assistantMessage(CONTEXT)
+    contextItemId = context.item.id
+    held.response.end(
+      createSse([
+        responseCreated(responseId),
+        context,
+        ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
+        responseCompleted(responseId),
+      ])
+    )
+  }
   return {
     requiresCloudEnvironment: true,
     diagnostics() {
@@ -213,15 +226,7 @@ export function createDesktopScenario({
           captureScreenshot,
           uiTimeoutMs,
           modelResponseTimeoutMs,
-          releaseQuestion: () =>
-            held.response.end(
-              createSse([
-                responseCreated(responseId),
-                assistantMessage(CONTEXT),
-                ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
-                responseCompleted(responseId),
-              ])
-            ),
+          releaseQuestion,
         })
         return
       }
@@ -245,14 +250,7 @@ export function createDesktopScenario({
       const focus = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
       assert.equal(focus.mainFocused, true, 'In-app reminders require real main-window focus')
       focusDiagnostics = { beforeQuestion: focus }
-      held.response.end(
-        createSse([
-          responseCreated(responseId),
-          assistantMessage(CONTEXT),
-          ...functionCall(callId, held.tool.name, held.tool.arguments, 1),
-          responseCompleted(responseId),
-        ])
-      )
+      releaseQuestion()
       // macOS background runs do not focus the native window through renderer clicks.
       // Wait for the real request before focusing, so model latency cannot lose the prerequisite.
       await control.command('click', '[data-testid="wework-notifications-button"]')
@@ -333,7 +331,7 @@ export function createDesktopScenario({
       }
       const contextParagraph = issueFixture
         ? `${page} [data-testid="task-activity-content-${issueDiagnostics.find(message => message.senderType === 'agent' && message.runtimeAddress).id}"] .task-activity-content-body p:first-of-type`
-        : `${page} [data-testid="assistant-message-content"] p:first-of-type`
+        : `${page} [data-testid="assistant-message-content"][data-runtime-item-id="${contextItemId}"] p:first-of-type`
       await control.command('waitFor', contextParagraph, { text: CONTEXT, visible: true })
       assert.equal(
         Number(await control.command('getElementCount', contextParagraph)),
