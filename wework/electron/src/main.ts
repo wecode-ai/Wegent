@@ -515,6 +515,8 @@ app.on('web-contents-created', (_event, contents) => {
         message: redactLog(message).slice(0, 1024),
       })
     }
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+      console.info(redactLog(message).slice(0, 4096))
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),

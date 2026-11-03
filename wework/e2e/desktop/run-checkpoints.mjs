@@ -59,6 +59,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
   'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
+  'follow-up-task-switch': './scenarios/follow-up-task-switch.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'responses-api-gateway': './scenarios/responses-api-gateway.scenario.mjs',
@@ -83,6 +84,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-collaboration-composer-isolation':
     './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
+  'plugin-legacy-upgrade': './scenarios/plugin-legacy-upgrade.scenario.mjs',
   'plugin-runtime-route-refresh': './scenarios/plugin-runtime-route-refresh.scenario.mjs',
   'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
   'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
@@ -93,7 +95,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'collaboration-issue-badges': './scenarios/collaboration-issue-badges.scenario.mjs',
-  'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'change-request-status': './scenarios/change-request-running-repair.scenario.mjs',
   'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
@@ -260,6 +262,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
 
   'native-lifecycle',
   'goal-state-sync',
+  'follow-up-task-switch',
   'model-settings',
   'codex-native-catalog',
   'runtime-input-answer-persistence',
@@ -288,6 +291,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-legacy-upgrade',
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',
@@ -510,6 +514,14 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (
+    ['human-interactions', 'human-interactions-hidden', 'human-interactions-issue'].includes(
+      checkpoint
+    )
+  ) {
+    // The narrow 480x760 content viewport must fit inside the physical display.
+    nextEnv.WEWORK_E2E_XVFB_SCREEN = '1280x900x24'
+  }
   if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =

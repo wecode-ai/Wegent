@@ -102,6 +102,18 @@ test.each([
     String.raw`C:\plugins\github\.agents\plugins\marketplace.json`,
     'C:/plugins/github/.agents/plugins/marketplace.json',
   ],
+  [
+    '/tmp/github-marketplace/.claude-plugin/marketplace.json',
+    '/tmp/github-marketplace/.claude-plugin/marketplace.json',
+  ],
+  [
+    '/tmp/github-marketplace/.agents/plugins/api_marketplace.json',
+    '/tmp/github-marketplace/.agents/plugins/api_marketplace.json',
+  ],
+  [
+    String.raw`C:\plugins\github\.agents\plugins\api_marketplace.json`,
+    'C:/plugins/github/.agents/plugins/api_marketplace.json',
+  ],
 ])(
   'marketplace detail resolves the supplied local source %s without catalog reads',
   async (source, manifest) => {

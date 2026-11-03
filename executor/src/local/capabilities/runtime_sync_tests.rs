@@ -27,6 +27,10 @@ fn runtime_comparison_normalizes_plugin_manifest_json_only() {
         }
         let is_manifest =
             [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH].contains(&relative);
+        assert_ne!(
+            tree_fingerprint(&left).unwrap(),
+            tree_fingerprint(&right).unwrap()
+        );
         assert_eq!(same_runtime_contents(&left, &right).unwrap(), is_manifest);
         for (field, value) in [
             ("name", json!("other")),
