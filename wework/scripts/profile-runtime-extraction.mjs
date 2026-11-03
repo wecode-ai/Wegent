@@ -10,6 +10,7 @@ import { performance } from 'node:perf_hooks'
 import { promisify } from 'node:util'
 import { resolveUpgradeInputs } from '../../.github/scripts/resolve-wework-upgrade-inputs.mjs'
 import { readDesktopReleaseInstallation } from './lib/published-desktop-release.mjs'
+import { upgradeUserEnvironment } from '../e2e/desktop/modules/upgrade-user-environment.mjs'
 
 const execute = promisify(execFile)
 const require = createRequire(new URL('../electron/package.json', import.meta.url))
@@ -96,7 +97,11 @@ async function deliveredHostRuntime() {
           '-Command',
           `(Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
         ],
-        { windowsHide: true, timeout: 120_000 }
+        {
+          windowsHide: true,
+          timeout: 120_000,
+          env: upgradeUserEnvironment(process.env, directory),
+        }
       )
     )
     const status = stdout.replace(/^\uFEFF/, '').trim()
