@@ -109,6 +109,19 @@ independently built regression packages.
 Compatible manual rollback switches directly to the retained release. Incompatible
 rollback still requires confirmation before restoring the pre-update snapshot.
 
+Historical signed updaters may copy the host and prepare a separate rollback
+profile first. Their verification still exercises real upgrades, rollbacks,
+and persisted data, and checks executable and `app.asar` hashes, physical slot
+ownership, and the independent profile. Historical packages cannot implement the
+new live-directory retention protocol; that protocol still requires unchanged
+host paths and profile inodes.
+
+Shared immutable runtime indexes must point to content beneath the physical
+parent directory, rather than a checkpoint or release-slot directory alias.
+Regression coverage cleans up the first caller before preparing again and
+requires reuse of the same integrity-checked content. Each target still checks
+its own delivered archive, with profiles and mutable catalogs kept isolated.
+
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new

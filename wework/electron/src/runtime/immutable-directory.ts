@@ -56,7 +56,10 @@ async function publish(
 ): Promise<string> {
   if (await isReady(target)) return target
   await mkdir(dirname(target), { recursive: true, mode: 0o700 })
-  const content = await mkdtemp(toNamespacedPath(join(dirname(target), '.content-')))
+  // An alias can belong to a shorter-lived release or checkpoint. Publish a
+  // physical address so the completed tree outlives that caller's alias.
+  const parent = await realpath(dirname(target))
+  const content = await mkdtemp(toNamespacedPath(join(parent, '.content-')))
   let published = false
   try {
     await populate(content)

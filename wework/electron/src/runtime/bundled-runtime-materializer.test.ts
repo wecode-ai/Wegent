@@ -245,6 +245,16 @@ describe('installed immutable runtime reuse', () => {
     )
     await rm(cases[0], { recursive: true, force: true })
     expect(await realpath(secondProgram)).toBe(original)
+    const third = join(f.root, 'checkpoint-three')
+    await mkdir(third)
+    const immutableRoot = join(third, '.prepared')
+    await symlink(shared, immutableRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    await materializeBundledRuntimes(f.resources, join(third, 'slot'), ['core', 'workbench'], {
+      immutableRoot,
+    })
+    expect(await realpath(join(third, 'slot', f.core.sourceFingerprint, 'runtime.json'))).toBe(
+      original
+    )
     expect(JSON.parse(await readFile(secondProgram, 'utf8')).sourceFingerprint).toBe(
       f.core.sourceFingerprint
     )

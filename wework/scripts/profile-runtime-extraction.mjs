@@ -87,6 +87,21 @@ async function deliveredHostRuntime() {
   )
   const installation = await readDesktopReleaseInstallation(host, release)
   const literal = installation.executable.replaceAll("'", "''")
+  for (const [name, environment] of [
+    ['native', process.env],
+    ['isolated', upgradeUserEnvironment(process.env, directory)],
+  ])
+    await measure(`powershell-startup-${name}`, () =>
+      execute(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', '[Console]::Write("ready")'],
+        {
+          env: environment,
+          windowsHide: true,
+          timeout: 120_000,
+        }
+      )
+    )
   for (const phase of ['signature-cold', 'signature-warm']) {
     const { stdout } = await measure(phase, () =>
       execute(
@@ -108,6 +123,23 @@ async function deliveredHostRuntime() {
     assert.ok(['Valid', 'NotSigned'].includes(status), `Unexpected signature status: ${status}`)
     console.log(JSON.stringify({ phase, status }))
   }
+  const nativeSignature = await measure('signature-native-environment', () =>
+    execute(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `(Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
+      ],
+      {
+        env: process.env,
+        windowsHide: true,
+        timeout: 120_000,
+      }
+    )
+  )
+  assert.ok(['Valid', 'NotSigned'].includes(nativeSignature.stdout.replace(/^\uFEFF/, '').trim()))
   const resources = join(installation.resources, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resources, 'runtimes.json'), 'utf8'))
   const runtime = catalog.runtimes.find(item => item.role === 'core')
