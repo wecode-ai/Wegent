@@ -505,7 +505,7 @@ jobs:
           set -euo pipefail
           zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
           test -n "$zip"
-          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)(/|\.tar\.gz$)'; then
+          if unzip -Z1 "$zip" | grep -E '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)(/|\.tar\.gz$)' >/dev/null; then
             echo "::error::The online Host update contains managed component resources."
             exit 1
           fi

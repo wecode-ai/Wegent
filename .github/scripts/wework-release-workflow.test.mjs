@@ -294,7 +294,7 @@ test("lightweight host updates reject both loose component trees and sealed arch
   const step = jobs.build.steps.find(
     (step) => step.name === "Verify componentized macOS update package",
   );
-  const pattern = new RegExp(step.run.match(/grep -Eq '([^']+)'/)[1]);
+  const pattern = new RegExp(step.run.match(/grep -E '([^']+)'/)[1]);
   for (const entry of [
     "WeWork.app/Contents/Resources/bin/wegent-executor",
     "WeWork.app/Contents/Resources/wework-core-plugins/wework-app/package.json",
@@ -304,4 +304,29 @@ test("lightweight host updates reject both loose component trees and sealed arch
   ])
     assert.match(entry, pattern);
   assert.doesNotMatch("WeWork.app/Contents/Resources/icons/icon.png", pattern);
+  const guard = step.run
+    .split("\n")
+    .find((line) => line.includes("if unzip -Z1"));
+  const status = execFileSync(
+    "bash",
+    [
+      "-c",
+      `
+set -o pipefail
+unzip() { printf '%s\\n' 'WeWork.app/Contents/Resources/wework-core-plugins.tar.gz'; seq 1 100000; }
+zip=fixture.zip
+${guard}
+  echo rejected
+else
+  echo accepted
+fi
+`,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(
+    status.trim(),
+    "rejected",
+    "A long ZIP listing must not bypass the gate through SIGPIPE",
+  );
 });
