@@ -200,14 +200,24 @@ async function openQuickCreateDialog(page: Page): Promise<Locator> {
   return dialog
 }
 
-async function findCreatedTeam(api: ApiClient, groupName: string, displayName: string) {
+// Agents created from the chat entry are personal resources; the selected team
+// target only adds a group binding.
+async function findCreatedTeam(api: ApiClient, displayName: string) {
   const response = await api.get<{
     items: Array<{ id: number; name: string; displayName?: string; namespace: string }>
-  }>(`/api/teams?${new URLSearchParams({ scope: 'group', group_name: groupName })}`)
+  }>(`/api/teams?${new URLSearchParams({ scope: 'personal' })}`)
   expect(response.status, JSON.stringify(response.data)).toBe(200)
   return (response.data?.items ?? []).find(
     team => team.displayName === displayName || team.name === displayName
   )
+}
+
+async function readGroupBindings(api: ApiClient, teamId: number): Promise<string[]> {
+  const response = await api.get<{ group_names: string[] }>(
+    `/api/resource-library/agents/${teamId}/bindings`
+  )
+  expect(response.status, JSON.stringify(response.data)).toBe(200)
+  return response.data?.group_names ?? []
 }
 
 test.describe('Agent share scope', () => {
@@ -237,14 +247,21 @@ test.describe('Agent share scope', () => {
       await dialog.getByRole('button', { name: /^(Save|保存)$/ }).press('Enter')
       await expect(dialog).toBeHidden({ timeout: 30000 })
 
+      let createdTeamId: number | undefined
       await expect
         .poll(
-          async () =>
-            (await findCreatedTeam(fixture.developerApi, fixture.groupName, agentDisplayName))
-              ?.namespace ?? null,
+          async () => {
+            const created = await findCreatedTeam(fixture.developerApi, agentDisplayName)
+            createdTeamId = created?.id
+            return Boolean(created)
+          },
           { timeout: 30000 }
         )
-        .toBe(fixture.groupName)
+        .toBe(true)
+
+      await expect
+        .poll(() => readGroupBindings(fixture.developerApi, createdTeamId!), { timeout: 20000 })
+        .toContain(fixture.groupName)
 
       await page.reload()
       const reopened = await openQuickCreateDialog(page)
@@ -286,9 +303,7 @@ test.describe('Agent share scope', () => {
           .first()
       ).toBeVisible({ timeout: 15000 })
 
-      expect(
-        await findCreatedTeam(fixture.reporterApi, fixture.groupName, agentDisplayName)
-      ).toBeUndefined()
+      expect(await findCreatedTeam(fixture.reporterApi, agentDisplayName)).toBeUndefined()
     } finally {
       await page.context().close()
       await fixture.cleanup()
