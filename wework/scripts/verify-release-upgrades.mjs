@@ -20,6 +20,7 @@ import {
   prepareBundledRuntimeCache,
 } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
+import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
@@ -234,7 +235,9 @@ async function verifySource(source, targetChannel, previous) {
     `Verifying ${source.version} -> ${release.version} (${targetChannel}/${platform}/${arch})`
   )
   const from = await downloadSource(source, targetChannel)
-  if (previous && source.version !== previous.version)
+  // Only the broken legacy selector can leave a newer, unstarted activation
+  // while continuing to run A. Modern selectors correctly start that package.
+  if (previous && source.version !== previous.version && usesLegacyReleaseLayout(source.version))
     from.installedSource = await downloadSource(previous, targetChannel)
   // Finish shared immutable installation before workers read it. All mutable
   // catalogs, profiles and release slots still belong to individual checkpoints.

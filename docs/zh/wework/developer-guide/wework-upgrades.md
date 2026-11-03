@@ -143,6 +143,8 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 
 套件 v13 将健康升级和旧版未启动事务检查合入 `app-rollback`，完整执行升级、续聊、手动回退及原有断言，不再另跑相同的 `app-upgrade` 前半程。`app-upgrade-recovery` 和 `app-rollback-recovery` 仍独立执行真实故障恢复。后续安装包的准备只用于未启动事务检查，不在未使用它的故障场景中重复执行。
 
+macOS 保留回退源时，新 release slot 的 `managed-components` 必须绑定到原不可变程序目录，且 `prepared.json` 的组件路径使用新 slot；这样忽略 `componentDataDirectory` 的旧启动器也能选择同一组合。保留源声明 `retainedRelease` 以防清理原 slot。旧布局的未启动事务前置只用于已确认使用旧选择器的发布版本；0.6.4-beta.2 起的选择器会正确启动待激活包，不能再断言其继续运行旧版本。所有来源仍运行完整升级、任务续聊与回退检查点。
+
 Windows 的物理宿主包与运行时解包共用隔离子进程，调用 `%SystemRoot%/System32/tar.exe`；其他平台使用锁定的 `node-tar`。包大小、SHA-256、运行时身份与签名检查保持独立。保留来源、清理、下载、宿主解包、签名和目标准备分别记录阶段耗时，不能将完整准备时间归为解压。
 
 已安装来源的测试前置使用共享 runner 的运行时安装器，从其原始包校验大小和 SHA-256 后安装不可变缓存，再调用该来源自带的准备入口生成组件和可变 profile。缓存安装耗时计入验证；不修改旧包、签名或程序入口，也不向目标提供预热缓存。相同指纹的 Core/Workbench 角色只解包一次，两个角色都检查运行时身份。

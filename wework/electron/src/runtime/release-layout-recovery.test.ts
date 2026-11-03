@@ -4,6 +4,14 @@ import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 import { releaseBridgeUserData } from './release-handoff.js'
+import { usesLegacyReleaseLayout } from './legacy-release-layout.mjs'
+
+test('legacy pending-activation fixtures apply only to delivered legacy selectors', () => {
+  for (const version of ['0.5.13-beta.8', '0.6.2', '0.6.3', '0.6.4-beta.1'])
+    expect(usesLegacyReleaseLayout(version)).toBe(true)
+  for (const version of ['0.6.4-beta.2', '0.6.4-beta.4', '0.6.4'])
+    expect(usesLegacyReleaseLayout(version)).toBe(false)
+})
 const parentProcess = vi.hoisted(() => ({ executable: vi.fn() }))
 vi.mock('./release-parent-process.js', () => ({
   releaseParentExecutable: parentProcess.executable,

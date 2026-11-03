@@ -66,6 +66,9 @@ if (process.platform === 'darwin') {
     await store.save(source)
     await store.save(target)
     await mkdir(source.profileRoot, { recursive: true })
+    const sourcePlugins = join(store.slot(source.id), 'managed-components/composed/core')
+    await mkdir(sourcePlugins, { recursive: true })
+    await writeFile(join(sourcePlugins, 'index.js'), 'original source component')
     await writeFile(join(source.profileRoot, 'package.json'), '{"private":true}')
     await atomicReleaseWrite(join(store.root, 'active'), source.id)
     await atomicReleaseWrite(join(store.root, 'bridge'), source.executable)
@@ -75,6 +78,7 @@ if (process.platform === 'darwin') {
         components: {
           coreDsh: join(source.resources, 'harness-runtime'),
           executor: join(source.resources, 'bin/executor'),
+          weworkCorePlugins: sourcePlugins,
         },
       })
     )
@@ -135,12 +139,21 @@ if (process.platform === 'darwin') {
         version: source.version,
         retainedRelease: source.id,
         profileRoot: source.profileRoot,
-        componentDataDirectory: store.slot(source.id),
+        componentDataDirectory: store.slot(rollback.id),
       })
       const components = JSON.parse(
         await readFile(join(store.slot(rollback.id), 'prepared.json'), 'utf8')
       ).components
       expect(components.coreDsh).toBe(join(installed, 'Contents/Resources/harness-runtime'))
+      expect(components.weworkCorePlugins).toBe(
+        join(store.slot(rollback.id), 'managed-components/composed/core')
+      )
+      expect(await realpath(components.weworkCorePlugins)).toBe(
+        await realpath(join(store.slot(source.id), 'managed-components/composed/core'))
+      )
+      expect(await readFile(join(components.weworkCorePlugins, 'index.js'), 'utf8')).toBe(
+        'original source component'
+      )
       for (const item of [prepared, rollback]) {
         const stage = macosInstallationStage(item.executable, item.id)
         await execute('/usr/bin/codesign', ['--verify', '--deep', '--strict', stage])
@@ -157,6 +170,12 @@ if (process.platform === 'darwin') {
         stat(dirname(macosInstallationStage(prepared.executable, prepared.id)))
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await stat(join(source.profileRoot, 'package.json'))
+      expect(
+        await readFile(
+          join(store.slot(source.id), 'managed-components/composed/core/index.js'),
+          'utf8'
+        )
+      ).toBe('original source component')
       expect((await stat(installed)).ino).toBe(inode)
     }
   )
