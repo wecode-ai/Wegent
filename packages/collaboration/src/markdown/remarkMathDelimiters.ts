@@ -4,6 +4,7 @@ import type { Extension as FromMarkdownExtension } from 'mdast-util-from-markdow
 import type { Code, Construct, Extension, State, Tokenizer } from 'micromark-util-types'
 import { unified, type Plugin } from 'unified'
 import remarkParse from 'remark-parse'
+import remarkGfm from 'remark-gfm'
 import { math } from '@streamdown/math'
 
 declare module 'micromark-util-types' {
@@ -198,9 +199,12 @@ export const remarkMathDelimiters: Plugin<[], Root> = function () {
 
 const parser = unified()
   .use(remarkParse)
+  .use(remarkGfm)
   .use(remarkMathDelimiters)
   .use([math.remarkPlugin])
   .freeze()
+
+const displayMathContainers = new Set(['root', 'blockquote', 'list', 'listItem', 'paragraph'])
 
 function dollarDisplay(source: string, start: number, end: number): string {
   const linePrefix = source.slice(source.lastIndexOf('\n', start - 1) + 1, start)
@@ -223,7 +227,7 @@ function dollarDisplay(source: string, start: number, end: number): string {
 export function normalizeMathDelimiters(source: string): string {
   if (!/\\[[(]/.test(source)) return source
   const replacements: { start: number; end: number; text: string }[] = []
-  const visit = (node: Nodes) => {
+  const visit = (node: Nodes, allowDisplayBlock = true) => {
     const start = node.position?.start.offset
     const end = node.position?.end.offset
     if (
@@ -236,11 +240,14 @@ export function normalizeMathDelimiters(source: string): string {
         start,
         end,
         text:
-          source[start + 1] === '['
+          source[start + 1] === '[' && allowDisplayBlock
             ? dollarDisplay(source, start, end)
             : `$$${source.slice(start + 2, end - 2)}$$`,
       })
-    } else if ('children' in node) node.children.forEach(visit)
+    } else if ('children' in node) {
+      const childAllowsBlock = allowDisplayBlock && displayMathContainers.has(node.type)
+      node.children.forEach(child => visit(child, childAllowsBlock))
+    }
   }
   visit(parser.parse(source))
   let cursor = 0

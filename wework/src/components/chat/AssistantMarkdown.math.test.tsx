@@ -116,6 +116,33 @@ $x^2$
     expect(container.querySelector('annotation')?.textContent).toBe(String.raw`a\\)b`)
   })
 
+  test.each([
+    ['outer pipes', '| Formula | Value |\n| --- | --- |\n| Area | \\[\\pi r^2\\] |'],
+    ['no outer pipes', 'Formula | Value\n--- | ---\nArea | \\[\\pi r^2\\]'],
+    ['quoted table', '> | Formula | Value |\n> | --- | --- |\n> | Area | \\[\\pi r^2\\] |'],
+  ])('preserves %s around display delimiters in table cells', async (_, content) => {
+    const { container } = render(<AssistantMarkdown content={content} />)
+
+    await waitFor(() => expect(container.querySelector('td .katex math')).not.toBeNull())
+    expect(container.querySelectorAll('tr')).toHaveLength(2)
+    expect(container.querySelectorAll('tbody td')).toHaveLength(2)
+    expect(container.querySelector('td annotation')?.textContent).toBe(String.raw`\pi r^2`)
+    expect(container.querySelector('tbody')).toHaveTextContent('Area')
+  })
+
+  test.each([
+    ['heading', '## Area \\[x_1\\]', 'h2'],
+    ['emphasis', '**Area \\[x_1\\]**', 'strong'],
+    ['link label', '[Area \\[x_1\\]](https://example.test)', 'a'],
+  ])('keeps display delimiters inside the %s phrasing container', async (_, content, selector) => {
+    const { container } = render(<AssistantMarkdown content={content} />)
+
+    await waitFor(() => expect(container.querySelector(`${selector} .katex math`)).not.toBeNull())
+    expect(container.querySelector(selector)).toHaveTextContent('Area')
+    expect(container.querySelector('annotation')?.textContent).toBe('x_1')
+    expect(container.querySelector('.katex-display')).not.toBeInTheDocument()
+  })
+
   test('preserves nested containers around single-line display math', async () => {
     const content = String.raw`> - Result: \[x_1\] follows.
 
