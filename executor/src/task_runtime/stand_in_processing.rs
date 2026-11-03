@@ -45,6 +45,11 @@ pub(super) fn update_processing_configuration(
     let mut state = get_item_from(connection, &id, STATE)?
         .map(|row| row.metadata)
         .unwrap_or_else(|| json!({"id":id,"userId":user}));
+    // Bind observation to configuration commit, before newly assigned work can
+    // finish. A delayed first poll must not classify that completion as history.
+    if !state["observedSince"].is_i64() {
+        state["observedSince"] = json!(Utc::now().timestamp_millis());
+    }
     state["batchId"] = Value::Null;
     state["snapshot"] = Value::Null;
     state["routerSnapshot"] = Value::Null;

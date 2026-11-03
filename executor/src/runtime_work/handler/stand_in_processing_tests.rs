@@ -171,7 +171,14 @@ fn unavailable_work_transcript_does_not_fail_or_consume_intake() {
         .unwrap();
     assert_eq!(snapshot["events"][0]["id"], event["id"]);
     assert!(handler.local_task_link(&task_id(7)).is_none());
-    assert_eq!(store.stand_in_events(7).unwrap(), vec![event]);
+    let pending = store.stand_in_events(7).unwrap();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0], event);
+    // New work contributes its state even when its transcript is unavailable.
+    // Neither the original intake nor that state event may be consumed.
+    assert_eq!(pending[1]["kind"], "work_state");
+    assert_eq!(pending[1]["taskId"], work_id);
+    assert_eq!(pending[1]["status"], "pending");
     });
 }
 
@@ -282,6 +289,40 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
             .runtime_handle
             .get("userMessagePresentations")
             .is_none()));
+}
+
+#[test]
+fn completion_before_the_first_poll_is_observed_from_configuration_commit() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"].as_i64().unwrap();
+    for (id, created_at) in [("historical", since - 1), ("new-work", since + 1)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(),
+            created_at,
+            status: "done".into(),
+            turn_status: Some("completed".into()),
+            completed_at: Some(created_at),
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["taskId"], "new-work");
+    settings["primary"]["preferences"] = json!("Updated preferences");
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert_eq!(
+        store.stand_in_processing_state(7).unwrap()["observedSince"],
+        since
+    );
 }
 
 #[test]
