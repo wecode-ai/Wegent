@@ -2025,7 +2025,7 @@ describe('SmartAppsMarketplacePage', () => {
     await waitFor(() => expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2))
 
     expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
-    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
   })
 
   test('keeps a dismissed target dialog closed when the fallback lookup resolves', async () => {
@@ -2044,7 +2044,7 @@ describe('SmartAppsMarketplacePage', () => {
     await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
 
     expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
-    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
   })
 
   test('ignores a pending target lookup after the API is removed', async () => {
