@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createUpgradeScenario } from './app-upgrade.scenario.mjs'
 
@@ -54,7 +54,14 @@ export async function createDesktopScenario(options) {
     assert.equal(installed.length, 1)
     const baseline = JSON.parse(await readFile(join(slots, installed[0], 'release.json'), 'utf8'))
     assert.equal(baseline.executable, running.hostExecutable, 'The running host was copied')
-    assert.equal(baseline.componentDataDirectory, data, 'The running components were replaced')
+    // Shipped 0.6.2 derives this directory from its selected slot, ignoring the
+    // later componentDataDirectory field. A slot alias must retain the exact
+    // original program store, rather than depend on a newer metadata convention.
+    assert.equal(
+      await realpath(join(baseline.componentDataDirectory, 'managed-components')),
+      await realpath(join(data, 'managed-components')),
+      'The running components were replaced'
+    )
     const retained = await stat(baseline.profileRoot, { bigint: true })
     assert.equal(retained.dev, original.dev, 'The retained profile moved to another filesystem')
     assert.equal(
