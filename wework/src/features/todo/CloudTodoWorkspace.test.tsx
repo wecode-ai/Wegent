@@ -4028,7 +4028,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTitle('alice')).toBeInTheDocument()
   })
 
-  it('shows child tasks in the unified execution task list without a duplicate child section', async () => {
+  it('shows child issues in the hierarchy summary with bidirectional navigation instead of duplicating execution tasks', async () => {
     const child = {
       ...item,
       id: 'WEG-2',
@@ -4056,16 +4056,17 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    await expandIssueExecutionDetails()
     expect(screen.queryByTestId('cloud-todo-detail-add-child')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-children')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('关联任务')
-    expect(screen.getByTestId('cloud-todo-execution-task-count')).toHaveTextContent('1')
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('实现快速排序')
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('开发机器人')
+    expect(screen.getByTestId('issue-children-progress')).toHaveTextContent('0/1 已完成')
+    expect(screen.getByTestId('issue-hierarchy-child-WEG-2')).toHaveTextContent('实现快速排序')
+    expect(screen.getByTestId('issue-hierarchy-child-WEG-2')).toHaveTextContent('开发机器人')
+    expect(screen.queryByTestId('cloud-todo-open-child-task-WEG-2')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-open-child-task-WEG-2'))
+    await userEvent.click(screen.getByTestId('issue-hierarchy-child-WEG-2'))
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('实现快速排序')
+    await userEvent.click(screen.getByTestId('issue-parent-link'))
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
   })
 
   it('adds an attachment from the TODO edit dialog', async () => {
@@ -5691,6 +5692,55 @@ describe('CloudTodoWorkspace', () => {
       })
     )
   })
+
+  it.each([false, true])(
+    'creates through the grouped column header at child level %s',
+    async childLevel => {
+      const user = userEvent.setup()
+      const workbenchServices = services()
+      workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_id, values) => ({
+        ...item,
+        ...values,
+        id: 'WEG-NEW',
+      }))
+      const child = {
+        ...item,
+        id: 'WEG-2',
+        parent_id: item.id,
+        status: 'completed' as const,
+        title: 'Existing child',
+      }
+      workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item, child] }))
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      )
+      await user.click((await screen.findAllByText('Wegent V4'))[0])
+      await user.click(await screen.findByTestId('cloud-board-parent-layout'))
+      if (childLevel) await user.click(await screen.findByTestId('cloud-board-parent-enter-WEG-1'))
+      const status = childLevel ? 'pending' : 'inbox'
+      await user.click(await screen.findByTestId(`cloud-todo-column-add-${status}`))
+      const input = await screen.findByTestId(`cloud-todo-column-quick-create-input-${status}`)
+      fireEvent.change(input, { target: { value: 'Grouped new issue' } })
+      await user.click(screen.getByTestId(`cloud-todo-column-quick-create-confirm-${status}`))
+      await waitFor(() =>
+        expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(
+          '11',
+          expect.objectContaining({
+            title: 'Grouped new issue',
+            status,
+            ...(childLevel ? { parent_id: item.id } : {}),
+          })
+        )
+      )
+      expect(
+        vi.mocked(workbenchServices.deliveryApi!.createLoopItem).mock.calls[0][1].parent_id
+      ).toBe(childLevel ? item.id : undefined)
+    }
+  )
 
   it('opens the Wework composer with the quick title and lane', async () => {
     const workbenchServices = services()

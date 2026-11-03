@@ -5,6 +5,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { collectProjectTags } from "./project-board/projectTags";
 import { MAX_TAGS_PER_ITEM } from "./tagging";
+import { IssueHierarchySummary } from "./issue-detail/IssueHierarchySummary";
 import {
   useCallback,
   useEffect,
@@ -704,6 +705,7 @@ export type TodoEditorProps = {
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
   onOpenChildTask?: (task: CloudLoopItem) => void;
+  onOpenRelatedIssue?: (issue: CloudLoopItem) => void;
   onWorkflowPlanChanged?: () => void | Promise<void>;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
 
@@ -1384,7 +1386,8 @@ export function TodoEditor(props: TodoEditorProps) {
       ? effectiveTasks.slice(0, 1)
       : []
     : effectiveTasks;
-  const executionChildItems = showChildren ? [] : childItems;
+  const executionChildItems =
+    showChildren || props.onOpenRelatedIssue ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
   const hasExecutionDetails =
     executionTaskCount > 0 ||
@@ -3372,6 +3375,15 @@ export function TodoEditor(props: TodoEditorProps) {
                 )}
               />
               {workspacePrimaryProperties}
+              {item && props.onOpenRelatedIssue ? (
+                <IssueHierarchySummary
+                  item={item}
+                  allItems={allItems}
+                  onOpen={props.onOpenRelatedIssue}
+                  onAddChild={editable ? editProps?.onAddChild : undefined}
+                  translate={t}
+                />
+              ) : null}
               {!workspacePanel ? (
                 <div
                   className={cn(

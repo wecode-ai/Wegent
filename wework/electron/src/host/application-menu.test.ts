@@ -41,6 +41,7 @@ function createMenu(
   let built: Menu | null = null
   const dispatch = vi.fn()
   const reload = vi.fn()
+  const openExternal = vi.fn(async () => undefined)
   const menu = new ApplicationMenu({
     platform,
     appName: 'Wework',
@@ -60,11 +61,11 @@ function createMenu(
     openLogDirectory: vi.fn(async () => undefined),
     showMain: vi.fn(async () => undefined),
     quit: vi.fn(),
-    openExternal: vi.fn(async () => undefined),
+    openExternal,
     reportError: vi.fn(),
   })
   menu.setLanguage('en')
-  return { menu, built: () => built!, dispatch, reload }
+  return { menu, built: () => built!, dispatch, reload, openExternal }
 }
 
 describe('application menu model', () => {
@@ -126,6 +127,7 @@ describe('application menu model', () => {
     const { menu, built } = createMenu()
     menu.setCapabilities({})
     for (const id of [
+      'application.about',
       'application.settings',
       'file.newTaskTab',
       'work.tasks',
@@ -135,21 +137,36 @@ describe('application menu model', () => {
     }
   })
 
+  test('routes About through the in-app menu action instead of the native panel', () => {
+    const { built } = createMenu()
+    const about = built().getMenuItemById('application.about')!
+    expect(about.label).toBe('About Wework')
+    expect(about.role).toBeUndefined()
+  })
+
   test('dispatches the declared action for each menu item', () => {
     const { menu, dispatch } = createMenu()
     menu.setCapabilities({ [APPLICATION_MENU_CAPABILITIES.taskSurface]: true })
     for (const [id, action] of [
+      ['application.about', APPLICATION_MENU_ACTIONS.openAbout],
       ['work.tasks', APPLICATION_MENU_ACTIONS.openTasks],
       ['work.projectSpaces', APPLICATION_MENU_ACTIONS.openProjectSpaces],
       ['work.plugins', APPLICATION_MENU_ACTIONS.openPlugins],
       ['file.newTaskTab', APPLICATION_MENU_ACTIONS.newTaskTab],
       ['view.search', APPLICATION_MENU_ACTIONS.openSearch],
       ['view.terminal', APPLICATION_MENU_ACTIONS.openTerminal],
+      ['help.issues', APPLICATION_MENU_ACTIONS.openFeedback],
     ] as const) {
       dispatch.mockClear()
       expect(menu.activateForTesting(id, 'main')).toBe(true)
       expect(dispatch).toHaveBeenCalledWith(action, expect.anything())
     }
+  })
+
+  test('keeps report issue inside the app instead of opening GitHub', () => {
+    const { menu, openExternal } = createMenu()
+    expect(menu.activateForTesting('help.issues', 'main')).toBe(true)
+    expect(openExternal).not.toHaveBeenCalled()
   })
 
   test('refuses to activate a hidden menu item', () => {

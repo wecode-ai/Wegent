@@ -54,6 +54,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
+  'responses-api-gateway': './scenarios/responses-api-gateway.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
   'cloud-model-presets': './scenarios/cloud-model-presets.scenario.mjs',
   'plugin-account-auth-password': './scenarios/plugin-account-auth.scenario.mjs',
@@ -201,6 +202,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
   'collaboration-issue-identity': './scenarios/collaboration-issue-identity.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -218,6 +220,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
   'board-transcript-followup',
@@ -251,6 +254,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'reply-prediction-auth',
   'collaboration-worktree-policy',
   'cloud-model-recovery',
+  'responses-api-gateway',
   'task-model-deletion',
   'cloud-model-presets',
   'plugin-account-auth-password',

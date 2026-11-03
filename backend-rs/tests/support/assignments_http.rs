@@ -19,6 +19,7 @@ const SIGNING_KEY: &str = "assignment-e2e-signing-key";
 pub struct Server {
     pub base: String,
     pub mysql: MysqlService,
+    pub state: Arc<AppState>,
     api_stop: oneshot::Sender<()>,
     gateway_stop: oneshot::Sender<()>,
     api_task: JoinHandle<()>,
@@ -34,7 +35,7 @@ impl Server {
         let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
             "127.0.0.1:0".parse().unwrap(),
             application.routes,
-            AppAuthenticator::new(state),
+            AppAuthenticator::new(state.clone()),
         )
         .await
         .unwrap();
@@ -75,6 +76,7 @@ impl Server {
         Self {
             base,
             mysql,
+            state,
             api_stop,
             gateway_stop,
             api_task,

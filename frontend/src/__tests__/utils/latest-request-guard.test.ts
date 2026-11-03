@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { createLatestRequestGuard } from '@/features/feed/components/subscription-form/latest-request-guard'
+import { createLatestRequestGuard } from '@/utils/latest-request-guard'
 
 describe('createLatestRequestGuard', () => {
   it('keeps only the newest request valid', () => {

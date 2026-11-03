@@ -36,6 +36,7 @@ import {
 } from '@/features/plugins/pluginInventorySources'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type {
+  InstalledPluginComponents,
   InstalledPluginListResponse,
   PluginMarketplaceItem,
   PluginPublicationRequestItem,
@@ -555,6 +556,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAuthPolicy: 'on_install' | 'on_use' | 'optional'
     marketplaceConnectorLocal: boolean
     marketplaceConnectorAccountAuth: boolean
+    installedMarketplaceConnectors: InstalledPluginComponents['connectors']
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
     marketplaceSourceProvider: 'codex' | 'wegent' | 'user'
@@ -936,7 +938,11 @@ function mockSystemSkillsFetch(
         releaseId: 1001,
         updatePolicy: marketplaceUpdatePolicy,
         componentStates: {},
-        components: marketplaceRow.components,
+        components: {
+          ...marketplaceRow.components,
+          connectors:
+            overrides.installedMarketplaceConnectors ?? marketplaceRow.components.connectors,
+        },
         interface: {
           ...marketplaceRow.interface,
           logo: overrides.installedMarketplaceLogo ?? marketplaceRow.interface.logo,
@@ -4926,6 +4932,151 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
   })
 
+  test('starts automatic updates when a catalog refresh reads a changed account policy', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const read = vi.mocked(fetch).getMockImplementation()!
+    let policy: 'manual' | 'auto' = 'manual'
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const response = await read(input, init)
+      if (new URL(String(input), window.location.origin).pathname !== '/api/plugins/installed') {
+        return response
+      }
+      const body = await response.json()
+      for (const plugin of body.items) plugin.spec.updatePolicy = policy
+      return { ...response, json: async () => body } as Response
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-all'))
+    await screen.findByTestId('plugin-marketplace-row-101')
+    const refresh = await screen.findByTestId('plugins-refresh-button')
+    await waitFor(() => expect(refresh).toBeEnabled())
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+
+    policy = 'auto'
+    await userEvent.click(refresh)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+  })
+
+  test.each([true, false])(
+    'defers automatic updates while a policy save overlaps a new release refresh (accepted: %s)',
+    async accepted => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceUpdatePolicy: 'auto',
+        autoUpdateBatchSizes: [1],
+        deviceAutoSyncSucceeds: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const read = vi.mocked(fetch).getMockImplementation()!
+      let finishSave!: () => void
+      const saveGate = new Promise<void>(resolve => {
+        finishSave = resolve
+      })
+      let saving = false
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
+          saving = true
+          await saveGate
+          if (!accepted) {
+            return new Response(JSON.stringify({ detail: 'Policy save rejected' }), { status: 400 })
+          }
+        }
+        return read(input, init)
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+      const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+      await userEvent.click(toggle)
+      await waitFor(() => expect(saving).toBe(true))
+      expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
+      try {
+        marketplace.publishMarketplaceUpdate()
+        fireEvent.focus(window)
+        await waitFor(() =>
+          expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+        )
+        expect(toggle).toBeDisabled()
+        expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+      } finally {
+        await act(async () => {
+          finishSave()
+          await saveGate
+        })
+      }
+      await waitFor(() => expect(toggle).toBeEnabled())
+      expect(toggle).toHaveAttribute('aria-checked', accepted ? 'false' : 'true')
+      await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(accepted ? 0 : 1))
+    }
+  )
+
+  test('resets policy saves across accounts without letting an old completion clear a new save', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const installed = getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))!
+      .installedPlugins[0]!
+    const finishSaves: Array<() => void> = []
+    const saveGates = [0, 1].map(() => new Promise<void>(resolve => finishSaves.push(resolve)))
+    const read = vi.mocked(fetch).getMockImplementation()!
+    let saveCount = 0
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/plugins/installed/101') && init?.method === 'PUT') {
+        const gate = saveGates[saveCount++]
+        await gate
+        return new Response(
+          JSON.stringify({
+            ...installed,
+            spec: { ...installed.spec, updatePolicy: 'auto' },
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      return read(input, init)
+    })
+    try {
+      await userEvent.click(await screen.findByTestId('plugin-auto-update-toggle-101'))
+      await waitFor(() => expect(saveCount).toBe(1))
+
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+      const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+      await waitFor(() => expect(toggle).toBeEnabled())
+      await userEvent.click(toggle)
+      expect(toggle).toBeDisabled()
+
+      await act(async () => finishSaves[0]!())
+      await waitFor(() => expect(saveCount).toBe(2))
+      expect(toggle).toBeDisabled()
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+      await act(async () => finishSaves[1]!())
+      await waitFor(() => expect(toggle).toBeEnabled())
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    } finally {
+      view.unmount()
+      await act(async () => finishSaves.forEach(finish => finish()))
+    }
+  })
+
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplace = mockSystemSkillsFetch({
@@ -4989,6 +5140,56 @@ describe('PluginsWorkspace', () => {
     expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
     expect(marketplace.getSyncDeviceCalls()).toBe(0)
   })
+
+  test.each(['auto', 'manual'] as const)(
+    'refreshes a server-side update policy change to %s before checking a new release',
+    async policy => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const previousPolicy = policy === 'auto' ? 'manual' : 'auto'
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceUpdatePolicy: previousPolicy,
+        autoUpdateBatchSizes: [1],
+        deviceAutoSyncSucceeds: true,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+      expect(await screen.findByTestId('plugin-auto-update-toggle-101')).toHaveAttribute(
+        'aria-checked',
+        String(previousPolicy === 'auto')
+      )
+      await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+
+      await fetch('/api/plugins/installed/101?device_id=current-device', {
+        method: 'PUT',
+        body: JSON.stringify({ updatePolicy: policy }),
+      })
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
+      await userEvent.click(screen.getByTestId('plugins-installed-strip-item-101'))
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-auto-update-toggle-101')).toHaveAttribute(
+          'aria-checked',
+          String(policy === 'auto')
+        )
+      )
+
+      marketplace.publishMarketplaceUpdate()
+      await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      if (policy === 'auto') {
+        await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+        await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+      } else {
+        await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
+        await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+        expect(await screen.findByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+        expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+      }
+    }
+  )
 
   test('refreshes the runtime record for a manual upgrade and retains the composer inventory identity', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
@@ -5377,6 +5578,73 @@ describe('PluginsWorkspace', () => {
       'runtime.local_connector_auth.start',
       expect.anything()
     )
+  })
+
+  test.each([
+    { name: 'catalog omits account auth', catalogAccountAuth: false, installedAuth: 'account' },
+    { name: 'catalog retains account auth', catalogAccountAuth: true, installedAuth: 'local' },
+    {
+      name: 'catalog retains a removed connector',
+      catalogAccountAuth: false,
+      installedAuth: 'none',
+    },
+  ] as const)('uses installed connector configuration when $name', async scenario => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceConnectorSlug: 'mail',
+      marketplaceConnectorLocal: true,
+      marketplaceConnectorAccountAuth: scenario.catalogAccountAuth,
+      installedMarketplaceConnectors:
+        scenario.installedAuth === 'none'
+          ? []
+          : [
+              {
+                slug: 'mail',
+                authPolicy: 'on_install',
+                localAuth: {
+                  kind: 'browser_oauth',
+                  health: ['scripts/local-auth.sh', 'health'],
+                  start: ['scripts/local-auth.sh', 'login'],
+                  poll: [],
+                },
+                ...(scenario.installedAuth === 'account'
+                  ? {
+                      accountAuth: {
+                        protocolVersion: 1,
+                        credentialType: 'oauth2',
+                        adapter: 'scripts/account-auth.py',
+                      },
+                    }
+                  : {}),
+              },
+            ],
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: () => Promise.resolve({ status: 'need_login' }),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+
+    if (scenario.installedAuth === 'local') {
+      expect(await screen.findByTestId('local-connector-auth-dialog')).toBeInTheDocument()
+      await waitFor(() =>
+        expect(requestLocalExecutor).toHaveBeenCalledWith(
+          'runtime.local_connector_auth.start',
+          expect.objectContaining({ pluginKey: 'documents', connectorSlug: 'mail' })
+        )
+      )
+    } else {
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Documents 已安装')
+      )
+      expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+      expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+        'runtime.local_connector_auth.start',
+        expect.anything()
+      )
+    }
   })
 
   test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {

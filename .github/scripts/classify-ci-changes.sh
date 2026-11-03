@@ -104,6 +104,10 @@ classify_path() {
       changed[executor_manager]=true
       changed[platform_e2e]=true
       ;;
+    shared/issue_follow_test_provider.rs)
+      changed[backend_rs]=true
+      changed[executor]=true
+      ;;
     shared/issue_follow_events.rs)
       changed[backend_rs]=true
       changed[executor]=true

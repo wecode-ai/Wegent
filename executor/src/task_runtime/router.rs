@@ -7,6 +7,14 @@ use serde_json::Value;
 #[path = "external_issue_polling.rs"]
 mod external_issue_polling;
 
+#[cfg(test)]
+#[path = "external_issue_polling_tests.rs"]
+mod external_issue_polling_tests;
+
+#[cfg(all(test, unix))]
+#[path = "external_aitable_follow_tests.rs"]
+mod external_aitable_follow_tests;
+
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,

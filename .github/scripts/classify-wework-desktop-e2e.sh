@@ -22,6 +22,7 @@ core_segments=(
   collaboration-board-sorting
   collaboration-board-backlog
   collaboration-issue-identity
+  collaboration-parent-board
   collaboration-board-move-recovery
   collaboration-home-preload
   board-transcript-followup
@@ -255,7 +256,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle
+  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-parent-board
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery,collaboration-issue-identity'
@@ -355,6 +356,7 @@ validate_registered_checkpoint_coverage() {
       import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
+        DESKTOP_CHECKPOINT_CI_HOSTS,
         DESKTOP_CHECKPOINT_GROUPS,
         expandDesktopCheckpoints,
       } from "./wework/e2e/desktop/checkpoints.mjs"
@@ -373,7 +375,8 @@ validate_registered_checkpoint_coverage() {
       }
       const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
       for (const checkpoint of registered) {
-        if (!covered.has(checkpoint)) {
+        const host = DESKTOP_CHECKPOINT_CI_HOSTS.get(checkpoint) ?? checkpoint
+        if (!covered.has(host)) {
           console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)
           process.exit(1)
         }
@@ -804,6 +807,12 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/responses-api-gateway.scenario.mjs)
+      # The registered Responses checkpoint runs inside this existing Cloud lifecycle.
+      select_target "cloud:plugin-account-auth-dws"
+      return
+      ;;
+
     wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
       select_target "cloud:task-model-deletion"
       return
@@ -977,6 +986,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs)
       select_target "core:collaboration-board-backlog"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
+      select_target "core:collaboration-parent-board"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
@@ -1197,6 +1210,7 @@ classify_wework_path() {
         select_target "core:collaboration-first-use"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
+        select_target "core:collaboration-parent-board"
         select_target "core:collaboration-board-sorting"
         select_target "core:collaboration-board-backlog"
         select_target "core:collaboration-board-move-recovery"
@@ -1929,6 +1943,7 @@ classify_path() {
       fi
       ;;
     packages/collaboration/*)
+      select_target "core:collaboration-parent-board"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
         select_target "core:drawing-attachment"
       fi
@@ -1959,6 +1974,13 @@ classify_path() {
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
+      ;;
+    backend/app/api/endpoints/openapi_responses.py | \
+      backend/app/api/endpoints/wework_api.py | \
+      backend/app/services/wework_api/* | \
+      backend/tests/api/test_openapi_responses.py | \
+      backend/tests/api/test_wework_api.py)
+      select_target "cloud:plugin-account-auth-dws"
       ;;
     backend/app/api/endpoints/adapter/attachments.py | \
       backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \

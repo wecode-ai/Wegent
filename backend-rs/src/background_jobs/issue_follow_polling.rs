@@ -281,6 +281,10 @@ async fn poll(state: &AppState, candidate: &Candidate) -> Result<usize> {
 }
 
 #[cfg(test)]
+#[path = "issue_follow_polling_tests.rs"]
+mod integration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
