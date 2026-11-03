@@ -47,7 +47,7 @@ it('loads exact records from their owning store and passes them unchanged to the
   expect(host.local.getLoopItem).toHaveBeenCalledExactlyOnceWith('ISSUE-1')
   expect(host.cloud.getLoopItem).not.toHaveBeenCalled()
   expect(host.render).toHaveBeenLastCalledWith(
-    expect.objectContaining({ project, item, focusedCommentId: 'root' })
+    expect.objectContaining({ project, item, focusedCommentId: 'root', readFirst: true })
   )
 })
 it('rejects an Issue returned from a different project', async () => {

@@ -268,7 +268,21 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, '02-global-compact-reminder.png')
+      focusDiagnostics.afterReminderCapture = JSON.parse(
+        await control.command('getWindowFocusSnapshot', 'body')
+      )
       await control.command('click', '[data-testid="interaction-notice-reply"]')
+      try {
+        await control.command(
+          'waitFor',
+          '[data-testid="runtime-interaction-notice"] [data-testid="interaction-reply-input"]',
+          { visible: true }
+        )
+      } finally {
+        focusDiagnostics.afterReplyClick = JSON.parse(
+          await control.command('getWindowFocusSnapshot', 'body')
+        )
+      }
       await control.command(
         'fill',
         '[data-testid="runtime-interaction-notice"] [data-testid="interaction-reply-input"]',
@@ -299,6 +313,35 @@ export function createDesktopScenario({
         0
       )
       await captureScreenshot(control, '05-pending-tab-with-shared-draft.png')
+      focusDiagnostics.entityMetrics = {}
+      for (const id of [
+        'interaction-entity-container',
+        'work-item-context-panel',
+        'cloud-todo-detail',
+        'cloud-todo-detail-scroll',
+      ]) {
+        focusDiagnostics.entityMetrics[id] = JSON.parse(
+          await control.command('getElementMetrics', `${page} [data-testid="${id}"]`)
+        )
+      }
+      if (issueFixture) {
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `${page} [data-testid="cloud-todo-cancel-content-edit"]`
+            )
+          ),
+          0,
+          'Opening an Issue must use its original reading state'
+        )
+        const container = focusDiagnostics.entityMetrics['interaction-entity-container'][0]
+        const detail = focusDiagnostics.entityMetrics['cloud-todo-detail'][0]
+        assert.ok(
+          detail.top >= container.top - 1,
+          'The original Issue header must stay inside its entity pane'
+        )
+      }
       const [originalAction] = JSON.parse(
         await control.command(
           'getElementMetrics',
@@ -315,12 +358,12 @@ export function createDesktopScenario({
         })
       )
       try {
-        await control.command('waitFor', `${page} [data-testid="interactions-back-to-list"]`, {
-          visible: true,
-        })
         await captureScreenshot(control, '05a-entity-medium.png')
         await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 480, height: 760 }),
+        })
+        await control.command('waitFor', `${page} [data-testid="interactions-back-to-list"]`, {
+          visible: true,
         })
         const [entity] = JSON.parse(
           await control.command(

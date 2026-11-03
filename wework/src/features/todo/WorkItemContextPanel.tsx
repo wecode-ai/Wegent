@@ -22,6 +22,7 @@ interface WorkItemContextPanelProps {
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
   focusedCommentId?: string
   focusedCommentRequestKey?: string
+  readFirst?: boolean
 }
 
 export function WorkItemContextPanel({
@@ -37,6 +38,7 @@ export function WorkItemContextPanel({
   onOpenTask,
   focusedCommentId,
   focusedCommentRequestKey,
+  readFirst,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -72,6 +74,7 @@ export function WorkItemContextPanel({
           mode="edit"
           focusedCommentId={focusedCommentId}
           focusedCommentRequestKey={focusedCommentRequestKey}
+          readFirst={readFirst}
           presentation="workspace-panel"
           workspacePanelFill
           showPanelControls={false}

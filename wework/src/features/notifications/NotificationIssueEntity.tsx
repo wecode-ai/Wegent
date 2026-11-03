@@ -83,6 +83,7 @@ export function NotificationIssueEntity({
     )
   return (
     <WorkItemContextPanel
+      readFirst
       key={url}
       api={api}
       services={services}

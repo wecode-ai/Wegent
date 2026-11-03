@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
@@ -1968,7 +1969,11 @@ async function dispatchDesktopControlPaths(
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   const getWindowFocusSnapshot = () =>
     invokeDesktopHost<Record<string, unknown>>('e2e.getWindowFocusSnapshot').then(snapshot =>
-      JSON.stringify(snapshot)
+      JSON.stringify({
+        ...snapshot,
+        documentFocused: document.hasFocus(),
+        tracker: getMainWindowFocusDiagnostics(),
+      })
     )
 
   const verificationResult = await executeVerificationControlCommand(command, {

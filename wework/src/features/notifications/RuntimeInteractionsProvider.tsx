@@ -658,6 +658,13 @@ function RuntimeInteractionsState({
   const notice = focused
     ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)
     : null
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E === 'true')
+      console.info(
+        '[interaction-focus-state]',
+        JSON.stringify({ focused, pendingIds: pending.map(item => item.id), noticeIds })
+      )
+  }, [focused, pending, noticeIds])
   const dismissNotice = useCallback(
     () => setNoticeIds(current => current.filter(id => id !== notice?.id)),
     [notice?.id]
