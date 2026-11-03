@@ -224,6 +224,22 @@ export function createDesktopScenario({
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.immediate, false)
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
         assert.equal(configured.processing, undefined)
+        // Direct source routing is explicit; completion feedback still uses the silent window.
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+        await control.command('click', '[data-testid="stand-in-connections-open"]')
+        await control.command(
+          'click',
+          `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command('click', timing)
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'true'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await control.command('waitFor', '[data-testid="stand-in-save"]', { visible: false })
         const issue = await rpc(control, 'todos.create', {
           project_id: project.id,
           todo: { title: MARKER, assignee_user_id: USER },
