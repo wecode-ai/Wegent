@@ -2057,7 +2057,9 @@ describe('SmartAppsMarketplacePage', () => {
     await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(1))
 
     rerender(<SmartAppsMarketplacePage api={null} targetSmartAppId={7} />)
-    act(() => lookup.resolve(item()))
+    await act(async () => {
+      lookup.resolve(item())
+    })
 
     expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
     expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
