@@ -993,7 +993,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       const localhostWait = await bridgeCall({
         action: 'waitFor',
-        options: { condition: { textVisible: READY_TEXT } },
+        options: {
+          condition: {
+            textVisible: READY_TEXT,
+            expression: `location.href === ${JSON.stringify(normalizedLocalhostUrl)}`,
+          },
+        },
         timeoutMs: 5_000,
       })
       assert.equal(
