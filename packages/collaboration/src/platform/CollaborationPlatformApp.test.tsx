@@ -3945,6 +3945,59 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("locks template selection after a project has been partially configured", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    api.automations!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("Configuration unavailable"));
+    const templateStore = new CollaborationTemplateStore({
+      scope: "partial-template",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    const resolveTemplateAgentRouting = vi.fn(async () => ({
+      executionPolicy: {
+        mode: "fixed" as const,
+        environment_id: environment.id,
+      },
+      modelPolicy: {
+        mode: "fixed" as const,
+        model: {
+          runtime: "codex" as const,
+          provider: "openai",
+          model_id: "default",
+          source: "native" as const,
+        },
+      },
+    }));
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        projectAgentConfiguration={{ resolveTemplateAgentRouting }}
+        start={{ ...initialLocation, rootView: "templates" }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("项目已创建");
+    expect(container.textContent).toContain("Configuration unavailable");
+    const choose = byTestId(
+      "project-create-choose-template",
+    ) as HTMLButtonElement;
+    expect(choose.disabled).toBe(true);
+    expect(
+      (byTestId("project-create-clear-template") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await click(choose);
+    expect(container.textContent).toContain("项目已创建");
+    expect(
+      byTestId("collaboration-project-create-confirm").textContent,
+    ).toContain("打开已创建项目");
+  });
+
   it.each([true, false])(
     "preserves available templates through navigation refresh (failure: %s)",
     async (failNavigation) => {

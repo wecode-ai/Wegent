@@ -928,7 +928,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               setup={resourceSetup}
               locale={labels.locale}
               initialTemplate={props.initialTemplate}
-              disabled={state.saving}
+              disabled={state.saving || Boolean(state.createdProject)}
               onSelect={(document) => {
                 commands.clearError();
                 commands.setTemplateDocument(document);
