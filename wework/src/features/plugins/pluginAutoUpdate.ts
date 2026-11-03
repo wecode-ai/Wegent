@@ -6,7 +6,7 @@ import type {
   PluginMarketplaceListResponse,
 } from '@/types/api'
 import {
-  beginPluginDeviceSync,
+  acquirePluginDeviceSync,
   marketplaceNeedsDeviceSync,
 } from '@/features/plugins/pluginDeviceAutoSync'
 
@@ -42,6 +42,7 @@ interface PluginAutoUpdateDependencies {
 }
 
 interface CurrentDevicePluginAutoUpdateDependencies {
+  signal?: AbortSignal
   listLocalInstalledPlugins: () => Promise<{ deviceId?: string; partial?: boolean }>
   listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
@@ -192,6 +193,7 @@ async function runPluginAutoUpdatePass({
  * sync even after the account installation already advanced.
  */
 export async function runCurrentDevicePluginAutoUpdate({
+  signal,
   listLocalInstalledPlugins,
   listMarketplacePlugins,
   updateBatch,
@@ -202,8 +204,7 @@ export async function runCurrentDevicePluginAutoUpdate({
   const deviceId = local.deviceId?.trim() ?? ''
   if (!deviceId) return null
 
-  const finishDeviceSync = beginPluginDeviceSync(deviceId)
-  if (!finishDeviceSync) return null
+  const finishDeviceSync = await acquirePluginDeviceSync(deviceId, signal)
 
   try {
     if (local.partial) {

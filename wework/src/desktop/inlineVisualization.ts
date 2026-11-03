@@ -1,5 +1,5 @@
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 
 export async function readInlineVisualizationHtml(path: string): Promise<string> {
-  return new TextDecoder().decode(await readElectronLocalFile(path))
+  return new TextDecoder().decode(await readElectronLocalFile(path, { maxBytes: 1024 * 1024 }))
 }

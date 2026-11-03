@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { verifyArchivedStandInNotification } from '../modules/stand-in-archived-notification.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -178,6 +179,15 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1)
       assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      await verifyArchivedStandInNotification({
+        control,
+        request,
+        projectId: String(project.id),
+        issueId: matching.id,
+        taskId: binding.task_id,
+        userId: user.id,
+        uiTimeoutMs,
+      })
       await requestExecutor(
         control,
         'runtime.stand_in.save',

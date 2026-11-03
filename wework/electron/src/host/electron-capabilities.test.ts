@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
+import { EventEmitter } from 'node:events'
+import { acquireDebuggerSession } from './debugger-session.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -351,19 +353,25 @@ function createWebContents(input: {
   debuggerPending?: boolean
 }) {
   let debuggerAttached = false
+  const debuggerEvents = new EventEmitter()
   const debuggerSession = {
     attach: vi.fn(() => {
       debuggerAttached = true
     }),
     detach: vi.fn(() => {
       debuggerAttached = false
+      debuggerEvents.emit('detach', {}, 'target closed')
     }),
     isAttached: vi.fn(() => debuggerAttached),
-    sendCommand: vi.fn(async () => {
-      if (input.debuggerPending) return new Promise<never>(() => undefined)
-      if (input.debuggerError) throw input.debuggerError
-      return { data: input.debuggerData }
-    }),
+    sendCommand: vi.fn<(method: string, params?: Record<string, unknown>) => Promise<unknown>>(
+      async () => {
+        if (input.debuggerPending) return new Promise<never>(() => undefined)
+        if (input.debuggerError) throw input.debuggerError
+        return { data: input.debuggerData }
+      }
+    ),
+    on: debuggerEvents.on.bind(debuggerEvents),
+    off: debuggerEvents.off.bind(debuggerEvents),
   }
   const capturePage = vi.fn(async () => {
     if (input.capturePending) return new Promise<never>(() => undefined)
@@ -376,6 +384,7 @@ function createWebContents(input: {
   const contents = {
     capturePage,
     debugger: debuggerSession,
+    isDestroyed: () => false,
   } as unknown as WebContents
   return { capturePage, contents, debuggerSession }
 }
@@ -439,6 +448,88 @@ function createIsolatedClipboardRouter(
 describe('Process explorer capabilities', () => {
   test('stays read-only', () => {
     expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
+describe('renderer heap debugger ownership', () => {
+  test('releases its heap lease without detaching another active consumer', async () => {
+    const { contents, debuggerSession } = createWebContents({})
+    const other = acquireDebuggerSession(contents)
+    const heap = { usedSize: 123, totalSize: 456 }
+    debuggerSession.sendCommand.mockResolvedValue(heap)
+    const { router } = createIsolatedClipboardRouter(true, { captureTarget: () => contents })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.getRendererHeapUsage', {})
+    ).resolves.toEqual(heap)
+    expect(debuggerSession.sendCommand.mock.calls).toEqual([
+      ['HeapProfiler.collectGarbage'],
+      ['Runtime.getHeapUsage'],
+    ])
+    expect(debuggerSession.detach).not.toHaveBeenCalled()
+    expect(other.isActive()).toBe(true)
+    other.release()
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+  })
+
+  test('releases a failed heap command without terminating another consumer', async () => {
+    const { contents, debuggerSession } = createWebContents({})
+    const other = acquireDebuggerSession(contents)
+    debuggerSession.sendCommand.mockRejectedValueOnce(new Error('heap failed'))
+    const { router } = createIsolatedClipboardRouter(true, { captureTarget: () => contents })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.getRendererHeapUsage', {})
+    ).rejects.toThrow('heap failed')
+    expect(debuggerSession.sendCommand).toHaveBeenCalledOnce()
+    expect(debuggerSession.detach).not.toHaveBeenCalled()
+    other.release()
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+  })
+})
+
+describe('startup renderer capabilities', () => {
+  test('forwards the real renderer failure and supplies a message for legacy callers', async () => {
+    const rendererStartupFailed = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { rendererStartupFailed })
+    const failure = {
+      message: 'Could not read the task database',
+      stack: 'Error: Could not read the task database\n    at loadTasks',
+      source: 'task_list',
+    }
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', failure)
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith(failure)
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'renderer.startupFailed', {})
+    expect(rendererStartupFailed).toHaveBeenLastCalledWith({
+      message: 'Desktop frontend failed to initialize',
+      source: 'renderer_initialize',
+    })
+  })
+
+  test('restricts startup test actions to desktop E2E and visible diagnostics controls', async () => {
+    const startupSplashClick = vi.fn(async () => undefined)
+    const { router } = createIsolatedClipboardRouter(true, { startupSplashClick })
+    const original = process.env.VITE_WEWORK_E2E
+    try {
+      process.env.VITE_WEWORK_E2E = 'false'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+          testId: 'startup-timeout-copy-button',
+        })
+      ).rejects.toThrow('disabled')
+      process.env.VITE_WEWORK_E2E = 'true'
+      await expect(
+        router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', { testId: 'startup-retry' })
+      ).rejects.toThrow('Unsupported startup splash action')
+      await router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.clickStartupSplash', {
+        testId: 'startup-timeout-copy-button',
+      })
+      expect(startupSplashClick).toHaveBeenCalledOnce()
+      expect(startupSplashClick).toHaveBeenCalledWith('startup-timeout-copy-button')
+    } finally {
+      if (original === undefined) delete process.env.VITE_WEWORK_E2E
+      else process.env.VITE_WEWORK_E2E = original
+    }
   })
 })
 

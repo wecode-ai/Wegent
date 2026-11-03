@@ -1090,6 +1090,7 @@ export function WeworkSharedProject({
       />
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          parentGroupingEnabled
           api={scopedApi}
           initialProject={project}
           onProjectChange={nextProject => {
@@ -1115,6 +1116,8 @@ export function WeworkSharedProject({
             onClose,
             onCreateTask,
             onDelete,
+            onOpenRelatedIssue,
+            onAddChild,
           }) => (
             <IssueConversationDrawers
               key={issue.id}
@@ -1145,6 +1148,11 @@ export function WeworkSharedProject({
                   item={issue as unknown as CloudLoopItem}
                   project={editorProject}
                   allItems={allIssues as unknown as CloudLoopItem[]}
+                  showChildren={false}
+                  onOpenRelatedIssue={related =>
+                    onOpenRelatedIssue(related as unknown as CollaborationIssue)
+                  }
+                  onAddChild={onAddChild}
                   projectChatAgentApi={detailServices?.projectChatAgentApi}
                   projectChatClient={detailServices?.projectChatClient}
                   selfManagedExecution={project.project_store === 'local'}

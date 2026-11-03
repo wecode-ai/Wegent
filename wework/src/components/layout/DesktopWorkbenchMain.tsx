@@ -290,7 +290,12 @@ import type {
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
-import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import {
+  openFeedbackDialog,
+  useRegisteredFeedbackDialogContext,
+  withLatestFeedbackDialogContext,
+  type FeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import {
   WORKSPACE_TABS_CLOSED_EVENT,
@@ -1350,6 +1355,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const runtimeTaskDescription =
     paneSession.messages.find(message => message.role === 'user')?.content ?? ''
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
+  const feedbackDialogRequest: FeedbackDialogRequest = {
+    hasActiveTask: Boolean(currentRuntimeTask),
+    deviceId: currentRuntimeTask?.deviceId ?? null,
+    taskId: currentRuntimeTask?.taskId ?? null,
+    feedbackApi: services?.feedbackApi,
+    getTaskContext: async () => {
+      if (!currentRuntimeTask) {
+        return {
+          task: { state: 'new-conversation' },
+          runtime: {
+            status: paneSession.status,
+            goal: paneSession.goal,
+          },
+        }
+      }
+      const messages = await paneSession.loadFullTranscriptForExport()
+      return {
+        task: {
+          taskId: currentRuntimeTask.taskId ?? null,
+          deviceId: currentRuntimeTask.deviceId ?? null,
+          threadId: currentRuntimeTask.threadId ?? null,
+          workspacePath: currentRuntimeTask.workspacePath ?? null,
+          title: runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+          status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+        },
+        conversation: {
+          messages,
+          queuedMessages: paneSession.queuedMessages,
+          guidanceMessages: paneSession.guidanceMessages,
+          turnNavigation: paneSession.turnNavigation,
+        },
+        runtime: {
+          status: paneSession.status,
+          goal: paneSession.goal,
+          taskPlan: paneSession.taskPlan,
+          subagentStatuses: paneSession.subagentStatuses,
+        },
+      }
+    },
+  }
+  const feedbackDialogRequestRef = useRef(feedbackDialogRequest)
+  useLayoutEffect(() => {
+    // The request is rebuilt from current pane state on every render.
+    feedbackDialogRequestRef.current = feedbackDialogRequest
+  })
+  useRegisteredFeedbackDialogContext(workbenchVisible && paneActive, feedbackDialogRequest)
   const {
     activeDeliveryItem,
     associateRuntimeTaskWithExistingItem,
@@ -1936,7 +1987,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
-  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
@@ -4942,7 +4992,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
         aria-label={t('workbench.feedback_button')}
-        onClick={() => setFeedbackDialogOpen(true)}
+        onClick={() =>
+          openFeedbackDialog(
+            withLatestFeedbackDialogContext(
+              feedbackDialogRequest,
+              () => feedbackDialogRequestRef.current
+            )
+          )
+        }
       >
         <MessageSquareWarning />
       </button>
@@ -6093,47 +6150,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <ContinueInImDialog
           key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
           {...continueInIm.dialog}
-        />
-        <TaskFeedbackDialog
-          open={feedbackDialogOpen}
-          hasActiveTask={Boolean(currentRuntimeTask)}
-          feedbackApi={services?.feedbackApi}
-          onClose={() => setFeedbackDialogOpen(false)}
-          getTaskContext={async () => {
-            if (!currentRuntimeTask) {
-              return {
-                task: { state: 'new-conversation' },
-                runtime: {
-                  status: paneSession.status,
-                  goal: paneSession.goal,
-                },
-              }
-            }
-            const messages = await paneSession.loadFullTranscriptForExport()
-            return {
-              task: {
-                taskId: currentRuntimeTask?.taskId ?? null,
-                deviceId: currentRuntimeTask?.deviceId ?? null,
-                threadId: currentRuntimeTask?.threadId ?? null,
-                workspacePath: currentRuntimeTask?.workspacePath ?? null,
-                title:
-                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
-                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
-              },
-              conversation: {
-                messages,
-                queuedMessages: paneSession.queuedMessages,
-                guidanceMessages: paneSession.guidanceMessages,
-                turnNavigation: paneSession.turnNavigation,
-              },
-              runtime: {
-                status: paneSession.status,
-                goal: paneSession.goal,
-                taskPlan: paneSession.taskPlan,
-                subagentStatuses: paneSession.subagentStatuses,
-              },
-            }
-          }}
         />
         <TaskSupervisorControl
           open={supervisorDialogOpen && !issueExecutionReadOnly}
