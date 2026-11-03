@@ -192,3 +192,32 @@ it.each(['close', 'cancel'] as const)(
     expect(f.api.saveMemory).not.toHaveBeenCalled()
   }
 )
+
+it('keeps project coordinator memory fixed to this project and hides personal memories', async () => {
+  const f = fixture()
+  const scope = { kind: 'project_coordinator' as const, id: 'project-a', store: 'local' as const }
+  f.api.memories.mockResolvedValue([
+    f.row,
+    { ...f.row, id: 'project-note', scope, content: 'Project A goals' },
+  ])
+  render(
+    <StandInMemoryPanel
+      api={f.api as unknown as StandInExecutorApi}
+      settings={f.settings}
+      projects={[]}
+      fixedScope={scope}
+      scopeLabel="项目 A"
+      onClose={f.onClose}
+    />
+  )
+  expect(await screen.findByText('Project A goals')).toBeInTheDocument()
+  expect(screen.queryByText('回复简洁')).not.toBeInTheDocument()
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-memory-add'))
+  expect(screen.getAllByRole('option')).toHaveLength(1)
+  await user.type(screen.getByTestId('stand-in-memory-content'), 'Only project A')
+  await user.click(screen.getByTestId('stand-in-memory-save'))
+  await waitFor(() =>
+    expect(f.api.saveMemory).toHaveBeenCalledWith(7, 'mac', { content: 'Only project A', scope })
+  )
+})

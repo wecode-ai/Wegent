@@ -16,18 +16,6 @@ window.__ModuleLoader__.load({
             title: '已安排',
           })
         )
-        ctx.slots.inject('wework.sidebar.navigation', () =>
-          ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
-            id: 'automations.navigation',
-            activeItem: 'automation',
-            icon: 'alarm-clock',
-            labelKey: 'workbench.automation',
-            label: '已安排',
-            order: 10,
-            path: '/automations',
-            testId: 'automation-button',
-          })
-        )
       },
     }
   },

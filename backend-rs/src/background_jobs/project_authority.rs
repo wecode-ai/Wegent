@@ -5,12 +5,13 @@
 //! workspace resource grants. Definition ownership never grants project use.
 
 use super::store::{COLUMNS, LIVE, Node};
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::{
     responses::create::resolution::{self, KindRow},
     state::AppState,
 };
 use anyhow::{Context, Result, bail};
-use brz_mysql::{FromMysqlRow, MysqlRow};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlRow};
 
 #[derive(FromMysqlRow)]
 struct Parent {
@@ -23,17 +24,45 @@ struct Grant {
 }
 
 pub(crate) async fn require(state: &AppState, project_id: &str, user_id: i64) -> Result<i64> {
-    let statement = crate::cloud_projects::project_access_point_statement(
+    require_on(&mut &state.mysql, project_id, user_id).await
+}
+
+pub(crate) async fn require_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    user_id: i64,
+) -> Result<i64> {
+    execution_priority_on(query, project_id, user_id).await?;
+    parent_on(query, project_id).await
+}
+
+pub(crate) async fn execution_priority(
+    mysql: &impl Mysql,
+    project_id: &str,
+    user_id: i64,
+) -> Result<i64> {
+    let mut query = mysql;
+    execution_priority_on(&mut query, project_id, user_id).await
+}
+
+pub(crate) async fn execution_priority_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    user_id: i64,
+) -> Result<i64> {
+    let statement = crate::cloud_projects::project_access_statement(
         i32::try_from(user_id)?,
-        project_id.parse()?,
+        Some(project_id.parse()?),
+        None,
     );
-    let access: Option<MysqlRow> = state.mysql.fetch_optional(statement, ()).await?;
-    let access = access.context("Project not found or membership revoked")?;
-    let priority: i64 = access.get_required("anon_3_priority")?;
+    let access: Option<MysqlRow> = query.fetch_optional(statement, ()).await?;
+    let priority: i64 = access
+        .context("Project not found or membership revoked")?
+        .get_required("anon_1_priority")?;
     if priority > 2 {
-        bail!("Insufficient permission to execute in this project")
+        bail!("Insufficient permission to execute in this project");
     }
-    parent(state, project_id).await
+    Ok(priority)
 }
 
 pub(crate) async fn require_issue(
@@ -45,21 +74,7 @@ pub(crate) async fn require_issue(
     if issue.cloud_project_id != project.id {
         bail!("Issue is not in this project")
     }
-    let row: Option<MysqlRow> = state
-        .mysql
-        .fetch_optional(
-            crate::cloud_projects::project_access_point_statement(
-                i32::try_from(user)?,
-                project.id.parse()?,
-            ),
-            (),
-        )
-        .await?;
-    let row = row.context("Project membership is revoked or unavailable")?;
-    let priority: i64 = row.get_required("anon_3_priority")?;
-    if priority > 2 {
-        bail!("Insufficient permission to execute in this project")
-    }
+    let priority = execution_priority(&state.mysql, &project.id, user).await?;
     let security = issue.metadata.0["security_level"]
         .as_str()
         .filter(|v| matches!(*v, "open" | "related"))
@@ -87,19 +102,32 @@ pub(crate) async fn require_issue(
 }
 
 pub(crate) async fn parent(state: &AppState, project_id: &str) -> Result<i64> {
-    let row:Option<Parent>=state.mysql.fetch_optional("SELECT CAST(MIN(grant_row.entity_id) AS SIGNED) AS workspace_id FROM resource_members grant_row JOIN kinds workspace ON workspace.id=CAST(grant_row.entity_id AS SIGNED) AND workspace.kind='CollaborationWorkspace' AND workspace.is_active=true WHERE grant_row.resource_type='CloudProject' AND grant_row.resource_id=CAST(? AS SIGNED) AND grant_row.entity_type='workspace' AND grant_row.status='approved' GROUP BY grant_row.resource_id HAVING COUNT(DISTINCT grant_row.entity_id)=1",(project_id,)).await?;
+    parent_on(&mut &state.mysql, project_id).await
+}
+
+pub(crate) async fn parent_on(query: &mut impl PluginQuery, project_id: &str) -> Result<i64> {
+    let row:Option<Parent>=query.fetch_optional("SELECT CAST(MIN(grant_row.entity_id) AS SIGNED) AS workspace_id FROM resource_members grant_row JOIN kinds workspace ON workspace.id=CAST(grant_row.entity_id AS SIGNED) AND workspace.kind='CollaborationWorkspace' AND workspace.is_active=true WHERE grant_row.resource_type='CloudProject' AND grant_row.resource_id=CAST(? AS SIGNED) AND grant_row.entity_type='workspace' AND grant_row.status='approved' GROUP BY grant_row.resource_id HAVING COUNT(DISTINCT grant_row.entity_id)=1",(project_id,)).await?;
     Ok(row
         .context("Project has no unique active Workspace parent")?
         .workspace_id)
 }
 
 pub(crate) async fn team(state: &AppState, project_id: &str, team_id: i64) -> Result<KindRow> {
-    let workspace = parent(state, project_id).await?;
-    let team = resolution::team_by_id(&state.mysql, team_id)
+    team_on(&mut &state.mysql, project_id, team_id).await
+}
+
+pub(crate) async fn team_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    team_id: i64,
+) -> Result<KindRow> {
+    let workspace = parent_on(query, project_id).await?;
+    let team: KindRow = query
+        .fetch_optional(resolution::team_by_id_statement(), (team_id,))
         .await?
         .context("Agent resource authorization is revoked or unavailable")?;
-    let grant:Option<Grant>=state.mysql.fetch_optional("SELECT status,role FROM resource_members WHERE resource_type='Team' AND resource_id=? AND entity_type='workspace' AND entity_id=? LIMIT 1",(team_id,workspace.to_string())).await?;
-    let bindings:Vec<Node>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS SIGNED)=?"),(project_id,team_id)).await?;
+    let grant:Option<Grant>=query.fetch_optional("SELECT status,role FROM resource_members WHERE resource_type='Team' AND resource_id=? AND entity_type='workspace' AND entity_id=? LIMIT 1",(team_id,workspace.to_string())).await?;
+    let bindings:Vec<Node>=query.fetch_all(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS SIGNED)=?"),(project_id,team_id)).await?;
     if bindings.is_empty() {
         bail!("Agent is not enabled in this project")
     }
@@ -126,7 +154,24 @@ pub(crate) async fn agent(
     user_id: i64,
     check_visibility: bool,
 ) -> Result<Node> {
-    let agent:Option<Node>=state.mysql.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE id=? AND resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
+    agent_on(
+        &mut &state.mysql,
+        project_id,
+        agent_id,
+        user_id,
+        check_visibility,
+    )
+    .await
+}
+
+pub(crate) async fn agent_on(
+    query: &mut impl PluginQuery,
+    project_id: &str,
+    agent_id: &str,
+    user_id: i64,
+    check_visibility: bool,
+) -> Result<Node> {
+    let agent:Option<Node>=query.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE id=? AND resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE}"),(agent_id,project_id)).await?;
     let agent = agent.context("Agent is not enabled in this project")?;
     if check_visibility
         && agent.metadata.0["visibility"] == "private"
@@ -135,10 +180,10 @@ pub(crate) async fn agent(
         bail!("Private Agent is not shared with this member")
     }
     if let Some(team_id) = integer(&agent.metadata.0["wegent_team_id"]).filter(|v| *v != 0) {
-        team(state, project_id, team_id).await?;
+        team_on(query, project_id, team_id).await?;
     } else {
-        let workspace = parent(state, project_id).await?;
-        let grant:Option<Grant>=state.mysql.fetch_optional("SELECT status,role FROM resource_members WHERE resource_type='Workspace' AND resource_id=? AND entity_type='project_agent' AND entity_id=? LIMIT 1",(workspace,agent_id)).await?;
+        let workspace = parent_on(query, project_id).await?;
+        let grant:Option<Grant>=query.fetch_optional("SELECT status,role FROM resource_members WHERE resource_type='Workspace' AND resource_id=? AND entity_type='project_agent' AND entity_id=? LIMIT 1",(workspace,agent_id)).await?;
         if !grant.as_ref().is_some_and(approved)
             && (grant.is_some() || truthy(&agent.metadata.0["authorization_version"]))
         {

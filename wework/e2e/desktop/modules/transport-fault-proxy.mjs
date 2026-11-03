@@ -144,7 +144,12 @@ export class TransportFaultProxy {
   forward(request, response) {
     const url = new URL(request.url, this.target)
     // Retain no headers, tokens, request bodies or device query strings.
-    const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
+    const entry = {
+      method: request.method,
+      path: url.pathname,
+      unscoped: !url.search,
+      receivedAt: new Date().toISOString(),
+    }
     const requestId = request.headers['x-request-id']
     if (typeof requestId === 'string') {
       entry.requestIdFingerprint = createHash('sha256').update(requestId).digest('hex')
@@ -152,6 +157,7 @@ export class TransportFaultProxy {
     this.requests.push(entry)
     response.once('finish', () => {
       entry.responseCompleted = true
+      entry.completedAt = new Date().toISOString()
     })
     const fault = this.rule(entry, request)
     entry.fault = fault

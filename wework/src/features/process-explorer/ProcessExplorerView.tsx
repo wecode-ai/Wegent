@@ -87,7 +87,7 @@ export function ProcessExplorerView({
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current
     try {
-      const next = await client.snapshot()
+      const next = await client.snapshot({ waitForSystemProcesses: false })
       if (loadSequence.current !== sequence) return
       setSnapshot(next)
       setError(null)
@@ -265,6 +265,15 @@ export function ProcessExplorerView({
           className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-secondary"
         >
           {t('process_explorer.load_failed')}
+        </div>
+      ) : null}
+
+      {snapshot?.collectingSystemProcesses ? (
+        <div
+          data-testid="process-explorer-collecting"
+          className="border-b border-border px-3 py-1.5 text-xs text-text-secondary"
+        >
+          {t('process_explorer.collecting_system_processes')}
         </div>
       ) : null}
 
