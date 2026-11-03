@@ -1491,7 +1491,8 @@ classify_wework_path() {
       select_target "core:runtime-task-queue"
       return
       ;;
-    wework/e2e/desktop/scenarios/codex-invalid-launch-cwd.scenario.mjs)
+    wework/e2e/desktop/scenarios/codex-invalid-launch-cwd.scenario.mjs | \
+    wework/e2e/desktop/modules/model-catalog-recovery.mjs)
       select_target "core:codex-invalid-launch-cwd"
       return
       ;;

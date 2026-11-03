@@ -219,6 +219,18 @@ describe('DSH executor transport', () => {
     })
   })
 
+  test.each([null, [], 42, 'invalid'])(
+    'rejects invalid response envelope %j without retrying',
+    async body => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body))))
+      await expect(requestDshExecutor('runtime.tasks.list')).rejects.toMatchObject({
+        name: 'DshExecutorTransportError',
+        code: 'protocol_mismatch',
+        retryable: false,
+      })
+    }
+  )
+
   test('logs correlated metadata when an executor response is not valid json', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(

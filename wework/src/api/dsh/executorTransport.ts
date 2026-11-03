@@ -171,12 +171,9 @@ export async function requestDshExecutor<T>(
     elapsed_ms: Date.now() - startedAt,
     status: response.status,
   })
-  let body: { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  let parsedBody: unknown
   try {
-    body = (await response.json()) as
-      | { ok: true; result: T }
-      | ({ ok?: false } & DshExecutorErrorBody)
-    diagnostic('body_parsed', { ok: response.ok && body.ok === true })
+    parsedBody = await response.json()
   } catch (error) {
     diagnostic('body_parse_failed')
     transportDiagnostic('body_parse_failed', {
@@ -192,6 +189,14 @@ export async function requestDshExecutor<T>(
     })
     throw connectionError(error)
   }
+  if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'DSH executor returned an invalid RPC response'
+    )
+  }
+  const body = parsedBody as { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  diagnostic('body_parsed', { ok: response.ok && body.ok === true })
   if (!response.ok || body.ok !== true) {
     const error = transportError(response.status, body as DshExecutorErrorBody)
     transportDiagnostic('rpc_failed', { status: response.status, code: error.code })

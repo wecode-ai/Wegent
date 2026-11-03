@@ -2898,6 +2898,14 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs"
 
+assert_desktop_case "catalog recovery regression has CI coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"codex-invalid-launch-cwd"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/model-catalog-recovery.mjs"
+
 for path in \
   wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs \
   wework/e2e/desktop/modules/follow-up-agent-history.mjs; do
