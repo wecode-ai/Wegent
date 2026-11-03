@@ -1383,13 +1383,33 @@ async fn stop_codex_app_server_process(
     let Some(mut process) = state.process.take() else {
         return false;
     };
+    let started = Instant::now();
+    let process_id = process
+        .child
+        .id()
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let checkpoint = |stage: &str| {
+        log_executor_event(
+            "codex shared app-server stop",
+            &[
+                ("process_id", process_id.clone()),
+                ("stage", stage.to_owned()),
+                ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
+    };
+    checkpoint("started");
     if let Some(error) = pending_error {
         fail_all_pending(&process.pending, error.to_owned()).await;
     }
     process.reader_task.abort();
     let _ = (&mut process.reader_task).await;
+    checkpoint("reader_stopped");
     notify_shared_process_closed(&process.notifications, "codex app-server stopped").await;
+    checkpoint("exit_notified");
     terminate_codex_app_server_child(&mut process.child).await;
+    checkpoint("child_terminated");
     true
 }
 

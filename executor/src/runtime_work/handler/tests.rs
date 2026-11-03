@@ -1236,6 +1236,9 @@ fn next_content_event(
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 
+#[path = "pre_admission_transcript_tests.rs"]
+mod pre_admission_transcript_tests;
+
 impl RuntimeWorkRpcHandler {
     // Test the same route/publication/hook handoff used by the two real subscriptions.
     async fn deliver_native_notification_for_execution(

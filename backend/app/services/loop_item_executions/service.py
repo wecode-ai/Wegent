@@ -2830,6 +2830,9 @@ class LoopItemExecutionService:
 
         activity = self._linked_activity(db, execution)
         if activity is not None:
+            project_chat_service._record_runtime_sequence(
+                activity, execution.last_event_seq
+            )
             project_chat_service._finish_activity(
                 db,
                 activity,
@@ -2854,6 +2857,9 @@ class LoopItemExecutionService:
                     "canceled",
                 }:
                     continue
+                project_chat_service._record_runtime_sequence(
+                    child, execution.last_event_seq
+                )
                 child.status = terminal_status
                 child.message_type = "text"
                 child_metadata = dict(child.metadata_json or {})

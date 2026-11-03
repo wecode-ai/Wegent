@@ -531,6 +531,13 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent DOM retained ${settledDomNodeGrowth} additional nodes after rendering the long response`
   )
   for (const sample of settledWindow) {
+    const displayItems = sample.activeRuntimeAssistant?.displayItems
+    assert.ok(displayItems?.length, 'The settled reply has no native display items')
+    assert.equal(
+      new Set(displayItems.map(item => item.id)).size,
+      displayItems.length,
+      'The settled reply contains duplicate native item identities'
+    )
     const chunks = sample.assistantDom.markdownChunks
     if (chunks.length > 2) {
       assert.ok(

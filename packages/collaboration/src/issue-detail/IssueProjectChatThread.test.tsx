@@ -588,6 +588,74 @@ describe("shared Issue threads", () => {
     expect(mergeIssueChatMessages([completed], [message])).toEqual([completed]);
   });
 
+  it("orders same-second Runtime snapshots by their exact event sequence", () => {
+    const outcomeOnly = {
+      ...message,
+      content: "",
+      metadata: { runtime_event_sequence: "1793597834818561699" },
+    };
+    const final = {
+      ...message,
+      content: "Completed by remote executor",
+      metadata: { runtime_event_sequence: "1793597834818561700" },
+    };
+    expect(mergeIssueChatMessages([final], [outcomeOnly])).toEqual([final]);
+    expect(mergeIssueChatMessages([outcomeOnly], [final])).toEqual([final]);
+  });
+
+  it.each([
+    {
+      name: "older than the final response",
+      sequence: "1793597834818561699",
+      snapshotStatus: "completed" as const,
+    },
+    {
+      name: "already included in a streaming snapshot",
+      sequence: "1793597834818561700",
+      snapshotStatus: "streaming" as const,
+    },
+  ])("ignores a delta $name", async ({ sequence, snapshotStatus }) => {
+    let receive!: (message: ProjectChatMessage) => void;
+    let receiveChunk!: (message: ProjectChatMessage) => void;
+    const client = {
+      subscribe: vi.fn(
+        async (...args: Parameters<ProjectChatClient["subscribe"]>) => {
+          receive = args[3];
+          receiveChunk = args[4]!;
+          return {
+            snapshot: { messages: [], latestSequence: 0, currentUserId: "1" },
+            unsubscribe: vi.fn(),
+          };
+        },
+      ),
+    } as unknown as ProjectChatClient;
+    function Harness() {
+      const chat = useIssueProjectChat(client, "project", "issue");
+      return <span>{chat.messages.map((item) => item.content).join("")}</span>;
+    }
+    await act(async () => root.render(<Harness />));
+    act(() =>
+      receive({
+        ...message,
+        status: snapshotStatus,
+        content: "Final answer",
+        metadata: { runtime_event_sequence: "1793597834818561700" },
+      }),
+    );
+    act(() =>
+      receiveChunk({
+        ...message,
+        status: "streaming",
+        content: " answer",
+        metadata: {
+          runtime_event_sequence: sequence,
+          contentMode: "delta",
+        },
+      }),
+    );
+    expect(container.textContent).toBe("Final answer");
+  });
+
   it("ignores a late subscription from an Issue that was closed", async () => {
     let resolveFirst!: (
       value: Awaited<ReturnType<ProjectChatClient["subscribe"]>>,

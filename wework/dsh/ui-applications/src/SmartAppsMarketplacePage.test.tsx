@@ -2,9 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
-import type { UnifiedModel } from '@/types/api'
-import { notifyHarnessAppInstallationsChanged } from '@/features/harness-apps/harnessAppInstallationsChanged'
+import {
+  HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
+  notifyHarnessAppInstallationsChanged,
+} from '@/features/harness-apps/harnessAppInstallationsChanged'
+import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnessModels'
+import type { UnifiedModel } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const navigateTo = vi.fn()
@@ -61,9 +65,12 @@ const harnessModel: UnifiedModel = {
   config: { weworkModelKind: 'model-interface' },
 }
 
+const workbenchModels = vi.hoisted(() => ({ current: [] as UnifiedModel[] }))
+workbenchModels.current = [harnessModel]
+
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [harnessModel] },
+    projectChat: { models: workbenchModels.current },
     services: { localHarnessModelApi: null },
   }),
 }))
@@ -154,7 +161,7 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
       sizeBytes: 1024,
       expiresAt: '2026-08-20T00:10:00Z',
     }),
-    getItem: vi.fn(),
+    getItem: vi.fn().mockRejectedValue(new ApiError('Smart app not found', 404, 'not_found')),
     getAccess: vi.fn(),
     updateAccess: vi.fn(),
     searchUsers: vi.fn(),
@@ -164,6 +171,16 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
     cancelSubmission: vi.fn(),
     publish: vi.fn(),
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 const importedInstallation = {
@@ -194,6 +211,8 @@ const importedInstallation = {
 describe('SmartAppsMarketplacePage', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/')
+    workbenchModels.current = [harnessModel]
+    vi.mocked(openHarnessAppTab).mockClear()
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
     queueSmartAppDevelopmentPreview.mockReset()
@@ -662,6 +681,100 @@ describe('SmartAppsMarketplacePage', () => {
       expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
     }
   )
+
+  test.each(['success', 'failure'])(
+    'retains unrelated model controls while a stopped app refresh ends in %s',
+    async outcome => {
+      const running = {
+        ...importedInstallation,
+        id: 'running-app',
+        state: 'running' as const,
+        webUrl: 'http://127.0.0.1:3080',
+      }
+      listInstalled
+        .mockResolvedValueOnce([importedInstallation, running])
+        .mockResolvedValue([importedInstallation, { ...running, state: 'installed', webUrl: null }])
+      const smartAppsApi = api([])
+      let resolveRefresh!: (value: { items: SmartAppMarketplaceItem[] }) => void
+      let rejectRefresh!: (error: Error) => void
+      vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(Promise.resolve({ items: [] }))
+      vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveRefresh = resolve
+          rejectRefresh = reject
+        })
+      )
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+      const model = await screen.findByTestId('harness-app-model-research-desk')
+
+      fireEvent.click(screen.getByTestId('smart-app-actions-running-app'))
+      fireEvent.pointerDown(screen.getByTestId('smart-app-stop-menu-running-app'))
+      await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(model)
+      expect(screen.getByTestId('harness-app-start-running-app')).toBeInTheDocument()
+      await act(async () => {
+        if (outcome === 'success') resolveRefresh({ items: [] })
+        else rejectRefresh(new Error('Cloud refresh unavailable'))
+      })
+      expect(screen.getByTestId('harness-app-model-research-desk')).toBe(model)
+      if (outcome === 'failure') expect(screen.getByRole('alert')).toBeInTheDocument()
+    }
+  )
+
+  test('an API change never exposes the previous catalog while loading or after failure', async () => {
+    listInstalled.mockResolvedValue([importedInstallation])
+    const previousApi = api([item({ displayName: 'Previous account workbench' })])
+    const replacementApi = api([])
+    let rejectRefresh!: (error: Error) => void
+    vi.mocked(replacementApi.listOwned).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectRefresh = reject
+      })
+    )
+    const { rerender } = render(<SmartAppsMarketplacePage api={previousApi} mode="owned" />)
+    expect(await screen.findByText('Previous account workbench')).toBeInTheDocument()
+
+    rerender(<SmartAppsMarketplacePage api={replacementApi} mode="owned" />)
+
+    expect(screen.queryByText('Previous account workbench')).not.toBeInTheDocument()
+    await waitFor(() => expect(replacementApi.listOwned).toHaveBeenCalledOnce())
+    await act(async () => rejectRefresh(new Error('Replacement catalog unavailable')))
+    expect(screen.queryByText('Previous account workbench')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  test('a mode round trip does not reuse readiness from its discarded catalog', async () => {
+    listInstalled.mockResolvedValue([importedInstallation])
+    const smartAppsApi = api([item({ displayName: 'Previous owned' })])
+    let resolveOwned!: (value: { items: SmartAppMarketplaceItem[] }) => void
+    let resolveMarketplace!: (value: { items: SmartAppMarketplaceItem[] }) => void
+    const { rerender } = render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    await screen.findByText('Previous owned')
+    vi.mocked(smartAppsApi.listMarketplace).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveMarketplace = resolve
+      })
+    )
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} mode="marketplace" />)
+    await waitFor(() => expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2))
+    vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveOwned = resolve
+      })
+    )
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+    await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+
+    expect(screen.queryByText('Previous owned')).not.toBeInTheDocument()
+    await act(async () => resolveMarketplace({ items: [item({ displayName: 'Stale market' })] }))
+    expect(screen.queryByText('Previous owned')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stale market')).not.toBeInTheDocument()
+    await act(async () => resolveOwned({ items: [item({ displayName: 'Current owned' })] }))
+    expect(screen.getByText('Current owned')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-model-research-desk')).toBeInTheDocument()
+  })
 
   test.each(['pending', 'failed'])(
     'shows local model controls while the initial cloud catalog is %s',
@@ -1233,9 +1346,12 @@ describe('SmartAppsMarketplacePage', () => {
     rerender(<SmartAppsMarketplacePage api={refreshedApi} mode="owned" />)
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
     await act(async () => resolveDelete())
+    // A device-owned mutation refreshes the current account, never the previous one.
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(3))
+    expect(initialApi.listOwned).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.queryByText('研究工作台')).not.toBeInTheDocument())
     await act(async () => resolveStaleRefresh([publishedImport]))
+    expect(refreshedApi.listOwned).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('smart-app-owned-item-7')).not.toBeInTheDocument()
     expect(screen.queryByText('研究工作台')).not.toBeInTheDocument()
   })
@@ -1724,5 +1840,443 @@ describe('SmartAppsMarketplacePage', () => {
 
     expect(await screen.findByText('打开工作台文件夹失败。')).toBeInTheDocument()
     expect(revealLocalFile).toHaveBeenCalledWith(importedInstallation.packagePath)
+  })
+
+  test('opens targeted app details and explains how to install it from a deep link', async () => {
+    render(<SmartAppsMarketplacePage api={api([item()])} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '此智能工作台尚未安装'
+    )
+    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent('研究工作台')
+    expect(screen.getByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+  })
+
+  test('loads a deep-link target directly when the catalog list is empty', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  test('loads a deep-link target while the marketplace catalog is still pending', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.listMarketplace).mockReturnValue(new Promise(() => {}))
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  test('clears the deep-link install prompt after the target is installed', async () => {
+    render(<SmartAppsMarketplacePage api={api([item()])} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+
+    const installation = {
+      ...importedInstallation,
+      id: 'research-target',
+      smartAppId: 7,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:3000',
+    }
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, {
+          detail: {
+            type: 'installed',
+            installationId: installation.id,
+            installation,
+          },
+        })
+      )
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+    )
+  })
+
+  test('reports an unavailable target instead of leaving a blank deep link', async () => {
+    render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={99} />)
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-deep-link-retry')).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+  })
+
+  test('retries a failed deep-link target lookup', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem)
+      .mockRejectedValueOnce(new ApiError('temporary failure', 503, 'unavailable'))
+      .mockResolvedValueOnce(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-deep-link-retry'))
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
+  })
+
+  test('clears the previous target before resolving another deep-link target', async () => {
+    const smartAppsApi = api([item()])
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={99} />)
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+    expect(screen.getByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+  })
+
+  test('ignores a pending download after the deep-link target changes', async () => {
+    const smartAppsApi = api([item()])
+    let resolveDownload: (
+      value: Awaited<ReturnType<SmartAppsApi['getDownload']>>
+    ) => void = () => {}
+    vi.mocked(smartAppsApi.getDownload).mockReturnValue(
+      new Promise(resolve => {
+        resolveDownload = resolve
+      })
+    )
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    await waitFor(() => expect(smartAppsApi.getDownload).toHaveBeenCalledWith(7))
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={99} />)
+    act(() =>
+      resolveDownload({
+        smartAppId: 7,
+        releaseId: 17,
+        version: '1.2.0',
+        filename: 'research.zip',
+        downloadUrl: 'https://download.test/research.zip',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 1024,
+        expiresAt: '2026-08-20T00:10:00Z',
+      })
+    )
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
+  })
+
+  test('starts an installed target after its catalog lookup resolves first', async () => {
+    let resolveInstalled: (value: unknown[]) => void = () => {}
+    listInstalled.mockReturnValue(
+      new Promise(resolve => {
+        resolveInstalled = resolve
+      })
+    )
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+    act(() =>
+      resolveInstalled([
+        {
+          ...importedInstallation,
+          smartAppId: 7,
+          modelKey: localHarnessModelOptionKey(harnessModel),
+          state: 'installed',
+        },
+      ])
+    )
+
+    await waitFor(() =>
+      expect(openHarnessAppTab).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ id: 'research-desk', smartAppId: 7 })
+      )
+    )
+  })
+
+  test('waits for a running target to receive its web URL', async () => {
+    const installation = {
+      ...importedInstallation,
+      smartAppId: 7,
+      modelKey: localHarnessModelOptionKey(harnessModel),
+      state: 'running' as const,
+      webUrl: null,
+    }
+    listInstalled.mockResolvedValue([installation])
+    const smartAppsApi = api([item()])
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+
+    await waitFor(() => expect(listInstalled).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+
+    const running = { ...installation, webUrl: 'http://127.0.0.1:3000' }
+    listInstalled.mockResolvedValue([running])
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, {
+          detail: {
+            type: 'updated',
+            installationId: installation.id,
+            installation: running,
+          },
+        })
+      )
+    })
+
+    await waitFor(() => expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), running))
+  })
+
+  test('retries a deep-link start after the model catalog becomes available', async () => {
+    workbenchModels.current = []
+    const installation = {
+      ...importedInstallation,
+      smartAppId: 7,
+      modelKey: localHarnessModelOptionKey(harnessModel),
+      state: 'installed',
+    }
+    listInstalled.mockResolvedValue([installation])
+    const { rerender } = render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
+    expect(
+      await screen.findByText('此智能工作台绑定的 Wework 模型已不可用，请重新选择模型。')
+    ).toBeInTheDocument()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+
+    workbenchModels.current = [harnessModel]
+    rerender(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
+
+    await waitFor(() =>
+      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
+    )
+  })
+
+  test('re-resolves the target when the marketplace API changes', async () => {
+    const firstApi = api([item()])
+    const secondApi = api([])
+    const { rerender } = render(<SmartAppsMarketplacePage api={firstApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+      '研究工作台'
+    )
+
+    rerender(<SmartAppsMarketplacePage api={secondApi} targetSmartAppId={7} />)
+
+    await waitFor(() => expect(secondApi.getItem).toHaveBeenCalledWith(7))
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+  })
+
+  test('re-resolves the target after a catalog refresh removes it', async () => {
+    const smartAppsApi = api([item()])
+    vi.mocked(smartAppsApi.listMarketplace)
+      .mockResolvedValueOnce({ items: [item()] })
+      .mockResolvedValue({ items: [] })
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'missing' },
+    })
+
+    expect(
+      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+    ).toBeInTheDocument()
+    expect(smartAppsApi.getItem).toHaveBeenCalledWith(7)
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+  })
+
+  test('keeps a dismissed target dialog closed after a catalog refresh', async () => {
+    const smartAppsApi = api([item()])
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-details')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('smart-app-details-close'))
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'refresh' },
+    })
+    await waitFor(() => expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2))
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+  })
+
+  test('keeps a dismissed target dialog closed when the fallback lookup resolves', async () => {
+    const smartAppsApi = api([item()])
+    vi.mocked(smartAppsApi.listMarketplace)
+      .mockResolvedValueOnce({ items: [item()] })
+      .mockResolvedValue({ items: [] })
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-details')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('smart-app-details-close'))
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'missing' },
+    })
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+  })
+
+  test('ignores a pending target lookup after the API is removed', async () => {
+    const lookup = deferred<SmartAppMarketplaceItem>()
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem).mockReturnValueOnce(lookup.promise)
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(1))
+
+    rerender(<SmartAppsMarketplacePage api={null} targetSmartAppId={7} />)
+    await act(async () => {
+      lookup.resolve(item())
+    })
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+  })
+
+  test('re-resolves a catalog target after its in-flight lookup is superseded', async () => {
+    const firstLookup = deferred<SmartAppMarketplaceItem>()
+    const secondLookup = deferred<SmartAppMarketplaceItem>()
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem)
+      .mockReturnValueOnce(firstLookup.promise)
+      .mockReturnValueOnce(secondLookup.promise)
+    vi.mocked(smartAppsApi.listMarketplace)
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [item()] })
+      .mockResolvedValue({ items: [] })
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'hit' },
+    })
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'miss' },
+    })
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2))
+
+    act(() => secondLookup.resolve(item()))
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+  })
+
+  test('retries a catalog target after its superseded lookup fails', async () => {
+    const firstLookup = deferred<SmartAppMarketplaceItem>()
+    const secondLookup = deferred<SmartAppMarketplaceItem>()
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem)
+      .mockReturnValueOnce(firstLookup.promise)
+      .mockReturnValueOnce(secondLookup.promise)
+      .mockResolvedValueOnce(item())
+    vi.mocked(smartAppsApi.listMarketplace)
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [item()] })
+      .mockResolvedValue({ items: [] })
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'hit' },
+    })
+    expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'miss' },
+    })
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2))
+    act(() => secondLookup.reject(new ApiError('temporary failure', 503, 'unavailable')))
+
+    fireEvent.click(await screen.findByTestId('smart-app-deep-link-retry'))
+
+    expect(await screen.findByTestId('smart-app-details')).toHaveTextContent('研究工作台')
+    expect(smartAppsApi.getItem).toHaveBeenCalledTimes(3)
+  })
+
+  test('ignores a pending download after the marketplace API changes', async () => {
+    const firstApi = api([item()])
+    let resolveDownload: (
+      value: Awaited<ReturnType<SmartAppsApi['getDownload']>>
+    ) => void = () => {}
+    vi.mocked(firstApi.getDownload).mockReturnValue(
+      new Promise(resolve => {
+        resolveDownload = resolve
+      })
+    )
+    const { rerender } = render(<SmartAppsMarketplacePage api={firstApi} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    await waitFor(() => expect(firstApi.getDownload).toHaveBeenCalledWith(7))
+    rerender(<SmartAppsMarketplacePage api={api([item()])} />)
+    act(() =>
+      resolveDownload({
+        smartAppId: 7,
+        releaseId: 17,
+        version: '1.2.0',
+        filename: 'research.zip',
+        downloadUrl: 'https://download.test/research.zip',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 1024,
+        expiresAt: '2026-08-20T00:10:00Z',
+      })
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
+    )
+  })
+
+  test('ignores an install continuation after the target changes', async () => {
+    let rejectInstall: (reason: Error) => void = () => {}
+    installPackage.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectInstall = reject
+      })
+    )
+    const smartAppsApi = api([item()])
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
+    await waitFor(() => expect(installPackage).toHaveBeenCalled())
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={99} />)
+    await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+
+    act(() => rejectInstall(new Error('stale install failure')))
+
+    await waitFor(() => expect(screen.queryByText('stale install failure')).not.toBeInTheDocument())
+    expect(screen.getByText('未找到此智能工作台，可能已下架或你没有访问权限。')).toBeInTheDocument()
   })
 })

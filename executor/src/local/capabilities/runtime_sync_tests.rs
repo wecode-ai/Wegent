@@ -3,6 +3,135 @@
 
 use super::*;
 
+#[test]
+fn runtime_comparison_normalizes_plugin_manifest_json_only() {
+    for relative in [
+        CODEX_PLUGIN_MANIFEST_PATH,
+        CLAUDE_PLUGIN_MANIFEST_PATH,
+        "config.json",
+        "nested/.codex-plugin/plugin.json",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let left = temp.path().join("left");
+        let right = temp.path().join("right");
+        let original = json!({"name":"demo","version":"1.0",
+            "metadata":{"z":1,"a":2},"skills":["first","second"]});
+        let mut canonical = original.clone();
+        canonical.sort_all_objects();
+        let before = serde_json::to_vec_pretty(&original).unwrap();
+        let after = serde_json::to_vec(&canonical).unwrap();
+        assert_ne!(before, after);
+        for (root, bytes) in [(&left, &before), (&right, &after)] {
+            fs::create_dir_all(root.join(relative).parent().unwrap()).unwrap();
+            fs::write(root.join(relative), bytes).unwrap();
+        }
+        let is_manifest =
+            [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH].contains(&relative);
+        assert_eq!(same_runtime_contents(&left, &right).unwrap(), is_manifest);
+        for (field, value) in [
+            ("name", json!("other")),
+            ("metadata", json!({"z":1,"a":3})),
+            ("skills", json!(["second", "first"])),
+        ] {
+            let mut changed = canonical.clone();
+            changed[field] = value;
+            fs::write(right.join(relative), serde_json::to_vec(&changed).unwrap()).unwrap();
+            assert!(!same_runtime_contents(&left, &right).unwrap(), "{field}");
+        }
+        assert_eq!(fs::read(left.join(relative)).unwrap(), before);
+    }
+}
+
+fn reverse_runtime_manifest_fields(store: &GlobalCapabilityStore) {
+    let manifest = store.manifest.load().unwrap();
+    let spec = checked_spec("demo@wegent", &manifest["plugins"]["demo@wegent"]).unwrap();
+    for (runtime, _) in store.plugin_runtime_targets(&spec) {
+        for relative in [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH] {
+            let path = runtime.join(relative);
+            let bytes = fs::read(&path).unwrap();
+            let original: Value = serde_json::from_slice(&bytes).unwrap();
+            let reversed: Map<String, Value> = original
+                .as_object()
+                .unwrap()
+                .iter()
+                .rev()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            assert_eq!(original, Value::Object(reversed.clone()));
+            let reordered = serde_json::to_vec_pretty(&reversed).unwrap();
+            assert_ne!(bytes, reordered);
+            fs::write(path, reordered).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn relocated_manifest_formatting_does_not_block_recovery_update_or_reinstall() {
+    for operation in ["recover", "sync", "update", "reinstall"] {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        let original = installed(&old, true).await;
+        reverse_runtime_manifest_fields(&original);
+        if operation == "reinstall" {
+            let handler = CapabilitySyncHandler::with_package_provider(
+                "",
+                original,
+                Packages(archive("demo")),
+            );
+            let result = handler
+                .apply_sync(json!({"scope":"plugins","plugins":[]}))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true, "{result}");
+        }
+        fs::rename(&old, &new).unwrap();
+        let store = store(&new, true);
+        if operation == "reinstall" {
+            // Startup rebases retained owners before an online reinstall.
+            let report = store.reconcile_managed_plugin_runtimes().unwrap();
+            assert!(report.failed.is_empty(), "{:?}", report.failed);
+            assert!(report.restored.is_empty());
+        }
+        if operation == "recover" {
+            let report = store.reconcile_managed_plugin_runtimes().unwrap();
+            assert!(report.failed.is_empty(), "{:?}", report.failed);
+            assert_eq!(report.restored, vec!["demo@wegent"]);
+        } else {
+            let package = archive_payload(
+                "demo",
+                if operation == "update" {
+                    "updated"
+                } else {
+                    "plugin capability"
+                },
+            );
+            let handler =
+                CapabilitySyncHandler::with_package_provider("", store.clone(), Packages(package));
+            let result = handler
+                .apply_sync(merge_plugin_payload("demo"))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true, "{operation}: {result}");
+        }
+        let manifest = store.manifest.load().unwrap();
+        let entry = &manifest["plugins"]["demo@wegent"];
+        assert_eq!(entry["installed_plugin_id"], 41);
+        assert!(entry.get("runtime_recovery_error").is_none());
+        let runtime = Path::new(entry["runtime"]["codex_link"].as_str().unwrap());
+        assert!(runtime.starts_with(&new));
+        assert_eq!(
+            fs::read_to_string(runtime.join("skills/demo/SKILL.md")).unwrap(),
+            if operation == "update" {
+                "updated"
+            } else {
+                "plugin capability"
+            }
+        );
+        assert!(!old.exists());
+    }
+}
+
 fn merge_plugin_payload(name: &str) -> Value {
     let mut request = payload(name);
     request.as_object_mut().unwrap().remove("scope");

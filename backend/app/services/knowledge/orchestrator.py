@@ -1836,10 +1836,11 @@ class KnowledgeOrchestrator:
         has_refresh_snapshot = (
             get_external_refresh_snapshot(document, generation) is not None
         )
+        attachment_name = content.name if content.name.strip() else document.name
         attachment, _ = context_service.upload_attachment(
             db=db,
             user_id=owner_user_id,
-            filename=_build_filename(content.name, content.file_extension),
+            filename=_build_filename(attachment_name, content.file_extension),
             binary_data=content.content,
             subtask_id=0,
             lifecycle_owner=(

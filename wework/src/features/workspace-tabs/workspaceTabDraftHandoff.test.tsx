@@ -115,6 +115,7 @@ test('applies returned drafts to an existing owner before acknowledgment without
   stage(other.id, { 'blank:0': 'other draft' })
   mount()
   fireEvent.click(screen.getByTestId('count-handoff'))
+  const initialRevision = Number(screen.getByTestId('revision-handoff').textContent)
   const input = screen.getByTestId('draft-handoff')
   const acknowledgmentValues: string[] = []
   const remove = localStorage.removeItem.bind(localStorage)
@@ -131,7 +132,7 @@ test('applies returned drafts to an existing owner before acknowledgment without
   expect(screen.getByTestId('draft-handoff')).toBe(input)
   expect(screen.getByTestId('count-handoff')).toHaveTextContent('1')
   expect(mounted.mock.calls.filter(([id]) => id === target.id)).toHaveLength(1)
-  expect(screen.getByTestId('revision-handoff')).toHaveTextContent('1')
+  expect(screen.getByTestId('revision-handoff').textContent).toBe(String(initialRevision + 1))
   expect(screen.getByTestId('scopes-handoff').textContent).toBe('blank:0')
   expect(screen.getByTestId('draft-other')).toHaveValue('other draft')
 })

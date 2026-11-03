@@ -98,6 +98,51 @@ test("a focused diagnostic is limited to a non-publishing replay", () => {
   );
 });
 
+test("a refresh diagnostic resolves a separate immutable source without publishing an edge", () => {
+  const value = fixture();
+  Object.assign(value.environment, {
+    REPLAY: "false",
+    VERIFICATION_CHECKPOINT: "app-update-refresh",
+    VERIFICATION_SOURCE_RUN_ID: "124",
+  });
+  const execute = (command, args) => {
+    const result = value.execute(command, args);
+    return args.at(-1).includes("/runs/124/")
+      ? result.replaceAll("0.6.4-beta.4", "0.6.4-beta.3")
+      : result;
+  };
+  assert.deepEqual(resolveUpgradeInputs(value.environment, execute), {
+    run_id: "123",
+    version: "0.6.4-beta.4",
+    channel: "beta",
+    release_tag: "wework-v0.6.4-beta.4",
+    verification_sha: "a".repeat(40),
+    diagnostic_checkpoint: "app-update-refresh",
+    published_release_tag: "",
+    source_run_id: "124",
+    source_version: "0.6.4-beta.3",
+  });
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, value.execute),
+    /must be newer/,
+  );
+  for (const change of [
+    { VERIFICATION_SOURCE_RUN_ID: "" },
+    { PUBLISH_RELEASE: "true" },
+    { VERIFICATION_CHECKPOINT: "all" },
+    { VERIFICATION_SOURCE_RUN_ID: "../124" },
+  ]) {
+    assert.throws(() =>
+      resolveUpgradeInputs({ ...value.environment, ...change }, execute),
+    );
+  }
+  value.jobs[0].conclusion = "failure";
+  assert.throws(
+    () => resolveUpgradeInputs(value.environment, execute),
+    /producer did not succeed/,
+  );
+});
+
 test("rejects publication, invalid provenance, failed producers, and incomplete artifacts", () => {
   const cases = [
     (value) => {

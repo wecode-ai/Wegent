@@ -1,28 +1,30 @@
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
-  WORKSPACE_TAB_RECEIVED_EVENT,
+  WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useScopedDraftInput } from './useScopedDraftInput'
 
-export function useWorkspaceTabDraftInput(tabId?: string) {
-  const draft = useScopedDraftInput(() =>
-    tabId ? (consumeWorkspaceTabTransfer(tabId)?.draftInputByScope ?? {}) : {}
-  )
-  const { replaceInputs } = draft
-  useEffect(() => {
-    if (!tabId) return
-    const receive = (event: Event) => {
-      if ((event as CustomEvent<{ tabId: string }>).detail?.tabId !== tabId) return
-      const transfer = consumeWorkspaceTabTransfer(tabId)
+export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
+  const draft = useScopedDraftInput(() => ({}))
+  const { inputs, replaceInputs } = draft
+  useLayoutEffect(() => {
+    if (!workspaceTabId) return
+    const restore = () => {
+      const transfer = consumeWorkspaceTabTransfer(workspaceTabId)
       if (transfer) replaceInputs(transfer.draftInputByScope)
     }
-    window.addEventListener(WORKSPACE_TAB_RECEIVED_EVENT, receive)
-    return () => window.removeEventListener(WORKSPACE_TAB_RECEIVED_EVENT, receive)
-  }, [replaceInputs, tabId])
-  useEffect(() => {
-    if (tabId) publishWorkspaceTabTransferState(tabId, { draftInputByScope: draft.inputs })
-  }, [draft.inputs, tabId])
+    const accept = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === workspaceTabId) restore()
+    }
+    restore()
+    window.addEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
+    return () => window.removeEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
+  }, [replaceInputs, workspaceTabId])
+  useLayoutEffect(() => {
+    if (!workspaceTabId) return
+    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope: inputs })
+  }, [inputs, workspaceTabId])
   return draft
 }
