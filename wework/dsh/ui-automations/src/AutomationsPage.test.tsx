@@ -33,6 +33,7 @@ let automationDetailProps: {
   draft: AutomationDraft
   devices: DeviceInfo[]
   cloudAvailable: boolean
+  onChange: (key: string, value: string) => void
   onClose: () => void
   onSave: () => void
   onSourceChange: (source: 'local' | 'cloud') => void
@@ -100,6 +101,13 @@ vi.mock('@/features/automations/AutomationDetailWorkspace', () => ({
     automationDetailProps = props
     return (
       <section data-testid="automation-detail-panel">
+        <button
+          type="button"
+          data-testid="automation-test-edit"
+          onClick={() => props.onChange('prompt', 'Unsaved arrangement')}
+        >
+          Edit
+        </button>
         <button type="button" data-testid="automation-detail-close" onClick={props.onClose}>
           Close
         </button>
@@ -120,6 +128,24 @@ describe('AutomationsPage', () => {
     workbenchMock.state.devices = []
     desktopSidebarProps = null
     automationDetailProps = null
+  })
+
+  test('protects arrangement drafts when creating, selecting or closing details', async () => {
+    render(<AutomationsPage embedded />)
+    await screen.findByTestId('automation-test-edit')
+    fireEvent.click(screen.getByTestId('automation-test-edit'))
+    fireEvent.click(screen.getByTestId('create-automation-button'))
+    expect(screen.getByTestId('automation-discard')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automation-keep-editing'))
+    expect(automationDetailProps?.draft.prompt).toBe('Unsaved arrangement')
+    fireEvent.click(screen.getByTestId(`automation-open-${automation.id}`))
+    expect(screen.getByTestId('automation-discard')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automation-keep-editing'))
+    fireEvent.click(screen.getByTestId('automation-detail-close'))
+    expect(screen.getByTestId('automation-discard')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automation-discard'))
+    expect(screen.queryByTestId('automation-detail-panel')).not.toBeInTheDocument()
+    expect(automationApi.updateAutomation).not.toHaveBeenCalled()
   })
 
   test('keeps runtime task pinning available from the automations route sidebar', async () => {

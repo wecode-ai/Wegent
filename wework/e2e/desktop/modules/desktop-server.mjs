@@ -320,6 +320,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getElementCount',
   'getLocalExecutorStatus',
   'getLocalStorageItem',
+  'waitForDesktopHostEvents',
   'getLocationOrigin',
   'getPluginSyncDiagnostics',
   'getTerminalText',

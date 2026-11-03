@@ -29,6 +29,7 @@ use super::{
 
 pub(crate) use super::remote_projects::CodexGlobalRemoteProject;
 
+mod diagnostics;
 mod migration;
 pub use migration::run_project_state_query;
 
@@ -195,7 +196,14 @@ impl CodexGlobalProjectIndex {
     }
 
     pub fn load() -> Self {
-        flush_or_watch_codex_global_state_oplog();
+        let _stage = diagnostics::Stage::start("load");
+        // Reads overlay durable pending records without waiting for the GUI probe.
+        // Explicit force-flush mode retains its synchronous write contract.
+        if env::var_os("WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH").is_some() {
+            flush_or_watch_codex_global_state_oplog();
+        } else {
+            start_codex_global_state_oplog_flush_watcher();
+        }
         cached_codex_global_project_index()
     }
 
@@ -556,6 +564,8 @@ pub(crate) fn register_codex_global_thread_workspace_root(
         return Ok(None);
     }
 
+    // Keep the existing write-side flush ordering before updating official state.
+    flush_or_watch_codex_global_state_oplog();
     let project_index = CodexGlobalProjectIndex::load();
     // Only a newly created thread can replace a stale projectless marker.
     if !is_new_thread && project_index.is_projectless_thread(thread_id) {
@@ -710,8 +720,7 @@ fn append_codex_global_state_op_record(record: &CodexGlobalStateOplogRecord) -> 
     }
     let line = serde_json::to_string(&record)
         .map_err(|error| format!("failed to serialize Codex state oplog record: {error}"))?;
-    let _guard = codex_global_state_oplog_io_lock()
-        .lock()
+    let _guard = diagnostics::trace("oplog_lock", || codex_global_state_oplog_io_lock().lock())
         .map_err(|_| "failed to lock Codex state oplog".to_owned())?;
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -724,6 +733,7 @@ fn append_codex_global_state_op_record(record: &CodexGlobalStateOplogRecord) -> 
 }
 
 fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
+    let _stage = diagnostics::Stage::start("flush_if_idle");
     let oplog_path = codex_global_state_oplog_path();
     if !oplog_path.exists() {
         return Ok(false);
@@ -731,10 +741,9 @@ fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
     if !codex_global_state_oplog_should_flush() {
         return Ok(false);
     }
-    let _guard = codex_global_state_oplog_io_lock()
-        .lock()
+    let _guard = diagnostics::trace("oplog_lock", || codex_global_state_oplog_io_lock().lock())
         .map_err(|_| "failed to lock Codex state oplog".to_owned())?;
-    let ops = read_codex_global_state_oplog_unlocked();
+    let ops = read_codex_global_state_oplog_unlocked(&oplog_path);
     if ops.is_empty() {
         let _ = fs::remove_file(oplog_path);
         return Ok(false);
@@ -750,6 +759,7 @@ fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
 }
 
 fn flush_or_watch_codex_global_state_oplog() {
+    let _stage = diagnostics::Stage::start("flush_or_watch");
     if !codex_global_state_oplog_has_content() {
         return;
     }
@@ -800,6 +810,7 @@ fn codex_global_state_oplog_io_lock() -> &'static Mutex<()> {
 }
 
 fn codex_global_state_oplog_should_flush() -> bool {
+    let _stage = diagnostics::Stage::start("should_flush");
     if codex_global_state_oplog_flush_disabled() {
         return false;
     }
@@ -813,15 +824,9 @@ fn codex_global_state_oplog_flush_disabled() -> bool {
     env::var_os("WEGENT_DISABLE_CODEX_GLOBAL_STATE_OPLOG_FLUSH").is_some()
 }
 
-fn read_codex_global_state_oplog() -> Vec<CodexGlobalStateOplogRecord> {
-    let Ok(_guard) = codex_global_state_oplog_io_lock().lock() else {
-        return Vec::new();
-    };
-    read_codex_global_state_oplog_unlocked()
-}
-
-fn read_codex_global_state_oplog_unlocked() -> Vec<CodexGlobalStateOplogRecord> {
-    let Ok(content) = fs::read_to_string(codex_global_state_oplog_path()) else {
+fn read_codex_global_state_oplog_unlocked(path: &Path) -> Vec<CodexGlobalStateOplogRecord> {
+    let _stage = diagnostics::Stage::start("oplog_read_parse");
+    let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
     content
@@ -997,8 +1002,10 @@ fn apply_codex_global_state_ops(
 }
 
 fn cached_codex_global_project_index() -> CodexGlobalProjectIndex {
+    let _stage = diagnostics::Stage::start("cached_index");
     let signature = codex_global_project_source_signature();
-    if let Ok(cache) = codex_global_project_cache().read() {
+    if let Ok(cache) = diagnostics::trace("cache_read_lock", || codex_global_project_cache().read())
+    {
         if cache.signature.as_ref() == Some(&signature) {
             return cache.index.clone();
         }
@@ -1014,7 +1021,9 @@ fn refresh_codex_global_project_cache_with_signature(
     signature: CodexGlobalProjectSourceSignature,
 ) -> CodexGlobalProjectIndex {
     let index = build_codex_global_project_index_from_files();
-    if let Ok(mut cache) = codex_global_project_cache().write() {
+    if let Ok(mut cache) =
+        diagnostics::trace("cache_write_lock", || codex_global_project_cache().write())
+    {
         cache.signature = Some(signature);
         cache.index = index.clone();
     }
@@ -1022,8 +1031,11 @@ fn refresh_codex_global_project_cache_with_signature(
 }
 
 fn build_codex_global_project_index_from_files() -> CodexGlobalProjectIndex {
-    let payload = load_codex_global_state();
-    let pending_ops = read_codex_global_state_oplog();
+    let _stage = diagnostics::Stage::start("build_index");
+    let (payload, pending_ops) = read_codex_global_project_snapshot(
+        &codex_global_state_path(),
+        &codex_global_state_oplog_path(),
+    );
     match (payload, pending_ops.is_empty()) {
         (Some(mut payload), false) => {
             apply_codex_global_state_ops(&mut payload, &pending_ops);
@@ -1045,6 +1057,7 @@ fn codex_global_project_cache() -> &'static RwLock<CodexGlobalProjectCache> {
 }
 
 fn codex_global_project_source_signature() -> CodexGlobalProjectSourceSignature {
+    let _stage = diagnostics::Stage::start("source_signature");
     let state_path = codex_global_state_path();
     let (state_modified, state_len) = file_source_signature(&state_path);
     let oplog_path = codex_global_state_oplog_path();
@@ -1066,8 +1079,22 @@ fn file_source_signature(path: &Path) -> (Option<SystemTime>, Option<u64>) {
         .unwrap_or((None, None))
 }
 
-fn load_codex_global_state() -> Option<Map<String, Value>> {
-    read_state_payload(&codex_global_state_path())
+fn read_codex_global_project_snapshot(
+    state_path: &Path,
+    oplog_path: &Path,
+) -> (Option<Map<String, Value>>, Vec<CodexGlobalStateOplogRecord>) {
+    // The watcher replaces state and removes the log under this same lock.
+    // Read both before releasing it, then apply records and build outside it.
+    let guard = diagnostics::trace("snapshot_oplog_lock", || {
+        codex_global_state_oplog_io_lock().lock()
+    });
+    let payload = read_state_payload(state_path);
+    let pending = if guard.is_ok() {
+        read_codex_global_state_oplog_unlocked(oplog_path)
+    } else {
+        Vec::new()
+    };
+    (payload, pending)
 }
 
 fn codex_global_state_path() -> PathBuf {
@@ -1086,8 +1113,8 @@ fn codex_home() -> PathBuf {
 }
 
 fn read_state_payload(path: &Path) -> Option<Map<String, Value>> {
-    let content = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Value>(&content)
+    let content = diagnostics::trace("state_read", || fs::read_to_string(path)).ok()?;
+    diagnostics::trace("state_parse", || serde_json::from_str::<Value>(&content))
         .ok()
         .and_then(|value| value.as_object().cloned())
 }
@@ -1105,16 +1132,18 @@ fn write_state_payload(path: &Path, payload: &Map<String, Value>) -> Result<(), 
         .write(true)
         .open(&temporary_path)
         .map_err(|error| format!("failed to create Codex global state temp file: {error}"))?;
-    file.write_all(&content)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("failed to flush Codex global state temp file: {error}"))?;
-    fs::rename(&temporary_path, path).map_err(|error| {
+    diagnostics::trace("state_write_sync", || {
+        file.write_all(&content).and_then(|_| file.sync_all())
+    })
+    .map_err(|error| format!("failed to flush Codex global state temp file: {error}"))?;
+    diagnostics::trace("state_rename", || fs::rename(&temporary_path, path)).map_err(|error| {
         let _ = fs::remove_file(&temporary_path);
         format!("failed to replace Codex global state: {error}")
     })
 }
 
 fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
+    let _stage = diagnostics::Stage::start("index_payload");
     let mut candidates = HashMap::<String, CodexGlobalProject>::new();
     let pinned_project_ids = text_list(payload.get(PINNED_PROJECT_IDS_KEY));
     let active_workspace_roots = normalized_text_list(payload.get(ACTIVE_WORKSPACE_ROOTS_KEY));
@@ -1867,6 +1896,7 @@ fn normalize_path_or_raw(value: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn codex_app_is_running() -> bool {
+    let _stage = diagnostics::Stage::start("codex_gui_probe");
     Command::new("ps")
         .args(codex_app_running_probe_args())
         .stdout(Stdio::piped())
@@ -2465,3 +2495,7 @@ mod tests {
         assert!(payload["thread-project-assignments"]["t1"].is_null());
     }
 }
+
+#[cfg(test)]
+#[path = "codex_global_state/index_snapshot_tests.rs"]
+mod index_snapshot_tests;

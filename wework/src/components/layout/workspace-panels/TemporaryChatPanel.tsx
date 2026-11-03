@@ -300,7 +300,17 @@ export function TemporaryChatPanel({
   const busy = sending || paneStatus.isBusy
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
+  const draftEditVersionRef = useRef(0)
+  const autoSubmissionScopeRef = useRef<{ active: boolean } | null>(null)
   const retryInFlightRef = useRef(false)
+
+  useEffect(() => {
+    const scope = { active: true }
+    autoSubmissionScopeRef.current = scope
+    return () => {
+      scope.active = false
+    }
+  }, [instanceId, initialAddress?.deviceId, initialAddress?.taskId])
 
   useEffect(() => {
     conversationQueue.reconcileGuidance(
@@ -585,7 +595,6 @@ export function TemporaryChatPanel({
       const attachments = localRuntimeAttachments(currentAttachments)
       const handleError = (errorMessage: string) => {
         setError(errorMessage)
-        setInput(current => current || message)
         setSending(false)
       }
 
@@ -629,7 +638,6 @@ export function TemporaryChatPanel({
               })
             : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
         )
-        setInput(current => current || message)
         updateAddress(null)
         setSending(false)
         return false
@@ -731,7 +739,18 @@ export function TemporaryChatPanel({
     const timeoutId = window.setTimeout(() => {
       if (autoSubmittedInitialInputRef.current) return
       autoSubmittedInitialInputRef.current = true
-      void send(initialInput)
+      const submittedEditVersion = draftEditVersionRef.current
+      const submissionScope = autoSubmissionScopeRef.current
+      const restoreInitialDraft = () => {
+        if (!submissionScope?.active) return
+        setSending(false)
+        if (draftEditVersionRef.current !== submittedEditVersion) return
+        setInput(initialInput.trim())
+        setReplaceDraftKey(current => current + 1)
+      }
+      void send(initialInput).then(accepted => {
+        if (!accepted) restoreInitialDraft()
+      }, restoreInitialDraft)
     }, 0)
     return () => window.clearTimeout(timeoutId)
   }, [autoSubmitInitialInput, initialInput, send, taskModelIdentityPending])
@@ -745,6 +764,7 @@ export function TemporaryChatPanel({
     (id: string) => {
       const message = conversationQueue.take(id)
       if (!message) return
+      draftEditVersionRef.current += 1
       setInput(message.content)
       setReplaceDraftKey(current => current + 1)
       sideChatProjectChat.resetAttachments()
@@ -896,8 +916,14 @@ export function TemporaryChatPanel({
                   predictionAddress={address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
-                  onChange={setInput}
-                  onDraftEdit={() => setError(null)}
+                  onChange={value => {
+                    setInput(value)
+                    return { appliedSynchronously: true }
+                  }}
+                  onDraftEdit={() => {
+                    draftEditVersionRef.current += 1
+                    setError(null)
+                  }}
                   onSubmit={send}
                   disabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}

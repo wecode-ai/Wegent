@@ -171,6 +171,7 @@ mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
 mod mcp;
+mod project_coordination;
 pub mod task_store_background;
 pub mod task_store_maintenance;
 

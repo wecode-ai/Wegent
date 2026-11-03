@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useConversationFind } from '@/components/chat/useConversationFind'
 import { getPlatform } from '@/lib/platform'
@@ -147,6 +147,123 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('explicit composer draft replacement', () => {
+  test('marks repeated same-value replacements without marking ordinary publications', async () => {
+    const { result } = await renderSession()
+    const initialKey = result.current.replaceDraftKey
+    act(() => result.current.setInput(draft))
+    act(() => result.current.onDraftEdit())
+    expect(result.current.replaceDraftKey).toBe(initialKey)
+
+    act(() => result.current.replaceInput(draft))
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    act(() => result.current.replaceInput(draft))
+    expect(result.current.replaceDraftKey).toBe(initialKey + 2)
+  })
+
+  test('marks editing a queued message even when its content matches the current draft', async () => {
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuedMessages(address, [
+      { id: 'queued-draft', content: draft, status: 'queued', createdAt: '2026-10-19T00:00:00Z' },
+    ])
+    const { result } = await renderSession()
+    const initialKey = result.current.replaceDraftKey
+
+    act(() => result.current.editQueuedMessage('queued-draft'))
+
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    expect(result.current.queuedMessages).toEqual([])
+  })
+
+  test('marks editing the current goal even when its objective matches the current draft', async () => {
+    const goal: RuntimeGoal = {
+      threadId: address.threadId,
+      objective: draft,
+      status: 'paused',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    mocks.context.getRuntimeGoal = vi.fn().mockResolvedValue({ accepted: true, goal })
+    const { result } = await renderSession()
+    await waitFor(() => expect(result.current.goal?.objective).toBe(draft))
+    const initialKey = result.current.replaceDraftKey
+
+    act(() => result.current.editCurrentGoal())
+
+    expect(result.current.input).toBe(draft)
+    expect(result.current.replaceDraftKey).toBe(initialKey + 1)
+    expect(result.current.goalDraftActive).toBe(true)
+  })
+
+  test('keeps an earlier scope replacement from marking the active composer', async () => {
+    const { result, rerender } = await renderSession()
+    const replaceEarlierScope = result.current.replaceInput
+    rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+    const activeKey = result.current.replaceDraftKey
+
+    act(() => replaceEarlierScope('Restored earlier scope'))
+
+    expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(scopeKey, 'Restored earlier scope')
+    expect(result.current.replaceDraftKey).toBe(activeKey)
+    expect(result.current.input).toBe('')
+    rerender({ currentRuntimeTask: address })
+    expect(result.current.input).toBe('Restored earlier scope')
+  })
+
+  test.each(['none', 'unpublished', 'scope'] as const)(
+    'restores a failed queued interrupt only while it owns the draft (change=%s)',
+    async change => {
+      cacheRuntimeConversationQueuePaused(address, true)
+      cacheRuntimeConversationQueuedMessages(address, [
+        {
+          id: 'queued-interrupt',
+          content: 'Queued message',
+          status: 'queued',
+          createdAt: '2026-10-19T00:00:00Z',
+        },
+      ])
+      const projectChat = mocks.context.projectChat as Record<string, unknown>
+      projectChat.addExistingAttachmentForScope = vi.fn()
+      let finishInterrupt!: (accepted: boolean) => void
+      const interrupt = vi.fn(() => new Promise<boolean>(resolve => (finishInterrupt = resolve)))
+      mocks.context.interruptAndSendRuntimePaneMessage = interrupt
+      const { result, rerender } = await renderSession()
+      let interruption!: Promise<void>
+      act(() => {
+        interruption = result.current.interruptAndSendQueued('queued-interrupt')
+      })
+      await waitFor(() => expect(interrupt).toHaveBeenCalledOnce())
+      if (change === 'unpublished') act(() => result.current.onDraftEdit())
+      if (change === 'scope') {
+        rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+      }
+      const replacementKey = result.current.replaceDraftKey
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        finishInterrupt(false)
+        await interruption
+      })
+
+      if (change === 'none') {
+        expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(
+          scopeKey,
+          `Queued message\n\n${draft}`
+        )
+        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+      } else {
+        expect(mocks.setInput).not.toHaveBeenCalled()
+        expect(result.current.replaceDraftKey).toBe(replacementKey)
+      }
+    }
+  )
+})
 
 describe('composer draft ownership during delayed send acknowledgment', () => {
   test.each([false, true])(
@@ -371,6 +488,35 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
+  test.each(['preparation', 'send'] as const)(
+    'does not force a failed draft over an unpublished edit during %s',
+    async timing => {
+      let rejectSend!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () => new Promise<boolean>(resolve => (rejectSend = resolve))
+      )
+      const { result } = await renderSession(null)
+      const draftEditVersion = result.current.getDraftEditVersion()
+      if (timing === 'preparation') act(() => result.current.onDraftEdit())
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft, { draftEditVersion })
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      if (timing === 'send') act(() => result.current.onDraftEdit())
+      const replacementKey = result.current.replaceDraftKey
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        rejectSend(false)
+        expect(await submission).toBe(false)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+      expect(result.current.replaceDraftKey).toBe(replacementKey)
+    }
+  )
+
   test.each([true, false])(
     'restores a rejected new goal only without newer edits (edited=%s)',
     async edited => {
@@ -394,13 +540,19 @@ describe('composer draft during an in-flight send', () => {
       })
       await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
       if (edited) act(() => result.current.setInput('Next goal draft'))
+      const replacementKey = result.current.replaceDraftKey
       mocks.setInput.mockClear()
       await act(async () => {
         rejectGoal(false)
         expect(await submission).toBe(false)
       })
-      if (edited) expect(mocks.setInput).not.toHaveBeenCalled()
-      else expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+      if (edited) {
+        expect(mocks.setInput).not.toHaveBeenCalled()
+        expect(result.current.replaceDraftKey).toBe(replacementKey)
+      } else {
+        expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+      }
     }
   )
 

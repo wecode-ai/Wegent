@@ -441,3 +441,74 @@ async fn native_approval_expiry_clears_only_its_waiter_and_updates_the_visible_c
     ));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn native_timeline_running_identity_survives_before_transcript_buffer_initializes() {
+    for completed in [false, true] {
+        let (mut handler, root) = native_handler(if completed {
+            "running-boundary"
+        } else {
+            "running-before-buffer"
+        });
+        let execution_id = start_test_execution(&handler, "task-1");
+        handler.record_active_codex_turn(
+            "task-1",
+            execution_id,
+            "thread-1".into(),
+            "current".into(),
+        );
+        handler.apply_native_lifecycle("task-1", &ExecutionRequest::default(), &json!({
+            "method":"turn/started", "params":{"threadId":"thread-1", "turn":{"id":"current","status":"inProgress"}}
+        }).into());
+        assert_eq!(
+            handler
+                .local_task_link("task-1")
+                .unwrap()
+                .execution_state
+                .unwrap()
+                .phase,
+            crate::runtime_work::lifecycle::NativeExecutionPhase::Running
+        );
+        assert!(handler
+            .active_codex_transcript_items
+            .lock()
+            .unwrap()
+            .is_empty());
+        fs::write(
+            root.join("thread_turns_list.json"),
+            json!({"data":[
+                {"id":"current","status":"interrupted","items":[]}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let mut events = vec![
+            json!({"type":"turnStarted","position":1,"turnId":"current"}),
+            json!({"type":"item","position":2,"turnId":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }}),
+        ];
+        if completed {
+            events.push(json!({"type":"turnCompleted","position":3,"turnId":"current","status":"interrupted"}));
+        }
+        fs::write(
+            root.join("thread_timeline_list.json"),
+            json!({"data":events,"nextCursor":null}).to_string(),
+        )
+        .unwrap();
+        let response = read_and_stop(&mut handler).await.unwrap();
+        assert_eq!(
+            response["turns"][0]["status"],
+            if completed { "cancelled" } else { "streaming" }
+        );
+        if !completed {
+            assert_eq!(response["running"], true);
+            assert!(response["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|message| message["stoppedNotice"] != true));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
