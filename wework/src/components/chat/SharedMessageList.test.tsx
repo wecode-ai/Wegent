@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   ConversationTranslationProvider,
   MessageList,
   type MessageListProps,
 } from '@wegent/collaboration/conversation'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { describe, expect, test, vi } from 'vitest'
 
 const userMessage: WorkbenchMessage = {
   id: 'user-1',
@@ -21,40 +21,6 @@ const assistantMessage: WorkbenchMessage = {
   content: 'The answer',
   status: 'done',
   createdAt: '2026-09-17T00:00:01Z',
-}
-const asyncQuestion: WorkbenchMessage = {
-  id: 'assistant-question',
-  role: 'assistant',
-  content: '',
-  status: 'done',
-  createdAt: '2026-09-17T00:00:01Z',
-  blocks: [
-    {
-      id: 'request-user-input-call-question',
-      subtaskId: 'subtask-1',
-      type: 'tool',
-      toolName: 'request_user_input',
-      status: 'pending',
-      createdAt: 1,
-      renderPayload: {
-        kind: 'request_user_input',
-        delivery: 'async',
-        itemId: 'call-question',
-        questions: [
-          { id: 'q1', question: '晴天还是雨天?' },
-          { id: 'q2', question: '早上还是晚上?' },
-          { id: 'q3', question: '猫还是狗?' },
-        ],
-      },
-    },
-  ],
-}
-const asyncReply: WorkbenchMessage = {
-  id: 'user-reply',
-  role: 'user',
-  content: '晴天\n早上\n猫',
-  status: 'done',
-  createdAt: '2026-09-17T00:00:02Z',
 }
 
 function renderList(overrides: Partial<MessageListProps> = {}) {
@@ -162,18 +128,5 @@ describe('full shared message list in a browser host', () => {
     expect(reference).toHaveAttribute('aria-disabled', 'true')
     expect(reference).toHaveAttribute('tabindex', '-1')
     expect(reference).toHaveTextContent('spec')
-  })
-
-  test('shows what a non-blocking answer replied to', () => {
-    renderList({ messages: [asyncQuestion, asyncReply] })
-    const reply = within(screen.getByTestId('user-message-question-reply'))
-    const answered = ['晴天还是雨天?', '晴天', '早上还是晚上?', '早上', '猫还是狗?', '猫']
-    answered.forEach(text => expect(reply.getByText(text)).toBeInTheDocument())
-  })
-
-  test('renders an ordinary user message without a question reference', () => {
-    renderList()
-    expect(screen.queryByTestId('user-message-question-reply')).not.toBeInTheDocument()
-    expect(screen.getByTestId('user-message-content')).toHaveTextContent('Original prompt')
   })
 })

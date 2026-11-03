@@ -1,3 +1,4 @@
+import type { RuntimeTaskAddress } from '@/types/api'
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   peekGenerationOutcome,
@@ -5,7 +6,6 @@ import {
   resetGenerationOutcomesForTests,
   takeGenerationOutcome,
 } from './runtimeGenerationOutcome'
-import type { RuntimeTaskAddress } from '@/types/api'
 
 const address: RuntimeTaskAddress = { deviceId: 'local-device', taskId: 'task-42' }
 

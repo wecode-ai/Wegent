@@ -40,6 +40,30 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
   })
 
+  test('preserves the fixed pending inbox when starting on another auxiliary page', () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app')
+    const pendingTab = {
+      id: 'pending-interactions',
+      kind: 'auxiliary' as const,
+      title: '待你处理',
+      contentRoute: '/pending-interactions',
+      fixed: true,
+    }
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        fixedTabs={[pendingTab]}
+        restoreSessionTabs={false}
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    expect(current.tabs.find(tab => tab.id === pendingTab.id)).toEqual(pendingTab)
+    expect(current.activeTab.contentRoute).toBe('/sites?app_type=smart_app')
+    expect(current.activeTabId).not.toBe(pendingTab.id)
+  })
+
   test.each([true, false])(
     'opens plugin routes in a task tab and preserves collaboration (task exists: %s)',
     async hasTask => {
