@@ -132,15 +132,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         )
       }
       await captureScreenshot(control, 'template-agents-02-ready-without-selection.png', CONTENT)
-      await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1024, height: 800 }),
+      const originalWindowSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1024, height: 720 }),
       })
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 6 个智能体',
       })
       await captureScreenshot(control, 'template-agents-02b-narrow-confirmation.png', CONTENT)
       await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1728, height: 1080 }),
+        value: originalWindowSize,
       })
       await control.command('click', selector('template-customize-main'))
       await control.command('waitFor', selector('template-role-main-role-0'), { visible: true })
