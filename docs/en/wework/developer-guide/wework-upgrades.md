@@ -158,6 +158,8 @@ Physical host and runtime extraction share an isolated child process. Windows us
 
 Installed-source prerequisites reuse the shared runner's runtime installer. It verifies size and SHA-256 from the original package, installs immutable cache content, and then invokes the source's shipped entry to prepare components and mutable profiles. Cache installation counts toward verification time. Historical packages, signatures, and entry points remain intact, and targets receive no warmed cache. Core/Workbench roles sharing a fingerprint extract once while validating both role identities.
 
+When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
+
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall

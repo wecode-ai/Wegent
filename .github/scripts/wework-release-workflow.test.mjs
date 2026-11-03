@@ -18,6 +18,16 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("build-only inputs cannot publish or start the serial upgrade verifier", () => {
+  assert.match(jobs["prepare-upgrade-inputs"].if, /!inputs.build_only/);
+  assert.match(jobs.publish.if, /!inputs.build_only/);
+  const rejection = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing unverified diagnostic inputs",
+  );
+  assert.equal(rejection.if, "inputs.build_only && inputs.publish_release");
+  assert.match(rejection.run, /exit 1/);
+});
+
 test("Intel ticket delivery uses the provider-confirmed TCP transport fix without bypassing notarization", () => {
   const steps = jobs.build.steps;
   const transport = steps.findIndex(

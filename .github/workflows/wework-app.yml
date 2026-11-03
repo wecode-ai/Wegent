@@ -25,6 +25,11 @@ on:
         type: string
         required: false
         default: ""
+      build_only:
+        description: "Build immutable diagnostic inputs without running upgrade verification or publishing"
+        type: boolean
+        required: false
+        default: false
       verification_checkpoint:
         description: "Diagnostic replay only: run one checkpoint without producing upgrade evidence"
         type: choice
@@ -92,6 +97,11 @@ jobs:
       componentized_host_update: ${{ steps.current-channel.outputs.componentized_host_update }}
 
     steps:
+      - name: Reject publishing unverified diagnostic inputs
+        if: inputs.build_only && inputs.publish_release
+        run: |
+          echo 'Build-only diagnostics cannot publish a release' >&2
+          exit 1
       - name: Create release app token
         id: release-app-token
         uses: actions/create-github-app-token@v3
@@ -475,7 +485,7 @@ jobs:
   prepare-upgrade-inputs:
     name: Resolve immutable upgrade inputs
     needs: [prepare-release, build]
-    if: ${{ !cancelled() && inputs.verification_checkpoint != 'runtime-extraction' && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.build_only && inputs.verification_checkpoint != 'runtime-extraction' && (inputs.verification_run_id != '' || inputs.verification_checkpoint != 'all' || inputs.verification_release_tag != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -592,7 +602,7 @@ jobs:
       - build
       - verify-upgrades
     runs-on: ubuntu-latest
-    if: needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none'
+    if: ${{ !inputs.build_only && needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none' }}
 
     steps:
       - name: Create release app token
