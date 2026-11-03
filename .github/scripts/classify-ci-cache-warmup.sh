@@ -22,6 +22,10 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    .github/scripts/verified-build-oci.mjs)
+      changed[node]=true
+      changed[wework_target]=true
+      ;;
     .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \
       .github/scripts/restore-frontend-ci-build.mjs | \
       .github/scripts/archive-frontend-e2e-build.sh | .github/scripts/restore-frontend-e2e-build.sh)
@@ -44,6 +48,8 @@ classify_path() {
       .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | \
       .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
       .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
       .github/scripts/resolve-backend-rs-e2e-runtime.sh | \

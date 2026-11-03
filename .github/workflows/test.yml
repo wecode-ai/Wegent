@@ -106,7 +106,7 @@ jobs:
           set -euo pipefail
           mkdir -p ../.ci-artifacts/backend-tests
           read -r -a guard_tests <<< "$BACKEND_GUARD_TESTS"
-          uv run pytest "${guard_tests[@]}" -n 0 --cov=app --cov-report= \
+          uv run pytest "${guard_tests[@]}" -n 0 --cov=app --cov-report= --durations=40 \
             --junitxml=../.ci-artifacts/backend-tests/guard-results.xml
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/guard.sha.txt
 
@@ -122,7 +122,8 @@ jobs:
           ignore_guards=("${guard_tests[@]/#/--ignore=}")
           mkdir -p ../.ci-artifacts/backend-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
-          command=(uv run pytest tests/ "${ignore_guards[@]}" --cov=app --cov-append \
+          # These read-only schema assertions share one worker's production OpenAPI cache.
+          command=(uv run pytest tests/ "${ignore_guards[@]}" --dist=loadgroup --cov=app --cov-append --durations=40 \
             --cov-report=xml --cov-report=term-missing -v \
             --junitxml=../.ci-artifacts/backend-tests/results.xml)
           printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/command.txt

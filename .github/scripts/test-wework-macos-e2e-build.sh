@@ -135,6 +135,15 @@ printf 'changed shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
 (cd "$repo" && git add packages/collaboration/issue.ts)
 test "$reference_after_collaboration" != "$(resolve_reference)"
 
+mkdir -p "$repo/packages/process-explorer" "$repo/patches"
+printf 'process explorer\n' >"$repo/packages/process-explorer/index.ts"
+(cd "$repo" && git add packages/process-explorer/index.ts)
+reference_after_explorer="$(resolve_reference)"
+test "$reference_after_collaboration" != "$reference_after_explorer"
+printf 'dependency patch\n' >"$repo/patches/runtime.patch"
+(cd "$repo" && git add patches/runtime.patch)
+test "$reference_after_explorer" != "$(resolve_reference)"
+
 (
   cd "$repo"
   GITHUB_OUTPUT=/dev/stdout \
@@ -142,7 +151,7 @@ test "$reference_after_collaboration" != "$(resolve_reference)"
     WECODE-AI \
     executor-source \
     backend-source
-) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-build:v1-'
+) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-runtime:app-v1-'
 
 ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" >"$temp_dir/build.sh" <<'RUBY'
 steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')

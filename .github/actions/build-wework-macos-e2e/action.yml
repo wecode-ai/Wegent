@@ -62,28 +62,7 @@ runs:
         EXECUTOR_SOURCE_DIGEST: ${{ steps.macos-source.outputs.executor }}
         BACKEND_RS_SOURCE_DIGEST: ${{ steps.macos-source.outputs.backend-rs }}
       run: |
-        mkdir -p .ci-artifacts
-        reference_output="$(mktemp)"
-        GITHUB_OUTPUT="$reference_output" \
-          .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
-          "$GITHUB_REPOSITORY_OWNER" \
-          "$EXECUTOR_SOURCE_DIGEST" \
-          "$BACKEND_RS_SOURCE_DIGEST"
-        reference="$(sed -n 's/^reference=//p' "$reference_output")"
-        test -n "$reference"
-        echo "reference=$reference" >> "$GITHUB_OUTPUT"
-
-        set +e
-        .github/scripts/restore-wework-core-e2e-build-oci.sh \
-          .ci-artifacts/wework-macos-e2e-build.tar.zst \
-          "$reference"
-        restore_status=$?
-        set -e
-        case "$restore_status" in
-          0) echo "cache-hit=true" >> "$GITHUB_OUTPUT" ;;
-          1) echo "cache-hit=false" >> "$GITHUB_OUTPUT" ;;
-          *) exit "$restore_status" ;;
-        esac
+        node .github/scripts/macos-e2e-build.mjs restore .ci-artifacts/macos-complete
 
     - name: Set up shared Rust toolchain and cache
       if: steps.macos-build.outputs.cache-hit != 'true'
@@ -233,22 +212,23 @@ runs:
       shell: bash
       if: inputs.publish == 'true' && steps.macos-build.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       run: |
-        .github/scripts/archive-wework-macos-e2e-build.sh
-        .github/scripts/publish-wework-core-e2e-build-oci.sh \
-          .ci-artifacts/wework-macos-e2e-build.tar.zst \
-          "${{ steps.macos-build.outputs.reference }}"
+        .github/scripts/archive-wework-macos-e2e-build.sh .ci-artifacts/macos-complete
+        node .github/scripts/macos-e2e-build.mjs describe .ci-artifacts/macos-complete
+        node .github/scripts/macos-e2e-build.mjs publish .ci-artifacts/macos-complete
 
     - name: Restore shared macOS Wework E2E build
       shell: bash
       if: steps.macos-build.outputs.cache-hit == 'true'
-      run: .github/scripts/restore-wework-macos-e2e-build.sh
+      run: |
+        node .github/scripts/macos-e2e-build.mjs verify .ci-artifacts/macos-complete
+        .github/scripts/restore-wework-macos-e2e-build.sh .ci-artifacts/macos-complete
 
     - name: Configure shared macOS Wework E2E build
       shell: bash
       id: configure
       run: |
         if [[ "${{ steps.macos-build.outputs.cache-hit }}" == "true" ]]; then
-          build_root="$PWD/.ci-artifacts/wework-macos-e2e-build"
+          build_root="$PWD/.ci-artifacts/macos-complete/wework-macos-e2e-build"
           app_bundle="$build_root/WeWork.app"
           backend_rs_bin="$build_root/wegent-backend-rs"
         else

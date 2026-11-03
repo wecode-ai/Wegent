@@ -56,11 +56,13 @@ classify_path() {
       .github/actions/build-wework-macos-e2e/* | .github/actions/build-minio-e2e/* | \
       .github/actions/setup-minio-e2e/* | .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | .github/scripts/macos-e2e-source-digest.mjs | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
       .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh)
       changed[wework_e2e]=true
       return
       ;;
-    .github/scripts/download-actions-artifact.sh | .github/scripts/restore-actions-runtime.sh | \
+    .github/scripts/verified-build-oci.mjs | \
+      .github/scripts/download-actions-artifact.sh | .github/scripts/restore-actions-runtime.sh | \
       .github/scripts/runtime-artifact.mjs | .github/scripts/ci-prebuilt-images.mjs | \
       .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
       .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
@@ -93,6 +95,8 @@ classify_path() {
       .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | \
       .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
       .github/scripts/lib/apt-packages.sh | \
       .github/scripts/lib/validate-ci-cache-policy.rb | \
       .github/scripts/test-ci-cache-policy.sh | \

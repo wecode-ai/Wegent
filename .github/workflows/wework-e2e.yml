@@ -1284,6 +1284,29 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      - name: Archive verified complete macOS E2E build
+        env:
+          MACOS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          artifact_dir=.ci-artifacts/macos-complete
+          if [[ ! -s "$artifact_dir/wework-macos-e2e-build.tar.zst" ]]; then
+            WEWORK_E2E_ELECTRON_PACKAGE_DIR="${WEWORK_E2E_APP_BIN%/Contents/MacOS/WeWork}" \
+              WEWORK_E2E_BACKEND_RS_BUILD_BIN="$WEWORK_E2E_BACKEND_RS_BIN" \
+              .github/scripts/archive-wework-macos-e2e-build.sh "$artifact_dir"
+          fi
+          node .github/scripts/macos-e2e-build.mjs describe "$artifact_dir"
+
+      - name: Upload verified complete macOS E2E build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-desktop-e2e-build
+          path: |
+            .ci-artifacts/macos-complete/wework-macos-e2e-build.tar.zst
+            .ci-artifacts/macos-complete/macos-build-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh

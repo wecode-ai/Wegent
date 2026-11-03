@@ -700,7 +700,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$macos_build_source" != *'wework-macos-executor-runtime-v1-'* ]] ||
   [[ "$macos_build_source" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
   [[ "$macos_build_source" != *'build-macos-e2e-runtimes.sh'* ]] ||
-  [[ "$macos_build_source" != *'resolve-wework-macos-e2e-build-ref.sh'* ]] ||
+  [[ "$macos_build_source" != *'node .github/scripts/macos-e2e-build.mjs restore'* ]] ||
   [[ "$macos_build_source" != *'restore-wework-macos-e2e-build.sh'* ]] ||
   [[ "$macos_build_source" != *'archive-wework-macos-e2e-build.sh'* ]] ||
   [[ "$memory_build_section" != *'node wework/e2e/desktop/run-checkpoints.mjs'* ]] ||
@@ -713,6 +713,7 @@ fi
 node --test "$script_dir/runtime-artifact.test.mjs"
 node --test "$script_dir/wework-core-e2e-transport.test.mjs"
 node --test "$script_dir/frontend-e2e-build.test.mjs"
+node --test "$script_dir/macos-e2e-build.test.mjs"
 node --test "$script_dir/ci-prebuilt-images.test.mjs"
 node --test "$script_dir/resolve-ci-image.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"

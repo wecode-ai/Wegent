@@ -158,6 +158,52 @@ function completionSeconds(checkpoints, seconds) {
   return Math.max(...workers)
 }
 
+test('balancing distributes the four-worker tail across existing Core runners', () => {
+  const matrix = {
+    include: [
+      {
+        id: 'core-1',
+        segments:
+          'harness-app-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+      },
+      { id: 'core-2', segments: 'application-menu' },
+      { id: 'core-6', segments: 'running-conversation-history' },
+    ],
+  }
+  const seconds = Object.fromEntries(
+    expandDesktopCheckpoints(
+      matrix.include.flatMap((entry) => entry.segments.split(',')),
+    ).map((name) => [name, name === 'application-menu' ? 10 : 100]),
+  )
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+  const maximum = (selection) =>
+    Math.max(
+      ...selection.include
+        .filter((entry) => entry.id !== 'core-6')
+        .map((entry) =>
+          completionSeconds(
+            orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+            seconds,
+          ),
+        ),
+    )
+  assert.equal(maximum(matrix), 200)
+  assert.equal(maximum(balanced), 100)
+  assert.deepEqual(
+    balanced.include.map((entry) => entry.id),
+    matrix.include.map((entry) => entry.id),
+  )
+  assert.deepEqual(
+    balanced.include
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+      .sort(),
+    matrix.include
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+      .sort(),
+  )
+  assert.deepEqual(balanceLinuxCoreMatrix(balanced, seconds), balanced)
+})
+
 test('ordering preserves every selected checkpoint in its existing shard and runner budget', () => {
   for (const [scope, count] of [
     ['core', 10],

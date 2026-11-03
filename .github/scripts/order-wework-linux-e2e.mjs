@@ -35,23 +35,36 @@ export function balanceLinuxCoreMatrix(
   const before = include.flatMap(checkpoints).sort()
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
-  const cost = (segments) =>
-    orderLinuxCheckpoints(segments, 'core', seconds).reduce(
-      (total, checkpoint) => total + (seconds[checkpoint] ?? 180),
-      0,
-    )
-  const moved = history.segments
-    .split(',')
-    .filter((segment) => segment !== 'running-conversation-history')
-    .sort((a, b) => cost([b]) - cost([a]))
+  const pending = [...receivers, history]
+    .flatMap(checkpoints)
+    .filter((checkpoint) => checkpoint !== 'running-conversation-history')
+    .sort((a, b) => a.localeCompare(b))
+  const ordered = orderLinuxCheckpoints(pending, 'core', seconds)
   history.segments = 'running-conversation-history'
-  for (const segment of moved) {
-    const target = receivers.reduce((best, entry) =>
-      cost(entry.segments.split(',')) < cost(best.segments.split(','))
-        ? entry
-        : best,
+  const assignments = receivers.map((entry) => ({
+    entry,
+    checkpoints: [],
+    workers: Array(measurements.workers).fill(0),
+  }))
+  // Match the runner's longest-first, four-worker scheduling. Summed durations
+  // overestimate concurrent work and can leave a fifth long checkpoint as a tail.
+  for (const checkpoint of ordered) {
+    assignments.sort(
+      (a, b) =>
+        Math.min(...a.workers) - Math.min(...b.workers) ||
+        a.workers.reduce((sum, value) => sum + value, 0) -
+          b.workers.reduce((sum, value) => sum + value, 0) ||
+        a.entry.id.localeCompare(b.entry.id),
     )
-    target.segments += `,${segment}`
+    const target = assignments[0]
+    const worker = target.workers.indexOf(Math.min(...target.workers))
+    target.workers[worker] += seconds[checkpoint] ?? 180
+    target.checkpoints.push(checkpoint)
+  }
+  for (const { entry, checkpoints: selected } of assignments) {
+    if (!selected.length)
+      throw new Error('Cannot leave a Linux Core runner empty')
+    entry.segments = selected.join(',')
   }
   if (
     JSON.stringify(include.flatMap(checkpoints).sort()) !==

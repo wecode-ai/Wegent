@@ -413,6 +413,8 @@ runtime_consumers="${all_false/platform_e2e=false/platform_e2e=true}"
 runtime_consumers="${runtime_consumers/wework_e2e=false/wework_e2e=true}"
 assert_case "artifact downloader validates its runtime producers and consumers" "$runtime_consumers" \
   ".github/scripts/download-actions-artifact.sh"
+assert_case "verified OCI transport validates both complete-build consumers" "$runtime_consumers" \
+  ".github/scripts/verified-build-oci.mjs"
 
 assert_case "Node cache follows workspace and E2E consumers" "$collaboration_package" \
   ".github/actions/setup-node-workspace/action.yml"
@@ -425,7 +427,9 @@ done
 for path in .github/actions/build-wework-core-e2e/action.yml \
   .github/actions/build-wework-macos-e2e/action.yml \
   .github/actions/build-wework-windows-e2e/action.yml \
-  .github/actions/build-minio-e2e/action.yml .github/actions/setup-minio-e2e/action.yml; do
+  .github/actions/build-minio-e2e/action.yml .github/actions/setup-minio-e2e/action.yml \
+  .github/scripts/macos-e2e-build.mjs .github/scripts/macos-e2e-build.test.mjs \
+  .github/scripts/restore-macos-ci-build.mjs; do
   assert_case "Desktop build actions select desktop consumers: $path" \
     "${all_false/wework_e2e=false/wework_e2e=true}" "$path"
 done
