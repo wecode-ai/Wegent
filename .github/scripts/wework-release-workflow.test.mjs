@@ -18,6 +18,30 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("Intel ticket delivery uses the provider-confirmed TCP transport fix without bypassing notarization", () => {
+  const steps = jobs.build.steps;
+  const transport = steps.findIndex(
+    (step) =>
+      step.name === "Use TCP for Apple ticket delivery on Intel runners",
+  );
+  const build = steps.findIndex(
+    (step) => step.name === "Build signed Electron release",
+  );
+  assert.ok(transport >= 0 && transport < build);
+  assert.equal(
+    steps[transport].if,
+    "matrix.platform == 'macos' && matrix.arch == 'x64'",
+  );
+  assert.match(
+    steps[transport].run,
+    /block return out quick proto udp from any to any port 443/,
+  );
+  assert.equal(
+    steps[build].env.WEWORK_CUSTOM_MACOS_NOTARIZATION,
+    "${{ matrix.platform == 'macos' && 'true' || '' }}",
+  );
+});
+
 test("release creation waits for every candidate build and validation", () => {
   for (const name of ["prepare-release", "build", "verify-upgrades"]) {
     for (const step of jobs[name].steps)

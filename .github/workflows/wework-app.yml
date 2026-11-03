@@ -349,6 +349,16 @@ jobs:
           restore-keys: |
             signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-
 
+      - name: Use TCP for Apple ticket delivery on Intel runners
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Intel hosted runners lose HTTP/3 ticket requests (actions/runner-images#14924).
+          # Limit the transport configuration to this disposable CI machine.
+          echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
+          sudo pfctl -E
+
       - name: Build signed Electron release
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
