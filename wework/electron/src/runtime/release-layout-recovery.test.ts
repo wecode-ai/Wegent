@@ -49,31 +49,36 @@ async function fixture(version = '0.6.3') {
   return { home, desktop, store, source, target, environment: { HOME: home } }
 }
 
-test('target preparation repairs the unstarted shipped-client activation without restoring data', async () => {
-  const { desktop, store, source, target, environment } = await fixture()
-  const activation = (await store.activation())!
-  await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
-  expect(await releaseBridgeUserData(store, source.executable, join(desktop, 'user-data'))).toBe(
-    join(desktop, 'user-data')
-  )
-  expect(await releaseBridgeUserData(store, '/unknown/host', join(desktop, 'user-data'))).toBeNull()
+test.each(['0.6.3', '0.5.13-beta.8'])(
+  'target preparation repairs the %s unstarted activation without restoring data',
+  async version => {
+    const { desktop, store, source, target, environment } = await fixture(version)
+    const activation = (await store.activation())!
+    await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+    expect(await releaseBridgeUserData(store, source.executable, join(desktop, 'user-data'))).toBe(
+      join(desktop, 'user-data')
+    )
+    expect(
+      await releaseBridgeUserData(store, '/unknown/host', join(desktop, 'user-data'))
+    ).toBeNull()
 
-  expect(await realpath(join(desktop, 'releases'))).toBe(await realpath(store.root))
-  expect((await store.active())?.id).toBe(source.id)
-  expect(await store.activation()).toBeNull()
-  expect(
-    JSON.parse(await readFile(join(store.root, 'recovery', `${activation.token}.json`), 'utf8'))
-  ).toEqual(activation)
-  expect(JSON.parse(await readFile(join(store.root, 'rolled-back-versions.json'), 'utf8'))).toEqual(
-    [target.version]
-  )
-  expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
-  // Repeating preparation reuses the same bridge and does not change source data.
-  await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
-})
+    expect(await realpath(join(desktop, 'releases'))).toBe(await realpath(store.root))
+    expect((await store.active())?.id).toBe(source.id)
+    expect(await store.activation()).toBeNull()
+    expect(
+      JSON.parse(await readFile(join(store.root, 'recovery', `${activation.token}.json`), 'utf8'))
+    ).toEqual(activation)
+    expect(
+      JSON.parse(await readFile(join(store.root, 'rolled-back-versions.json'), 'utf8'))
+    ).toEqual([target.version])
+    expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
+    // Repeating preparation reuses the same bridge and does not change source data.
+    await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+  }
+)
 
 test('recovers an owned unstarted activation even when the source does not need layout bridges', async () => {
-  const { desktop, store, source, environment } = await fixture('0.5.13-beta.8')
+  const { desktop, store, source, environment } = await fixture('0.6.4-beta.2')
   const activation = (await store.activation())!
   await recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
   expect(await store.activation()).toBeNull()

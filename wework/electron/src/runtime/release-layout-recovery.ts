@@ -6,7 +6,7 @@ import { releaseParentExecutable } from './release-parent-process.js'
 
 // These delivered clients read <desktop>/releases before main migrates userData.
 // Target-owned preparation can repair that handoff without modifying signed hosts.
-const AFFECTED_VERSIONS = new Set(['0.6.2', '0.6.3', '0.6.4-beta.1'])
+const AFFECTED_VERSIONS = new Set(['0.5.13-beta.8', '0.6.2', '0.6.3', '0.6.4-beta.1'])
 
 export async function recoverReleaseLayout(
   store: ReleaseStore,
