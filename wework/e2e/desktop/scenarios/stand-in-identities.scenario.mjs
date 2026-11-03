@@ -165,7 +165,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await control.command('click', '[data-testid="stand-in-add-connection"]')
-      await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
       await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')
       await captureScreenshot(control, '08-explicit-source-selection.png', ROOT)
