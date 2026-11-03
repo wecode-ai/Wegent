@@ -34,7 +34,7 @@ export function StandInSourceConnections({
   onChange(role: StandInRole): void
   onReady?(): void
 }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const [adding, setAdding] = useState(false)
   const [newPolicy, setNewPolicy] = useState({
     automatic: true,
@@ -122,9 +122,12 @@ export function StandInSourceConnections({
     const current = latest.current
     let connections = [...(current.role.connections ?? [])]
     if (items.length && items.every(item => item.scope !== 'all')) {
-      const profiles = new Set(items.map(item => item.profile))
+      const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
       connections = connections.filter(
-        row => row.providerId !== provider.id || !profiles.has(row.profile) || row.scope !== 'all'
+        row =>
+          row.providerId !== provider.id ||
+          row.scope !== 'all' ||
+          !covered.has(JSON.stringify([row.profile, row.kind]))
       )
     }
     for (const item of items) {
@@ -361,14 +364,14 @@ export function StandInSourceConnections({
             <div className="space-y-3">
               <p className="text-sm text-text-muted">
                 {t('standIn.workspace.all_resources_help')}{' '}
-                {provider.allResourceKinds
-                  ?.map(
+                {new Intl.ListFormat(i18n.language, { style: 'long', type: 'conjunction' }).format(
+                  (provider.allResourceKinds ?? []).map(
                     resourceKind =>
                       provider.allResourceLabels?.[resourceKind] ??
                       provider.resourceLabels?.[resourceKind] ??
                       resourceKind
                   )
-                  .join('、')}
+                )}
               </p>
               <Button
                 size="sm"

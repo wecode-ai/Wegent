@@ -313,3 +313,40 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
         );
     }
 }
+
+#[test]
+fn a_calendar_enqueue_failure_does_not_block_other_calendar_runs() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler(root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap().execute_batch(
+        "CREATE TRIGGER reject_bad_calendar BEFORE INSERT ON loop_items WHEN NEW.resource_type='stand_in_event' AND json_extract(NEW.metadata,'$.automationId')='bad' BEGIN SELECT RAISE(ABORT,'injected calendar enqueue failure'); END;"
+    ).unwrap();
+    for id in ["bad", "good"] {
+        let mut entry = automation();
+        entry.id = id.into();
+        entry.task_request["standInCalendar"] = json!({});
+        handler.automation_store.create(entry).unwrap();
+    }
+    handler.automation_store.due(chrono::Utc::now()).unwrap();
+    assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
+    assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["automationId"], "good");
+    let runs = handler.automation_store.list_runs(None);
+    let bad = runs.iter().find(|run| run.automation_id == "bad").unwrap();
+    assert_eq!(bad.status, AutomationRunStatus::NeedsAttention);
+    assert!(bad
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("injected calendar enqueue failure"));
+    assert_eq!(
+        runs.iter()
+            .find(|run| run.automation_id == "good")
+            .unwrap()
+            .status,
+        AutomationRunStatus::Pending
+    );
+}

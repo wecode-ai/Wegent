@@ -461,6 +461,7 @@ export function StandInOverviewPage({
           </>
         )}
         {profile &&
+          (profile !== 'primary' || state.draft) &&
           createPortal(
             <div
               className="fixed inset-0 z-modal bg-black/20 text-text-primary"

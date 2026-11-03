@@ -12,7 +12,10 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
     await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
-    await control.command('click', `[data-testid="stand-in-add-${providerId}-connection"]`)
+    await control.command(
+      'clickWhenEnabled',
+      `[data-testid="stand-in-add-${providerId}-connection"]`
+    )
   }
   try {
     await ensureExperimentalFeaturesEnabled(control)

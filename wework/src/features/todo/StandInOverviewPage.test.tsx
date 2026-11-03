@@ -487,6 +487,29 @@ it('keeps unsaved settings mounted when the menu requests scheduled work', async
   expect(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).toBeInTheDocument()
 })
 
+it('waits for the primary settings before mounting a calendar deep link', async () => {
+  const { props } = fixture()
+  const getSettings = vi.mocked(props.services.standInApi!.personalGet)
+  const settings = await getSettings(7, 'device')
+  getSettings.mockClear()
+  let finishLoading!: () => void
+  getSettings.mockImplementationOnce(
+    () => new Promise(resolve => (finishLoading = () => resolve(settings)))
+  )
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} initialWorkView="scheduled" />)
+  await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(1))
+  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+  await act(async () => finishLoading())
+  const primary = await screen.findByTestId('stand-in-primary-profile')
+  expect(screen.getByTestId('stand-in-calendar-connection')).toBeVisible()
+  await user.click(screen.getByTestId('stand-in-connections-back'))
+  expect(await screen.findByTestId('stand-in-time-connections')).toBeVisible()
+  expect(screen.getByTestId('stand-in-primary-profile')).toBe(primary)
+  expect(screen.queryByTestId('stand-in-calendar-connection')).not.toBeInTheDocument()
+})
+
 it('opens the calendar as a connection and protects its draft on every repeated menu request', async () => {
   const { props } = fixture()
   render(<StandInOverviewPage {...props} />)

@@ -2,6 +2,13 @@ import { expect, test, vi } from 'vitest'
 
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/stand-in-identities.scenario.mjs'
 
+vi.mock('../../e2e/desktop/modules/stand-in-dingtalk-fixture.mjs', () => ({
+  createStandInDingTalkFixture: () => ({
+    prepareApp: vi.fn(),
+    install: vi.fn().mockResolvedValue(undefined),
+  }),
+}))
+
 vi.mock('../../e2e/desktop/modules/shared.mjs', () => ({
   selectE2EModel: vi.fn(),
 }))

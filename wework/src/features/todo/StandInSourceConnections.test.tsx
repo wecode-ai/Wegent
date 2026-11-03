@@ -310,3 +310,84 @@ it('defaults to all supported resource kinds and only reveals search after filte
   ])
   expect(searchConnectionResources).toHaveBeenCalledTimes(2)
 })
+
+it('keeps all groups when selected contacts replace the all-contacts scope', async () => {
+  const role = newStandInRole('device')
+  const allGroups = {
+    providerId: 'example',
+    profile: 'corp',
+    kind: 'group',
+    id: '*',
+    scope: 'all' as const,
+    name: 'All groups',
+    policy: { automatic: true, askBeforeAct: true },
+  }
+  role.connections = [allGroups, { ...allGroups, kind: 'direct', name: 'All contacts' }]
+  const onChange = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <StandInSourceConnections
+      role={role}
+      provider={{
+        id: 'example',
+        displayName: 'Example',
+        resourceKinds: ['direct'],
+        allResourceKinds: ['group', 'direct'],
+        availability: { status: 'ready' },
+        dependencies: [],
+      }}
+      api={
+        {
+          searchConnectionResources: vi.fn().mockResolvedValue({
+            items: [{ profile: 'corp', kind: 'direct', id: 'contact', name: 'Selected contact' }],
+            hasMore: false,
+          }),
+        } as unknown as StandInExecutorApi
+      }
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  await user.click(screen.getByTestId('stand-in-connection-example-add'))
+  await user.click(screen.getByTestId('stand-in-connection-example-scope-selected'))
+  await user.type(screen.getByTestId('stand-in-connection-example-query'), 'contact')
+  await user.click(screen.getByTestId('stand-in-connection-example-search'))
+  await user.click(await screen.findByTestId('stand-in-connection-example-result-contact'))
+  await user.click(screen.getByTestId('stand-in-connection-example-add-selected'))
+  expect(onChange).toHaveBeenCalledOnce()
+  expect(onChange.mock.calls[0][0].connections).toEqual([
+    allGroups,
+    expect.objectContaining({ id: 'contact', kind: 'direct', profile: 'corp' }),
+  ])
+})
+
+it('formats the supported resource list in the active language', async () => {
+  const i18n = (await import('@/i18n')).default
+  await i18n.changeLanguage('en')
+  try {
+    render(
+      <StandInSourceConnections
+        role={newStandInRole('device')}
+        provider={{
+          id: 'example',
+          displayName: 'Example',
+          resourceKinds: ['group', 'direct'],
+          allResourceKinds: ['group', 'direct'],
+          allResourceLabels: { group: 'Groups', direct: 'Contacts' },
+          availability: { status: 'ready' },
+          dependencies: [],
+        }}
+        api={{} as StandInExecutorApi}
+        deviceId="device"
+        localDeviceId="device"
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/Groups and Contacts/)).toBeVisible()
+  } finally {
+    await i18n.changeLanguage('zh-CN')
+  }
+})

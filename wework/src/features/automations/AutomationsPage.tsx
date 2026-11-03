@@ -460,7 +460,7 @@ export function AutomationsPage({
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
-      if (embedded) {
+      if (standInOwner) {
         setSelectedAutomationId(null)
         setEditing(null)
         setDraft(null)
@@ -569,7 +569,7 @@ export function AutomationsPage({
 
   return (
     <div
-      className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${embedded && !draft ? 'shrink-0' : 'h-full flex-1'}`}
+      className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
     >
       <ConfirmDialog
         open={pendingNavigation !== null}
@@ -686,7 +686,7 @@ export function AutomationsPage({
         )}
         {hasWorkspace ? (
           <>
-            {(!embedded || !draft) && (
+            {(!standInOwner || !draft) && (
               <AutomationListPane
                 calendar={Boolean(standInOwner)}
                 automations={filteredAutomations}
@@ -708,7 +708,7 @@ export function AutomationsPage({
             )}
             {draft ? (
               <AutomationDetailWorkspace
-                compact={embedded}
+                compact={Boolean(standInOwner)}
                 validationError={draftError}
                 draft={draft}
                 calendarMode={Boolean(standInOwner)}

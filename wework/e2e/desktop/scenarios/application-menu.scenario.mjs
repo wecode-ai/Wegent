@@ -179,6 +179,9 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
           await control.command('waitFor', '[data-testid="automation-button"]')
           await control.command('click', '[data-testid="automation-button"]')
           await waitForRoute(control, '/automations', uiTimeoutMs)
+          // Native menu dispatch is asynchronous; observe a real route transition.
+          await control.command('navigate', 'body', { value: '/plugins' })
+          await waitForRoute(control, '/plugins', uiTimeoutMs)
         }
         assert.equal(await activateMenuItem(control, id), true, `${id} could not be activated`)
         if (id === 'work.automations') {

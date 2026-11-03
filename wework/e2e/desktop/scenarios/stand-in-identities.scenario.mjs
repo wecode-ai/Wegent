@@ -172,7 +172,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
-      await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
       if (
         Number(await control.command('getElementCount', '[data-testid="stand-in-dingtalk-add"]')) >
         0

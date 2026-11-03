@@ -38,7 +38,11 @@ impl RuntimeWorkRpcHandler {
                 if automation.task_request["standInCalendar"].is_object()
                     && run.status == AutomationRunStatus::Pending
                 {
-                    self.queue_calendar_run(store, &automation, run)?;
+                    if let Err(error) = self.queue_calendar_run(store, &automation, run) {
+                        self.automation_store
+                            .mark_needs_attention(&run.id, error.message)
+                            .map_err(|error| AppIpcError::new("calendar_store_error", error))?;
+                    }
                     continue;
                 }
             }
