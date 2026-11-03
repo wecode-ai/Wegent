@@ -1961,8 +1961,13 @@ class LoopItemExecutionService:
         runtime_device_id: str,
         runtime_task_id: str,
         owner_user_id: int | None = None,
+        include_initial_manager: bool = False,
     ) -> Optional[LoopItemExecution]:
-        """Resolve the active execution owned by a Runtime task identity."""
+        """Resolve a Runtime identity; activity recovery may include its manager.
+
+        Lifecycle write-back keeps exact dispatch identities so finishing the
+        manager conversation cannot settle its parent group execution.
+        """
 
         device_ids = runtime_device_identity_ids(
             db,
@@ -1971,16 +1976,30 @@ class LoopItemExecutionService:
         )
         if not device_ids:
             return None
+        task_ids = {runtime_task_id}
+        if include_initial_manager and runtime_task_id.endswith("-manager-initial"):
+            task_ids.add(runtime_task_id.removesuffix("-manager-initial"))
         query = db.query(LoopItemExecution).filter(
             LoopItemExecution.runtime_device_id.in_(device_ids),
-            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.runtime_task_id.in_(task_ids),
             LoopItemExecution.status.in_(CAPACITY_STATUSES),
         )
         if owner_user_id is not None:
             query = query.filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id
             )
-        return query.order_by(LoopItemExecution.id.desc()).first()
+        query = query.order_by(LoopItemExecution.id.desc())
+        if not include_initial_manager:
+            return query.first()
+        return next(
+            (
+                row
+                for row in query.all()
+                if runtime_task_id
+                in {row.runtime_task_id, execution_conversation_task_id(row)}
+            ),
+            None,
+        )
 
     def reconciled_activity_for_runtime(
         self,

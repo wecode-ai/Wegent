@@ -1273,7 +1273,22 @@ class ProjectChatService:
                 turn_id=turn_id,
                 client_user_message_id=runtime_event_client_message_id(payload),
                 lock=False,
+                completed_only=False,
             )
+            execution = None
+            if completed is not None:
+                # Discover by identity, then read current state under the root
+                # and activity locks. A REPEATABLE READ snapshot may predate
+                # history's terminal commit and still show this row streaming.
+                execution = self._execution_for_completed_activity(db, completed)
+                if (
+                    "execution_id" in (completed.metadata_json or {})
+                    and execution is None
+                ):
+                    return None
+                db.refresh(completed, with_for_update=True)
+                if completed.status != "completed":
+                    completed = None
             if completed is None:
                 from app.services.loop_item_executions.service import (
                     loop_item_execution_service,
@@ -1286,8 +1301,9 @@ class ProjectChatService:
                     turn_id=turn_id,
                     owner_user_id=owner_user_id,
                 )
+                if completed is not None:
+                    execution = self._execution_for_completed_activity(db, completed)
             if completed is not None:
-                execution = self._execution_for_completed_activity(db, completed)
                 if (
                     "execution_id" in (completed.metadata_json or {})
                     and execution is None
@@ -1321,6 +1337,18 @@ class ProjectChatService:
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
+                logger.info(
+                    "[ProjectChat] Late final content repair message=%s execution=%s "
+                    "accepted_terminal=%s content_present=%s content_length=%s "
+                    "incoming_sequence=%s last_sequence=%s",
+                    completed.message_id,
+                    execution.id if execution is not None else None,
+                    accepted_terminal,
+                    content is not None,
+                    len(content) if content is not None else 0,
+                    runtime_event_sequence(payload),
+                    execution.last_event_seq if execution is not None else None,
+                )
                 if content is not None:
                     completed.content = content
                     if turn_id:
@@ -1349,6 +1377,7 @@ class ProjectChatService:
                 db,
                 runtime_device_id=device_id,
                 runtime_task_id=runtime_task_id,
+                owner_user_id=owner_user_id,
             )
         if row is None:
             return None
@@ -1558,6 +1587,7 @@ class ProjectChatService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        owner_user_id: int | None = None,
     ) -> ProjectChatMessage | None:
         """Open the activity message from the owning execution.
 
@@ -1574,6 +1604,8 @@ class ProjectChatService:
             db,
             runtime_device_id=runtime_device_id,
             runtime_task_id=runtime_task_id,
+            owner_user_id=owner_user_id,
+            include_initial_manager=True,
         )
         if execution is None:
             return None
