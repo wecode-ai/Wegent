@@ -22,6 +22,11 @@ Harness Runtime 的原生依赖按
 保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
 E2E 断言隐藏失败。
 
+主页面加载期间，同一 Core DSH 来源的入口脚本、样式或主文档若被
+`ERR_NETWORK_CHANGED` 中断，Electron 会重新加载该主页面一次，再确认加载
+完成；连续中断则进入原有启动错误处理。`startup-network-change` 检查点通过
+Chromium 协议错误接口中断一次真实脚本请求，验证恢复后工作台能够打开新任务输入界面。
+
 ## macOS 应用图标
 
 macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
@@ -121,8 +126,10 @@ SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七�
 macOS 发布先按未签名内容、证书身份、架构、签名参数和构建工具版本定位不可变的
 已签名组件。输入和签名策略不变时，安装包与在线组件复用完全相同的已签名字节；
 任一输入变化时重新签名并校验。Electron Builder 跳过这些已处理的托管资源，避免
-签名时间戳单独改变组件哈希。发布组件清单中的内容 SHA-256 必须从这份最终资源
-计算，不得从重新签名后的安装包再次提取组件。
+签名时间戳单独改变组件哈希。组件归档必须读取最终交付应用中的资源，并逐项核对
+其内置清单的内容 SHA-256、应用版本和源码提交。不得读取可被 E2E 夹具构建覆盖的
+`electron/resources` 暂存目录，也不得为提取组件重新签名交付应用。发布目录生成时
+再次核对组件描述文件与目标源码提交，身份不一致立即阻止发布。
 
 重新签名已有 Mach-O 文件时必须保留原签名中的 entitlement。Codex 及其
 `codex-code-mode-host` 依赖 `allow-jit` 和 `allow-unsigned-executable-memory`
@@ -264,6 +271,12 @@ Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证�
 仅检查中间资源目录不能证明最终发行物合规。
 
 ## 开发模式热更新
+
+文件监听必须等待 Chokidar 的 `ready`，再采集输入快照并启动首次构建。仅创建
+原生 watcher 不代表订阅已经就绪，启动后的首次编辑可能丢失通知。关闭时须等待
+所有监听器释放；失败日志同时保留编辑、通知和构建的时间线。
+Chokidar 的 Node 后端会节流规范化的 `change` 事件，因此还须保留底层文件通知，
+由输入快照统一去重，避免快速修正编译错误时丢失恢复修改。
 
 `pnpm --dir wework run dev:mac` 会通过
 `wework/scripts/dev-wework-app-watch.mjs` 持续构建原始 Wework 应用。监听器启动时

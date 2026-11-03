@@ -539,7 +539,7 @@ async function verifyAutomaticProcessingControls(
   await control.command('waitFor', ruleSelector, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-automatic-processing-01-created.png', CONTENT)
   const enabledSelector = scoped(`[data-testid="automatic-processing-enabled-${rule.id}"]`)
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === false),
@@ -551,7 +551,7 @@ async function verifyAutomaticProcessingControls(
     value: 'false',
     timeoutMs,
   })
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === true),
@@ -565,9 +565,15 @@ async function verifyAutomaticProcessingControls(
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
   await control.command('waitFor', form, { visible: true, timeoutMs })
-  await control.command('click', scoped('[data-testid="automatic-processing-cancel"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-cancel"]'), {
+    timeoutMs,
+  })
   await control.command('waitFor', form, { visible: false, timeoutMs })
-  await control.command('click', scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`))
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),

@@ -222,6 +222,47 @@ fn shared_index_reload_preserves_process_local_execution_state() {
 }
 
 #[test]
+fn native_snapshot_revision_covers_interaction_goal_and_model_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = RuntimeWorkStore::new(directory.path().join("index.json"));
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into());
+    crate::runtime_work::lifecycle::begin_native_request(&mut task);
+    let initial = task.execution_state.clone().unwrap();
+    store.upsert_task(task);
+    let mut revision = initial.revision.clone();
+    for status in [Some("waitingForUserInput"), Some("awaitingUserReply"), None] {
+        let task = store
+            .update_task("task", |task| {
+                task.interaction_status = status.map(str::to_owned);
+            })
+            .unwrap();
+        let state = task.execution_state.unwrap();
+        assert!(state.revision.parse::<u128>().unwrap() > revision.parse::<u128>().unwrap());
+        assert_eq!(state.phase, initial.phase);
+        assert_eq!(state.native_sequence, initial.native_sequence);
+        assert_eq!(state.updated_at, initial.updated_at);
+        revision = state.revision;
+    }
+    for update in [0, 1] {
+        let task = store
+            .update_task("task", |task| {
+                if update == 0 {
+                    task.goal_status = Some("active".into());
+                } else {
+                    task.runtime_handle["modelSelection"] =
+                        serde_json::json!({"modelName":"changed"});
+                }
+            })
+            .unwrap();
+        let state = task.execution_state.unwrap();
+        assert!(state.revision.parse::<u128>().unwrap() > revision.parse::<u128>().unwrap());
+        revision = state.revision;
+    }
+    let unchanged = store.update_task("task", |_| {}).unwrap();
+    assert_eq!(unchanged.execution_state.unwrap().revision, revision);
+}
+
+#[test]
 fn persisted_archive_metadata_restores_without_task_status_fields() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");

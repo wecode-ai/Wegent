@@ -4,6 +4,7 @@ import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
   cloudRunnerModels,
+  requiresCloudModelCatalog,
   resolveRunnerSelection,
   runnerModelKey,
   type RunnerSelection,
@@ -842,6 +843,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
+    ...(taskRecord.executionState
+      ? { executionState: taskRecord.executionState as RuntimeTaskSummary['executionState'] }
+      : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
     ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
@@ -2773,7 +2777,10 @@ export function createRuntimeWorkApiFromIpc(
       try {
         const response = await request(
           'runtime.tasks.list',
-          requestOptions?.preferCached ? { preferCached: true } : {},
+          {
+            ...(requestOptions?.preferCached ? { preferCached: true } : {}),
+            ...(requestOptions?.pendingOnly ? { pendingOnly: true } : {}),
+          },
           localDeviceId
         )
         if (identity) {
@@ -4034,10 +4041,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     runnerSelection?: RunnerSelection
   ) => {
     const environments = agent.executionPolicy ? await listRunnerEnvironments(projectId) : []
-    const modelRequirement =
-      agent.modelPolicy?.mode === 'fixed' ? agent.modelPolicy.model : runnerSelection?.model
     const cloudModels =
-      agent.executionPolicy && (!modelRequirement || modelRequirement.source === 'cloud')
+      agent.executionPolicy && requiresCloudModelCatalog(agent.modelPolicy, runnerSelection)
         ? await (deps.listCloudModels?.() ?? Promise.resolve([]))
         : []
     let routing: ReturnType<typeof resolveRunnerSelection> | null = null

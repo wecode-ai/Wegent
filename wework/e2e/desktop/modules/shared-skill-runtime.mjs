@@ -279,6 +279,7 @@ export function createSharedSkillRuntime({
       mcpBefore = await stat(mcpPath, { bigint: true })
       firstProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
       assert.match(firstProbe.token, /^\d+$/)
+      assert.match(firstProbe.instanceId, /^[0-9a-f-]{36}$/)
     }
     const link = join(home, 'skills', NAME)
     const packagePath = skill =>
@@ -297,9 +298,10 @@ export function createSharedSkillRuntime({
       assert.equal((await stat(systemPath, { bigint: true })).ino, systemBefore.ino)
     } else {
       secondProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
+      assert.match(secondProbe.instanceId, /^[0-9a-f-]{36}$/)
       assert.notEqual(
-        secondProbe.pid,
-        firstProbe.pid,
+        secondProbe.instanceId,
+        firstProbe.instanceId,
         'Omitted skill MCP was not started on continuation'
       )
       assert.notEqual(secondProbe.token, firstProbe.token, 'MCP task context was not refreshed')

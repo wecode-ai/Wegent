@@ -141,4 +141,53 @@ test "$reference_after_collaboration" != "$(resolve_reference)"
     backend-source
 ) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-build:v1-'
 
+ruby -ryaml - "$script_dir/../workflows/wework-e2e.yml" >"$temp_dir/build.sh" <<'RUBY'
+steps = YAML.load_file(ARGV.fetch(0)).fetch('jobs').fetch('wework-desktop-memory-e2e').fetch('steps')
+build = steps.find { |step| step['name'] == 'Build Wework Electron E2E application' }.fetch('run')
+puts build.sub('$HOME/.cache/wegent/wework-macos-e2e-runtimes', '$TEST_RUNTIME_ROOT')
+RUBY
+
+mkdir -p "$repo/bin"
+cat >"$repo/.github/scripts/build-macos-e2e-runtimes.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo runtimes >> "$BUILD_EVENTS"
+if [[ "$FAIL_RUNTIME_BUILD" == true ]]; then exit 42; fi
+mkdir -p "$(dirname "$1")"
+for destination in "$@"; do
+  printf '#!/bin/sh\nexit 0\n' > "$destination"
+  chmod +x "$destination"
+done
+EOF
+cat >"$repo/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo package >> "$BUILD_EVENTS"
+test -x "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH"
+test -x "$TEST_RUNTIME_ROOT/wegent-backend-rs"
+app="wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents"
+mkdir -p "$app/MacOS" "$app/Resources/bin"
+cp "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH" "$app/MacOS/WeWork"
+cp "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH" "$app/Resources/bin/wegent-executor"
+EOF
+chmod +x "$repo/.github/scripts/build-macos-e2e-runtimes.sh" "$repo/bin/pnpm"
+
+for failure in false true; do
+  events="$temp_dir/build-$failure.events"
+  status=0
+  (
+    cd "$repo"
+    PATH="$repo/bin:$PATH" TEST_RUNTIME_ROOT="$temp_dir/runtime-$failure" \
+      BUILD_EVENTS="$events" FAIL_RUNTIME_BUILD="$failure" \
+      bash -e -o pipefail "$temp_dir/build.sh"
+  ) || status=$?
+  if [[ "$failure" == false ]]; then
+    test "$status" -eq 0
+    test "$(cat "$events")" = $'runtimes\npackage'
+  else
+    test "$status" -eq 42
+    test "$(cat "$events")" = runtimes
+  fi
+done
+
 echo "Wework macOS E2E build tests passed"

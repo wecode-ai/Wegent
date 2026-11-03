@@ -59,6 +59,24 @@ describe('createHttpClient', () => {
     }
   })
 
+  test('cancels account-owned requests through the client lifetime signal', async () => {
+    const controller = new AbortController()
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(init.signal.reason))
+        })
+    )
+    const client = createHttpClient({ baseUrl: '/api', signal: controller.signal })
+    const pending = client.post('/plugins/installed/sync-device')
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+
+    controller.abort()
+
+    await rejected
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal)
+  })
+
   test('adds auth token and parses json responses', async () => {
     localStorage.setItem('auth_token', 'token-1')
     fetchMock.mockResolvedValueOnce({

@@ -24,7 +24,7 @@ class BoardViewColumn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: str = Field(min_length=1, max_length=128)
-    type: Literal["status", "tag"]
+    type: Literal["status", "tag", "unmatched"]
     value: str = Field(min_length=1, max_length=80)
 
     @model_validator(mode="after")
@@ -57,7 +57,10 @@ class BoardView(BaseModel):
     @model_validator(mode="after")
     def validate_columns(self) -> "BoardView":
         ids = [column.id for column in self.columns]
-        bindings = [(column.type, column.value) for column in self.columns]
+        bindings = [
+            (column.type, "" if column.type == "unmatched" else column.value)
+            for column in self.columns
+        ]
         if len(set(ids)) != len(ids) or len(set(bindings)) != len(bindings):
             raise ValueError("board column ids and bindings must be unique")
         if not self.name.strip():

@@ -6,6 +6,16 @@ sidebar_position: 24
 
 Wework 桌面端复用 Codex App 的侧栏状态语义。项目和实时任务内容由 Codex app-server 提供，侧栏元数据由设备对应 `CODEX_HOME` 下的 `.codex-global-state.json` 提供。远程设备在线时，Wework 还会在本机保存任务列表摘要，用于设备离线后的启动恢复。
 
+## 悬浮详情的生命周期
+
+侧栏项目和任务详情由鼠标悬停控制。鼠标离开行与浮层后关闭详情；浮层内按钮保留焦点不能延长显示时间。`HoverCard.interactive` 只允许操作浮层内容，需要焦点控制显示的调用方必须显式启用 `openOnFocus`。项目置顶状态与浮层是否保持显示无关。
+
+桌面 `running-sidebar-state` 检查点覆盖从项目行进入详情、聚焦浮层按钮后移出、详情关闭、重新打开和 Escape 关闭。该场景在后台 renderer 内保留按钮焦点，验证关闭不会被后续鼠标移动取消，也不会被原生窗口失焦触发的关闭掩盖。
+
+跨元素移动使用 `pointerLeave` 的 `target` 参数，在同一 renderer 回合内发出离开与进入事件，避免控制协议的命令间隔超过实际关闭延迟。保留生产环境的 120ms 关闭延迟，不通过延长等待或重试掩盖问题。
+
+焦点前置条件使用共享控制命令 `focus`。后台 Electron 中直接调用 DOM `focus()` 会更新 `activeElement`，却不发出 `focusin`；命令在窗口未激活时同时发出该事件，让 React 获得真实的焦点状态，而不激活原生窗口。
+
 ## 状态所有权
 
 | 数据                     | 唯一来源                               | 说明                                                                      |

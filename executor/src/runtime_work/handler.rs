@@ -136,6 +136,7 @@ mod control;
 mod creation;
 mod fork_transfer;
 mod hooks;
+pub(super) mod lifecycle;
 mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
@@ -678,6 +679,7 @@ struct WorktreeReconciliationState {
 
 struct ActiveLocalExecution {
     execution_id: u64,
+    request: Option<ExecutionRequest>,
     stop_requested: bool,
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,
@@ -725,7 +727,6 @@ struct RuntimeThreadEventRoute {
     active: bool,
     nested: bool,
     generation: u64,
-    native_completed_turn_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -812,7 +813,6 @@ impl RuntimeThreadEventRoute {
             active,
             nested: false,
             generation,
-            native_completed_turn_id: None,
         }
     }
 }
@@ -1180,6 +1180,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"

@@ -41,6 +41,15 @@ import {
   isConversationScrollInput,
   scrollToContentPosition,
 } from './conversationViewportScroll'
+import { getClampedPreviewTopPx } from './turnNavigationGeometry'
+
+interface PreviewClampMeasurement {
+  markerId: string
+  previewHeightPx: number
+  regionTopPx: number
+  regionBottomPx: number
+}
+
 export function MessageTurnNavigation({
   translate: t,
   messages,
@@ -52,15 +61,20 @@ export function MessageTurnNavigation({
   onNavigationLoadStateChange,
   onNavigationScrollTargetChange,
   portalTarget,
+  bottomInsetPx = 0,
 }: MessageTurnNavigationProps) {
   const portalTheme = useCollaborationPortalTheme()
+  const insetPx = Math.max(0, Math.round(bottomInsetPx))
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerIds, setActiveMarkerIds] = useState<string[]>([])
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
+  const [previewClamp, setPreviewClamp] = useState<PreviewClampMeasurement | null>(null)
   const markersRef = useRef<MessageTurnMarker[]>([])
+  const navRef = useRef<HTMLElement | null>(null)
+  const previewNodesRef = useRef<Map<string, HTMLDivElement>>(new Map())
   const timerRef = useRef<number | null>(null)
   const navigationCleanupRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef(messages)
@@ -196,6 +210,55 @@ export function MessageTurnNavigation({
     messagesRef.current = messages
     turnNavigationRef.current = turnNavigation
   }, [messages, turnNavigation, userTurnsSignature])
+
+  useLayoutEffect(() => {
+    if (!hoveredMarkerId) {
+      setPreviewClamp(null)
+      return
+    }
+    const nav = navRef.current
+    const preview = previewNodesRef.current.get(hoveredMarkerId)
+    const parent = portalTarget ?? nav?.parentElement ?? null
+    if (!nav || !preview || !parent) return
+
+    const measure = () => {
+      const navRect = nav.getBoundingClientRect()
+      const parentRect = parent.getBoundingClientRect()
+      const scrollerRect = scrollRef.current?.getBoundingClientRect() ?? null
+      const regionTopViewportPx = Math.max(parentRect.top, scrollerRect?.top ?? parentRect.top)
+      const regionBottomViewportPx =
+        Math.min(parentRect.bottom, scrollerRect?.bottom ?? parentRect.bottom) - insetPx
+      const next: PreviewClampMeasurement = {
+        markerId: hoveredMarkerId,
+        previewHeightPx: preview.getBoundingClientRect().height,
+        regionTopPx: regionTopViewportPx - navRect.top,
+        regionBottomPx: regionBottomViewportPx - navRect.top,
+      }
+      setPreviewClamp(current =>
+        current &&
+        current.markerId === next.markerId &&
+        Math.abs(current.previewHeightPx - next.previewHeightPx) < 0.5 &&
+        Math.abs(current.regionTopPx - next.regionTopPx) < 0.5 &&
+        Math.abs(current.regionBottomPx - next.regionBottomPx) < 0.5
+          ? current
+          : next
+      )
+    }
+
+    measure()
+    window.addEventListener('resize', measure)
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure)
+      observer.observe(parent)
+      observer.observe(preview)
+      if (scrollRef.current) observer.observe(scrollRef.current)
+    }
+    return () => {
+      window.removeEventListener('resize', measure)
+      observer?.disconnect()
+    }
+  }, [hoveredMarkerId, insetPx, portalTarget, scrollRef, userTurnsSignature])
 
   const updateActiveMarkers = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -496,19 +559,24 @@ export function MessageTurnNavigation({
 
   const navigation = (
     <nav
+      ref={navRef}
       aria-label={t('conversation.message_navigation.label', '历史发言导航')}
       {...portalTheme}
       className={cn(
         portalTheme.className,
-        'pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block'
+        'pointer-events-none absolute z-popover hidden -translate-y-1/2 lg:block'
       )}
       data-testid="message-turn-navigation"
       style={{
         ...portalTheme.style,
         left: '16px',
+        top: insetPx === 0 ? '50%' : `calc(50% - ${insetPx / 2}px)`,
         width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
         height: `${navigationHeight}px`,
-        maxHeight: `calc(100% - ${NAVIGATION_VIEWPORT_PADDING_PX}px)`,
+        maxHeight:
+          insetPx === 0
+            ? `calc(100% - ${NAVIGATION_VIEWPORT_PADDING_PX}px)`
+            : `calc(100% - ${NAVIGATION_VIEWPORT_PADDING_PX + insetPx}px)`,
       }}
     >
       <div
@@ -572,27 +640,47 @@ export function MessageTurnNavigation({
           })}
         </div>
       </div>
-      {markers.map((marker, index) => (
-        <div
-          key={`${marker.id}-preview`}
-          className={cn(
-            'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
-            hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
-          )}
-          data-testid="message-turn-navigation-preview"
-          data-turn-index={marker.turnIndex}
-          style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
-        >
-          <p className="break-words text-xs font-semibold leading-4 text-text-primary">
-            {marker.promptPreview}
-          </p>
-          {marker.responsePreview && (
-            <p className="mt-1 break-words text-xs leading-4 text-text-muted">
-              {marker.responsePreview}
+      {markers.map((marker, index) => {
+        const previewTopPx = getMarkerTopPx(index) - navigationScrollTop
+        const clampedPreviewTopPx =
+          previewClamp?.markerId === marker.id
+            ? getClampedPreviewTopPx({
+                centerTopPx: previewTopPx,
+                previewHeightPx: previewClamp.previewHeightPx,
+                regionTopPx: previewClamp.regionTopPx,
+                regionBottomPx: previewClamp.regionBottomPx,
+              })
+            : previewTopPx
+        return (
+          <div
+            key={`${marker.id}-preview`}
+            ref={node => {
+              if (node) previewNodesRef.current.set(marker.id, node)
+              else previewNodesRef.current.delete(marker.id)
+            }}
+            className={cn(
+              'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
+              hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
+            )}
+            data-testid="message-turn-navigation-preview"
+            data-turn-index={marker.turnIndex}
+            style={{ top: `${clampedPreviewTopPx}px` }}
+          >
+            <p className="break-words text-xs font-semibold leading-4 text-text-primary">
+              {marker.promptPreview ||
+                t('conversation.message_navigation.turn_label', undefined, {
+                  index: marker.turnIndex + 1,
+                  defaultValue: `第 ${marker.turnIndex + 1} 轮对话`,
+                })}
             </p>
-          )}
-        </div>
-      ))}
+            {marker.responsePreview && (
+              <p className="mt-1 break-words text-xs leading-4 text-text-muted">
+                {marker.responsePreview}
+              </p>
+            )}
+          </div>
+        )
+      })}
     </nav>
   )
 

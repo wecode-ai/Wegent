@@ -6,6 +6,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { collectProjectTags } from "./project-board/projectTags";
 import { MAX_TAGS_PER_ITEM } from "./tagging";
+import { IssueHierarchySummary } from "./issue-detail/IssueHierarchySummary";
 import {
   useCallback,
   useEffect,
@@ -612,6 +613,8 @@ export interface TodoEditorCreateProps {
   initialParent: CloudLoopItem | null;
   initialStatus: CloudLoopItem["status"];
   initialTitle?: string;
+  initialTags?: string[];
+  draftScope?: string;
   onCreated: (item: CloudLoopItem) => void | Promise<void>;
   onCreateError?: (
     error: unknown,
@@ -677,6 +680,7 @@ export type TodoEditorProps = {
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
   onOpenChildTask?: (task: CloudLoopItem) => void;
+  onOpenRelatedIssue?: (issue: CloudLoopItem) => void;
   onWorkflowPlanChanged?: () => void | Promise<void>;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
 
@@ -718,7 +722,10 @@ export function TodoEditor(props: TodoEditorProps) {
       }));
 
   const draftKey = createProps
-    ? todoDraftKey(createProps.project.id, createProps.initialStatus)
+    ? todoDraftKey(
+        createProps.project.id,
+        createProps.draftScope ?? createProps.initialStatus,
+      )
     : null;
   const [draft] = useState(() => (draftKey ? readTodoDraft(draftKey) : null));
   const [editingContent, setEditingContent] = useState(!readFirst);
@@ -739,7 +746,7 @@ export function TodoEditor(props: TodoEditorProps) {
       startDate: draft?.startDate ?? "",
       dueDate: draft?.dueDate ?? "",
       assigneeTarget: draft?.assigneeTarget ?? "",
-      tags: draft?.tags ?? [],
+      tags: draft?.tags ?? createProps?.initialTags ?? [],
     },
     normalizeDescription: extensions?.normalizeDescription,
     startDateFromSource:
@@ -1347,7 +1354,8 @@ export function TodoEditor(props: TodoEditorProps) {
       ? effectiveTasks.slice(0, 1)
       : []
     : effectiveTasks;
-  const executionChildItems = showChildren ? [] : childItems;
+  const executionChildItems =
+    showChildren || props.onOpenRelatedIssue ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
   const hasExecutionDetails =
     executionTaskCount > 0 ||
@@ -2931,6 +2939,15 @@ export function TodoEditor(props: TodoEditorProps) {
                     "task-detail-content-clickable",
                 )}
               />
+              {item && props.onOpenRelatedIssue ? (
+                <IssueHierarchySummary
+                  item={item}
+                  allItems={allItems}
+                  onOpen={props.onOpenRelatedIssue}
+                  onAddChild={editable ? editProps?.onAddChild : undefined}
+                  translate={t}
+                />
+              ) : null}
               {!workspacePanel ? (
                 <div
                   className={cn(

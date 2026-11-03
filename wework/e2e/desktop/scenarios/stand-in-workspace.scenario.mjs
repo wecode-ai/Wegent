@@ -500,7 +500,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-cancel"]')
       await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
-      await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
+      await control.command('clickWhenEnabled', selector(`stand-in-overview-role-${saved.id}`))
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')

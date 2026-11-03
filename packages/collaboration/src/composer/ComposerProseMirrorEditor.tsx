@@ -510,6 +510,14 @@ export const ComposerProseMirrorEditor = forwardRef<
     );
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      if (event.key.length === 1) {
+        recordComposerDiagnostic("keyboard-text", {
+          composerId,
+          trusted: event.isTrusted,
+          valueLength: internalValueRef.current.length,
+          ...classifyComposerInputData(event.key),
+        });
+      }
       const prediction = callbacksRef.current.prediction;
       if (
         prediction &&
@@ -525,6 +533,12 @@ export const ComposerProseMirrorEditor = forwardRef<
         view.state.doc.childCount === 1 &&
         view.state.doc.firstChild?.content.size === 0
       ) {
+        recordComposerDiagnostic("prediction-accepted", {
+          composerId,
+          key: event.key,
+          trusted: event.isTrusted,
+          valueLength: prediction.text.length,
+        });
         replaceComposerValue(
           view,
           prediction.text,

@@ -54,7 +54,11 @@ async function switchUser(
 ): Promise<void> {
   await page.getByRole('button').filter({ hasText: currentUsername }).click()
   await page.getByRole('menuitem', { name: /^(退出登录|Logout)$/ }).click()
-  await new LoginPage(page).login(nextUser.username, nextUser.password)
+  await page.waitForURL(url => url.pathname === '/login')
+  const loginPage = new LoginPage(page)
+  await loginPage.fillCredentials(nextUser.username, nextUser.password)
+  await loginPage.clickLogin()
+  await loginPage.waitForLoginComplete()
 }
 
 for (const role of ['Developer', 'Viewer'] as const) {

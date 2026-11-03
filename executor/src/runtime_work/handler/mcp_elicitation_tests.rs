@@ -47,6 +47,49 @@ fn assert_interaction_status(handler: &RuntimeWorkRpcHandler, expected: Option<&
 }
 
 #[test]
+fn runtime_owner_uses_the_effective_profile_for_mcp_approval_visibility() {
+    for (label, profile, visible) in [
+        (
+            "full",
+            crate::agents::CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            false,
+        ),
+        (
+            "workspace",
+            crate::agents::CODEX_WORKSPACE_PERMISSION_PROFILE,
+            true,
+        ),
+        (
+            "read-only",
+            crate::agents::CODEX_READ_ONLY_PERMISSION_PROFILE,
+            true,
+        ),
+    ] {
+        let (handler, root) = interaction_handler(&format!("mcp-profile-{label}"));
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("runtime_permission_profile".into(), json!(profile));
+        handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+        let mut approval = self::request();
+        approval["params"]["_meta"] = json!({"codex_approval_kind": "mcp_tool_call"});
+        handler.route_codex_notification(approval);
+        let active = handler.active_codex_transcript_items.lock().unwrap();
+        assert_eq!(
+            active["task-1"].items.len(),
+            usize::from(visible),
+            "{profile}"
+        );
+        drop(active);
+        assert_interaction_status(
+            &handler,
+            visible.then_some(INTERACTION_WAITING_FOR_USER_INPUT),
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer() {
     let (handler, root) = interaction_handler("ordinary-refresh-history");
     let ordinary = ordinary_request(json!(1), "turn-1");
@@ -73,7 +116,7 @@ fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer
         &json!({"answers": {"choice": {"answers": ["No"]}}}),
     );
     assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
-    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
     let link = handler.local_task_link("task-1").unwrap();
     let recovered = super::transcript_overlays::runtime_transcript_overlay_turns(
         &link,
@@ -297,6 +340,7 @@ fn ordinary_pending_requests_are_cleared_by_turn_changes_and_completion() {
     );
     handler.refresh_pending_user_input_status("task-1");
     assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-3");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-3",
@@ -391,7 +435,7 @@ fn mcp_elicitation_terminal_turn_and_expired_deadline_cannot_restore_pending_car
 
 #[tokio::test]
 async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_is_cleared() {
-    for completion_notification in [false, true] {
+    for rpc_completion_first in [false, true] {
         let (mut handler, root) = isolated_runtime_work_handler("elicitation-answered-history");
         let mut link = RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
@@ -444,18 +488,17 @@ async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_i
             }
             handler.record_active_codex_transcript_item("task-1", "turn-1", &settled);
         }
-        if completion_notification {
-            handler.persist_completed_codex_turn_from_notification(
-                "task-1",
-                &json!({
-                    "method": "turn/completed", "params": {
-                        "threadId": "thread-1",
-                        "turn": {"id": "turn-1", "status": "completed", "items": []}
-                    }
-                }),
-            );
-        } else {
-            handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+        if rpc_completion_first {
+            handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
+        }
+        handler.route_codex_notification(json!({
+            "method": "turn/completed", "params": {
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "status": "completed", "items": []}
+            }
+        }));
+        if !rpc_completion_first {
+            handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
         }
         handler.clear_active_codex_transcript("task-1");
         assert!(handler
@@ -536,7 +579,7 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
             "answers": {"action": {"answers": [choice]}}
         });
         handler.record_active_codex_transcript_item("task-1", turn_id, &settled);
-        handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+        handler.persist_and_clear_active_codex_transcript("task-1", "completed", None);
         previous_settled = Some(settled);
     }
     let history = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());

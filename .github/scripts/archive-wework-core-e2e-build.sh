@@ -34,6 +34,7 @@ cp -R "$codex_root" "$staging_dir/codex/$codex_target"
 mkdir -p "$staging_dir/backend-rs"
 cp "$backend_rs_binary" "$staging_dir/backend-rs/wegent-backend-rs"
 node wework/scripts/build-desktop-e2e-client.mjs "$staging_dir/e2e-client"
+test -s "$staging_dir/e2e-client/lz-string.cjs"
 chmod 0755 \
   "$staging_dir/electron-app/WeWork" \
   "$staging_dir/electron-app/resources/bin/wegent-executor" \

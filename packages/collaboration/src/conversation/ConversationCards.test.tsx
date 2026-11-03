@@ -9,6 +9,7 @@ import { ConversationTranslationProvider } from "./ConversationTranslation";
 import { FileChangesCard } from "./FileChangesCard";
 import { RequestUserInputCard } from "./RequestUserInputCard";
 import { CodexReferenceList } from "./CodexTurnArtifacts";
+import { getAssistantReferences } from "./codexReferences";
 import { SelectionActionsPopover } from "./SelectionActionsPopover";
 
 let container: HTMLDivElement;
@@ -118,22 +119,52 @@ describe("shared conversation cards without Electron", () => {
     });
   });
 
-  it("opens a reference at its original file and line range", () => {
+  it.each([
+    "/workspace/notes.md",
+    String.raw`/workspace/report\2026.md`,
+    String.raw`C:\workspace\notes.md`,
+    String.raw`docs\notes.md`,
+  ])("opens reference %s at its original file and line range", (path) => {
     const openFile = vi.fn();
     render(
       <CodexReferenceList
-        references={[{ path: "/workspace/notes.md", lineStart: 5, lineEnd: 8 }]}
+        references={[{ path, lineStart: 5, lineEnd: 8 }]}
         onOpenFile={openFile}
       />,
     );
     act(() => element("codex-reference-card").click());
-    expect(openFile).toHaveBeenCalledExactlyOnceWith("/workspace/notes.md", {
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(path, {
       lineStart: 5,
       lineEnd: 8,
     });
     expect(element("codex-reference-kind-label").textContent).toBe(
       "Document · MD",
     );
+    expect(
+      element("codex-reference-card").querySelector(".font-semibold")
+        ?.textContent,
+    ).toBe(
+      path === String.raw`/workspace/report\2026.md`
+        ? String.raw`report\2026.md`
+        : "notes.md",
+    );
+  });
+
+  it.each([
+    [String.raw`/workspace/report\2026.md`, String.raw`report\2026.md`],
+    [String.raw`C:\workspace\notes.md`, String.raw`docs\..\notes.md`],
+  ])("merges absolute and relative references for %s", (absolute, relative) => {
+    for (const paths of [
+      [absolute, relative],
+      [relative, absolute],
+    ]) {
+      const references = getAssistantReferences(
+        paths.map((path) => ({ path })),
+        "",
+      );
+      expect(references).toHaveLength(1);
+      expect(references[0].path).toBe(absolute);
+    }
   });
 
   it("keeps selection actions themed, localized and bound to real callbacks", () => {

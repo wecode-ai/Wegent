@@ -1814,6 +1814,9 @@ export function createHybridWorkbenchServices(
       async readTask(deviceId, taskId) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
       },
+      async assignmentTasks(userId, deviceId, assignments) {
+        return (await standInApiForDevice(deviceId)).assignmentTasks(userId, deviceId, assignments)
+      },
       async catalog(deviceId) {
         return (await standInApiForDevice(deviceId)).catalog(deviceId)
       },
@@ -1913,7 +1916,7 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
-    onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
+    onRuntimeTurnUpdated: route(handlers.onRuntimeTurnUpdated),
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),
     onRuntimeEventLagged: handlers.onRuntimeEventLagged,

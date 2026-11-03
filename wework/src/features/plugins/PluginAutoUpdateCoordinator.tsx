@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { createHttpClient } from '@/api/http'
 import {
   clearLocalCodexPluginsReadStateCache,
@@ -26,35 +26,45 @@ export function PluginAutoUpdateCoordinator() {
   const cloud = useOptionalCloudConnection()
   const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
-  const cloudPluginApi = useMemo(() => {
-    if (!cloud.apiBaseUrl || !cloud.token) return null
-    return createPluginApi(
-      createHttpClient({
-        baseUrl: cloud.apiBaseUrl,
-        getToken: () => cloud.token,
-        redirectOnUnauthorized: false,
-      }),
-      cloud.apiBaseUrl
-    )
-  }, [cloud.apiBaseUrl, cloud.token])
+  const accountController = useRef<AbortController | null>(null)
   const runtimeConnected =
     localExecutorCloudConnection.connected &&
     localExecutorCloudConnection.apiBaseUrl === (cloud.apiBaseUrl || '')
 
+  // An accepted sync must survive an Executor disconnect until its HTTP request settles.
   useEffect(() => {
+    const controller = new AbortController()
+    accountController.current = controller
+    return () => {
+      controller.abort()
+      if (accountController.current === controller) accountController.current = null
+    }
+  }, [cloud.apiBaseUrl, cloud.isConnected, cloud.token])
+
+  useEffect(() => {
+    const controller = accountController.current
     if (
+      !controller ||
       !cloud.isConnected ||
       !cloud.apiBaseUrl ||
       !cloud.socketBaseUrl ||
       !cloud.socketPath ||
       !cloud.token ||
-      !cloudPluginApi ||
       !runtimeConnected
     ) {
       return undefined
     }
 
     const token = cloud.token
+    const cloudPluginApi = createPluginApi(
+      createHttpClient({
+        baseUrl: cloud.apiBaseUrl,
+        getToken: () => token,
+        redirectOnUnauthorized: false,
+        signal: controller.signal,
+      }),
+      cloud.apiBaseUrl
+    )
     const socketClient = createSocketClient({
       socketBaseUrl: () => cloud.socketBaseUrl || '',
       path: cloud.socketPath,
@@ -68,9 +78,11 @@ export function PluginAutoUpdateCoordinator() {
     let pending = false
     let connectedTriggerSeen = false
     let cancelScheduledUpdate: (() => void) | null = null
+    const waiting = new AbortController()
 
     const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
+        signal: waiting.signal,
         listLocalInstalledPlugins: () =>
           localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
@@ -80,6 +92,7 @@ export function PluginAutoUpdateCoordinator() {
         syncDevice: deviceId => cloudPluginApi.syncInstalledPluginsToDevice(deviceId),
       })
       if (
+        disposed ||
         !result ||
         (result.updatedCount === 0 && result.failedCount === 0 && !result.deviceSyncPerformed)
       ) {
@@ -111,6 +124,7 @@ export function PluginAutoUpdateCoordinator() {
             const retryNeeded = await runUpdatePass()
             pending = pending || retryNeeded
           } catch (error) {
+            if (disposed) return
             console.warn('[Plugins] Automatic update check failed', error)
             track('operation_failed', { operation: 'plugin_auto_update' })
           }
@@ -151,6 +165,7 @@ export function PluginAutoUpdateCoordinator() {
 
     return () => {
       disposed = true
+      waiting.abort()
       cancelScheduledUpdate?.()
       socketClient.socket.off('connect', handleConnect)
       socketClient.socket.off(PLUGIN_RELEASE_AVAILABLE_EVENT, handleReleaseAvailable)
@@ -162,7 +177,6 @@ export function PluginAutoUpdateCoordinator() {
     cloud.socketBaseUrl,
     cloud.socketPath,
     cloud.token,
-    cloudPluginApi,
     localPluginApi,
     runtimeConnected,
   ])

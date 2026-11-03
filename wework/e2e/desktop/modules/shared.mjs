@@ -24,7 +24,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
-import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import {
+  crashOwnedProcessTree,
+  processIsAlive,
+  stopProcess,
+  stopProcessGroup,
+} from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
@@ -114,7 +119,7 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const REQUEST_USER_INPUT_ASYNC_PROMPT =
-  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn. Complete root-cause investigation before changing behavior; this context is not an answer.'
 const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
 const REQUEST_USER_INPUT_FREE_TEXT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT_FREE_TEXT: ask a long question without options.'
@@ -1039,8 +1044,13 @@ async function commandOutputAsync(command, args, options = {}) {
   })
 }
 
-async function stopDesktopAppProcess(app) {
+async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
   if (!app) return
+  if (forceSnapshot) {
+    await crashOwnedProcessTree(app, forceSnapshot)
+    if (app.launcher) await stopProcess(app.launcher)
+    return
+  }
   if (!app.launcher) {
     await stopProcessGroup(app)
     return
@@ -1496,6 +1506,12 @@ async function selectE2EModel(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     visible: true,
   })
+  if (expectedProviderId) {
+    // The recovery control stays mounted while startup reconciles the local catalog.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })
