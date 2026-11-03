@@ -296,8 +296,8 @@ export function createStandInCoordinatorVerification({
       )
       assert.ok(agent, 'Creating an agent through the group editor persists the real agent')
       await control.command(
-        'clickWhenEnabled',
-        `${CONTENT} button[data-testid="collaboration-group-leader-agent-${agent.id}"]`
+        'waitFor',
+        `${CONTENT} [data-testid="collaboration-group-leader-agent-${agent.id}"]`
       )
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-group-leader"]`, {
         text: '项目负责人',
