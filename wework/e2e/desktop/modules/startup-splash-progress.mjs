@@ -113,6 +113,17 @@ export function startupSlowObservation(state) {
   )
 }
 
+export function startupTimeoutObservation(state) {
+  // Host progress can advance before the splash applies the renderer update.
+  return state.observations?.find(
+    snapshot =>
+      snapshot.progress?.stage.id === 'renderer' &&
+      snapshot.progress.startedAt === state.progress?.startedAt &&
+      snapshot.stepCount === state.stepCount &&
+      !snapshot.timeoutHidden
+  )
+}
+
 async function waitForHandlerLog(logPath, afterBytes, step, status) {
   const deadline = Date.now() + 10_000
   do {
@@ -229,19 +240,15 @@ export async function verifyStartupSplashProgress({
   const timeout = await waitForSplash(
     control,
     state =>
-      !state.timeoutHidden &&
-      !state.timeoutActionsHidden &&
-      state.observations.some(
-        snapshot =>
-          snapshot.progress?.startedAt === state.progress.startedAt && !snapshot.timeoutHidden
-      ),
+      !state.timeoutHidden && !state.timeoutActionsHidden && startupTimeoutObservation(state),
     'The real startup timer did not show diagnostics actions'
   )
   assert.equal(timeout.failure, null)
   assert.equal(slow.progress.startedAt, timeout.progress.startedAt)
-  const timeoutObservation = timeout.observations.find(
-    snapshot =>
-      snapshot.progress?.startedAt === timeout.progress.startedAt && !snapshot.timeoutHidden
+  const timeoutObservation = startupTimeoutObservation(timeout)
+  await writeFile(
+    join(root, 'observations.json'),
+    `${JSON.stringify({ slowEvidence, timeout }, null, 2)}\n`
   )
   assert.ok(slow.capturedAt < timeoutObservation.capturedAt)
   assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)

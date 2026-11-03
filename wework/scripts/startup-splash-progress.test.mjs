@@ -8,8 +8,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 import {
   assertStartupProgressStages,
   startupSlowObservation,
+  startupTimeoutObservation,
   waitForStartupProgressEvidence,
-} from './startup-splash-progress.mjs'
+} from '../e2e/desktop/modules/startup-splash-progress.mjs'
 
 const stages = [
   'launch',
@@ -55,6 +56,29 @@ test('slow evidence uses real observations from the same renderer stage before t
       observations: [{ ...slow, progress: { stage: { id: 'core-dsh' } } }],
     }),
     undefined
+  )
+})
+
+test('timeout evidence excludes the previous stage while its DOM update is in flight', () => {
+  const progress = { stage: { id: 'renderer' }, startedAt: 100 }
+  const previous = {
+    progress,
+    stepCount: 'Step 8 of 9',
+    timeoutHidden: false,
+    capturedAt: 150,
+  }
+  const slow = {
+    ...previous,
+    stepCount: 'Step 9 of 9',
+    timeoutHidden: true,
+    capturedAt: 200,
+  }
+  const timeout = { ...slow, timeoutHidden: false, capturedAt: 300 }
+  const current = { ...timeout, observations: [previous, slow] }
+  assert.equal(startupTimeoutObservation(current), undefined)
+  assert.equal(
+    startupTimeoutObservation({ ...current, observations: [previous, slow, timeout] }),
+    timeout
   )
 })
 
