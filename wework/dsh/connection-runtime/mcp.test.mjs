@@ -300,3 +300,39 @@ test('multiple aliases of the same installed plugin keep their distinct invocati
   )
   assert.ok(calls.every(item => item.params.source.pluginId === 'mail@company'))
 })
+
+test('DingTalk CLI reads bind to the actual declared installed marketplace', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const definition = parseConnections(
+    JSON.parse(
+      await readFile(new URL('../connection-dingtalk/package.json', import.meta.url), 'utf8')
+    )
+  )
+  for (const marketplaceId of ['wegent', 'wework']) {
+    const source = { marketplaceId, pluginId: `dingtalk@${marketplaceId}` }
+    const calls = []
+    const tools = connectionTools(
+      {
+        providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+        signal: new AbortController().signal,
+        dependencies: [{ alias: 'dingtalk', ...definition.dependencies.dingtalk }],
+      },
+      {
+        inventory: async () => [
+          { ...source, name: 'dingtalk', installed: true, enabled: true, version: '0.2.2' },
+        ],
+      },
+      async (method, params) => {
+        calls.push({ method, params })
+        return { success: true, currentProfile: 'existing-account' }
+      },
+      satisfies
+    )
+    assert.equal(
+      (await tools.cli.callTool('dingtalk', { tool: 'listProfiles' })).currentProfile,
+      'existing-account'
+    )
+    assert.deepEqual(calls[0].params.source, source)
+    assert.equal(calls[0].params.expectedVersion, '0.2.2')
+  }
+})

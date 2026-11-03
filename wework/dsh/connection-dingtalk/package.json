@@ -23,6 +23,12 @@
             "marketplaceId": "wegent",
             "pluginId": "dingtalk@wegent"
           },
+          "alternateSources": [
+            {
+              "marketplaceId": "wework",
+              "pluginId": "dingtalk@wework"
+            }
+          ],
           "version": "*"
         }
       },
