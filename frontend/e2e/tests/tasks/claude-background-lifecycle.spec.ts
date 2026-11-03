@@ -163,11 +163,7 @@ test.describe('Real Claude background subagent lifecycle', () => {
     const teamName = `${model}-team`
     const childMarker = `BG_LARGE_CHILD_${model}`
     const finalMarker = `BG_LARGE_PARENT_DONE_${model}`
-    const login = await createApiClient(request).login(
-      ADMIN_USER.username,
-      ADMIN_USER.password,
-      1
-    )
+    const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password, 1)
     expect(login.status).toBe(200)
     const headers = createBackendRequestHeaders(login.data!.access_token)
     let taskId: number | undefined

@@ -199,6 +199,10 @@ fn stdout_buffer_limit_uses_the_executor_process_environment() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(output.status.success(), "{case}: {diagnostics}");
+        assert!(
+            diagnostics.contains("test result: ok. 1 passed;"),
+            "{case}: subprocess test did not run: {diagnostics}"
+        );
         if case == "invalid" {
             assert_eq!(
                 diagnostics
