@@ -18,6 +18,33 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("Intel ticket delivery uses TCP before signing while preserving every notarization gate", () => {
+  const steps = jobs.build.steps;
+  const transport = steps.find(
+    (step) =>
+      step.name === "Use TCP for Apple ticket delivery on Intel runners",
+  );
+  assert.equal(
+    transport.if,
+    "matrix.platform == 'macos' && matrix.arch == 'x64'",
+  );
+  assert.match(transport.run, /set -euo pipefail/);
+  assert.match(
+    transport.run,
+    /block return out quick proto udp from any to any port 443/,
+  );
+  assert.match(transport.run, /sudo pfctl -f -/);
+  assert.match(transport.run, /sudo pfctl -E/);
+  assert.ok(
+    steps.indexOf(transport) <
+      steps.findIndex((step) => step.name === "Build signed Electron release"),
+  );
+  assert.doesNotMatch(
+    transport.run,
+    /stapler|retry|attempt|timeout|notarytool/,
+  );
+});
+
 test("install diagnostics preserve the failing install gate on every platform", () => {
   const install = jobs.build.steps.find(
     (step) => step.id === "workspace-install",
