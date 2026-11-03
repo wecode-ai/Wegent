@@ -957,6 +957,8 @@ export function createDesktopScenario({
         text: SECOND_PROMPT,
         timeoutMs: uiTimeoutMs,
       })
+      // Reload restores a bounded tail; the first reply precedes the seeded tools.
+      await restoreCompleteRunningHistory(control, taskId, uiTimeoutMs)
       await captureScreenshot(
         control,
         'running-conversation-history-01-reloaded-while-running.png',
