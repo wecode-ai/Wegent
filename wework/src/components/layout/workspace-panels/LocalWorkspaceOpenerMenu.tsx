@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  prioritizeWorkspaceOpener,
   visibleOpenersForPlatform,
   type LocalWorkspaceOpenerDef,
   type LocalWorkspaceOpenerId,
@@ -38,6 +39,7 @@ interface LocalWorkspaceOpenerPickerProps {
   preferredPlacement?: 'above' | 'below'
   align?: 'start' | 'end'
   availability: Record<LocalWorkspaceOpenerId, boolean | undefined>
+  preferredOpener: LocalWorkspaceOpenerId | null
   labels?: Record<string, string | undefined>
   onChooseOther?: () => void | Promise<void>
   onOpen?: () => void | Promise<void>
@@ -54,6 +56,7 @@ export function LocalWorkspaceOpenerPicker({
   preferredPlacement = 'below',
   align = 'end',
   availability,
+  preferredOpener,
   labels,
   onChooseOther,
   onOpen,
@@ -149,7 +152,7 @@ export function LocalWorkspaceOpenerPicker({
   }
 
   const platform = getPlatform()
-  const openers = visibleOpenersForPlatform(platform)
+  const openers = prioritizeWorkspaceOpener(visibleOpenersForPlatform(platform), preferredOpener)
   const showChooseOther = platform === 'win' && onChooseOther != null
 
   return (

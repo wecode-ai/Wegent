@@ -95,6 +95,9 @@ const APP_IPC_AUTH_TIMEOUT_SECONDS: u64 = 5;
 const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
 const APP_IPC_CAPABILITIES: &[&str] = &[
+    "runtime.command-receipts-v1",
+    "runtime.coordination-v1",
+    "runtime.coordination-arrangements-v1",
     "device.command",
     "executor.backend",
     "executor.codex_home",
@@ -3335,13 +3338,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
         "git_branch" => Some(command_definition(
-            "git branch --show-current",
-            &["git", "branch", "--show-current"],
+            "git symbolic-ref --quiet --short HEAD",
+            super::command::GIT_CURRENT_BRANCH_ARGV,
             None,
         )),
         "git_branch_list" => Some(command_definition(
-            "git branch --format=%(refname:short)",
-            &["git", "branch", "--format=%(refname:short)"],
+            "git for-each-ref --format=%(refname:short) refs/heads/",
+            super::command::GIT_BRANCH_LIST_ARGV,
             None,
         )),
         "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),

@@ -10,6 +10,10 @@ await cp(
   resolve(root, 'dist/runtime/legacy-release-layout.mjs')
 )
 await cp(
+  resolve(root, 'src/runtime/legacy-dsh-browser-auth.cjs'),
+  resolve(root, 'dist/runtime/legacy-dsh-browser-auth.cjs')
+)
+await cp(
   resolve(root, 'src/runtime/upgrade-policy.mjs'),
   resolve(root, 'dist/runtime/upgrade-policy.mjs')
 )

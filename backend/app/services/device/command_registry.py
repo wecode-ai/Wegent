@@ -79,7 +79,7 @@ GIT_BRANCH_DIFF_COMMAND = (
 )
 
 GIT_PUSH_COMMAND = (
-    "sh -c 'branch=$(git branch --show-current); "
+    "sh -c 'branch=$(git symbolic-ref --quiet --short HEAD); "
     '[ -n "$branch" ] || { echo "Cannot push detached HEAD" >&2; exit 64; }; '
     'exec git push -u origin "$branch"\''
 )

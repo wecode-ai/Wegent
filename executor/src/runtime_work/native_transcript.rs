@@ -395,7 +395,7 @@ pub(crate) fn remove_restored_transcript(
     workspace_path: &Path,
     thread_id: &str,
 ) -> Result<bool, String> {
-    let restored_root = executor_home().join("restored-workspaces");
+    let restored_root = super::restored_workspaces::root();
     if workspace_path.parent() != Some(restored_root.as_path()) {
         return Ok(false);
     }
@@ -1218,7 +1218,7 @@ fn unused_workspace_path(transcript_id: &str) -> PathBuf {
             }
         })
         .collect::<String>();
-    let root = executor_home().join("restored-workspaces");
+    let root = super::restored_workspaces::root();
     let preferred = root.join(&safe_id);
     if !preferred.exists() {
         return preferred;

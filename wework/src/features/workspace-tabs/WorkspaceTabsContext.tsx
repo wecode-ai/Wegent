@@ -420,9 +420,11 @@ export function WorkspaceTabsProvider({
         if (!localStorage.getItem(key)) return
         flushSync(() => {
           dispatch({ type: 'receive', tab: receivedTab })
-          acceptWorkspaceTabTransfer(receivedTab.id)
         })
         navigateTo(workspaceTabRoute(receivedTab))
+        // Preference synchronization may have mounted this tab before its return.
+        // Commit its received drafts before acknowledging the source window.
+        flushSync(() => acceptWorkspaceTabTransfer(receivedTab.id))
         localStorage.removeItem(key)
       })().catch(error => {
         console.error('Failed to accept returned workspace tab', error)

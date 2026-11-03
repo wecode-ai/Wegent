@@ -342,6 +342,16 @@ class LocalDeviceCommandService:
 local_device_command_service = LocalDeviceCommandService()
 
 
+def is_builtin_branch_query(
+    command_key: str, configured_commands: Mapping[str, Any]
+) -> bool:
+    """Identify built-in branch queries while preserving explicit overrides."""
+    return (
+        command_key in {"git_branch", "git_branch_list"}
+        and command_key not in configured_commands
+    )
+
+
 async def execute_configured_device_command(
     *,
     db: Any,
@@ -368,14 +378,12 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not available through the command API"
         )
 
+    configured_commands = (
+        settings.LOCAL_DEVICE_COMMANDS if command_config is None else command_config
+    )
     try:
         command_definition = resolve_local_device_command(
-            command_key,
-            (
-                settings.LOCAL_DEVICE_COMMANDS
-                if command_config is None
-                else command_config
-            ),
+            command_key, configured_commands
         )
     except CommandRegistryError as exc:
         raise DeviceCommandConfigurationError(str(exc)) from exc
@@ -385,6 +393,9 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not configured"
         )
 
+    uses_builtin_branch_query = is_builtin_branch_query(
+        command_key, configured_commands
+    )
     dispatch_device_id = await _resolve_dispatch_device_id(
         user_id=user_id,
         submitted_device_id=device_id,
@@ -404,7 +415,7 @@ async def execute_configured_device_command(
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
     }
-    if command_key in {
+    if uses_builtin_branch_query or command_key in {
         "environment_prepare",
         "git_apply_patch",
         "workspace_tree",

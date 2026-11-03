@@ -57,7 +57,7 @@ export function observeStartupSplash(
 
 export async function inspectStartupSplash(
   window: BrowserWindow | null
-): Promise<Record<string, unknown>> {
+): Promise<StartupSplashInspection> {
   if (!window || window.isDestroyed()) throw new Error('Startup splash is unavailable')
   return window.webContents.executeJavaScript(`(() => {
     const text = id => document.getElementById(id)?.textContent ?? ''
@@ -66,6 +66,7 @@ export async function inspectStartupSplash(
     const style = activity ? getComputedStyle(activity) : null
     const progress = document.getElementById('splash-progress')
     return {
+      progress: structuredClone(currentUpdate),
       title: text('splash-title'),
       stepCount: text('splash-step-count'),
       activity: activity?.textContent ?? '',
