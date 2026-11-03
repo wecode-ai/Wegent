@@ -1,0 +1,510 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import {
+  readFileSync,
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import test from "node:test";
+import vm from "node:vm";
+import {
+  desktopIds,
+  filterDesktop,
+  loadCatalog,
+} from "./ci-feature-catalog.mjs";
+import { assertCurrentPlan, buildPlan } from "./ci-feature-plan.mjs";
+import { ciLabels, integrationChecks } from "./ci-feature-policy.mjs";
+import { playwrightInvocation } from "./run-feature-playwright.mjs";
+
+const root = resolve(import.meta.dirname, "../..");
+const catalog = await loadCatalog(root);
+const planFor = (files, labels, extra = {}) =>
+  buildPlan({
+    files,
+    labels,
+    head: "head",
+    base: "base",
+    catalog,
+    legacyDesktop: {
+      ...catalog.all,
+      wework_desktop_macos_inspector_e2e: "false",
+    },
+    ...extra,
+  });
+const entries = (output) => JSON.parse(output).include;
+
+test("every physical desktop entry and platform spec has a registered feature", () => {
+  const actual = new Set(
+    Object.values(catalog.features).flatMap((feature) => feature.desktop),
+  );
+  assert.deepEqual(actual, desktopIds(catalog.all, catalog.plugins));
+  assert.equal(Object.keys(catalog.features).length, 14);
+  assert(catalog.specOwners.size > 70);
+});
+
+test("missing, duplicate and unknown catalog entries are rejected before scheduling", async () => {
+  const fixture = mkdtempSync(resolve(tmpdir(), "ci-feature-catalog-"));
+  try {
+    mkdirSync(resolve(fixture, ".github/ci"), { recursive: true });
+    for (const name of ["wework", "frontend"])
+      symlinkSync(resolve(root, name), resolve(fixture, name), "dir");
+    for (const name of ["scripts", "workflows"])
+      symlinkSync(
+        resolve(root, ".github", name),
+        resolve(fixture, ".github", name),
+        "dir",
+      );
+    const mutations = [
+      (data) => {
+        data.features.chat.desktop = data.features.chat.desktop.filter(
+          (id) => id !== "core:voice-input",
+        );
+      },
+      (data) => {
+        data.features.chat.specs.shift();
+      },
+      (data) => {
+        data.features.chat.desktop.push("core:unregistered-checkpoint");
+      },
+      (data) => {
+        data.features.workspace.specs.push(data.features.chat.specs[0]);
+      },
+      (data) => {
+        data.version = 99;
+      },
+    ];
+    for (const mutate of mutations) {
+      const data = JSON.parse(catalog.text);
+      mutate(data);
+      writeFileSync(
+        resolve(fixture, ".github/ci/features.json"),
+        JSON.stringify(data),
+      );
+      await assert.rejects(
+        loadCatalog(fixture),
+        /no feature|Unknown|Duplicate|Unsupported/,
+      );
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("required labels retain affected client ownership and narrow existing desktop prerequisites", () => {
+  const desktopOnly = planFor(
+    ["wework/src/components/chat/MessageList.tsx"],
+    ["ci:chat"],
+    { surfaces: { platform: false, desktop: true } },
+  );
+  assert.equal(desktopOnly.outputs.platform_e2e, "false");
+  const webOnly = planFor(
+    ["frontend/src/components/chat/MessageList.tsx"],
+    ["ci:chat"],
+    { surfaces: { platform: true, desktop: false } },
+  );
+  assert.equal(webOnly.outputs.wework_desktop_e2e, "false");
+  const previous = filterDesktop(
+    catalog.all,
+    new Set(["core:streaming-tools", "core:runtime-input-answer-persistence"]),
+    catalog.plugins,
+  );
+  const narrow = planFor(
+    ["wework/src/components/chat/MessageList.tsx"],
+    ["ci:chat"],
+    { surfaces: { platform: false, desktop: true }, legacyDesktop: previous },
+  );
+  assert.deepEqual(
+    desktopIds(narrow.outputs, catalog.plugins),
+    desktopIds(previous, catalog.plugins),
+  );
+  const widened = planFor(
+    ["wework/src/components/chat/MessageList.tsx"],
+    ["ci:chat", "ci:knowledge"],
+    { surfaces: { platform: false, desktop: true } },
+  );
+  assert.equal(widened.outputs.platform_e2e, "true");
+  assert(
+    widened.plan.specs.every(
+      (spec) => catalog.specOwners.get(spec.file).feature === "knowledge",
+    ),
+  );
+  const windows = planFor(
+    ["frontend/src/components/chat/MessageList.tsx"],
+    ["ci:chat", "ci:windows"],
+    { surfaces: { platform: true, desktop: false } },
+  );
+  assert.equal(windows.outputs.windows_desktop_core_e2e, "true");
+});
+
+test("draft plans defer every expensive suite without erasing label requirements", () => {
+  const { plan, outputs } = planFor([], ["ci:all"], { draft: true });
+  assert.equal(plan.draft, true);
+  for (const key of [
+    "platform_e2e",
+    "platform_suite",
+    "executor_suite",
+    "wework_e2e",
+    "wework_desktop_e2e",
+    "windows_desktop_core_e2e",
+    "wework_desktop_macos_inspector_e2e",
+  ])
+    assert.equal(outputs[key], "false", key);
+  assert(
+    planFor(["wework/src/components/chat/MessageList.tsx"], [], { draft: true })
+      .plan.errors.length,
+  );
+});
+
+test("catalog project assignments agree with the actual Playwright configuration", () => {
+  const source = readFileSync(
+    resolve(root, "frontend/playwright.config.ts"),
+    "utf8",
+  )
+    .replace(/^import .*$/m, "")
+    .replace(
+      "export default defineConfig(",
+      "globalThis.config = defineConfig(",
+    );
+  const context = {
+    defineConfig: (value) => value,
+    devices: { "Desktop Chrome": {} },
+    process: { env: { CI: "true" } },
+  };
+  vm.runInNewContext(source, context);
+  const candidates = context.config.projects.filter((project) =>
+    [
+      "chromium",
+      "api",
+      "provider-native-chromium",
+      "executor-chromium",
+    ].includes(project.name),
+  );
+  for (const spec of catalog.specOwners.values()) {
+    const matches = candidates.filter((project) => {
+      const ignored = (project.testIgnore ?? []).some((pattern) =>
+        pattern.test(spec.file),
+      );
+      return (
+        !ignored && (!project.testMatch || project.testMatch.test(spec.file))
+      );
+    });
+    assert.deepEqual(
+      Array.from(matches, (project) => project.name),
+      [spec.project],
+      spec.file,
+    );
+  }
+});
+
+test("missing labels and unknown labels stop all expensive suites", () => {
+  for (const labels of [[], ["ci:chat"], ["ci:plguins"]]) {
+    const { plan, outputs } = planFor(
+      ["wework/src/features/plugins/PluginAutoUpdateCoordinator.tsx"],
+      labels,
+    );
+    assert(plan.errors.length);
+    assert.equal(outputs.platform_e2e, "false");
+    assert.equal(outputs.wework_desktop_e2e, "false");
+    assert.equal(outputs.wework_e2e, "false");
+    assert.equal(outputs.windows_desktop_core_e2e, "false");
+    assert.equal(outputs.wework_desktop_macos_inspector_e2e, "false");
+  }
+});
+
+test("known feature paths require their own labels and no unrelated desktop suite", () => {
+  const { plan, outputs } = planFor(
+    ["backend/app/services/knowledge/dingtalk_import.py"],
+    ["ci:knowledge"],
+  );
+  assert.deepEqual(plan.required, ["ci:knowledge"]);
+  assert.deepEqual(plan.errors, []);
+  assert.equal(outputs.wework_desktop_e2e, "false");
+  assert.equal(outputs.executor_suite, "false");
+  assert(plan.checks.includes("knowledge_index"));
+  assert(!plan.checks.includes("subscriptions"));
+  assert(!plan.checks.includes("attachments"));
+});
+
+test("plugins select plugin Core, Cloud and dedicated cases without platform E2E", () => {
+  const { plan, outputs } = planFor(
+    ["wework/src/features/plugins/PluginAutoUpdateCoordinator.tsx"],
+    ["ci:plugins"],
+  );
+  assert.deepEqual(plan.errors, []);
+  assert.equal(outputs.platform_e2e, "false");
+  assert.equal(outputs.wework_desktop_other_e2e, "true");
+  const selected = desktopIds(outputs, catalog.plugins);
+  assert(selected.has("cloud:plugin-periodic-reconcile"));
+  assert(selected.has("core:plugin-development"));
+  assert(!selected.has("core:goal-lifecycle"));
+});
+
+test("feature unions deduplicate identical profile/checkpoint pairs, not local/cloud coverage", () => {
+  const { outputs } = planFor([], ["ci:chat", "ci:runtime", "ci:chat"]);
+  const ids = desktopIds(outputs, catalog.plugins);
+  assert(ids.has("core:conversation-state"));
+  assert(ids.has("cloud:conversation-state"));
+  const checkpoints = Object.entries(outputs)
+    .filter(([key]) => key.endsWith("_matrix"))
+    .flatMap(([key, value]) =>
+      entries(value).flatMap((entry) =>
+        (entry.segments ?? entry.segment ?? "")
+          .split(",")
+          .filter(Boolean)
+          .map((name) => `${key}:${name}`),
+      ),
+    );
+  assert.equal(checkpoints.length, new Set(checkpoints).size);
+});
+
+test("unknown code, selection policy and lockfiles require explicit ci:all", () => {
+  for (const path of [
+    "backend-rs/src/new_domain.rs",
+    ".github/ci/features.json",
+    ".github/scripts/ci-feature-plan.mjs",
+    "pnpm-lock.yaml",
+  ]) {
+    assert(
+      planFor([path], ["ci:runtime"]).plan.missing.includes("ci:all"),
+      path,
+    );
+    assert.deepEqual(planFor([path], ["ci:all"]).plan.errors, [], path);
+  }
+});
+
+test("docs-only work needs no feature suite; permission contracts remain covered", () => {
+  const { plan, outputs } = planFor(
+    ["AGENTS.md", "docs/zh/wework/tasks.md"],
+    [],
+  );
+  assert.deepEqual(plan.errors, []);
+  assert.equal(outputs.platform_e2e, "false");
+  assert.equal(outputs.wework_desktop_e2e, "false");
+  assert.deepEqual(
+    planFor(["docs/en/wegent/developer-guide/collaboration-permissions.md"], [])
+      .plan.required,
+    ["ci:auth", "ci:collaboration"],
+  );
+});
+
+test("ci:all, release, nightly and dispatch preserve complete existing matrices", () => {
+  for (const extra of [
+    { labels: ["ci:all"] },
+    { labels: ["ci:release"] },
+    { labels: [], event: "schedule" },
+    { labels: [], event: "workflow_dispatch" },
+  ]) {
+    const { plan, outputs } = planFor([], extra.labels, extra);
+    assert(plan.full);
+    for (const key of ["core", "cloud", "other"])
+      assert.equal(
+        outputs[`wework_desktop_${key}_e2e_matrix`],
+        catalog.all[`wework_desktop_${key}_e2e_matrix`],
+      );
+    assert.equal(outputs.platform_suite, "true");
+    assert.equal(outputs.executor_suite, "true");
+    assert.deepEqual(plan.checks, Object.keys(integrationChecks));
+    assert.equal(plan.platformMatrix.length, 4);
+  }
+});
+
+test("merge queue uses its own desktop product diff without Windows or macOS expansion", () => {
+  const legacy = filterDesktop(
+    catalog.all,
+    new Set(["core:streaming-content"]),
+    catalog.plugins,
+  );
+  const { outputs } = planFor([], [], {
+    event: "merge_group",
+    legacyDesktop: legacy,
+  });
+  assert.deepEqual(
+    [...desktopIds(outputs, catalog.plugins)],
+    ["core:streaming-content"],
+  );
+  assert.equal(outputs.windows_desktop_core_e2e, "false");
+  assert.equal(outputs.wework_desktop_macos_inspector_e2e, "false");
+  assert.equal(outputs.platform_suite, "true");
+});
+
+test("platform modifiers cannot make missing functional labels or nonexistent coverage pass", () => {
+  assert(
+    planFor(["wework/src/components/chat/MessageList.tsx"], ["ci:windows"]).plan
+      .errors.length,
+  );
+  assert(planFor([], ["ci:knowledge", "ci:windows"]).plan.errors.length);
+  const { outputs } = planFor([], ["ci:chat", "ci:windows"]);
+  assert.equal(outputs.windows_desktop_core_e2e, "true");
+  assert.equal(outputs.wework_desktop_macos_inspector_e2e, "false");
+});
+
+test("partitioned platform plans execute each selected spec and independent command exactly as registered", () => {
+  for (const feature of Object.keys(catalog.features).filter(
+    (name) => name !== "release",
+  )) {
+    const { plan } = planFor([], [`ci:${feature}`]);
+    const files = plan.platformMatrix
+      .flatMap((entry) => [...entry.specs, ...entry.provider])
+      .sort();
+    assert.deepEqual(
+      files,
+      plan.specs
+        .filter((spec) => spec.project !== "executor-chromium")
+        .map((spec) => spec.file)
+        .sort(),
+      feature,
+    );
+    assert(plan.platformMatrix.length <= 4);
+    for (const check of plan.checks) {
+      assert.deepEqual(
+        plan.platformMatrix
+          .filter((entry) => entry.checks.includes(check))
+          .map((entry) => entry.shardIndex),
+        integrationChecks[check].shards,
+      );
+    }
+  }
+});
+
+test("provider-only shards provision auth and keep serial/no-deps execution", () => {
+  const { plan } = planFor([], ["ci:knowledge"]);
+  const bucket = plan.platformMatrix.find(
+    (entry) => entry.provider.length && !entry.specs.length,
+  );
+  assert(bucket);
+  assert.deepEqual(
+    playwrightInvocation(plan, [
+      "--project=chromium",
+      "--project=api",
+      `--shard=${bucket.shardIndex}/4`,
+    ]),
+    ["--project=setup"],
+  );
+  const args = playwrightInvocation(plan, [
+    "--project=provider-native-chromium",
+    "--workers=1",
+    `--shard=${bucket.providerShardIndex}/4`,
+    "--no-deps",
+  ]);
+  assert(args.includes("--workers=1"));
+  assert(args.includes("--no-deps"));
+  assert(!args.some((arg) => arg.startsWith("--shard=")));
+  assert(args.some((arg) => arg.endsWith("dingtalk-import\\.spec\\.ts$")));
+});
+
+test("unknown shards fail and full runs retain the exact Playwright shard command", () => {
+  const { plan } = planFor([], ["ci:knowledge"]);
+  assert.throws(
+    () => playwrightInvocation(plan, ["--project=api", "--shard=99/4"]),
+    /absent/,
+  );
+  const args = ["--project=api", "--shard=1/4"];
+  assert.deepEqual(
+    playwrightInvocation(planFor([], ["ci:all"]).plan, args),
+    args,
+  );
+});
+
+test("removed labels, changed heads and retargeting invalidate successful old plans", () => {
+  const { plan } = planFor([], ["ci:plugins"]);
+  const current = {
+    head: { sha: "head" },
+    base: { sha: "base", ref: "main" },
+    labels: [{ name: "ci:plugins" }],
+  };
+  assert.doesNotThrow(() => assertCurrentPlan(plan, current));
+  for (const changed of [
+    { ...current, labels: [] },
+    { ...current, head: { sha: "new" } },
+    { ...current, base: { sha: "base", ref: "other" } },
+  ])
+    assert.throws(() => assertCurrentPlan(plan, changed), /changed/);
+  assert.doesNotThrow(() =>
+    assertCurrentPlan(plan, {
+      ...current,
+      base: { sha: "advanced-main", ref: "main" },
+    }),
+  );
+});
+
+test("unrelated labels do not select, cancel or replace canonical CI checks", () => {
+  assert.deepEqual(ciLabels(["bug", "ci:chat", "ci:chat"]), ["ci:chat"]);
+  for (const file of ["e2e-tests.yml", "wework-e2e.yml"]) {
+    const workflow = readFileSync(
+      resolve(root, ".github/workflows", file),
+      "utf8",
+    );
+    assert(workflow.includes("&& 'metadata' || 'code'"));
+    assert(workflow.includes("Ignored label metadata"));
+    assert(workflow.includes("github.event.action != 'unlabeled'"));
+    assert(workflow.includes("node .github/scripts/check-ci-feature-plan.mjs"));
+    const parsed = JSON.parse(
+      execFileSync(
+        "ruby",
+        [
+          "-ryaml",
+          "-rjson",
+          "-e",
+          "puts JSON.generate(YAML.load_file(ARGV[0]))",
+          resolve(root, ".github/workflows", file),
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+    const evaluate = (expression, label) =>
+      vm.runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ""), {
+        github: {
+          event_name: "pull_request",
+          event: {
+            action: "labeled",
+            label: { name: label },
+            pull_request: { draft: false },
+          },
+        },
+        startsWith: (value, prefix) => value.startsWith(prefix),
+      });
+    assert.equal(evaluate(parsed.jobs.changes.if, "bug"), false);
+    assert.equal(evaluate(parsed.jobs.changes.if, "ci:chat"), true);
+    const summary =
+      parsed.jobs[
+        file === "wework-e2e.yml"
+          ? "wework-e2e-summary"
+          : "platform-e2e-summary"
+      ];
+    assert(evaluate(summary.name, "bug").startsWith("Ignored label metadata"));
+    assert(evaluate(summary.name, "ci:chat").endsWith("E2E Summary"));
+  }
+});
+
+test("every independent platform integration command is gated by its registered feature", () => {
+  const workflow = readFileSync(
+    resolve(root, ".github/workflows/e2e-tests.yml"),
+    "utf8",
+  );
+  for (const id of Object.keys(integrationChecks))
+    assert(
+      workflow.includes(
+        `contains(fromJSON(env.CI_FEATURE_PLAN).checks, '${id}')`,
+      ),
+      id,
+    );
+  assert(workflow.includes("--env CI_FEATURE_PLAN"));
+  assert(workflow.includes("RUN_PLATFORM_SUITE"));
+  assert(workflow.includes("RUN_EXECUTOR_SUITE"));
+});
+
+test("workflow YAML remains valid and includes the planner in the existing summary dependencies", () => {
+  for (const file of [
+    "e2e-tests.yml",
+    "wework-e2e.yml",
+    "ci-feature-labels.yml",
+  ]) {
+    const path = resolve(root, ".github/workflows", file);
+    execFileSync("ruby", ["-ryaml", "-e", "YAML.load_file(ARGV[0])", path]);
+  }
+});

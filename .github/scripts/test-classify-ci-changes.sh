@@ -2314,7 +2314,8 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
     printf '%s must not path-filter ci:all label events\n' "$workflow" >&2
     exit 1
   fi
-  if ! grep -q "ci:all" "$workflow_path"; then
+  if ! grep -Fq 'run: node .github/scripts/ci-feature-plan.mjs' "$workflow_path" ||
+    ! grep -q 'ci:all' "$script_dir/ci-feature-plan.mjs"; then
     printf '%s must force E2E for the ci:all label\n' "$workflow" >&2
     exit 1
   fi
@@ -2328,17 +2329,17 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
     exit 1
   fi
   if [[ "$workflow" == "wework-e2e.yml" ]]; then
-    if ! grep -Fq "github.event.merge_group.base_sha" "$workflow_path" ||
-      ! grep -Fq "github.event.merge_group.head_sha" "$workflow_path" ||
-      ! grep -Fq "github.event_name != 'merge_group'" "$workflow_path" ||
-      ! grep -Fq "grep -v '^\\.github/'" "$workflow_path"; then
+    if ! grep -Fq 'event.merge_group?.base_sha' "$script_dir/ci-feature-plan.mjs" ||
+      ! grep -Fq 'event.merge_group?.head_sha' "$script_dir/ci-feature-plan.mjs" ||
+      ! grep -Fq 'event !== "merge_group"' "$script_dir/ci-feature-plan.mjs" ||
+      ! grep -Fq 'files.filter((path) => !path.startsWith(".github/"))' "$script_dir/ci-feature-plan.mjs"; then
       printf '%s must classify merge groups from their product diff\n' \
         "$workflow" >&2
       exit 1
     fi
   elif ! grep -Fq \
-    "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'" \
-    "$workflow_path"; then
+    '["schedule", "workflow_dispatch"].includes(eventName)' \
+    "$script_dir/ci-feature-plan.mjs"; then
     printf '%s must reserve full E2E for scheduled, dispatched, or ci:all runs\n' \
       "$workflow" >&2
     exit 1
@@ -2363,8 +2364,8 @@ fi
 # job must also run when a fork PR selects desktop E2E without platform_e2e.
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '.github/scripts/classify-wework-desktop-e2e.sh' \
-  "$platform_e2e_workflow" ||
+if ! grep -Fq 'classify-wework-desktop-e2e.sh' \
+  "$script_dir/ci-feature-plan.mjs" ||
   ! grep -Fq 'wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}' \
     "$platform_e2e_workflow" ||
   ! grep -Fq "needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository" \
@@ -2528,7 +2529,14 @@ for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
   fi
   # GitHub expressions are matched literally in workflow source.
   # shellcheck disable=SC2016
-  if ! grep -Fq 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' "$workflow_path"; then
+  if [[ "$workflow" == "e2e-tests.yml" || "$workflow" == "wework-e2e.yml" ]]; then
+    diff_source="$script_dir/ci-feature-plan.mjs"
+    diff_expression='`${base}...${head}`'
+  else
+    diff_source="$workflow_path"
+    diff_expression='git diff --name-only "$BASE_SHA...$HEAD_SHA"'
+  fi
+  if ! grep -Fq "$diff_expression" "$diff_source"; then
     printf '%s must classify pull request changes from the merge base\n' \
       "$workflow" >&2
     exit 1
@@ -2585,18 +2593,18 @@ if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]
   exit 1
 fi
 
-if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
-  printf 'Wework label events must not cancel code-change E2E runs\n' >&2
+if ! grep -Fq "&& 'metadata' || 'code'" "$wework_workflow"; then
+  printf 'Wework non-CI label events must not cancel code-change E2E runs\n' >&2
   exit 1
 fi
 
-if ! grep -q "name: Platform E2E Summary" \
+if ! grep -Fq "'Platform E2E Summary' }}" \
   "$script_dir/../workflows/e2e-tests.yml"; then
   printf 'Platform E2E must expose a stable summary check\n' >&2
   exit 1
 fi
 
-if ! grep -q "name: Wework E2E Summary" "$wework_workflow"; then
+if ! grep -Fq "'Wework E2E Summary' }}" "$wework_workflow"; then
   printf 'Wework E2E must expose a stable summary check\n' >&2
   exit 1
 fi
@@ -2878,7 +2886,8 @@ if grep -Fq 'cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES' "$desktop_build
   exit 1
 fi
 
-if ! grep -q "github.event_name != 'merge_group'" "$wework_workflow"; then
+if ! grep -Fq 'event !== "merge_group"' "$script_dir/ci-feature-plan.mjs" ||
+  ! grep -Fq "needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true'" "$wework_workflow"; then
   printf 'Wework memory E2E must remain outside regular merge groups\n' >&2
   exit 1
 fi

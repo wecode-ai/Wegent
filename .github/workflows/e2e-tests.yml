@@ -3,7 +3,7 @@ name: E2E Tests
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
   merge_group:
     types: [checks_requested]
   schedule:
@@ -13,19 +13,26 @@ on:
 
 # Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !startsWith(github.event.label.name, 'ci:')) && 'metadata' || 'code' }}
   cancel-in-progress: true
 
 permissions:
+  pull-requests: read
   actions: read
   contents: read
   packages: read
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.action != 'unlabeled') || startsWith(github.event.label.name, 'ci:')
     name: Detect Platform E2E Changes
     runs-on: ubuntu-latest
     outputs:
+      ci_feature_plan: ${{ steps.classify.outputs.ci_feature_plan }}
+      ci_feature_valid: ${{ steps.classify.outputs.ci_feature_valid }}
+      platform_suite: ${{ steps.classify.outputs.platform_suite }}
+      executor_suite: ${{ steps.classify.outputs.executor_suite }}
+      platform_matrix: ${{ steps.classify.outputs.platform_matrix }}
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
 
@@ -37,22 +44,10 @@ jobs:
           fetch-depth: 0
 
       - name: Classify changed paths
-        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
-        run: |
-          if [[ "$FORCE_ALL" == "true" ]]; then
-            .github/scripts/classify-ci-changes.sh --all
-            .github/scripts/classify-wework-desktop-e2e.sh --all
-          else
-            changed_files="$(mktemp)"
-            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
-            .github/scripts/classify-ci-changes.sh < "$changed_files"
-            .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
-          fi
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/ci-feature-plan.mjs
 
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
@@ -467,14 +462,17 @@ jobs:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     needs:
       [
+        changes,
         build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
+    if: needs.changes.outputs.platform_suite == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
+      CI_FEATURE_PLAN: ${{ needs.changes.outputs.ci_feature_plan }}
       HOME: /root
       UV_PYTHON: "3.11"
       UV_MANAGED_PYTHON: "true"
@@ -495,22 +493,7 @@ jobs:
         shell: bash
     strategy:
       fail-fast: false
-      matrix:
-        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
-        # Exchange those logical shards without changing users or runner count.
-        include:
-          - shardIndex: 1
-            shardTotal: 4
-            providerShardIndex: 3
-          - shardIndex: 2
-            shardTotal: 4
-            providerShardIndex: 2
-          - shardIndex: 3
-            shardTotal: 4
-            providerShardIndex: 1
-          - shardIndex: 4
-            shardTotal: 4
-            providerShardIndex: 4
+      matrix: ${{ fromJSON(needs.changes.outputs.platform_matrix) }}
 
     services:
       mysql:
@@ -692,7 +675,7 @@ jobs:
       # Runs 40548056927 and 40547828678: shard 1 was slowest; shard 3
       # had the shortest browser phase and shard 4 had room for remote indexing.
       - name: Run attachment storage E2E on shared services
-        if: matrix.shardIndex == 2 || matrix.shardIndex == 3
+        if: (matrix.shardIndex == 2 || matrix.shardIndex == 3) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'attachments')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -737,7 +720,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload attachment storage E2E evidence
-        if: always() && (matrix.shardIndex == 2 || matrix.shardIndex == 3)
+        if: (always() && (matrix.shardIndex == 2 || matrix.shardIndex == 3)) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'attachments')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: attachment-${{ matrix.shardIndex == 2 && 's3-upload' || 'media-hosting' }}-e2e
@@ -746,7 +729,7 @@ jobs:
           retention-days: 14
 
       - name: Verify DingTalk sync MySQL transaction rollback
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'dingtalk_sync')
         working-directory: ./backend
         env:
           DINGTALK_SYNC_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -754,7 +737,7 @@ jobs:
         run: uv run --no-sync python tests/integration/dingtalk_sync_mysql.py
 
       - name: Verify device registration MySQL serialization
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'device_registration')
         working-directory: ./backend
         env:
           DEVICE_REGISTRATION_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -762,7 +745,7 @@ jobs:
         run: uv run --no-sync python tests/integration/device_registration_mysql.py
 
       - name: Verify MySQL Runtime activity concurrency
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'runtime_activity')
         working-directory: ./backend
         env:
           RUNTIME_ACTIVITY_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -770,7 +753,7 @@ jobs:
         run: uv run --no-sync python tests/integration/runtime_activity_mysql.py
 
       - name: Verify MySQL project detachment concurrency
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'project_detachment')
         working-directory: ./backend
         env:
           PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -778,7 +761,7 @@ jobs:
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
 
       - name: Verify MySQL Issue assignment concurrency
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'issue_assignment')
         working-directory: ./backend
         env:
           ISSUE_ASSIGNMENT_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -786,7 +769,7 @@ jobs:
         run: uv run --no-sync python tests/integration/issue_assignment_mysql.py
 
       - name: Prepare isolated DingTalk HTTPS download fixture
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'dingtalk_documents')
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
       - name: Start backend server
@@ -988,7 +971,7 @@ jobs:
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
       - name: Run DingTalk private-chat AI Card E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'dingtalk_cards')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1004,7 +987,7 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
       - name: Run subscription callback and system MCP gateway E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1032,7 +1015,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
       - name: Upload subscription callback gateway E2E report
-        if: always() && matrix.shardIndex == 1
+        if: (always() && matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: subscription-callback-gateway-e2e
@@ -1041,7 +1024,7 @@ jobs:
           retention-days: 14
 
       - name: Run subscription callback and gateway Python MCP E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1066,7 +1049,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Run subscription notification directives E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1085,7 +1068,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload subscription notification directives E2E report
-        if: always() && matrix.shardIndex == 1
+        if: (always() && matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: subscription-notification-directives-e2e
@@ -1094,7 +1077,7 @@ jobs:
           retention-days: 14
 
       - name: Run knowledge and team Python gateway API E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'knowledge_team_gateway')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1127,7 +1110,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
 
       - name: Upload Python gateway API E2E reports
-        if: always() && matrix.shardIndex == 1
+        if: (always() && matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'knowledge_team_gateway')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: knowledge-python-gateway-api-e2e
@@ -1136,7 +1119,7 @@ jobs:
           retention-days: 14
 
       - name: Run attachment upload MySQL replication E2E
-        if: matrix.shardIndex == 3
+        if: (matrix.shardIndex == 3) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'attachment_replication')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1159,13 +1142,13 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload attachment upload replication E2E report
-        if: always() && matrix.shardIndex == 3
+        if: (always() && matrix.shardIndex == 3) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'attachment_replication')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: attachment-upload-replica-e2e
           path: .ci-artifacts/attachment-upload-replica/
       - name: Run subscription execution notification directives E2E
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1186,7 +1169,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload subscription execution notification directives E2E report
-        if: always() && matrix.shardIndex == 1
+        if: (always() && matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'subscriptions')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: subscription-execution-notification-directives-e2e
@@ -1196,7 +1179,7 @@ jobs:
 
       - name: Run knowledge remote index E2E
         id: knowledge_e2e
-        if: matrix.shardIndex == 4
+        if: (matrix.shardIndex == 4) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'knowledge_index')
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1218,7 +1201,7 @@ jobs:
         run: ../.github/scripts/run-knowledge-provider-e2e.sh
 
       - name: Upload knowledge provider lifecycle diagnostics
-        if: always() && matrix.shardIndex == 4 && steps.knowledge_e2e.outcome != 'skipped' && steps.knowledge_e2e.outcome != ''
+        if: (always() && matrix.shardIndex == 4 && steps.knowledge_e2e.outcome != 'skipped' && steps.knowledge_e2e.outcome != '') && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'knowledge_index')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: knowledge-provider-lifecycle-e2e
@@ -1228,7 +1211,7 @@ jobs:
 
       - name: Run DingTalk document protocol integration tests
         id: dingtalk_oauth_e2e
-        if: matrix.shardIndex == 1
+        if: (matrix.shardIndex == 1) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'dingtalk_documents')
         timeout-minutes: 10
         working-directory: ./backend
         env:
@@ -1249,7 +1232,7 @@ jobs:
             --junitxml=reports/dingtalk-oauth-e2e.xml
 
       - name: Upload DingTalk protocol integration results
-        if: always() && matrix.shardIndex == 1 && steps.dingtalk_oauth_e2e.outcome != 'skipped' && steps.dingtalk_oauth_e2e.outcome != ''
+        if: (always() && matrix.shardIndex == 1 && steps.dingtalk_oauth_e2e.outcome != 'skipped' && steps.dingtalk_oauth_e2e.outcome != '') && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'dingtalk_documents')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dingtalk-oauth-e2e-results
@@ -1279,7 +1262,7 @@ jobs:
         run: |
           # Dependencies are verified; retain resource logging without pnpm's exit worker pool.
           node ../.github/scripts/run-with-resource-logging.mjs \
-            node ./node_modules/@playwright/test/cli.js test --project=chromium --project=api \
+            node ../.github/scripts/run-feature-playwright.mjs --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests
@@ -1295,7 +1278,7 @@ jobs:
           E2E_USE_ISOLATED_USERS: "false"
           CI: true
         run: |
-          node ./node_modules/@playwright/test/cli.js test \
+          node ../.github/scripts/run-feature-playwright.mjs \
             --project=provider-native-chromium \
             --workers=1 \
             --shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }} \
@@ -1424,13 +1407,17 @@ jobs:
       packages: read
     needs:
       [
+        changes,
         build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
+    if: needs.changes.outputs.executor_suite == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      CI_FEATURE_PLAN: ${{ needs.changes.outputs.ci_feature_plan }}
 
     services:
       mysql:
@@ -1825,6 +1812,7 @@ jobs:
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
       - name: Run Executor Manager resilience E2E tests
+        if: fromJSON(env.CI_FEATURE_PLAN).full || contains(fromJSON(env.CI_FEATURE_PLAN).selected, 'runtime')
         working-directory: ./executor_manager
         env:
           E2E_REDIS_URL: redis://localhost:6379/15
@@ -1833,6 +1821,7 @@ jobs:
         run: uv run pytest e2e_tests/ --no-cov -v
 
       - name: Verify retired artifact revision against real MySQL
+        if: fromJSON(env.CI_FEATURE_PLAN).full || contains(fromJSON(env.CI_FEATURE_PLAN).selected, 'workspace')
         working-directory: ./backend
         env:
           WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
@@ -1878,9 +1867,10 @@ jobs:
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env DATABASE_URL \
             --env E2E_DEVICE_ID \
+            --env CI_FEATURE_PLAN \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
+            node ../.github/scripts/run-feature-playwright.mjs --project=executor-chromium
 
       - name: Stop Local ClaudeCode Executor
         if: always()
@@ -1976,20 +1966,41 @@ jobs:
           retention-days: 7
 
   platform-e2e-summary:
-    name: Platform E2E Summary
+    name: ${{ (github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !startsWith(github.event.label.name, 'ci:')) && 'Ignored label metadata (platform)' || (github.event_name == 'pull_request' && github.event.pull_request.draft) && 'Draft feature plan (platform)' || 'Platform E2E Summary' }}
     needs:
       - changes
       - build-frontend-e2e
       - build-executor-e2e-runtime
+      - build-backend-rs-e2e-runtime
+      - prepare-platform-e2e-image
       - e2e-tests
       - executor-e2e-tests
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.action != 'unlabeled') || startsWith(github.event.label.name, 'ci:'))
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout current CI gate
+        if: needs.changes.result == 'success'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify current feature coverage
+        if: needs.changes.result == 'success'
+        env:
+          CI_FEATURE_PLAN: ${{ needs.changes.outputs.ci_feature_plan }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/check-ci-feature-plan.mjs
+
       - name: Check Platform E2E results
         env:
           RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true') }}
+          RUN_PLATFORM_SUITE: ${{ needs.changes.outputs.platform_suite }}
+          RUN_EXECUTOR_SUITE: ${{ needs.changes.outputs.executor_suite }}
+          BACKEND_BUILD_RESULT: ${{ needs.build-backend-rs-e2e-runtime.result }}
+          IMAGE_RESULT: ${{ needs.prepare-platform-e2e-image.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
@@ -2017,5 +2028,11 @@ jobs:
 
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
-          assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
-          assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
+          assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E build"
+          assert_success "$IMAGE_RESULT" "Platform E2E image"
+          if [[ "$RUN_PLATFORM_SUITE" == "true" ]]; then
+            assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
+          fi
+          if [[ "$RUN_EXECUTOR_SUITE" == "true" ]]; then
+            assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
+          fi

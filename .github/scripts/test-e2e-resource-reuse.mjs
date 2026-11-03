@@ -10,6 +10,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { loadCatalog } from "./ci-feature-catalog.mjs";
+import { buildPlan } from "./ci-feature-plan.mjs";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
@@ -160,7 +162,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
 });
 
-test("platform sharding preserves four runners and every provider shard", () => {
+test("platform sharding preserves four runners and every provider shard", async () => {
   const result = spawnSync(
     "ruby",
     [
@@ -173,7 +175,25 @@ test("platform sharding preserves four runners and every provider shard", () => 
     { encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);
-  const { matrix, services, steps } = JSON.parse(result.stdout);
+  const {
+    matrix: matrixExpression,
+    services,
+    steps,
+  } = JSON.parse(result.stdout);
+  assert.equal(
+    matrixExpression,
+    "${{ fromJSON(needs.changes.outputs.platform_matrix) }}",
+  );
+  const catalog = await loadCatalog(process.cwd());
+  const { outputs } = buildPlan({
+    files: [],
+    labels: ["ci:all"],
+    head: "head",
+    base: "base",
+    catalog,
+    legacyDesktop: catalog.all,
+  });
+  const matrix = JSON.parse(outputs.platform_matrix);
   assert.deepEqual(Object.keys(matrix), ["include"]);
   assert.deepEqual(
     matrix.include.map((row) => row.shardIndex).sort(),
@@ -190,7 +210,10 @@ test("platform sharding preserves four runners and every provider shard", () => 
     step.run?.includes("run-knowledge-provider-e2e.sh"),
   );
   assert.equal(knowledgeSteps.length, 1);
-  assert.equal(knowledgeSteps[0].if, "matrix.shardIndex == 4");
+  assert.equal(
+    knowledgeSteps[0].if,
+    "(matrix.shardIndex == 4) && contains(fromJSON(env.CI_FEATURE_PLAN).checks, 'knowledge_index')",
+  );
   assert.equal(knowledgeSteps[0]["working-directory"], "./backend");
 });
 
