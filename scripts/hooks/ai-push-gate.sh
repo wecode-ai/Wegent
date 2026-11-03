@@ -198,6 +198,7 @@ run_wework_full_renderer_tests() {
         pnpm --filter wework exec vitest run --dir src --pool=threads \
             --maxWorkers "$test_workers" \
             --testTimeout "$test_timeout_ms" \
+            --reporter=default \
             --shard="$shard/$shard_count" \
             > "${shard_logs[$((shard - 1))]}" 2>&1 &
         shard_pids+=("$!")
