@@ -3778,10 +3778,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         elapsedMs: Math.round(performance.now() - startedAt),
       })
     }
-    tracePhase('resolve_device')
-    const localDeviceId = await getDeviceCommandLocalDeviceId()
-    tracePhase('dispatch')
     try {
+      tracePhase('resolve_device')
+      const localDeviceId = await getDeviceCommandLocalDeviceId()
+      tracePhase('dispatch')
       return await request<DeviceCommandResponse>(
         'device.execute_command',
         normalizeLocalDeviceRecord({ deviceId, ...data }, localDeviceId)
