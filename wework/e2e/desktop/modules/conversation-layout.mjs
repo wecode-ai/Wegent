@@ -377,7 +377,9 @@ async function verifyConversationContextMenuDismissal(control, taskRowTestId, co
     'The outside-click regression must start with focus outside the composer'
   )
   await openMenu()
-  await control.command('click', composerSelector)
+  // Focus and pointerdown must share a renderer turn to expose deferred focus theft.
+  await control.command('pointerDownOnly', composerSelector)
+  await control.command('pointerUp', composerSelector)
   await control.command('waitFor', menu, { visible: false })
   await control.command('waitFor', `${composerSelector}:focus`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
