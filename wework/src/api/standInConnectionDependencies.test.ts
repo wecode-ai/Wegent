@@ -153,3 +153,23 @@ it('also installs workspace-scoped official dependencies through their exact weg
   await installStandInConnectionDependencies(f.options)
   expect(f.installMarketplacePlugin).toHaveBeenCalledWith(42, 'device')
 })
+
+it('keeps the public default for new DingTalk installations and declares the legacy source', () => {
+  const dependency = dingtalkManifest.wework.connections.dependencies.dingtalk
+  expect(dependency.source).toEqual({ marketplaceId: 'wework', pluginId: 'dingtalk@wework' })
+  expect(dependency.alternateSources).toEqual([
+    { marketplaceId: 'wegent', pluginId: 'dingtalk@wegent' },
+  ])
+})
+
+it('preserves the ready selected legacy source without installing the public default', async () => {
+  const alternate = dingtalkManifest.wework.connections.dependencies.dingtalk.alternateSources[0]
+  expect(alternate).toEqual({ marketplaceId: 'wegent', pluginId: 'dingtalk@wegent' })
+  const f = fixture()
+  f.dependency.source = { ...alternate }
+  f.dependency.status = 'ready'
+  await expect(installStandInConnectionDependencies(f.options)).resolves.toEqual({ success: true })
+  expect(f.listMarketplacePlugins).not.toHaveBeenCalled()
+  expect(f.installMarketplacePlugin).not.toHaveBeenCalled()
+  expect(f.options.installNative).not.toHaveBeenCalled()
+})
