@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { WorkbenchMessage } from '@/types/workbench'
 import { layout, prepare } from '@chenglou/pretext'
 import { beforeEach, describe, expect, test, vi } from 'vitest'

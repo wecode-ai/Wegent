@@ -238,6 +238,13 @@ frontend/src/__tests__/
 
 ## Wework Unit Tests
 
+Focus unit coverage on task state and message consistency, account and permission
+boundaries, persistence, device and runtime routing, input submission, and failure
+recovery. Do not add standalone cases for CSS classes, icons, copy ordering, source
+keywords, fixed metadata, or diagnostic log formatting. Keep mixed scenarios focused
+on business outcomes. Retain telemetry consent, opt-out, redaction, and account
+isolation coverage rather than separate analytics-label or debug-snapshot tests.
+
 Run the complete Wework unit test suite from the repository root:
 
 ```bash
@@ -256,6 +263,17 @@ For compatibility, the test script removes one standalone leading `--`, then
 passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
+
+Pure logic tests without DOM dependencies should declare `// @vitest-environment node`
+at the top of the file. These tests do not load the browser mocks, storage, or plugin UI
+fixtures in `src/test/setup.dom.ts`. Tests exercising browser behavior keep the default
+jsdom environment. Component tests import plugin UI helpers from `@/test/setup.dom`.
+
+Wework CI runs tests without collecting coverage by default to avoid Istanbul
+instrumentation overhead. Collect focused coverage when needed with
+`pnpm --dir wework exec vitest run <test-file> --coverage`.
+Full renderer push checks report the current shard's passed file count every 15 seconds;
+complete diagnostics remain in the logs.
 
 ### Async Question Model Fixtures
 

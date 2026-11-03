@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { runtimeContextUsageMetrics } from '@wegent/chat-core/runtime-context-usage'
 import { describe, expect, test } from 'vitest'

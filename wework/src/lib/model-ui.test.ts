@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { UnifiedModel } from '@/types/api'
 import { desktopModelControl } from '@wegent/collaboration/controls/model-selector-utils'
 import { describe, expect, test } from 'vitest'

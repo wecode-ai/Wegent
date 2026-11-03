@@ -392,6 +392,14 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     exit 1
 fi
 
+for shard in 1 2; do
+    if ! grep -q "wework_test_shard_${shard}: finished (exit 0)" "$WEWORK_FULL_TEST_OUT"; then
+        echo "Expected renderer shard $shard to report completion."
+        cat "$WEWORK_FULL_TEST_OUT"
+        exit 1
+    fi
+done
+
 assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"

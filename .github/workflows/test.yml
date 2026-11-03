@@ -692,7 +692,6 @@ jobs:
         run: |
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
-            --coverage \
             --passWithNoTests \
             --shard=${{ matrix.shard }}/2 &
           vitest_pid=$!
@@ -718,13 +717,6 @@ jobs:
           name: wework-test-evidence-${{ matrix.shard }}
           path: .ci-artifacts/wework-tests/
           retention-days: 7
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: ./wework/coverage/coverage-final.json
-          flags: wework
-          name: wework-coverage-${{ matrix.shard }}
 
   test-wegent-cli:
     name: Test wegent CLI

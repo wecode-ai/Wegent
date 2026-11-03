@@ -393,22 +393,6 @@ describe('GeneralSettingsPage', () => {
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
-  test('shows the pending-interactions fixed tab with its localized title', async () => {
-    getAppPreferencesMock.mockResolvedValue({
-      ...defaultPreferences,
-      fixedWorkspaceTabs: [
-        ...defaultPreferences.fixedWorkspaceTabs,
-        { id: 'pending-interactions', kind: 'auxiliary', contentRoute: '/pending-interactions' },
-      ],
-    })
-    render(<GeneralSettingsPage />)
-
-    expect(await screen.findByTestId('general-fixed-tab-pending-interactions')).toHaveTextContent(
-      '待你处理'
-    )
-    expect(screen.getByTestId('general-fixed-tab-startup-pending-interactions')).toBeEnabled()
-  })
-
   test('shows an unavailable saved friendly title model for replacement', async () => {
     const taskModel = {
       name: 'gpt-5',
@@ -482,36 +466,6 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
-  })
-
-  test('groups task runtime controls separately and spaces later sections', async () => {
-    render(<GeneralSettingsPage />)
-
-    const basicSection = screen.getByTestId('general-settings-basic-section')
-    const runtimeSection = screen.getByTestId('general-settings-runtime-section')
-    const privacySection = screen.getByTestId('general-settings-privacy-section')
-    const popoutSection = screen.getByTestId('general-settings-popout-section')
-
-    expect(runtimeSection).toHaveClass('mt-12')
-    expect(privacySection).toHaveClass('mt-12')
-    expect(popoutSection).toHaveClass('mt-12')
-    expect(within(runtimeSection).getByTestId('general-close-to-tray-toggle')).toBeInTheDocument()
-    expect(
-      within(runtimeSection).getByTestId('general-prevent-sleep-while-tasks-running-toggle')
-    ).toBeInTheDocument()
-    expect(
-      within(runtimeSection).queryByTestId('general-task-completion-notifications-toggle')
-    ).not.toBeInTheDocument()
-    expect(within(runtimeSection).getByTestId('general-tray-running-toggle')).toBeInTheDocument()
-    expect(
-      within(basicSection).queryByTestId('general-close-to-tray-toggle')
-    ).not.toBeInTheDocument()
-    expect(within(basicSection).queryByTestId('general-system-drag-toggle')).not.toBeInTheDocument()
-    expect(within(popoutSection).getByTestId('general-system-drag-toggle')).toBeInTheDocument()
-    expect(within(privacySection).getByTestId('general-telemetry-toggle')).toBeInTheDocument()
-    expect(
-      within(popoutSection).getByTestId('general-popout-shortcut-record-button')
-    ).toBeInTheDocument()
   })
 
   test('records, clears, and persists the Popout Window shortcut', async () => {

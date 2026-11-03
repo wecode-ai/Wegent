@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { expect, test } from 'vitest'
 import { qualifyLocalRuntimeWork } from './local-runtime-sidebar-identity'

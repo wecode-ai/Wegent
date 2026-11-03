@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { hasEmbeddedHttpGitCredentials } from './git-url'
 
