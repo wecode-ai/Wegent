@@ -15,6 +15,7 @@ const mergedDefaultPreferences = {
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: 'pending-interactions', kind: 'auxiliary', contentRoute: '/pending-interactions' },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,

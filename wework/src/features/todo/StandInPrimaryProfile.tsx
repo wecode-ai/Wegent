@@ -120,10 +120,12 @@ export function StandInPrimaryProfile({
             type="button"
             data-testid="stand-in-primary-back-to-settings"
             aria-label={t('standIn.settings')}
-            onClick={() => {
-              setCalendarEntry(false)
-              setConnections(false)
-            }}
+            onClick={() =>
+              connectionRef.current?.requestLeave(() => {
+                setCalendarEntry(false)
+                setConnections(false)
+              })
+            }
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <ArrowLeft className="h-4 w-4" />

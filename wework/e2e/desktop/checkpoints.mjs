@@ -37,6 +37,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-template-agents',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
+  'stand-in-email',
   'stand-in-list-confirmation',
   'stand-in-profile',
   'stand-in-telemetry',

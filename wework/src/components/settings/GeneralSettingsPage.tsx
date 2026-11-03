@@ -20,6 +20,7 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   SettingsGroup,
   SettingsPage,
@@ -680,7 +681,10 @@ export function GeneralSettingsPage() {
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
                       : tab.kind === 'auxiliary'
-                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        ? (tab.title ??
+                          (tab.contentRoute === INTERACTIONS_PATH
+                            ? t('interactions.title', '待你处理')
+                            : t('workbench.workspace_tab_auxiliary', '工作区')))
                         : (tab.title ??
                           t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (

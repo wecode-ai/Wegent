@@ -285,6 +285,56 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
 }
 
 #[test]
+fn configuration_starts_observation_before_fast_work_completes() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"]
+        .as_i64()
+        .expect("configuration establishes the observation boundary");
+    for (id, created_at) in [("historical", since - 10), ("new-fast-work", since + 1)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(), status: "done".into(), turn_status: Some("completed".into()),
+            created_at, completed_at: Some(since + 2),
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["taskId"], "new-fast-work");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "unstarted".into(), status: "active".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "status-only-completion".into(),
+        status: "done".into(), created_at: since + 1,
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    });
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .any(|event| event["taskId"] == "status-only-completion"));
+}
+
+#[test]
 fn work_changes_are_observed_once_without_waking_for_historical_completion() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
