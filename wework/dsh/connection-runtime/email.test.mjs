@@ -6,7 +6,7 @@ import { createEmailSender } from './email-send.js'
 import { imapError, mailError } from './email-client.js'
 
 test('distinguishes recoverable IMAP transport from authentication, TLS and message errors', () => {
-  for (const code of ['ECONNRESET', 'NoConnection', 'ClosedAfterConnectTLS', 'ETIMEOUT'])
+  for (const code of ['ECONNRESET', 'NoConnection', 'ClosedAfterConnectTLS', 'ETIMEOUT', 'ENOTFOUND'])
     assert.equal(
       imapError({ code, message: 'private server details' }).code,
       'email_transport_failed'

@@ -69,6 +69,7 @@ export function imapError(error) {
     'EHOSTUNREACH',
     'ENETUNREACH',
     'EAI_AGAIN',
+    'ENOTFOUND',
     'ETIMEOUT',
     'CONNECT_TIMEOUT',
     'GREETING_TIMEOUT',
