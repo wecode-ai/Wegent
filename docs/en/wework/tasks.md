@@ -32,7 +32,7 @@ Hover over a message table to copy its Markdown or expand it; press `Esc` to clo
 
 ## Repair a PR from the task sidebar
 
-Click the PR/MR status beside a task and choose **Let AI continue fixing** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
+Click the PR/MR status beside a task and choose **Continue fixing with AI** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
 
 ## Add a conversation to a project-space board
 
