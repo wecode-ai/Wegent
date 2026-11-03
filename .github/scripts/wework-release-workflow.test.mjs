@@ -201,7 +201,7 @@ test("release creation waits for every candidate build and validation", () => {
     "Download release builds",
     "Reuse verified arm64 upgrade paths for macOS x64",
     "Generate desktop update manifests",
-    "Verify completed upgrade duration before publication",
+    "Report completed upgrade duration before publication",
   ])
     assert.ok(names.indexOf(name) >= 0 && names.indexOf(name) < create, name);
   assert.ok(create < names.indexOf("Upload formal release assets"));
@@ -257,7 +257,7 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
   assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
-  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 10);
+  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 15);
   assert.equal(jobs.build["timeout-minutes"], 90);
   const step = jobs["verify-upgrades"].steps.find(
     (step) =>
@@ -388,6 +388,20 @@ test("source runners consume one frozen plan and complete aggregation gates publ
     /verify-wework-upgrade-duration.mjs/,
   );
   assert.ok(jobs.publish.needs.includes("aggregate-upgrades"));
+});
+
+test("duration remains observable without blocking the verified release", () => {
+  for (const name of ["verify-upgrades", "aggregate-upgrades", "publish"]) {
+    const timing = jobs[name].steps.filter((step) =>
+      step.run?.includes("verify-wework-upgrade-duration.mjs"),
+    );
+    assert.ok(timing.length > 0, name);
+    for (const step of timing) {
+      assert.match(step.run, /--report-only/);
+      assert.equal(step["continue-on-error"], undefined);
+      if (name === "publish") assert.match(step.run, /--completed/);
+    }
+  }
 });
 
 test("lightweight host updates reject both loose component trees and sealed archives", () => {

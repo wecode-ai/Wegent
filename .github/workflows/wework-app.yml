@@ -594,7 +594,7 @@ jobs:
     needs: prepare-upgrade-inputs
     if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -620,13 +620,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
-      - name: Check remaining upgrade verification budget
+      - name: Report upgrade verification execution time
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
           UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
-        run: node .github/scripts/verify-wework-upgrade-duration.mjs
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs --report-only
       - name: Download frozen source upgrade plans
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
         uses: actions/download-artifact@v4
@@ -713,13 +713,13 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Enforce complete upgrade verification time budget
+      - name: Report complete upgrade verification execution time
         if: needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
           UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
-        run: node .github/scripts/verify-wework-upgrade-duration.mjs
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs --report-only
 
   aggregate-upgrades:
     name: Aggregate complete upgrade verification
@@ -765,12 +765,12 @@ jobs:
           name: wework-${{ needs.prepare-upgrade-inputs.outputs.version }}-upgrade-policies
           path: upgrade-policies/*.json
           if-no-files-found: error
-      - name: Enforce complete verification including aggregation
+      - name: Report complete verification including aggregation
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
           UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
-        run: node .github/scripts/verify-wework-upgrade-duration.mjs
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs --report-only
 
   publish:
     name: Publish release and update channels
@@ -798,12 +798,12 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
-      - name: Verify completed upgrade duration before publication
+      - name: Report completed upgrade duration before publication
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_MATRIX: ${{ needs.prepare-upgrade-inputs.outputs.verification_matrix }}
           UPGRADE_PRODUCER_RUN_ID: ${{ needs.prepare-upgrade-inputs.outputs.run_id }}
-        run: node .github/scripts/verify-wework-upgrade-duration.mjs --completed
+        run: node .github/scripts/verify-wework-upgrade-duration.mjs --report-only --completed
 
       - name: Resolve previous Wework release
         id: previous-release

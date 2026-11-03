@@ -132,6 +132,21 @@ test("publication counts setup, downloads, scenarios, cleanup and the final arti
   assert.throws(() => verifyUpgradeDuration(value), /10-minute budget/);
 });
 
+test("report-only timing records an exceeded target without accepting invalid evidence", () => {
+  const value = fixture();
+  value.enforceBudget = false;
+  value.now = origin + 900_000;
+  const result = verifyUpgradeDuration(value);
+  assert.equal(result.withinBudget, false);
+  assert.equal(result.enforceBudget, false);
+  assert.equal(result.elapsedMs, 710_000);
+  value.completed = true;
+  assert.throws(() => verifyUpgradeDuration(value));
+  value.completed = false;
+  value.jobs[1].steps = [];
+  assert.throws(() => verifyUpgradeDuration(value), /Missing execution steps/);
+});
+
 test("queued shards have no execution yet but cannot authorize completion", () => {
   const value = fixture();
   value.jobs[2] = {

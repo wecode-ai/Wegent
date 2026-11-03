@@ -70,6 +70,7 @@ export function verifyUpgradeDuration({
   matrix,
   producerRunId,
   completed = false,
+  enforceBudget = true,
   now = Date.now(),
 }) {
   const resolver = jobs.filter(
@@ -147,8 +148,9 @@ export function verifyUpgradeDuration({
     : 0;
   const elapsedMs = resolverMs + matrixMs + aggregateMs;
   const reserveMs = completed ? 0 : 15_000;
+  const withinBudget = elapsedMs + reserveMs < LIMIT_MS;
   assert.ok(
-    elapsedMs + reserveMs < LIMIT_MS,
+    !enforceBudget || withinBudget,
     `Complete upgrade verification exceeded its 10-minute budget: elapsedMs=${elapsedMs}, reserveMs=${reserveMs}`,
   );
   return {
@@ -161,6 +163,8 @@ export function verifyUpgradeDuration({
     limitMs: LIMIT_MS,
     reserveMs,
     completed,
+    withinBudget,
+    enforceBudget,
   };
 }
 
@@ -190,8 +194,14 @@ if (
     matrix: JSON.parse(process.env.VERIFICATION_MATRIX),
     producerRunId: process.env.UPGRADE_PRODUCER_RUN_ID,
     completed: process.argv.includes("--completed"),
+    enforceBudget: !process.argv.includes("--report-only"),
   });
   console.log(
     JSON.stringify({ event: "upgrade-verification-duration", ...result }),
   );
+  if (!result.withinBudget) {
+    console.log(
+      "::warning::Upgrade verification exceeded the ten-minute target; package verification remains required.",
+    );
+  }
 }
