@@ -353,11 +353,21 @@ jobs:
           WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WEWORK_RELEASE_DIAGNOSTICS_DIR: ${{ github.workspace }}/.ci-artifacts/release-build
           WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: ${{ needs.prepare-release.outputs.componentized_host_update != 'true' }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
+
+      - name: Retain release build stage diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-release-build-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: .ci-artifacts/release-build/*.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify formal release package
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
