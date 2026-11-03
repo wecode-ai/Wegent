@@ -202,15 +202,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
       await click(`cloud-todo-card-${fixture.front.id}`)
       await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
-      await wait('cloud-todo-save', '')
-      await capture('06b-completion-draft')
-      await click('cloud-todo-save')
       await waitForBoardValue(
         async () => (await get(fixture.front.id)).status,
         'completed',
-        'Completion must persist',
+        'Completion must auto-save without an explicit Save action',
         uiTimeoutMs
       )
+      await control.command('waitFor', test('cloud-todo-save'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture('06b-completion-saved')
       assert.equal((await get(fixture.back.id)).status, 'in_progress')
       await click('issue-parent-link')
       await wait('issue-children-progress', '2/5 已完成')
