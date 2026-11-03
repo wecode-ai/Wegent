@@ -770,6 +770,11 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    // Restored workspaces own their execution directory, even inside a worktree.
+    let restored_root = crate::config::paths::executor_home().join("restored-workspaces");
+    if Path::new(path).starts_with(restored_root) {
+        return None;
+    }
     if !Path::new(path).exists() {
         return path_worktree_root_and_id(path);
     }

@@ -549,16 +549,6 @@ impl RuntimeWorkRpcHandler {
                 crate::runtime_work::lifecycle::native_execution_state,
             )
             .flatten();
-        if thread["timeline"] == true {
-            if let Some((latest_id, started_at)) = state
-                .as_ref()
-                .and_then(|state| Some((state.latest_turn_id.as_deref()?, state.started_at?)))
-            {
-                super::super::codex_timeline::interrupt_obsolete_running_turns(
-                    thread, latest_id, started_at,
-                );
-            }
-        }
         let owned_turn_id = state
             .as_ref()
             .and_then(|state| state.turn_id.clone())

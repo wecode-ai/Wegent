@@ -115,6 +115,12 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
+  // Cached text can render while another reader is still hydrating this page.
+  // Let that read finish so reopening cannot reuse a pre-fault request.
+  await control.command(
+    'waitFor',
+    `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`
+  )
   const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   // The closing drawer retains its conversation until the exit animation ends.

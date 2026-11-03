@@ -26,13 +26,41 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
   let resumed = false
   let pending = false
   let namespace
-  let initialWait = false
-  let resumeWait = false
+  let initialReady = false
+  let resumedReady = false
+  let statusCallId
+  let statusSequence = 0
+  let statusDeadline
   const startedFile = join(options.workspacePath, 'reused-agent-command-started')
   const releaseFile = join(options.workspacePath, 'reused-agent-command-release')
   const reply = (response, id, events) => {
     response.writeHead(200, { 'Content-Type': 'text/event-stream' })
     response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+  }
+  const childReady = (body, response) => {
+    const output = statusCallId && toolOutputText(body, statusCallId)
+    if (output) {
+      const child = JSON.parse(output).agents.find(agent => agent.agent_name === `/root/${CHILD}`)
+      if (child?.agent_status && Object.hasOwn(child.agent_status, 'completed')) {
+        statusCallId = undefined
+        statusDeadline = undefined
+        return true
+      }
+    }
+    statusDeadline ??= Date.now() + options.uiTimeoutMs
+    assert.ok(
+      Date.now() < statusDeadline,
+      'The real child agent must finish before parent execution'
+    )
+    statusCallId = `history-child-status-${++statusSequence}`
+    reply(
+      response,
+      statusCallId,
+      namespacedFunctionCall(statusCallId, namespace, 'list_agents', {
+        path_prefix: `/root/${CHILD}`,
+      })
+    )
+    return false
   }
   return {
     async handle(request, body, response) {
@@ -42,6 +70,14 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
       }
       const content = JSON.stringify(body)
       if (!content.includes(INITIAL)) return false
+      if (spawned && !content.includes(FOLLOW_UP) && !initialReady) {
+        if (!childReady(body, response)) return true
+        initialReady = true
+      }
+      if (resumed && !resumedReady) {
+        if (!childReady(body, response)) return true
+        resumedReady = true
+      }
       if (!spawned) {
         const candidates = (body.tools ?? []).filter(
           tool =>
@@ -62,15 +98,6 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
             message: 'Complete this isolated regression fixture.',
           })
         )
-      } else if (!content.includes(FOLLOW_UP) && !initialWait) {
-        initialWait = true
-        reply(
-          response,
-          'history-initial-wait',
-          namespacedFunctionCall('history-initial-wait', namespace, 'wait_agent', {
-            timeout_ms: 60_000,
-          })
-        )
       } else if (!content.includes(FOLLOW_UP)) {
         reply(response, 'history-result', [assistantMessage(`${INITIAL} completed result`)])
       } else if (!resumed) {
@@ -88,15 +115,6 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
             message: 'Complete another isolated regression fixture.',
           }).map(event => ({ ...event, output_index: 520 })),
         ])
-      } else if (!resumeWait) {
-        resumeWait = true
-        reply(
-          response,
-          'history-resumed-wait',
-          namespacedFunctionCall('history-resumed-wait', namespace, 'wait_agent', {
-            timeout_ms: 60_000,
-          })
-        )
       } else if (!pending) {
         pending = true
         const tool = selectProgrammaticExec(

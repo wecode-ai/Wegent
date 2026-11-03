@@ -5,6 +5,7 @@ import type {
 } from '@/types/api'
 import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   abortRuntimeConversationHydration,
   adoptRuntimeConversationThread,
@@ -67,7 +68,16 @@ export function synchronizeRuntimeConversation(
     options.navigationOnly ?? false,
   ])
   const existing = requests.get(requestKey)
-  if (existing) return existing
+  if (existing) {
+    logRuntimeTaskCreateStage('runtime-transcript-read-reused', {
+      taskId: address.taskId,
+      projectScoped: Boolean(address.projectSession),
+      limit: options.limit ?? null,
+      refresh: options.refresh === true,
+      olderPage: Boolean(options.beforeCursor),
+    })
+    return existing
+  }
   const previous = writer.pending
   const operation = beginRuntimeConversationOperation(address)
   const pending = (async () => {

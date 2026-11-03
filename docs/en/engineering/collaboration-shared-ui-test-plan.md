@@ -36,8 +36,8 @@ Native Goal continuations create paginated history; after restarting, the latest
 4. Read upward and then scroll to the bottom after returning; the latest request must remain reachable. Component tests also preserve the reading position when paging prepends an older user message.
 5. Reuse one child agent across two native turns and exceed the latest-page budget in the new turn. After returning, the older reply must retain its original turn identity instead of merging into the follow-up.
 
-A child thread identity cannot establish that two execution turns are aliases. When native history lacks an older terminal record, Executor's observed newer turn and start time determine whether the older turn can still appear active; no end time is invented.
-Focused Rust tests cover historical pages, the active execution, and a newer turn racing a history read.
+A child thread identity cannot establish that two execution turns are aliases. When native history lacks an older terminal record, only the latest native turn displays a live timer; the original historical status stays unchanged and no end time is invented.
+Component tests verify that historical timing stops while the current timer advances, without mutating native history.
 
 Run `pnpm --filter wework e2e:desktop --segment follow-up-task-switch`.
 The checkpoint belongs to the shared desktop runner and Core CI. Screenshots, logs and isolated history stay under `wework/test-results/`.

@@ -15,6 +15,42 @@ import '@/i18n'
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test('times only the latest native turn without rewriting unfinished historical state', () => {
+    vi.useFakeTimers()
+    const startedAt = Date.parse('2026-09-17T00:00:00Z')
+    vi.setSystemTime(startedAt + 24 * 60 * 60_000)
+    const turns: RuntimeConversationTurn[] = ['old', 'current'].map((id, index) => ({
+      id,
+      status: 'streaming',
+      startedAt: index ? Date.now() : startedAt,
+      items: [
+        {
+          id: `${id}-tool`,
+          type: 'block',
+          block: {
+            id: `${id}-tool`,
+            type: 'tool',
+            toolName: 'exec_command',
+            status: 'streaming',
+            createdAt: index ? Date.now() : startedAt,
+            toolInput: { command: 'pwd' },
+          },
+        },
+      ],
+    }))
+    const { container } = render(
+      <MessageList messages={projectRuntimeConversationTurns(turns)} turns={turns} />
+    )
+    const old = container.querySelector('[data-message-id="runtime-view:old:assistant"]')!
+    const current = container.querySelector('[data-message-id="runtime-view:current:assistant"]')!
+    expect(old.querySelector('[data-testid="processing-duration-label"]')).toBeNull()
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(current.querySelector('[data-testid="processing-duration-label"]')).toHaveTextContent(
+      '已处理 10秒'
+    )
+    expect(turns[0].status).toBe('streaming')
+    expect(turns[0].completedAt).toBeUndefined()
+  })
   test.each([
     { name: 'message list', Conversation: MessageList },
     { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
