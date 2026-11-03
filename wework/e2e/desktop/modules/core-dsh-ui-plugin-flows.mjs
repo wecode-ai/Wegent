@@ -635,7 +635,7 @@ async function waitForSlotState(control, predicate) {
   assert.fail(`Core DSH slot state did not settle: ${JSON.stringify(lastSlots)}`)
 }
 
-async function invokeCoreDshPluginCapability(control, origin, capability, params = {}) {
+export async function invokeCoreDshPluginCapability(control, origin, capability, params = {}) {
   const response = await fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     method: 'POST',

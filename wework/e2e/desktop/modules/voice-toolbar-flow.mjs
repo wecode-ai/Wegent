@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fetchLocalRuntime } from './runtime-request.mjs'
+import { invokeCoreDshPluginCapability } from './core-dsh-ui-plugin-flows.mjs'
 
 const PACKAGE = '@wework-e2e/speech-model'
 const PROVIDER = 'voice-toolbar-model'
@@ -44,18 +44,13 @@ export function apply(ctx) {
 `
   )
   const origin = await control.command('getLocationOrigin', 'body')
-  const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      capability: 'runtime.installCoreDshPlugin',
-      params: { spec: `file:${directory}` },
-    }),
-  })
-  const payload = await response.json()
-  assert.equal(response.ok, true, JSON.stringify(payload))
-  assert.equal(payload.ok, true, JSON.stringify(payload))
-  assert.ok(payload.result.some(plugin => plugin.name === PACKAGE && plugin.enabled))
+  const plugins = await invokeCoreDshPluginCapability(
+    control,
+    origin,
+    'runtime.installCoreDshPlugin',
+    { spec: `file:${directory}` }
+  )
+  assert.ok(plugins.some(plugin => plugin.name === PACKAGE && plugin.enabled))
 }
 
 async function assertToolbar(control, active) {

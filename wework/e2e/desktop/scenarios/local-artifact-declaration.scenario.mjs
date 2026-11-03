@@ -25,6 +25,10 @@ const NAME = process.platform === 'win32' ? 'local report.md' : String.raw`\\loc
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CARD = `${PANE} [data-testid="codex-reference-card"]`
 
+export function localArtifactGenerationScript() {
+  return String.raw`const fs=require('fs'),p=require('path'),cp=require('child_process'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||process.env.WEGENT_BACKEND_TASK_ID)throw Error('Expected a runtime-only conversation');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,${JSON.stringify(NAME)}),${JSON.stringify(CONTENT)});const out=cp.execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',${JSON.stringify(NAME)}],{cwd:root,encoding:'utf8'});const line=out.split(/\r?\n/).find(s=>s.startsWith('[WEGENT_ARTIFACT]'));if(!line)throw Error(out);process.stdout.write('LOCAL_ARTIFACT_RESULT:'+Buffer.from(line.slice('[WEGENT_ARTIFACT]'.length)).toString('base64')+'\n');`
+}
+
 export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let active = false
   let requested = false
@@ -58,7 +62,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       else if (!requestContainsToolOutput(body)) {
         assert.equal(requested, false, 'The declaration command must run only once')
         requested = true
-        const script = String.raw`const fs=require('fs'),p=require('path'),cp=require('child_process'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||process.env.WEGENT_BACKEND_TASK_ID)throw Error('Expected a runtime-only conversation');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,${JSON.stringify(NAME)}),${JSON.stringify(CONTENT)});const out=cp.execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',${JSON.stringify(NAME)}],{cwd:root,encoding:'utf8'});const line=out.split(/\r?\n/).find(s=>s.startsWith('[WEGENT_ARTIFACT]'));if(!line)throw Error(out);process.stdout.write('LOCAL_ARTIFACT_RESULT:'+Buffer.from(line.slice('[WEGENT_ARTIFACT]'.length)).toString('base64'));`
+        const script = localArtifactGenerationScript()
         const encoded = Buffer.from(script).toString('base64')
         const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
         if (requestAdvertisesProgrammaticExec(body)) {

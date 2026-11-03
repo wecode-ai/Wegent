@@ -88,15 +88,24 @@ test.each([false, true])(
   }
 )
 
-test('marketplace detail uses the supplied local source without consulting a catalog cache', async () => {
+test.each([
+  ['/tmp/github-marketplace', '/tmp/github-marketplace/.agents/plugins/marketplace.json'],
+  [
+    '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+    '/tmp/github-marketplace/.agents/plugins/marketplace.json',
+  ],
+  ['/tmp/legacy/marketplace.json', '/tmp/legacy/marketplace.json'],
+  ['C:/plugins/personal', 'C:/plugins/personal/.agents/plugins/marketplace.json'],
+  ['C:\\plugins\\personal\\marketplace.json', 'C:\\plugins\\personal\\marketplace.json'],
+])('marketplace detail reads the manifest for local source %s', async (source, manifest) => {
   request.mockImplementation(async (method, payload) => {
     if (method === 'executor.plugins.manifest.read') {
-      expect(payload).toEqual({ marketplacePath: '/tmp/github-marketplace', pluginName: 'github' })
+      expect(payload).toEqual({ marketplacePath: source, pluginName: 'github' })
       return { connectors: [{ slug: 'github', authPolicy: 'on_use' }] }
     }
     if (method === 'codex.app_server_request' && payload.method === 'plugin/read') {
       expect(payload.params).toEqual({
-        marketplacePath: '/tmp/github-marketplace',
+        marketplacePath: manifest,
         remoteMarketplaceName: null,
         pluginName: 'github',
       })
@@ -108,7 +117,7 @@ test('marketplace detail uses the supplied local source without consulting a cat
   })
 
   const detail = await createLocalCodexPluginApi().readMarketplacePluginDetail(
-    { id: 'openai-official', name: 'GitHub fixture', path: '/tmp/github-marketplace' },
+    { id: 'openai-official', name: 'GitHub fixture', path: source },
     'github'
   )
   expect(detail.spec.components.connectors).toMatchObject([

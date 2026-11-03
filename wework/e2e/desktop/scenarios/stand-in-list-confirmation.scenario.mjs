@@ -20,6 +20,13 @@ const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先�
 const ROOT = '[data-testid="stand-in-overview"]'
 const CARD = '[data-testid="request-user-input-card"]'
 
+export async function openStandInConfirmationOverview(control) {
+  await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+  // The collaboration page mounts asynchronously after switching tabs.
+  await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+  await control.command('waitFor', ROOT)
+}
+
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, modelResponseTimeoutMs, workspacePath, captureScreenshot } = options
   const file = join(workspacePath, 'stand-in-approved.txt')
@@ -75,9 +82,7 @@ export function createDesktopScenario(options) {
     return settings.roles[0].id
   }
   async function openList(control, roleId, taskId) {
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
-    await control.command('waitFor', ROOT)
+    await openStandInConfirmationOverview(control)
     await control.command('click', `[data-testid="stand-in-overview-role-${roleId}"]`)
     await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`, {
       timeoutMs: modelResponseTimeoutMs,
@@ -123,9 +128,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
-      await control.command('waitFor', ROOT)
+      await openStandInConfirmationOverview(control)
       const taskId = 'stand-in-list-approve'
       const roleId = await createWork(control, taskId)
       await openList(control, roleId, taskId)

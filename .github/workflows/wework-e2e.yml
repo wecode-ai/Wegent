@@ -253,6 +253,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Build shared real object storage for desktop E2E
+        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile')
+        uses: ./.github/actions/build-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Verify isolated Xvfb lifecycle
         run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
 
@@ -418,8 +424,6 @@ jobs:
       - name: Set up real object storage for collaboration E2E
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
-        with:
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Wework desktop Core shard E2E
         env:
@@ -437,6 +441,7 @@ jobs:
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
+          WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
@@ -879,8 +884,6 @@ jobs:
       - name: Set up real object storage for plugin sync recovery E2E
         if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
         uses: ./.github/actions/setup-minio-e2e
-        with:
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
@@ -915,6 +918,7 @@ jobs:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
         run: |
+          WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"

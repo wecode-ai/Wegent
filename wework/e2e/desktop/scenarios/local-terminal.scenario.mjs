@@ -781,7 +781,12 @@ export async function createDesktopScenario({
         modelMenuScreenshot: 'local-harness-11-kimi-code-model-menu.png',
         readyScreenshot: 'local-harness-12-kimi-code-ready.png',
       })
-      const completedKimiSessionId = await waitForHarnessExit(control, 'kimi_code', uiTimeoutMs)
+      // Headless CLI shutdown includes cleanup and output draining after the reply.
+      const completedKimiSessionId = await waitForHarnessExit(
+        control,
+        'kimi_code',
+        workbenchReadyTimeoutMs
+      )
       await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs: uiTimeoutMs })
       await captureWorkbench(control, 'local-harness-13-kimi-code-running.png')
       await verifyHarnessWorkbenchChrome({

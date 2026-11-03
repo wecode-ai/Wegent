@@ -1,5 +1,7 @@
 import {
   ACTIVE_WORKBENCH_SELECTOR,
+  ACTIVE_SEND_BUTTON_SELECTOR,
+  COMPOSER_READY_STABILITY_MS,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -11,6 +13,18 @@ import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForElementCount } from './harness-app-fixture.mjs'
 
 import { DIAGRAM_REGRESSION_MARKER } from './conversation-diagram-fixture.mjs'
+
+async function revealConversationDiagram(control) {
+  const chunk = `${ACTIVE_WORKBENCH_SELECTOR} [data-markdown-window-chunk]`
+  const text = 'Diagram regression section 8'
+  await control.command('waitFor', chunk, { text })
+  // Transcript reconciliation can change the total height after the reply appears.
+  await control.command('scrollIntoViewAsUser', chunk, { text })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-diagram-preview"][data-diagram-status="ready"]`
+  )
+}
 
 export async function verifyConversationDiagrams(control, composerSelector, restoreTaskRow) {
   const selector = id => `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${id}"]`
@@ -24,8 +38,10 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
     await control.command('waitFor', selector('message-assistant'), {
       text: 'Diagram regression section 16',
     })
-    await control.command('scrollToRatioAsUser', scroller, { value: '0.5' })
-    await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
+    await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+    })
+    await revealConversationDiagram(control)
     const source = await control.command('getAttribute', image, { value: 'src' })
     assert.ok(
       source.startsWith('data:image/svg+xml;'),
@@ -69,8 +85,7 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
       0,
       'The middle Markdown chunk must unmount outside the preparation window'
     )
-    await control.command('scrollToRatioAsUser', scroller, { value: '0.5' })
-    await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
+    await revealConversationDiagram(control)
     assert.equal(
       await control.command('getAttribute', image, { value: 'src' }),
       source,
