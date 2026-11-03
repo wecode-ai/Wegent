@@ -450,7 +450,7 @@ assert_case "executor E2E resolver changes run platform E2E" \
   ".github/scripts/resolve-executor-e2e-runtime.sh"
 
 wework_e2e_expected="${all_false/wework_e2e=false/wework_e2e=true}"
-assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
+assert_case "Wework workflow changes validate all modules" "$all_true" \
   ".github/workflows/wework-e2e.yml"
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
@@ -2898,8 +2898,8 @@ wework_memory_job="$(
 memory_step_gate="$(
   sed -n '/^      - name: Run Wework desktop memory E2E$/{n;p;}' "$wework_workflow"
 )"
-if [[ "$memory_step_gate" != "        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')" ]]; then
-  printf 'Wework memory E2E must run only for ci:all PRs\n' >&2
+if [[ "$memory_step_gate" != "        if: needs.changes.outputs.memory_suite == 'true'" ]]; then
+  printf 'Wework memory E2E must use the verified full-PR feature plan\n' >&2
   exit 1
 fi
 

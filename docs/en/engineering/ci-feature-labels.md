@@ -37,7 +37,7 @@ Extra feature or platform labels explicitly widen coverage. Assertions inside sc
 `ci:windows` adds the selected features' registered Windows Core cases. It does not claim Windows
 parity for Cloud/Plugins. Requesting it for a feature with no Windows Core coverage fails the plan.
 `ci:macos` adds the existing Inspector suite, not arbitrary macOS feature parity. Previously required
-path-based Inspector coverage remains. The `ci:memory` name is retained without changing its execution policy.
+path-based Inspector coverage remains. The `ci:memory` name is retained; the full PR plans below trigger the memory suite.
 
 ## PR behavior
 
@@ -51,8 +51,12 @@ Unrelated labels neither cancel code validation nor publish a new successful che
 E2E summary names. Existing basic-check workflows retain their label-event behavior.
 
 Documentation alone needs no feature label, except the collaboration permission contract.
-Unknown code, lockfiles, common CI infrastructure and selector changes conservatively require explicit
-`ci:all`. The initial policy also treats test registration files conservatively; narrow those requirements
+Unknown product code and lockfiles conservatively require explicit `ci:all`. Common CI policy, workflow
+and selector changes automatically run full coverage: all module unit tests, native authentication SDKs,
+platform and desktop E2E, plus the full PR memory suite and Windows/macOS checks. This removes first-rollout
+dependencies on newly created labels or contributors' label-write permission while requiring actual full test results.
+Module and SDK classifiers and the feature planner share `.github/scripts/lib/ci-policy-paths.sh` as their policy inventory.
+The initial policy also treats test registration files conservatively; narrow those requirements
 only after precise dependency evidence and contract coverage are available.
 
 The recorded base SHA explains the analyzed diff. Advancing main alone does not invalidate tests on the
@@ -73,11 +77,12 @@ A provider-only shard runs the existing setup first, preserving the provider com
 Storage, replication, MySQL concurrency, knowledge, DingTalk document protocol, subscription and notification
 checks retain explicit feature ownership and their existing physical shards. Initial feature jobs still reuse
 their complete existing service setup. No per-feature service stacks are added. Scheduled, dispatched and
-`ci:all` runs retain the complete original matrices and Playwright sharding arguments.
+full plans retain the complete original matrices and Playwright sharding arguments.
 
 `ci:release` does not publish packages or certify upgrade compatibility. Exact source/target package upgrade,
 rollback, migration and hash evidence remain owned by the existing release maintenance contract and verifier,
-which this change does not modify. The existing memory benchmark still runs only for `ci:all` PRs.
+which this change does not modify. The memory benchmark runs only for PRs with explicit `ci:all` or automatic
+full CI policy coverage; scheduled runs and `ci:release` alone do not add it.
 
 ## Activation and verification
 
@@ -88,7 +93,7 @@ Maintainers add feature labels for external contributors without label-write acc
 update from main after rollout so their tested heads contain the planner, workflows and catalog together.
 
 Branch protection should require the existing `Platform E2E Summary` and `Wework E2E Summary` checks.
-Validate the selector PR itself with the existing `ci:all` label; new label synchronization runs after merge.
+The selector PR itself automatically runs full coverage; new label synchronization runs after merge.
 
 Focused local checks:
 

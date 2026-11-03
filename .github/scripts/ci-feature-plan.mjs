@@ -85,7 +85,19 @@ export function buildPlan({
     "ci:memory",
   ]);
   const invalid = normalized.filter((label) => !known.has(label));
+  const automaticFull = files.some((path) =>
+    catalog.policyPaths.some((pattern) =>
+      new RegExp(
+        "^" +
+          pattern
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            .replaceAll("\\*", ".*") +
+          "$",
+      ).test(path),
+    ),
+  );
   const full =
+    automaticFull ||
     event !== "pull_request" ||
     normalized.includes("ci:all") ||
     normalized.includes("ci:release");
@@ -94,7 +106,7 @@ export function buildPlan({
       ? []
       : required.filter((label) =>
           label === "ci:all"
-            ? !normalized.includes(label)
+            ? !automaticFull && !normalized.includes(label)
             : !full && !normalized.includes(label),
         );
   const selected = Object.keys(catalog.features).filter(
@@ -166,6 +178,7 @@ export function buildPlan({
     );
   const policyHash = createHash("sha256")
     .update(catalog.text)
+    .update(catalog.policyPaths.join("\n"))
     .update(readFileSync(new URL("./ci-feature-policy.mjs", import.meta.url)))
     .digest("hex");
   const plan = {
@@ -184,6 +197,7 @@ export function buildPlan({
     desktop: [...desktopIds(matrices, catalog.plugins)].sort(),
     mandatoryDesktop: [...mandatoryDesktop].sort(),
     full,
+    automaticFull,
     specs,
     checks,
     platformMatrix,
@@ -198,6 +212,11 @@ export function buildPlan({
     ...matrices,
     ci_feature_plan: JSON.stringify(plan),
     ci_feature_valid: String(valid),
+    memory_suite: String(
+      active &&
+        event === "pull_request" &&
+        (automaticFull || normalized.includes("ci:all")),
+    ),
     platform_e2e: String(active && (platformMatrix.length > 0 || executor)),
     platform_suite: String(active && platformMatrix.length > 0),
     executor_suite: String(active && executor),

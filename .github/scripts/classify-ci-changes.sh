@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/ci-policy-paths.sh"
+
 declare -A changed=(
   [backend]=false
   [backend_rs]=false
@@ -26,27 +28,13 @@ mark_all() {
 classify_path() {
   local path="$1"
 
+  if is_ci_policy_path "$path"; then
+    mark_all
+    return
+  fi
+
   case "$path" in
-    .github/workflows/lint.yml | \
-      .github/workflows/test.yml | \
-      .github/workflows/ci-cache-warmup.yml | \
-      .github/workflows/publish-base-image.yml | \
-      .github/workflows/publish-image.yml | \
-      .github/workflows/snapshot-image.yml | \
-      .github/workflows/wework-app.yml | \
-      .github/actions/* | \
-      .github/scripts/classify-ci-cache-warmup.sh | \
-      .github/scripts/classify-ci-changes.sh | \
-      .github/scripts/download-actions-artifact.sh | \
-      .github/scripts/lib/apt-packages.sh | \
-      .github/scripts/lib/validate-ci-cache-policy.rb | \
-      .github/scripts/test-ci-cache-policy.sh | \
-      .github/scripts/test-classify-ci-changes.sh)
-      mark_all
-      return
-      ;;
-    .github/workflows/e2e-tests.yml | \
-      .github/scripts/run-attachment-replica-e2e.sh | \
+    .github/scripts/run-attachment-replica-e2e.sh | \
       .github/scripts/run-knowledge-provider-e2e.sh | \
       .github/scripts/test-e2e-resource-reuse.mjs | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
@@ -63,9 +51,8 @@ classify_path() {
       changed[executor]=true
       changed[platform_e2e]=true
       ;;
-    .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+    docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
-      .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true

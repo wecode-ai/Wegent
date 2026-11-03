@@ -23,7 +23,7 @@ export function readClassifier(root, script, files, all = false) {
       [resolve(root, ".github/scripts", script), ...(all ? ["--all"] : [])],
       {
         cwd: root,
-        input: files.join("\n"),
+        input: files.length ? files.join("\n") + "\n" : "",
         encoding: "utf8",
         env: { ...process.env, GITHUB_OUTPUT: outputFile },
       },
@@ -106,6 +106,13 @@ function walk(directory) {
 export async function loadCatalog(root) {
   const text = readFileSync(resolve(root, ".github/ci/features.json"), "utf8");
   const catalog = JSON.parse(text);
+  const policyPaths = execFileSync(
+    "bash",
+    [resolve(root, ".github/scripts/lib/ci-policy-paths.sh"), "--list"],
+    { encoding: "utf8" },
+  )
+    .trim()
+    .split("\n");
   if (catalog.version !== 1)
     throw new Error(`Unsupported feature catalog version: ${catalog.version}`);
   const registry = await import(
@@ -160,5 +167,5 @@ export async function loadCatalog(root) {
       if (!catalog.features[name])
         throw new Error(`Unknown integration feature: ${name}`);
   }
-  return { ...catalog, text, all, plugins, specOwners };
+  return { ...catalog, text, all, plugins, specOwners, policyPaths };
 }

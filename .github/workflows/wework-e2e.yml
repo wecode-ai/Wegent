@@ -45,6 +45,7 @@ jobs:
     outputs:
       ci_feature_plan: ${{ steps.classify.outputs.ci_feature_plan }}
       ci_feature_valid: ${{ steps.classify.outputs.ci_feature_valid }}
+      memory_suite: ${{ steps.classify.outputs.memory_suite }}
       browser_image: ${{ steps.image.outputs.browser-ref }}
       desktop_image: ${{ steps.image.outputs.desktop-ref }}
       executor_image: ${{ steps.runtime.outputs.executor-ref }}
@@ -1438,7 +1439,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
-        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: needs.changes.outputs.memory_suite == 'true'
         env:
           CI: true
         run: |

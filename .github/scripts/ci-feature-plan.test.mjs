@@ -284,19 +284,55 @@ test("feature unions deduplicate identical profile/checkpoint pairs, not local/c
   assert.equal(checkpoints.length, new Set(checkpoints).size);
 });
 
-test("unknown code, selection policy and lockfiles require explicit ci:all", () => {
-  for (const path of [
-    "backend-rs/src/new_domain.rs",
-    ".github/ci/features.json",
-    ".github/scripts/ci-feature-plan.mjs",
-    "pnpm-lock.yaml",
-  ]) {
+test("unknown product code and lockfiles require explicit ci:all", () => {
+  for (const path of ["backend-rs/src/new_domain.rs", "pnpm-lock.yaml"]) {
     assert(
       planFor([path], ["ci:runtime"]).plan.missing.includes("ci:all"),
       path,
     );
     assert.deepEqual(planFor([path], ["ci:all"]).plan.errors, [], path);
   }
+});
+
+test("CI policy edits without label-write permission execute complete coverage", () => {
+  for (const path of [
+    ".github/ci/features.json",
+    ".github/scripts/ci-feature-plan.mjs",
+    ".github/workflows/wework-e2e.yml",
+    ".github/actions/setup-node-workspace/action.yml",
+  ]) {
+    const { plan, outputs } = planFor([path], []);
+    assert.deepEqual(plan.errors, [], path);
+    assert.equal(plan.automaticFull, true);
+    assert.equal(plan.full, true);
+    assert.equal(outputs.memory_suite, "true");
+    assert.equal(outputs.windows_desktop_core_e2e, "true");
+    assert.equal(outputs.wework_desktop_macos_inspector_e2e, "true");
+    assert.equal(plan.specs.length, catalog.specOwners.size);
+    assert.deepEqual(plan.checks, Object.keys(integrationChecks));
+    for (const suite of ["core", "cloud", "other"])
+      assert.equal(
+        outputs[`wework_desktop_${suite}_e2e_matrix`],
+        catalog.all[`wework_desktop_${suite}_e2e_matrix`],
+      );
+    const modules = readClassifier(root, "classify-ci-changes.sh", [path]);
+    assert(Object.values(modules).every((value) => value === "true"));
+    assert.equal(
+      readClassifier(root, "classify-plugin-auth-sdk.sh", [path])
+        .plugin_auth_sdk,
+      "true",
+    );
+  }
+  assert.equal(
+    planFor(["wework/src/components/chat/MessageList.tsx"], ["ci:chat"]).outputs
+      .memory_suite,
+    "false",
+  );
+  assert.equal(planFor([], ["ci:release"]).outputs.memory_suite, "false");
+  assert.equal(
+    planFor([], [], { event: "schedule" }).outputs.memory_suite,
+    "false",
+  );
 });
 
 test("docs-only work needs no feature suite; permission contracts remain covered", () => {
