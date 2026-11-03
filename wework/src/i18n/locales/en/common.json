@@ -4217,7 +4217,8 @@
     "diagram_preview": "Diagram preview",
     "diagram_loading": "Rendering diagram…",
     "diagram_render_failed": "Could not render the diagram. Source shown below.",
-    "diagram_retry": "Retry"
+    "diagram_retry": "Retry",
+    "runtime_task_load_failed": "Unable to load this task. Refresh and try again."
   },
   "delivery": {
     "action": "Deliver",
@@ -5792,7 +5793,7 @@
     "loading": "Loading pending requests…",
     "empty": "Nothing needs your input",
     "load_failed": "Could not load some requests. Retry to refresh.",
-    "open_original": "Open original conversation",
+    "open_original": "Open in original view",
     "context": "Context",
     "back_to_list": "Back to list",
     "your_reply": "Your reply",
@@ -5804,6 +5805,7 @@
     "pending_count": "{{count}} pending requests",
     "needs_action": "Open the original context to complete this action.",
     "title_with_count": "Needs your input, {{count}} pending",
-    "cached": "This question was pending when last connected. Syncing its latest state; reconnect the device to respond."
+    "cached": "This question was pending when last connected. Syncing its latest state; reconnect the device to respond.",
+    "entity_unavailable": "This entity cannot be displayed here. Open its original location."
   }
 }

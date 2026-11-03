@@ -160,6 +160,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-agents': './scenarios/collaboration-template-agents.scenario.mjs',
   'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
@@ -235,6 +236,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
+  'collaboration-template-agents',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
@@ -519,6 +521,14 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (
+    ['human-interactions', 'human-interactions-hidden', 'human-interactions-issue'].includes(
+      checkpoint
+    )
+  ) {
+    // The narrow 480x760 content viewport must fit inside the physical display.
+    nextEnv.WEWORK_E2E_XVFB_SCREEN = '1280x900x24'
+  }
   if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =

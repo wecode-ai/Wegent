@@ -20,6 +20,51 @@ const urlPayload = {
   elicitationId: 'github-auth-1',
 }
 
+test('shares a hosted draft while retaining the original structured response', async () => {
+  const payload = {
+    requestId: 7,
+    questions: [{ id: 'details', question: 'Provide details', is_other: true, options: [] }],
+  }
+  const change = vi.fn()
+  const submit = vi.fn().mockResolvedValue(false)
+  const { rerender } = render(
+    <RequestUserInputCard
+      payload={payload}
+      draftAnswers={{ details: 'Saved draft' }}
+      onDraftAnswersChange={change}
+      onSubmit={submit}
+    />
+  )
+  expect(screen.getByTestId('request-user-input-custom-details')).toHaveValue('Saved draft')
+  fireEvent.change(screen.getByTestId('request-user-input-custom-details'), {
+    target: { value: 'New reply' },
+  })
+  expect(change).toHaveBeenCalledWith({ details: 'New reply' })
+  rerender(
+    <RequestUserInputCard
+      payload={payload}
+      draftAnswers={{ details: 'New reply' }}
+      onDraftAnswersChange={change}
+      onSubmit={submit}
+    />
+  )
+  await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
+  expect(submit).toHaveBeenCalledWith(
+    expect.objectContaining({ requestId: 7, answers: { details: { answers: ['New reply'] } } })
+  )
+  rerender(
+    <RequestUserInputCard
+      payload={payload}
+      draftAnswers={{ details: 'New reply' }}
+      error="Reply could not be sent"
+      onSubmit={submit}
+    />
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent('Reply could not be sent')
+  expect(screen.getByTestId('request-user-input-custom-details')).toHaveValue('New reply')
+  expect(screen.getByTestId('request-user-input-submit-button')).toBeEnabled()
+})
+
 describe('MCP form cancellation', () => {
   test.each(['button', 'Escape'])(
     '%s cancels only the correlated form and preserves retry after rejection',
