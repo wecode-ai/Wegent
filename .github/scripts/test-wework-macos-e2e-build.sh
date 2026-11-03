@@ -144,6 +144,19 @@ printf 'dependency patch\n' >"$repo/patches/runtime.patch"
 (cd "$repo" && git add patches/runtime.patch)
 test "$reference_after_explorer" != "$(resolve_reference)"
 
+reference_before_template_data="$(resolve_reference)"
+mkdir -p "$repo/shared/data"
+printf '{"name":"template"}\n' >"$repo/shared/data/collaboration-templates.json"
+(cd "$repo" && git add shared/data/collaboration-templates.json)
+reference_after_template_data="$(resolve_reference)"
+if [[ "$reference_before_template_data" == "$reference_after_template_data" ]]; then
+  echo 'Shared template data must invalidate the complete macOS App key' >&2
+  exit 1
+fi
+printf '{"name":"changed template"}\n' >"$repo/shared/data/collaboration-templates.json"
+(cd "$repo" && git add shared/data/collaboration-templates.json)
+test "$reference_after_template_data" != "$(resolve_reference)"
+
 (
   cd "$repo"
   GITHUB_OUTPUT=/dev/stdout \

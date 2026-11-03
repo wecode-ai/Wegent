@@ -8,6 +8,16 @@ const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
 
 export async function fillTemplateRoleBindings(control, count) {
+  if (
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('details:not([open]):has(> [data-testid="template-customize-main"])')
+      )
+    ) > 0
+  ) {
+    await control.command('click', testId('template-customize-main'))
+  }
   await control.command('waitFor', testId('template-role-main-role-0'), {
     text: '当前设备智能体',
   })
@@ -312,6 +322,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '02-preview')
       await click(control, 'template-use')
       await wait(control, 'project-create-template-section')
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            testId('collaboration-project-create-confirm') + ':disabled'
+          )
+        ),
+        0,
+        'A self-contained template must be ready without selecting existing Agents'
+      )
+      await click(control, 'template-customize-main')
+      await control.command('select', testId('template-role-main-role-1'), { value: '' })
       assert.equal(
         Number(
           await control.command(

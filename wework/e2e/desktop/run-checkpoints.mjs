@@ -163,6 +163,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-agents': './scenarios/collaboration-template-agents.scenario.mjs',
   'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
@@ -238,6 +239,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
+  'collaboration-template-agents',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',

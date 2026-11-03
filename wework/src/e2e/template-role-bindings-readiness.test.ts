@@ -93,3 +93,27 @@ test('propagates an unavailable Agent catalog without changing the binding or re
   await expect(fillTemplateRoleBindings({ command }, 3)).rejects.toBe(unavailable)
   expect(command.mock.calls.filter(([action]) => action === 'select')).toHaveLength(0)
 })
+
+test('opens collapsed template customization before reading its role catalog', async () => {
+  let open = false
+  const command = vi.fn(async (action: string, selector: string) => {
+    if (action === 'getElementCount') return open ? 0 : 1
+    if (action === 'click' && selector.endsWith('[data-testid="template-customize-main"]')) {
+      open = true
+    }
+    if (action === 'waitFor' && !open) throw new Error('Template customization is still closed')
+    if (action === 'getAttribute') return 'human:1'
+  })
+
+  await expect(fillTemplateRoleBindings({ command }, 3)).resolves.toBeUndefined()
+  expect(open).toBe(true)
+  expect(command).toHaveBeenCalledWith(
+    'click',
+    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-customize-main"]'
+  )
+  expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })
+  expect(command).toHaveBeenCalledWith('select', role(2), {
+    by: 'label',
+    value: '当前设备智能体',
+  })
+})

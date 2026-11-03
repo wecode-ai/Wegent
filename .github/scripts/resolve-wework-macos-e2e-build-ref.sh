@@ -30,6 +30,7 @@ git -c "safe.directory=$PWD" ls-files -s -- \
   scripts \
   sdk \
   shared/assets \
+  shared/data \
   LICENSES \
   pnpm-lock.yaml \
   pnpm-workspace.yaml \
