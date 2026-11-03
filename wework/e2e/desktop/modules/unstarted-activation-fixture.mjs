@@ -16,12 +16,19 @@ export async function seedUnstartedActivation({
   from,
   homePath,
 }) {
+  // A retained installation owns the pending transaction's preparation API.
+  // The running legacy package may predate retainReleaseProfile entirely.
+  const preparationExecutable = from.installedSource?.executable ?? running.hostExecutable
   const resources =
     process.platform === 'darwin'
       ? resolve(dirname(running.hostExecutable), '../Resources')
       : join(dirname(running.hostExecutable), 'resources')
+  const preparationResources =
+    process.platform === 'darwin'
+      ? resolve(dirname(preparationExecutable), '../Resources')
+      : join(dirname(preparationExecutable), 'resources')
   const module = name =>
-    JSON.stringify(pathToFileURL(join(resources, 'app.asar/dist/runtime', name)).href)
+    JSON.stringify(pathToFileURL(join(preparationResources, 'app.asar/dist/runtime', name)).href)
   const source = {
     schemaVersion: 1,
     id: 'installed-unstarted-source',
@@ -60,7 +67,7 @@ await retainReleaseProfile(${JSON.stringify(dataDirectory)}, source.profileRoot)
 await store.activate(target, snapshot)
 `
   )
-  await promisify(execFile)(running.hostExecutable, [script], {
+  await promisify(execFile)(preparationExecutable, [script], {
     env: { ...upgradeUserEnvironment(process.env, homePath), ELECTRON_RUN_AS_NODE: '1' },
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
