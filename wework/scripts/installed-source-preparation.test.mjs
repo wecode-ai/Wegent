@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, toNamespacedPath } from 'node:path'
+import { join, relative, toNamespacedPath } from 'node:path'
 import test from 'node:test'
 import { installPreparedSource } from '../e2e/desktop/modules/installed-source-preparation.mjs'
 
@@ -24,6 +24,11 @@ test('the installed source owns its shipped preparation without a selected relea
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
   await symlink(toNamespacedPath(content), publication, linkType)
   await symlink(packaged, join(content, 'external'), linkType)
+  await symlink(
+    process.platform === 'win32' ? packaged : relative(content, packaged),
+    join(content, 'relative-external'),
+    linkType
+  )
   await writeFile(join(profile, '.wework-core-plugins.json'), 'prepared disabled-plugin state')
   await writeFile(join(profile, '.prepared-stamp'), 'checked stamp')
   await writeFile(
@@ -39,6 +44,7 @@ test('the installed source owns its shipped preparation without a selected relea
   assert.equal((await lstat(join(installed, 'index.js'))).ino, original.ino)
   assert.equal(await readFile(join(installed, 'index.js'), 'utf8'), 'checked component bytes')
   assert.equal(await realpath(join(installed, 'external')), await realpath(packaged))
+  assert.equal(await realpath(join(installed, 'relative-external')), await realpath(packaged))
   assert.deepEqual(
     JSON.parse(await readFile(join(liveProfile, 'package.json'), 'utf8')).dependencies,
     {

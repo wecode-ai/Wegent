@@ -9,31 +9,38 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, toNamespacedPath } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep, toNamespacedPath } from 'node:path'
 
 function relocated(path, source, target) {
   const suffix = relative(toNamespacedPath(source), toNamespacedPath(path))
-  if (
-    isAbsolute(suffix) ||
-    suffix === '..' ||
-    suffix.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
-  )
-    return path
+  if (isAbsolute(suffix) || suffix === '..' || suffix.startsWith(`..${sep}`)) return path
   return join(target, suffix)
 }
 
-async function relocateLinks(directory, source, target) {
+function relocatePath(path, moves) {
+  for (const [source, target] of moves) {
+    const replacement = relocated(path, source, target)
+    if (replacement !== path) return replacement
+  }
+  return path
+}
+
+async function relocateLinks(directory, moves) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isSymbolicLink()) {
       const original = await readlink(path)
-      const destination = resolve(dirname(path), original)
-      const replacement = relocated(destination, source, target)
-      if (replacement !== destination) {
+      const originalLocation = relocatePath(
+        path,
+        moves.map(([from, to]) => [to, from])
+      )
+      const destination = resolve(dirname(originalLocation), original)
+      const replacement = relocatePath(destination, moves)
+      if (replacement !== resolve(dirname(path), original)) {
         await rm(path)
         await symlink(replacement, path, process.platform === 'win32' ? 'junction' : 'dir')
       }
-    } else if (entry.isDirectory()) await relocateLinks(path, source, target)
+    } else if (entry.isDirectory()) await relocateLinks(path, moves)
   }
 }
 
@@ -47,18 +54,21 @@ export async function installPreparedSource(slot, dataDirectory) {
   // publication junctions and file dependencies must follow their moved content.
   const sourceComponents = join(slot, 'managed-components')
   const components = join(dataDirectory, 'managed-components')
+  const moves = [
+    [sourceComponents, components],
+    [preparedProfile, profile],
+  ]
   await rename(sourceComponents, components)
-  await relocateLinks(components, sourceComponents, components)
   for (const [name, dependency] of Object.entries(manifest.dependencies)) {
     if (typeof dependency === 'string' && dependency.startsWith('file:'))
-      manifest.dependencies[name] =
-        `file:${relocated(dependency.slice(5), sourceComponents, components)}`
+      manifest.dependencies[name] = `file:${relocatePath(dependency.slice(5), moves)}`
   }
   await writeFile(join(preparedProfile, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
-  await relocateLinks(preparedProfile, sourceComponents, components)
   await mkdir(dirname(profile), { recursive: true })
   await rm(profile, { recursive: true, force: true })
   await rename(preparedProfile, profile)
+  await relocateLinks(components, moves)
+  await relocateLinks(profile, moves)
   // The caller keeps source-preparation for retained-version fault fixtures.
   // No active/bridge marker is written: the real updater still registers this
   // installed source and exercises the thin-installation ownership assertions.
