@@ -2011,6 +2011,58 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
   })
 
+  test('keeps a dismissed target dialog closed after a catalog refresh', async () => {
+    const smartAppsApi = api([item()])
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-details')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('smart-app-details-close'))
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'refresh' },
+    })
+    await waitFor(() => expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2))
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+  })
+
+  test('keeps a dismissed target dialog closed when the fallback lookup resolves', async () => {
+    const smartAppsApi = api([item()])
+    vi.mocked(smartAppsApi.listMarketplace)
+      .mockResolvedValueOnce({ items: [item()] })
+      .mockResolvedValue({ items: [] })
+    vi.mocked(smartAppsApi.getItem).mockResolvedValue(item())
+    render(<SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />)
+    expect(await screen.findByTestId('smart-app-details')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('smart-app-details-close'))
+    fireEvent.change(screen.getByTestId('smart-apps-marketplace-search'), {
+      target: { value: 'missing' },
+    })
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-deep-link-install-prompt')).toBeInTheDocument()
+  })
+
+  test('ignores a pending target lookup after the API is removed', async () => {
+    const lookup = deferred<SmartAppMarketplaceItem>()
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.getItem).mockReturnValueOnce(lookup.promise)
+    const { rerender } = render(
+      <SmartAppsMarketplacePage api={smartAppsApi} targetSmartAppId={7} />
+    )
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(1))
+
+    rerender(<SmartAppsMarketplacePage api={null} targetSmartAppId={7} />)
+    act(() => lookup.resolve(item()))
+
+    expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+  })
+
   test('re-resolves a catalog target after its in-flight lookup is superseded', async () => {
     const firstLookup = deferred<SmartAppMarketplaceItem>()
     const secondLookup = deferred<SmartAppMarketplaceItem>()

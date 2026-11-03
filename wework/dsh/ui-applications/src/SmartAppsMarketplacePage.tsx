@@ -292,6 +292,7 @@ export function SmartAppsMarketplacePage({
   const targetLookupInFlightRef = useRef<{ target: number; api: SmartAppsApi } | null>(null)
   const targetLookupRevisionRef = useRef(0)
   const targetLookupRequestRef = useRef(0)
+  const dismissedTargetSmartAppIdRef = useRef<number | null>(null)
   const downloadRequestRef = useRef(0)
   const installRequestRef = useRef(0)
   const {
@@ -363,6 +364,7 @@ export function SmartAppsMarketplacePage({
     targetItemsSnapshotRef.current = null
     targetLookupFailedRef.current = null
     targetLookupInFlightRef.current = null
+    dismissedTargetSmartAppIdRef.current = null
     targetLookupRevisionRef.current = targetLookupRevision
     targetLookupRequestRef.current += 1
     downloadRequestRef.current += 1
@@ -389,6 +391,7 @@ export function SmartAppsMarketplacePage({
       targetItemsSnapshotRef.current = null
       targetLookupFailedRef.current = null
       targetLookupInFlightRef.current = null
+      dismissedTargetSmartAppIdRef.current = null
       targetLookupRevisionRef.current = targetLookupRevision
       targetLookupRequestRef.current += 1
       downloadRequestRef.current += 1
@@ -412,6 +415,7 @@ export function SmartAppsMarketplacePage({
       targetLookupFailedRef.current = null
       targetLookupInFlightRef.current = null
       targetLookupRevisionRef.current = targetLookupRevision
+      targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setSelected(null)
         setTargetInstallItem(null)
@@ -461,6 +465,7 @@ export function SmartAppsMarketplacePage({
       targetLookupRevisionRef.current = targetLookupRevision
       targetLookupFailedRef.current = null
       targetLookupInFlightRef.current = null
+      dismissedTargetSmartAppIdRef.current = null
     }
     const item = currentApiItems?.find(candidate => candidate.id === targetSmartAppId)
     if (item) {
@@ -473,7 +478,9 @@ export function SmartAppsMarketplacePage({
         setTargetInstallItem(item)
         setTargetLookupError(null)
         setTargetLookupPending(false)
-        setSelected({ item, readInstallations: readLocalInstallations })
+        if (dismissedTargetSmartAppIdRef.current !== targetSmartAppId) {
+          setSelected({ item, readInstallations: readLocalInstallations })
+        }
       })
       return
     }
@@ -507,7 +514,9 @@ export function SmartAppsMarketplacePage({
         targetLookupFailedRef.current = null
         setTargetInstallItem(item)
         setTargetLookupError(null)
-        setSelected({ item, readInstallations: readLocalInstallations })
+        if (dismissedTargetSmartAppIdRef.current !== targetSmartAppId) {
+          setSelected({ item, readInstallations: readLocalInstallations })
+        }
       })
       .catch(error => {
         if (requestId !== targetLookupRequestRef.current) return
@@ -652,7 +661,13 @@ export function SmartAppsMarketplacePage({
   }
 
   function selectDetails(item: SmartAppMarketplaceItem) {
+    if (item.id === targetSmartAppId) dismissedTargetSmartAppIdRef.current = null
     setSelected({ item, readInstallations: readLocalInstallations })
+  }
+
+  function closeDetails() {
+    if (targetSmartAppId) dismissedTargetSmartAppIdRef.current = targetSmartAppId
+    setSelected(null)
   }
 
   function currentInstallation(installation: HarnessAppInstallation) {
@@ -1805,7 +1820,7 @@ export function SmartAppsMarketplacePage({
           state={localState(currentSelected)}
           installDisabled={!localReady}
           busy={busy === `download-${currentSelected.id}`}
-          onClose={() => setSelected(null)}
+          onClose={closeDetails}
           onInstall={() => void download(currentSelected)}
         />
       ) : null}
