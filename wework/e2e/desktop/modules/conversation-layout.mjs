@@ -391,6 +391,15 @@ async function verifyConversationContextMenuDismissal(control, taskRowTestId, co
   await control.command('waitFor', `${composerSelector}:focus`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
   })
+
+  await openMenu()
+  await control.command('click', `[data-testid="runtime-local-task-menu-rename-${taskId}"]`)
+  const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+  await control.command('waitFor', `${renameInput}:focus`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+  })
+  await control.command('nativePress', renameInput, { key: 'Escape' })
+  await control.command('waitFor', renameInput, { visible: false })
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {

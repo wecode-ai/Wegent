@@ -180,7 +180,10 @@ export function ActionMenu({
           ? previousFocus
           : triggerRef.current;
         window.requestAnimationFrame(() => {
-          if (focusTarget?.isConnected) {
+          if (
+            focusTarget?.isConnected &&
+            document.activeElement === document.body
+          ) {
             focusTarget.focus();
           }
         });
