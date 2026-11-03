@@ -29,9 +29,9 @@ test('a failed real child rejects the release pair before another checkpoint sta
         rejectFailedReleaseCheckpoint(checkpoint, await checkpointExit(1))
       },
     }),
-    /Release package checkpoint failed: app-upgrade/
+    { message: `Release package checkpoint failed: ${UPGRADE_PACKAGE_CHECKPOINTS[0]}` }
   )
-  assert.deepEqual(started, ['app-upgrade'])
+  assert.deepEqual(started, [UPGRADE_PACKAGE_CHECKPOINTS[0]])
 })
 
 test('a successful release pair still executes every required checkpoint', async () => {
