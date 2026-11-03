@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { lstat, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,10 +27,12 @@ import {
   isolatedPath,
   pluginEntry,
   readCapabilityManifest,
+  reformatRuntimeManifests,
   refreshWithOccupiedPluginRuntime,
   relocateInstalledHome,
   relocatedPath,
   replaceOwnedRuntimeWithForeignDirectory,
+  rewriteRuntimeManifests,
 } from '../modules/plugin-runtime-path-fixture.mjs'
 import {
   assistantMessage,
@@ -50,6 +53,8 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
+  commandOutputAsync,
+  repoDir,
   selectE2EModel,
 } from '../modules/shared.mjs'
 
@@ -119,7 +124,33 @@ export async function createDesktopScenario({
       slug,
       version
     )
-    return { ...(await cloud.publishPluginRelease({ slug, version, packageRoot })), slug }
+    return {
+      ...(await cloud.publishPluginRelease({ slug, version, packageRoot })),
+      slug,
+      packageRoot,
+    }
+  }
+
+  async function assertManifestBytes(changes) {
+    for (const change of changes) {
+      assert.deepEqual(
+        await readFile(change.path),
+        change.updated,
+        `Manifest changed: ${change.path}`
+      )
+    }
+  }
+
+  function recordFormatting(phase, changes) {
+    const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+    evidence.push({
+      phase,
+      files: changes.map(({ path, original, updated }) => ({
+        path,
+        before: digest(original),
+        after: digest(updated),
+      })),
+    })
   }
 
   async function install(slug, device) {
@@ -245,6 +276,13 @@ export async function createDesktopScenario({
     const blocked = await install('recovery-occupied', device)
     const missing = await install('recovery-missing', device)
     const removed = await install('recovery-uninstalled', device)
+    const retained = await waitRuntime(removed, '1.0.0')
+    const conflicts = []
+    for (const kind of ['field', 'array']) {
+      const fixture = await install(`recovery-z-${kind}-conflict`, device)
+      conflicts.push({ kind, fixture, original: await waitRuntime(fixture, '1.0.0'), changes: [] })
+    }
+    let formattedForSync = []
     const componentStates = { [`skill:${disabled.slug}`]: false }
     await update(disabled, device, { enabled: false, componentStates })
     await until(
@@ -285,6 +323,28 @@ export async function createDesktopScenario({
     backendStopped = true
     await restartDesktopApp({
       async afterStop() {
+        for (const value of [original, retained]) {
+          recordFormatting(
+            'format-only-before-relocation',
+            await reformatRuntimeManifests(resultDir, value)
+          )
+        }
+        for (const conflict of conflicts) {
+          conflict.changes = await rewriteRuntimeManifests(
+            resultDir,
+            conflict.original,
+            (metadata, path) => {
+              if (conflict.kind === 'field' && path === '.codex-plugin/plugin.json') {
+                metadata.description += ' user edit'
+              }
+              if (conflict.kind === 'array' && path === '.claude-plugin/plugin.json') {
+                assert.equal(metadata.keywords.length, 2)
+                metadata.keywords.reverse()
+              }
+              return metadata
+            }
+          )
+        }
         // Both Home and runtime files really move. No compatibility symlink is left behind.
         currentExecutor = await relocateInstalledHome({
           resultDir,
@@ -292,6 +352,11 @@ export async function createDesktopScenario({
           oldExecutor: executorHome,
           newHome: nextHome,
         })
+        for (const conflict of conflicts) {
+          for (const change of conflict.changes) {
+            change.path = relocatedPath(change.path, executorHome, nextExecutor)
+          }
+        }
         const occupied = relocatedPath(blockedBefore.runtime.codex_link, executorHome, nextExecutor)
         await replaceOwnedRuntimeWithForeignDirectory(resultDir, occupied)
         const missingPackage = relocatedPath(missingBefore.store_path, homePath, nextHome)
@@ -351,6 +416,18 @@ export async function createDesktopScenario({
     const preservedDisabled = await entry(disabled)
     assert.equal(preservedDisabled.enabled, false)
     assert.deepEqual(preservedDisabled.component_states, componentStates)
+    for (const { fixture, original: previous, changes } of conflicts) {
+      const failed = await until(
+        () => entry(fixture),
+        value => Boolean(value?.runtime_recovery_error),
+        'Semantic manifest change was accepted during recovery',
+        workbenchReadyTimeoutMs
+      )
+      assert.match(failed.runtime_recovery_error, /occupied by an unrelated item/)
+      assert.equal(failed.installed_plugin_id, previous.installed_plugin_id)
+      assert.equal(failed.cloud_plugin_id, previous.cloud_plugin_id)
+      await assertManifestBytes(changes)
+    }
     await until(
       async () => [await entry(blocked), await entry(missing)],
       entries => entries.every(value => typeof value?.runtime_recovery_error === 'string'),
@@ -394,6 +471,14 @@ export async function createDesktopScenario({
     await openPlugin(control, primary)
     await refreshWithOccupiedPluginRuntime(control, blocked, workbenchReadyTimeoutMs)
     await waitRuntime(missing, '1.0.0')
+    for (const { fixture, changes } of conflicts) {
+      assert.ok((await entry(fixture)).runtime_recovery_error)
+      await assertManifestBytes(changes)
+    }
+    evidence.push({
+      phase: 'semantic-manifests-preserved',
+      kinds: conflicts.map(value => value.kind),
+    })
     assert.equal(
       await readFile(join(foreign, 'unrelated-owner.txt'), 'utf8'),
       'Keep this unrelated directory intact\n'
@@ -402,6 +487,11 @@ export async function createDesktopScenario({
     await restartDesktopApp({
       async afterStop() {
         await rm(foreign, { recursive: true })
+        for (const conflict of conflicts) {
+          for (const change of conflict.changes) await writeFile(change.path, change.original)
+        }
+        formattedForSync = await reformatRuntimeManifests(resultDir, await entry(primary))
+        recordFormatting('format-only-before-sync', formattedForSync)
       },
     })
     await control.command('waitFor', testId('new-chat-button'), {
@@ -410,6 +500,31 @@ export async function createDesktopScenario({
     await primeComposerApps(control)
     await refresh(control, primary)
     await waitRuntime(blocked, '1.0.0')
+    await assertManifestBytes(formattedForSync)
+    for (const { fixture, original: previous } of conflicts) {
+      const restored = await waitRuntime(fixture, '1.0.0')
+      assert.equal(restored.installed_plugin_id, previous.installed_plugin_id)
+      assert.equal(restored.cloud_plugin_id, previous.cloud_plugin_id)
+    }
+    await openPlugin(control, removed)
+    await control.command(
+      'clickWhenEnabled',
+      testId(`plugin-marketplace-install-${removed.pluginId}`)
+    )
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    const retainedReinstall = await until(
+      () => accountPlugin(cloud, removed.slug),
+      Boolean,
+      'Retained formatting fixture did not reinstall',
+      workbenchReadyTimeoutMs
+    )
+    removed.installedId = Number(retainedReinstall.metadata.labels.id)
+    const reinstalledRetained = await waitRuntime(removed, '1.0.0')
+    assert.equal(reinstalledRetained.cloud_plugin_id, retained.cloud_plugin_id)
+    assert.equal(reinstalledRetained.installed_plugin_id, removed.installedId)
+    await refresh(control, removed)
+    await invoke(control, removed, '1.0.0', 'retained-format-reinstall')
+    await openPlugin(control, primary)
     await assertSurfaces(control, primary, true, workbenchReadyTimeoutMs)
     await openPlugin(control, primary)
     await control.command('click', testId(`plugin-marketplace-row-${primary.pluginId}`))
@@ -435,13 +550,59 @@ export async function createDesktopScenario({
         ([path]) => !path.startsWith(executorHome + '/') && !path.startsWith(homePath + '/')
       )
     )
+    await assertManifestBytes(formattedForSync)
+    let revision
     await verifyPluginTogglePersistence({
       control,
       cloud,
       fixture: primary,
-      restartDesktopApp,
+      restartDesktopApp: () =>
+        restartDesktopApp({
+          async afterStop() {
+            if (revision) return
+            // Recreate an old writer's same-version revision in real storage.
+            // The offline account update must be consumed by desktop startup.
+            await writeFile(join(second.packageRoot, 'revision.txt'), 'same-version-content\n')
+            revision = JSON.parse(
+              await commandOutputAsync(
+                'uv',
+                [
+                  'run',
+                  'python',
+                  join(repoDir, 'wework/e2e/desktop/fixtures/historical-plugin-revision.py'),
+                  String(second.releaseId),
+                  second.packageRoot,
+                ],
+                { cwd: join(repoDir, 'backend'), env: cloud.backendEnv }
+              )
+            )
+            assert.equal(original.checksum, `sha256:${revision.previous}`)
+            await update(primary, device, { releaseId: second.releaseId })
+            assert.equal((await entry(primary)).checksum, original.checksum)
+            await assertManifestBytes(formattedForSync)
+          },
+        }),
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    const revised = await until(
+      () => entry(primary),
+      value => value?.checksum === `sha256:${revision.checksum}`,
+      'Same-version update did not install the revised package',
+      workbenchReadyTimeoutMs
+    )
+    assert.equal(revised.version, '2.0.0')
+    assert.equal(revised.installed_plugin_id, original.installed_plugin_id)
+    assert.equal(revised.cloud_plugin_id, original.cloud_plugin_id)
+    assert.equal(
+      await readFile(join(revised.runtime.codex_link, 'revision.txt'), 'utf8'),
+      'same-version-content\n'
+    )
+    evidence.push({
+      phase: 'same-version-package-update',
+      previous: revision.previous,
+      checksum: revision.checksum,
+    })
+    await invoke(control, primary, '2.0.0', 'same-version-update')
 
     await publish(primary.slug, '3.0.0')
     await refresh(control, primary)

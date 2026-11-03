@@ -1399,17 +1399,19 @@ export function registerAppUpdateCapabilities(
   // A download outlives any single host request, and every host request is
   // bounded by a fixed timeout. Start the download and let callers follow
   // appUpdate.downloadProgress until it reports a terminal phase.
-  router.register('appUpdate.download', () => {
+  router.register('appUpdate.download', params => {
     void requiredAppUpdates(appUpdates)
-      .download()
+      .download(updateChannelParam(params))
       .catch(() => undefined)
     return null
   })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
-  router.register('appUpdate.install', (_params, context) => {
-    context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  router.register('appUpdate.install', (params, context) => {
+    context.deferUntilResponseSent(
+      requiredAppUpdates(appUpdates).createInstallAction(stringParam(params, 'version'))
+    )
   })
   router.register(
     'appUpdate.previousRelease',

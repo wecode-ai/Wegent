@@ -502,6 +502,41 @@ async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
 }
 
 #[tokio::test]
+async fn idle_restart_preserves_pending_reads_until_the_native_response() {
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let mut client = CodexAppServerClient::new("codex-idle-restart-pending-read-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let response = client
+        .start_existing_request("thread/list", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(client.restart_if_idle().await, Err((0, 1)));
+    assert!(client.state.lock().await.process.is_some());
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, sender) in responses {
+        sender.send(Ok(json!({"data": []}))).unwrap();
+    }
+    assert_eq!(response.await.unwrap().unwrap(), json!({"data": []}));
+    assert_eq!(client.restart_if_idle().await, Ok(()));
+    assert!(client.state.lock().await.process.is_none());
+}
+
+#[tokio::test]
 async fn auth_mutation_is_rejected_while_a_turn_is_active() {
     let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
     client.mark_thread_active("thread-1").await;

@@ -472,6 +472,10 @@ const executorTransportDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'executor-transport.log'),
   '[Wework] Executor transport diagnostic '
 )
+const electronHostDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'electron-host-transport.log'),
+  '[Wework] Electron host diagnostic '
+)
 const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'smart-app-launch.log'),
   '[Wework] Smart app launch diagnostic '
@@ -532,6 +536,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void executorTransportDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write executor transport diagnostics', error)
+    })
+    void electronHostDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write Electron host diagnostics', error)
     })
     void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write Smart app diagnostics', error)
@@ -2109,9 +2116,13 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
-  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
-    desktopHostEvents.publish('browser.event', { ...event })
-  })
+  embeddedBrowser = new EmbeddedBrowserManager(
+    app.getPath('userData'),
+    event => {
+      desktopHostEvents.publish('browser.event', { ...event })
+    },
+    openSchemeInMainWindow
+  )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
     publish: state => {

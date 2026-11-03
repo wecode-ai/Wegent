@@ -563,9 +563,15 @@ async function verifyAutomaticProcessingControls(
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
   await control.command('waitFor', form, { visible: true, timeoutMs })
-  await control.command('click', scoped('[data-testid="automatic-processing-cancel"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-cancel"]'), {
+    timeoutMs,
+  })
   await control.command('waitFor', form, { visible: false, timeoutMs })
-  await control.command('click', scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`))
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),
@@ -947,6 +953,17 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(modelRequests, 2, 'The auto tag did not invoke the agent model exactly once')
+      const autoMessages = await readProjectChatMessages(
+        { backendUrl, authToken, projectId: project.id },
+        issue.id,
+        uiTimeoutMs
+      )
+      const autoResponse = autoMessages.find(message => message.content === COMPLETION)
+      assert.match(
+        autoResponse?.metadata.runtime_event_sequence ?? '',
+        /^[1-9]\d+$/,
+        'The persisted final response must preserve its exact Runtime event sequence'
+      )
       await captureScreenshot(control, 'remote-agent-dispatch-03-auto-tag-in-review.png', CONTENT)
       await request(`/api/v1/cloud-projects/${project.id}/automations/${tagged.rule.id}`, {
         method: 'DELETE',

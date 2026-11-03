@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::codex_timeline::next_open_timeline_turn_id;
 use super::super::codex_user_input::async_question_payload_from_item;
 use super::command_items::{merge_codex_command_item, merge_codex_turn_items};
 use super::*;
@@ -542,26 +543,46 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
         // The lifecycle is published before its transcript buffer is created.
         // Preserve that native identity across a concurrent historical read.
-        let state = self
-            .store
-            .read_task(
-                local_task_id,
-                crate::runtime_work::lifecycle::native_execution_state,
-            )
-            .flatten();
-        let owned_turn_id = state
+        let link = self.local_task_link(local_task_id);
+        let state = link
             .as_ref()
-            .and_then(|state| state.turn_id.clone())
-            .or_else(|| {
-                state
-                    .is_some_and(|state| {
-                        state.phase
-                            == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
-                    })
-                    .then(|| self.active_codex_turn(local_task_id))
-                    .flatten()
-                    .map(|turn| turn.turn_id)
+            .and_then(crate::runtime_work::lifecycle::native_execution_state);
+        // Goal recovery can commit a new native boundary before its notification
+        // is routed. Observe only a continuation after this task's known turn;
+        // an abandoned turn from the previous process must stay interrupted.
+        let observed_turn_id = link
+            .as_ref()
+            .filter(|link| {
+                link.running
+                    && self
+                        .active_local_executions
+                        .lock()
+                        .expect("active local execution map lock should not be poisoned")
+                        .get(local_task_id)
+                        .is_some_and(|control| !control.stop_requested)
+                    && link
+                        .thread_id
+                        .as_deref()
+                        .is_some_and(|id| thread["id"] == id)
+            })
+            .and_then(|link| {
+                next_open_timeline_turn_id(thread, link.runtime_handle["lastTurnId"].as_str()?)
             });
+        let owned_turn_id = observed_turn_id.or_else(|| {
+            state
+                .as_ref()
+                .and_then(|state| state.turn_id.clone())
+                .or_else(|| {
+                    state
+                        .is_some_and(|state| {
+                            state.phase
+                                == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+                        })
+                        .then(|| self.active_codex_turn(local_task_id))
+                        .flatten()
+                        .map(|turn| turn.turn_id)
+                })
+        });
         let active = self
             .active_codex_transcript_items
             .lock()
