@@ -69,6 +69,13 @@ export function upgradeSource(catalogs, version) {
   return candidates[0]
 }
 
+/** Select catalog channels independently of the target package's release label. */
+export function releaseUpgradeChannels(targetChannel, sourceVersion) {
+  if (sourceVersion?.includes('-beta.')) return ['beta']
+  if (sourceVersion) return [targetChannel]
+  return targetChannel === 'stable' ? ['stable', 'beta'] : ['beta']
+}
+
 /** Select candidates automatically; only real-package E2E may authorize their edges. */
 export function releaseUpgradePlan(catalogs, target, channel) {
   if (compareVersions(target.minSourceVersion, target.version) > 0)

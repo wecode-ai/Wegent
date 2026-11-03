@@ -39,10 +39,11 @@ export function useStandInAssignmentTasks(
       .map(device => ({ id: device.device_id, aliases: getWorkbenchDeviceIds(device) }))
   )
   const visibleKeys = JSON.stringify(source?.items.map(item => item.key) ?? [])
-  const request = useMemo(
-    () => ({ accountKey, userId, assignments, devices, visibleKeys, inbox }),
-    [accountKey, userId, assignments, devices, visibleKeys, inbox]
+  const scope = useMemo(
+    () => ({ accountKey, userId, api, identity, assignments, devices }),
+    [accountKey, userId, api, identity, assignments, devices]
   )
+  const request = useMemo(() => ({ scope, visibleKeys, inbox }), [scope, visibleKeys, inbox])
   const [loaded, setLoaded] = useState<{
     request: typeof request
     items: RuntimeTaskReminderItem[]
@@ -95,7 +96,7 @@ export function useStandInAssignmentTasks(
     }
   }, [available, api, identity, userId, assignments, devices, request])
 
-  const current = available && loaded?.request === request ? loaded : null
+  const current = available && loaded?.request.scope === scope ? loaded : null
   return {
     items: current?.items ?? EMPTY_ITEMS,
     pending: Boolean(available && !current),

@@ -4,6 +4,11 @@ const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 
 const { resolveBuildIdentity } = require('./build-identity.cjs')
+const {
+  recordReleaseBuildStage,
+  isTransientNotaryFailure,
+  notaryStatus,
+} = require('./release-build-diagnostics.cjs')
 
 async function notarizeMacos(context) {
   if (context.electronPlatformName !== 'darwin') return
@@ -15,20 +20,47 @@ async function notarizeMacos(context) {
 
 async function notarizeApp(appPath, environment = process.env) {
   await requireDirectory(appPath)
-  if (await hasStapledTicket(appPath, environment)) return
+  if (
+    await recordReleaseBuildStage(
+      'ticket-lookup',
+      () => hasStapledTicket(appPath, environment),
+      environment
+    )
+  )
+    return
 
   const identity = resolveBuildIdentity(environment)
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-notarize-'))
   const archivePath = join(temporaryDirectory, `${identity.productName}.zip`)
   try {
-    await run('codesign', ['--verify', '--deep', '--strict', appPath])
-    await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, archivePath])
-    const result = await submitArchive(archivePath, environment)
+    await recordReleaseBuildStage(
+      'verify-signature',
+      () => run('codesign', ['--verify', '--deep', '--strict', appPath]),
+      environment
+    )
+    await recordReleaseBuildStage(
+      'archive',
+      () => run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, archivePath]),
+      environment
+    )
+    const result = await recordReleaseBuildStage(
+      'notary-submit',
+      () => submitArchive(archivePath, environment),
+      environment
+    )
     if (result.status !== 'Accepted') {
       throw new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`)
     }
-    await runNotaryCommand(['stapler', 'staple', appPath], environment)
-    await runNotaryCommand(['stapler', 'validate', appPath], environment)
+    await recordReleaseBuildStage(
+      'staple-ticket',
+      () => runNotaryCommand(['stapler', 'staple', appPath], environment),
+      environment
+    )
+    await recordReleaseBuildStage(
+      'validate-ticket',
+      () => runNotaryCommand(['stapler', 'validate', appPath], environment),
+      environment
+    )
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
   }
@@ -112,13 +144,6 @@ function s3AccelerationArgs(value) {
   throw new Error('WEWORK_NOTARYTOOL_S3_ACCELERATION must be true or false')
 }
 
-function isTransientNotaryFailure(error) {
-  const message = error instanceof Error ? error.message : String(error)
-  return /abortedUpload|deadlineExceeded|timed? ?out|connection (?:reset|lost)|NSURLErrorDomain.*-100[159]/i.test(
-    message
-  )
-}
-
 async function hasStapledTicket(appPath, environment, execute = runNotaryCommand) {
   try {
     await execute(['stapler', 'validate', appPath], environment)
@@ -161,11 +186,18 @@ function run(command, args) {
         resolvePromise(stdout)
       } else {
         const details = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
-        reject(
+        const error = Object.assign(
           new Error(
             `${command} exited with ${signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`}${details ? `: ${details}` : ''}`
-          )
+          ),
+          { exitCode: code, signal }
         )
+        try {
+          error.notaryStatus = notaryStatus(JSON.parse(stdout).status)
+        } catch {
+          // Non-JSON command output has no structured notarization status.
+        }
+        reject(error)
       }
     })
   })

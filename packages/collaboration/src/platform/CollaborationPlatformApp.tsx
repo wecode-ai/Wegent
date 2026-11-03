@@ -1923,6 +1923,12 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     host.location.rootView === "stand-in" &&
     Boolean(host.renderStandInPage);
+  const isTemplatePage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "templates" &&
+    Boolean(host.templateStore);
+  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -2088,8 +2094,8 @@ function CollaborationPlatformAppContent({
     domainProjects[0] ??
     null;
   useEffect(() => {
-    if (!state.loading && !state.error) onReady?.();
-  }, [onReady, state.error, state.loading]);
+    if (ownsPageRequests || (!state.loading && !state.error)) onReady?.();
+  }, [onReady, ownsPageRequests, state.error, state.loading]);
   const navigationProjectsRef = useRef(state.navigationProjects);
   useLayoutEffect(() => {
     navigationProjectsRef.current = state.navigationProjects;
@@ -2448,7 +2454,7 @@ function CollaborationPlatformAppContent({
     });
   };
   let content: React.ReactNode;
-  if (state.loading && !isDevicePage && !isStandInPage) {
+  if (state.loading && !ownsPageRequests) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -2459,7 +2465,7 @@ function CollaborationPlatformAppContent({
         }
       />
     );
-  } else if (state.error && !isDevicePage && !isStandInPage) {
+  } else if (state.error && !ownsPageRequests) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -2537,6 +2543,7 @@ function CollaborationPlatformAppContent({
   } else if (
     !state.workspace ||
     isDevicePage ||
+    isTemplatePage ||
     host.location.rootView === "stand-in"
   ) {
     const rootView = host.location.rootView ?? "home";
@@ -3049,7 +3056,9 @@ function CollaborationPlatformAppContent({
       workspaces={state.workspaces}
       workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
-      navigationIncomplete={state.navigationIncomplete}
+      navigationIncomplete={
+        state.navigationIncomplete || (ownsPageRequests && Boolean(state.error))
+      }
       onRetryNavigation={commands.reload}
       canCreateWorkspace={canCreateCloudWorkspace}
       onCreateWorkspace={() => {

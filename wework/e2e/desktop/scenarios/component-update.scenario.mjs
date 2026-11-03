@@ -8,6 +8,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { unavailableUpdatePolicy, verifyAppUpdateRetry } from '../modules/app-update-retry.mjs'
 
 const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
@@ -66,6 +67,7 @@ export async function createDesktopScenario({
       ])
   )
   const requests = []
+  let advertisedPolicy = null
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', origin).pathname
     requests.push(path)
@@ -95,7 +97,7 @@ export async function createDesktopScenario({
           platform: target.platform,
           arch: target.arch,
           components,
-          upgradePolicy: {
+          upgradePolicy: advertisedPolicy ?? {
             schemaVersion: 1,
             channel,
             platform: target.platform,
@@ -105,6 +107,11 @@ export async function createDesktopScenario({
           },
         })
       )
+      return
+    }
+    if (path === '/unavailable-release.tar.gz') {
+      response.writeHead(503)
+      response.end('The advertised release is unavailable')
       return
     }
     if (path === `/${assetName}`) {
@@ -211,6 +218,20 @@ export async function createDesktopScenario({
         false,
         'Restart downloaded unversioned component code'
       )
+      if (process.platform !== 'linux') {
+        const policy = unavailableUpdatePolicy(packaged, target, origin)
+        const retry = await verifyAppUpdateRetry(control, {
+          policy,
+          requests,
+          advertise: available => {
+            advertisedPolicy = available ? policy : null
+          },
+        })
+        await writeFile(
+          join(resultDir, 'app-update-retry-result.json'),
+          JSON.stringify({ sourceSha: packaged.sourceSha, version: packaged.appVersion, ...retry })
+        )
+      }
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
       assert.doesNotMatch(appLog, /\[runtime\] startup failed/)
       assert.doesNotMatch(appLog, /\[components\] update staged for the next application restart/)

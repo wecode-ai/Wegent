@@ -431,6 +431,9 @@ export function applyCompletedAssistantContent(
   content: string | undefined
 ): RuntimeConversationItem[] {
   if (!content) return items
+  if (itemId) {
+    return upsertAssistantText(items, itemId, content, 'snapshot', undefined)
+  }
   const lastUserIndex = findLastIndex(items, item => item.type === 'user_message')
   const hasStreamedAssistantText = items.some(
     (item, index) => index > lastUserIndex && item.type === 'assistant_text'
@@ -438,19 +441,16 @@ export function applyCompletedAssistantContent(
   if (hasStreamedAssistantText) return items
   const matchingProcessTextIndex = findLastIndex(
     items,
-    item =>
-      item.type === 'block' &&
-      item.block.type === 'text' &&
-      (itemId ? item.id === itemId : item.block.content === content)
+    item => item.type === 'block' && item.block.type === 'text' && item.block.content === content
   )
   if (matchingProcessTextIndex >= 0) {
-    return upsertAssistantText(
-      items,
-      itemId ?? items[matchingProcessTextIndex].id,
+    return replaceAt(items, matchingProcessTextIndex, {
+      id: items[matchingProcessTextIndex].id,
+      position: items[matchingProcessTextIndex].position,
+      type: 'assistant_text',
       content,
-      'snapshot',
-      undefined
-    )
+      createdAt: new Date().toISOString(),
+    })
   }
   const retained = items.filter(
     (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
@@ -458,7 +458,7 @@ export function applyCompletedAssistantContent(
   return [
     ...retained,
     {
-      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
+      id: `runtime-final:${turnId ?? 'pending'}`,
       type: 'assistant_text',
       content,
       createdAt: new Date().toISOString(),
