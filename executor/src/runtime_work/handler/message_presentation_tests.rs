@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn historical_reads_do_not_restart_a_previous_root_turn() {
+    use crate::runtime_work::lifecycle::{
+        begin_native_request, native_execution_state, project_native_execution,
+        NativeExecutionPhase,
+    };
+    let (handler, root) = isolated_runtime_work_handler("obsolete-running-history");
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    begin_native_request(&mut link);
+    let mut state = native_execution_state(&link).unwrap();
+    state.phase = NativeExecutionPhase::Running;
+    state.turn_id = Some("current".into());
+    state.latest_turn_id = state.turn_id.clone();
+    state.started_at = Some(200_000);
+    project_native_execution(&mut link, &state);
+    handler.upsert_local_task(link);
+    for include_current in [false, true] {
+        let mut thread = json!({"timeline":true,"turns":[
+            {"id":"old","status":"inProgress","startedAt":100,"items":[]}
+        ]});
+        if include_current {
+            thread["turns"].as_array_mut().unwrap().push(json!({
+                "id":"current","status":"inProgress","startedAt":200,"items":[]
+            }));
+        }
+        handler.merge_active_codex_transcript("task-1", &mut thread);
+        let projection =
+            crate::runtime_work::transcript::project_transcript(&thread, "device", true);
+        assert_eq!(projection.turns[0]["status"], "cancelled");
+        assert!(projection.turns[0]["completedAt"].is_null());
+        if include_current {
+            assert_eq!(projection.turns[1]["status"], "streaming");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn assistant_phase_resets_at_the_root_turn_boundary_only() {
     let (event_tx, mut event_rx) = broadcast::channel(16);
     let mut mapper = CodexNotificationEventMapper::default();

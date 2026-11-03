@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::agents::CodexAppServerClient;
 
 use super::codex_transcript_page::CodexTranscriptPage;
-use super::util::string_field;
+use super::util::{string_field, timestamp_ms_field};
 
 const TURN_CURSOR_PREFIX: &str = "wework-codex-turn:";
 
@@ -18,6 +18,25 @@ pub(super) fn turn_cursor(turn_id: &str) -> String {
 }
 
 pub(super) const CURSOR_PREFIX: &str = "wework-codex-timeline:";
+
+pub(super) fn interrupt_obsolete_running_turns(
+    thread: &mut Value,
+    latest_turn_id: &str,
+    latest_started_at: i64,
+) {
+    // A missing native terminal record must not keep a previous root turn alive
+    // after Executor has observed a newer root turn. Do not invent end times or
+    // overwrite a newer turn that raced the historical read.
+    for turn in thread["turns"].as_array_mut().into_iter().flatten() {
+        if turn["id"] != latest_turn_id
+            && turn["status"] == "inProgress"
+            && timestamp_ms_field(turn, "startedAt")
+                .is_some_and(|started| started < latest_started_at)
+        {
+            turn["status"] = json!("interrupted");
+        }
+    }
+}
 
 #[derive(Deserialize, Serialize)]
 struct TimelineCursor {
@@ -210,6 +229,24 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_newer_observed_root_turn_stops_old_unfinished_history_timers() {
+        let mut thread = json!({"turns":[
+            {"id":"old","startedAt":100,"status":"inProgress"},
+            {"id":"active","startedAt":200,"status":"inProgress"},
+            {"id":"newer-read","startedAt":300,"status":"inProgress"},
+            {"id":"completed","startedAt":50,"status":"completed"},
+            {"id":"unknown","status":"inProgress"}
+        ]});
+        interrupt_obsolete_running_turns(&mut thread, "active", 200_000);
+        assert_eq!(thread["turns"][0]["status"], "interrupted");
+        assert!(thread["turns"][0].get("completedAt").is_none());
+        assert_eq!(thread["turns"][1]["status"], "inProgress");
+        assert_eq!(thread["turns"][2]["status"], "inProgress");
+        assert_eq!(thread["turns"][3]["status"], "completed");
+        assert_eq!(thread["turns"][4]["status"], "inProgress");
+    }
 
     #[test]
     fn a_turn_started_after_metadata_was_read_remains_running() {

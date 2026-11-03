@@ -94,6 +94,7 @@ core_segments=(
   window-lifecycle
   goal-lifecycle
   goal-state-sync
+  follow-up-task-switch
   native-lifecycle
   supervisor-lifecycle
   resilience
@@ -247,7 +248,7 @@ cloud_shards=(
 # Put Harness flows in Core 4 (24m baseline) and history in Core 6; retain ten runners and 40 minutes.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,native-lifecycle,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
+  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,follow-up-task-switch,native-lifecycle,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle
   stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use,board-transcript-followup
   harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes
@@ -895,6 +896,12 @@ classify_wework_path() {
       wework/e2e/desktop/scenarios/goal-output-identity.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs | \
+      wework/e2e/desktop/modules/follow-up-agent-history.mjs)
+      select_target "core:follow-up-task-switch"
       return
       ;;
 
@@ -1939,6 +1946,9 @@ classify_path() {
       fi
       ;;
     packages/collaboration/*)
+      if [[ "$path" == packages/collaboration/src/conversation/useConversationScrollController* ]]; then
+        select_target "core:follow-up-task-switch"
+      fi
       select_target "core:collaboration-parent-board"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
         select_target "core:drawing-attachment"

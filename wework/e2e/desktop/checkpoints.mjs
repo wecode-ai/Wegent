@@ -175,6 +175,7 @@ export const DESKTOP_CHECKPOINTS = [
   'native-lifecycle',
   'goal-lifecycle',
   'goal-state-sync',
+  'follow-up-task-switch',
   'supervisor-lifecycle',
   'resilience',
   'environment-panel-scroll',
