@@ -262,6 +262,33 @@ export function createDesktopScenario({
       await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
         text: '请先为当前执行环境设置默认模型',
       })
+      const [error] = JSON.parse(
+        await control.command('getElementMetrics', `${CONTENT} .collaboration-project-create-error`)
+      )
+      const [footer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${CONTENT} .collaboration-project-create-footer`
+        )
+      )
+      const [dialog] = JSON.parse(
+        await control.command('getElementMetrics', selector('collaboration-project-create-dialog'))
+      )
+      const [confirm] = JSON.parse(
+        await control.command('getElementMetrics', selector('collaboration-project-create-confirm'))
+      )
+      assert.ok(
+        error.height > 0 && error.top >= footer.top && error.bottom <= footer.bottom,
+        'The complete error message must stay in the non-scrolling footer'
+      )
+      assert.ok(
+        error.scrollHeight <= error.clientHeight + 1 && error.scrollWidth <= error.clientWidth + 1,
+        'The error message must not clip its text'
+      )
+      assert.ok(
+        error.bottom <= confirm.top && confirm.bottom <= dialog.bottom,
+        'The error and create action must be readable together without scrolling'
+      )
       const after = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       assert.equal(
         after.length,

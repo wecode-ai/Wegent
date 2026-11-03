@@ -3942,6 +3942,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
       expect(container.textContent).toContain(message);
       expect(container.textContent).not.toContain("项目已创建");
+      const error = container.querySelector('[role="alert"]')!;
+      expect(
+        error.closest(".collaboration-project-create-footer"),
+      ).not.toBeNull();
+      expect(error.closest(".collaboration-project-create-body")).toBeNull();
     },
   );
 
@@ -4057,6 +4062,11 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.create).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("项目已创建");
     expect(container.textContent).toContain("Configuration unavailable");
+    expect(
+      container
+        .querySelector('[role="alert"]')!
+        .closest(".collaboration-project-create-footer"),
+    ).not.toBeNull();
     const choose = byTestId(
       "project-create-choose-template",
     ) as HTMLButtonElement;
