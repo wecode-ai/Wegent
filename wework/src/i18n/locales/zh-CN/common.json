@@ -5535,6 +5535,8 @@
       "primary_profile": "设置",
       "primary_prompt": "交代工作，或问问最近的进展…",
       "role_prompt": "给这个角色交代工作…",
+      "review_work": "查看并处理",
+      "pending_work_help": "上方有待你处理的工作。打开工作查看详情，或在这里继续和分身沟通。",
       "primary_empty": "我是你的分身。可以和我交代工作、了解进展，或一起创建场景角色。",
       "role_empty": "在这里持续交代职责、调整安排或了解进展。具体工作在各自会话中推进。",
       "work_filters": "筛选工作",

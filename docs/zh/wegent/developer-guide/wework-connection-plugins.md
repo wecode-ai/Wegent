@@ -188,6 +188,8 @@ Executor 保留唯一的后台采集调度。它通过仅监听回环地址、�
 
 分身通过来源绑定的 `wework_stand_in.send_email` 发送或回复。原工作对话中的原生审批展示发件人、收件人、主题和完整正文；取消不会调用 SMTP 投递。回复校验原邮件 UID 和 Reply-To/From，并保留线程头。发送使用持久化的写前记录防止重复：明确未进入投递阶段的失败可在修复后重新审批，未知或部分投递结果禁止盲目重试。
 
+邮件预览读取同一条原生审批中的工具身份、精确参数及待处理状态。内置工具顶层 `title` 固定为 `Wework: Send email`；仅在服务名、工具标题和审批类型均匹配时展示邮件确认，不从会异步整理的工具展示状态推断审批身份。
+
 邮箱协议库随选定 Harness runtime 提供。Core 插件从该运行时的 `package.json` 解析依赖，避免已复制到用户配置目录的插件错误地从配置目录查找模块。新增邮箱用户故事由共享 `stand-in-email` 桌面 checkpoint 覆盖，使用独立的真实 GreenMail IMAP/SMTP 服务和临时受信证书，只模拟模型服务；该验证不代表已验证所有外部邮箱服务商的实际兼容性。
 
 协议和依赖测试位于 `wework/dsh/plugin-runtime/connections.test.mjs`；钉钉采集契约测试位于 `wework/dsh/connection-dingtalk/provider.test.mjs`；回环鉴权测试位于 `wework/dsh/connection-runtime/rpc.test.mjs`。这些测试由现有 Wework 测试发现器执行。

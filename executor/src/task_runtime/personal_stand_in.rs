@@ -4,19 +4,6 @@ use super::*;
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
 
-#[cfg(test)]
-mod email_policy_tests {
-    use super::*;
-
-    #[test]
-    fn email_connections_always_require_native_confirmation() {
-        let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
-        assert!(validate_connections(&role).is_ok());
-        role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
-        assert!(validate_connections(&role).is_err());
-    }
-}
-
 pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
     let immediate = value["processing"]["mode"] != "silent";
@@ -581,4 +568,17 @@ fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     } else {
         json!(now())
     };
+}
+
+#[cfg(test)]
+mod email_policy_tests {
+    use super::*;
+
+    #[test]
+    fn email_connections_always_require_native_confirmation() {
+        let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
+        assert!(validate_connections(&role).is_ok());
+        role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+        assert!(validate_connections(&role).is_err());
+    }
 }

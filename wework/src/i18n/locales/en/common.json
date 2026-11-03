@@ -5540,6 +5540,8 @@
       "primary_profile": "Settings",
       "primary_prompt": "Delegate work or ask about progress…",
       "role_prompt": "Talk to this role…",
+      "review_work": "Review work",
+      "pending_work_help": "Work above needs your attention. Open it to review the details, or continue talking with your stand-in here.",
       "primary_empty": "Tell me about your work, ask for an update, or create a scenario role together.",
       "role_empty": "Discuss responsibilities and progress here. Each work item has its own conversation.",
       "work_filters": "Filter work",

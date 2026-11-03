@@ -32,8 +32,8 @@ export function createDesktopScenario({
 }) {
   let mail
   let round = 0
+  let coordinatorRound = 0
   let originalSettings
-  let controlRef
   let messageId
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const backend = async (control, method, params = {}) =>
@@ -79,8 +79,43 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
-      if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(MARKER))
-        return false
+      if (isReplyPredictionRequest(body)) return false
+      const input = JSON.stringify(body.input ?? [])
+      if (input.includes('Review this silent intake batch')) {
+        const readId = `email-intake-${coordinatorRound}`
+        const actionId = `email-arrange-${coordinatorRound}`
+        let events
+        if (requestContainsToolOutput(body, actionId)) {
+          assert.equal(JSON.parse(readMcpToolOutput(body, actionId)).status, 'pending')
+          events = [assistantMessage('已安排邮件工作。')]
+          coordinatorRound++
+        } else if (requestContainsToolOutput(body, readId)) {
+          const snapshot = JSON.parse(readMcpToolOutput(body, readId)).snapshot
+          const event = snapshot.events.find(item => item.kind === 'connection')
+          const toolName = event ? 'create_work' : 'ignore_events'
+          events = mcpToolRequestEvents(body, {
+            toolName,
+            directToolName: `mcp__wework_stand_in__${toolName}`,
+            argumentsValue: event
+              ? { eventIds: [event.id], roleId: event.roleIds[0], title: '邮箱接入验证' }
+              : { eventIds: snapshot.events.map(item => item.id), reason: '邮件处理状态已记录' },
+            searchCallId: `email-arrange-search-${coordinatorRound}`,
+            toolCallId: actionId,
+          }).events
+        } else
+          events = mcpToolRequestEvents(body, {
+            toolName: 'read_intake',
+            directToolName: 'mcp__wework_stand_in__read_intake',
+            argumentsValue: {},
+            searchCallId: `email-intake-search-${coordinatorRound}`,
+            toolCallId: readId,
+          }).events
+        const id = `email-coordinator-${Date.now()}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+        return true
+      }
+      if (!input.includes(MARKER)) return false
       const readId = `email-read-${round}`
       const sendId = `email-send-${round}`
       let events
@@ -120,7 +155,6 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
-      controlRef = control
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -128,6 +162,13 @@ export function createDesktopScenario({
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model)
+      await control.command('seedLocalProject', 'body', {
+        value: JSON.stringify({
+          projectKey: 'email-story',
+          name: '邮箱工作验证',
+          path: workspacePath,
+        }),
+      })
       await rpc(control, 'runtime.stand_in.personal.save', {
         userId: USER,
         settings: {
@@ -135,6 +176,8 @@ export function createDesktopScenario({
           primary: {
             ...originalSettings.primary,
             enabled: true,
+            prompt: originalSettings.primary?.prompt ?? '',
+            preferences: originalSettings.primary?.preferences ?? '',
             model,
             workspace: {
               projectKey: 'email-story',
@@ -162,6 +205,10 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await control.command('waitFor', '[data-testid="stand-in-email-discard"]')
+      await control.command('click', '[data-testid="stand-in-email-discard-cancel-button"]')
+      await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
+      await control.command('waitFor', '[data-testid="stand-in-email-discard"]')
+      await captureScreenshot(control, '01a-unsaved-mailbox-protected.png')
       await control.command('click', '[data-testid="stand-in-email-discard-cancel-button"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-email-email"]'),
@@ -205,17 +252,22 @@ export function createDesktopScenario({
         `${MARKER}\n请拟定邮件回复，发送前让我确认。`,
         '<new-email@example.com>'
       )
-      await control.command('waitFor', '[data-testid^="stand-in-activity-task-"]', {
+      await control.command('waitFor', '[data-testid^="stand-in-attention-"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const works = await rpc(control, 'runtime.stand_in.work.list', { userId: USER })
       assert.deepEqual(works.sourceErrors, [])
       assert.equal(works.items.length, 1, 'Historical mail must not create work')
       const work = works.items[0]
-      await control.command('click', `[data-testid="stand-in-activity-task-${work.taskId}"]`)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+      await captureScreenshot(control, '04a-mail-work-needs-confirmation.png')
+      await control.command('click', `[data-testid="stand-in-attention-${work.taskId}"]`)
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
-      const preview = await control.command('getText', CARD)
+      const preview = await control.command('getText', CARD, { visible: true })
+      await writeFile(join(resultDir, 'native-approval-preview.txt'), preview)
+      await writeFile(
+        join(resultDir, 'native-approval-metrics.json'),
+        await control.command('getElementMetrics', CARD)
+      )
       for (const value of [
         'owner@example.com',
         'sender@example.com',
@@ -224,11 +276,27 @@ export function createDesktopScenario({
       ])
         assert.ok(preview.includes(value), `Email confirmation must include ${value}`)
       assert.equal((await mail.received()).length, 0, 'No SMTP message before confirmation')
+      await control.command('startElementMetricsSampling', CARD, { value: '500', visible: true })
+      let sample
+      const frameDeadline = Date.now() + uiTimeoutMs
+      do {
+        sample = JSON.parse(await control.command('getElementMetricsSample', CARD))
+        assert.ok(Date.now() < frameDeadline, 'The visible approval must render animation frames')
+        if (!sample.done) await new Promise(resolve => setTimeout(resolve, 30))
+      } while (!sample.done)
+      await writeFile(join(resultDir, 'native-approval-frames.json'), JSON.stringify(sample))
       await captureScreenshot(control, '04-complete-native-send-confirmation.png')
-      await control.command(
-        'click',
-        '[data-testid^="request-user-input-option-mcp_tool_call_approval_"][data-testid$="-1"]'
+      const afterCapture = await control.command('getText', CARD, { visible: true })
+      await writeFile(join(resultDir, 'native-approval-after-capture.txt'), afterCapture)
+      assert.ok(
+        afterCapture.includes('这是经过本人确认的完整回复。'),
+        'The visible approval must retain the full email preview after rendering'
       )
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1000, height: 760 }),
+      })
+      await captureScreenshot(control, '04b-narrow-send-confirmation.png')
+      await control.command('click', '[data-testid="request-user-input-option-__mcp_approval-1"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: '已取消发送',
         timeoutMs: modelResponseTimeoutMs,
@@ -241,23 +309,46 @@ export function createDesktopScenario({
       })
       await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
       await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
-      await control.command(
-        'click',
-        '[data-testid^="request-user-input-option-mcp_tool_call_approval_"][data-testid$="-0"]'
-      )
+      await control.command('click', '[data-testid="request-user-input-option-__mcp_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: '邮件已确认发送',
         timeoutMs: modelResponseTimeoutMs,
       })
       const received = await mail.received()
+      await writeFile(
+        join(resultDir, 'mail-delivery.json'),
+        JSON.stringify(
+          received.map(item => ({ envelope: item.envelope, source: item.source.toString() })),
+          null,
+          2
+        )
+      )
       assert.equal(received.length, 1)
-      assert.equal(received[0].envelope.inReplyTo, '<new-email@example.com>')
       assert.ok(received[0].source.toString().includes('In-Reply-To: <new-email@example.com>'))
+      assert.ok(received[0].source.toString().includes('References: <new-email@example.com>'))
       await captureScreenshot(control, '06-confirmed-mail-delivered.png')
-      await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify({ width: 1000, height: 760 }),
-      })
       await captureScreenshot(control, '07-narrow-work-conversation.png')
+      await control.command('navigate', 'body', { value: '/settings/appearance' })
+      await control.command('waitFor', '[data-testid="appearance-mode-dark"]')
+      await control.command('click', '[data-testid="appearance-mode-dark"]')
+      await control.command('waitFor', 'html[data-theme="dark"]')
+      await control.command('click', '[data-testid="settings-back-button"]')
+      for (const target of [
+        'workspace-tab-select-fixed-task',
+        'personal-stand-in-button',
+        'stand-in-settings-open',
+        'stand-in-primary-connections-open',
+        'stand-in-add-connection',
+        `stand-in-add-${PROVIDER}-connection`,
+      ])
+        await control.command('clickWhenEnabled', `[data-testid="${target}"]`)
+      await captureScreenshot(control, '08-narrow-dark-mailbox-connections.png')
+      await control.command('click', '[data-testid="stand-in-email-add"]')
+      await control.command('waitFor', '[data-testid="stand-in-email-form"]')
+      await captureScreenshot(control, '09-narrow-dark-mailbox-form.png')
+      await control.command('scrollIntoView', '[data-testid="stand-in-email-save"]')
+      await captureScreenshot(control, '10-narrow-dark-mailbox-form-actions.png')
+      await control.command('click', '[data-testid="stand-in-email-add"]')
       // Reusing a paused role from a project must establish a fresh server UID boundary.
       const project = await rpc(control, 'projects.create', { name: '邮箱角色复用验证' })
       let current = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
@@ -318,17 +409,7 @@ export function createDesktopScenario({
       )
     },
     async cleanup() {
-      try {
-        if (controlRef && originalSettings) {
-          const current = await rpc(controlRef, 'runtime.stand_in.personal.get', { userId: USER })
-          await rpc(controlRef, 'runtime.stand_in.personal.save', {
-            userId: USER,
-            settings: { ...originalSettings, version: current.version },
-          })
-        }
-      } finally {
-        await mail?.stop()
-      }
+      await mail?.stop()
     },
     diagnostics() {
       return { round, sourceMessageId: messageId }

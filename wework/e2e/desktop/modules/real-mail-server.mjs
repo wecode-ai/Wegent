@@ -67,6 +67,8 @@ export async function startRealMailServer(directory, runtimeRoot) {
   const child = spawn(
     'java',
     [
+      '-Xms16m',
+      '-Xmx128m',
       '-Dgreenmail.hostname=127.0.0.1',
       '-Dgreenmail.imaps.hostname=127.0.0.1',
       `-Dgreenmail.imaps.port=${imapPort}`,

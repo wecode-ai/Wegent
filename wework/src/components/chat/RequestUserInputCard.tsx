@@ -1,4 +1,5 @@
 import type { ComponentProps } from 'react'
+import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   RequestUserInputCard as SharedRequestUserInputCard,
   RequestUserInputSummary as SharedRequestUserInputSummary,
@@ -9,6 +10,22 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isRequestUserInputBlock, requestUserInputPayloadKey } from './requestUserInputMessages'
 export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+
+function nativeEmailApproval(payload: RequestUserInputPayload) {
+  const input = payload.toolArguments
+  return payload.serverName === 'wework_stand_in' &&
+    payload.approvalKind === 'mcp_tool_call' &&
+    payload.toolTitle === 'Wework: Send email' &&
+    payload.interactionKind === 'mcp_form' &&
+    payload.interactionStatus === 'pending' &&
+    payload.questions?.[0]?.id === '__mcp_approval' &&
+    input &&
+    ['from', 'to', 'subject', 'text'].every(
+      key => typeof input[key] === 'string' && input[key].trim()
+    )
+    ? input
+    : undefined
+}
 
 export function RequestUserInputCard({
   messages,
@@ -41,11 +58,12 @@ export function RequestUserInputCard({
         block.type === 'tool' &&
         ['wework_stand_in.reply', 'wework_stand_in.send_email'].includes(block.toolName ?? '')
     )
-  const text = reply && reply.type === 'tool' && reply.toolInput?.text
   const email =
-    reply && reply.type === 'tool' && reply.toolName === 'wework_stand_in.send_email'
+    nativeEmailApproval(props.payload) ??
+    (reply && reply.type === 'tool' && reply.toolName === 'wework_stand_in.send_email'
       ? reply.toolInput
-      : undefined
+      : undefined)
+  const text = email?.text ?? (reply && reply.type === 'tool' && reply.toolInput?.text)
   const preview =
     email && typeof text === 'string'
       ? t('standIn.email.preview', {

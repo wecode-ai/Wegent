@@ -259,7 +259,7 @@ export function StandInEmailConnections({
           }
           className="inline-flex min-h-9 items-center gap-2 text-sm hover:underline"
         >
-          <Plus className="h-4 w-4" />
+          {adding ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {t(adding ? 'standIn.email.cancel_edit' : 'standIn.email.add_account')}
         </button>
       )}
