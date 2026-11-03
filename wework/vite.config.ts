@@ -271,6 +271,15 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    reporters: process.env.WEWORK_TEST_REPORT_FILE
+      ? [
+          'default',
+          [
+            'junit',
+            { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+          ],
+        ]
+      : ['default'],
     server: {
       deps: {
         inline: [/@file-viewer/, /@panzoom/, /mermaid/],
