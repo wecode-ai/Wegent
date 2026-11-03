@@ -476,6 +476,7 @@
         "core:stand-in-cloud",
         "core:stand-in-connections",
         "core:stand-in-controls",
+        "core:stand-in-email",
         "core:stand-in-identities",
         "core:stand-in-list-confirmation",
         "core:stand-in-mcp",
