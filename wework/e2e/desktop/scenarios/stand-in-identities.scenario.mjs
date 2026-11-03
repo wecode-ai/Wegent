@@ -1,3 +1,4 @@
+import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
@@ -29,11 +30,15 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workspacePath,
+  resultDir,
+  workbenchReadyTimeoutMs,
 }) {
+  const fixture = createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbenchReadyTimeoutMs })
   let draft
   let sentProposal = false
   const requests = []
   return {
+    prepareApp: fixture.prepareApp,
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -67,6 +72,7 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await fixture.install(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -167,7 +173,12 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
-      await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
+      if (
+        Number(await control.command('getElementCount', '[data-testid="stand-in-dingtalk-add"]')) >
+        0
+      )
+        await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
+      await control.command('click', '[data-testid="stand-in-dingtalk-scope-selected"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')
       await captureScreenshot(control, '08-explicit-source-selection.png', ROOT)
       await control.command('click', '[data-testid="stand-in-cancel"]')

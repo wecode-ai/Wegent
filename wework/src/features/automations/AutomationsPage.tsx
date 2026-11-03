@@ -604,6 +604,7 @@ export function AutomationsPage({
           collapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
           onNewChat={handleNewChat}
+          onOpenStandIn={() => requestLeave(() => navigateTo('/stand-in'))}
           onStartStandaloneChat={handleStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}

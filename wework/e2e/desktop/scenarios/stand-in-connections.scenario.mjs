@@ -1,3 +1,4 @@
+import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -7,8 +8,11 @@ import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario(options) {
+  const { uiTimeoutMs } = options
+  const fixture = createStandInDingTalkFixture(options)
   return {
+    prepareApp: fixture.prepareApp,
     async verify(control) {
       const initial = await requestExecutor(
         control,
@@ -27,6 +31,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         assert.ok(provider, 'The real Wework plugin registry must expose the DingTalk provider')
         assert.deepEqual(provider.resourceKinds, ['group', 'direct'])
         assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wework')
+        await fixture.install(control)
         const source = {
           id: 'connection-migration-fixture',
           profile: 'connection-test-account',

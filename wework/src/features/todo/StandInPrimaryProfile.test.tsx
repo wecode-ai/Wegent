@@ -156,6 +156,21 @@ it('consolidates saved instructions without losing content and keeps connection 
   )
 })
 
+it('returns from connections without discarding the profile draft', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), '; keep this draft')
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
+    'Review my work\n\nKeep replies concise; keep this draft'
+  )
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
+})
+
 it('persists real project and model selections and protects unsaved changes when switching devices', async () => {
   const props = fixture()
   const user = userEvent.setup()

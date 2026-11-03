@@ -146,10 +146,8 @@ export function StandInPrimaryProfile({
                     connectionRef.current?.back()
                     return
                   }
-                  requestLeave(() => {
-                    setCalendarEntry(false)
-                    setConnections(false)
-                  })
+                  setCalendarEntry(false)
+                  setConnections(false)
                 },
               }
             : undefined

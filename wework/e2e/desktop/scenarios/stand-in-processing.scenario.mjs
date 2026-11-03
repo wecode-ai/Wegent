@@ -203,7 +203,12 @@ export function createDesktopScenario({
         )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
         await control.command('waitFor', timing)
-        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'checkbox')
+        assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
+        assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
+        assert.equal(
+          await control.command('getAttribute', timing, { value: 'aria-checked' }),
+          'false'
+        )
         await control.command('click', timing)
         await control.command('click', timing)
         assert.equal(

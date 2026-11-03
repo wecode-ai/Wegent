@@ -2,7 +2,7 @@ import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { Folder, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
-import type { StandInProjectRef, StandInRole } from '@/api/personalStandIn'
+import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
@@ -179,7 +179,7 @@ export function StandInConnections({
             name: t('standIn.workspace.default_processing'),
             testId: 'stand-in-project-default-policy',
             policy: standInPolicy(role),
-            onChange: policy => setSource({ policy }),
+            onChange: (policy: StandInHandlingPolicy) => setSource({ policy }),
           },
           ...projects
             .filter(project => roleIncludesProject(role, ref(project)))
@@ -188,7 +188,7 @@ export function StandInConnections({
               name: project.name,
               policy: standInPolicy(role, ref(project)),
               testId: `stand-in-project-policy-${project.id}`,
-              onChange: policy =>
+              onChange: (policy: StandInHandlingPolicy) =>
                 setSource({
                   projectPolicies: [
                     ...(source.projectPolicies ?? []).filter(

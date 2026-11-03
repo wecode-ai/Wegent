@@ -123,7 +123,8 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
       automation: { ...saved, id: '', version: 0, name: 'Independent scheduled work', taskRequest },
     })
     ordinaryId = created.automation.id
-    await control.command('navigate', 'body', { value: '/automations' })
+    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('waitFor', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', `[data-testid="automation-open-${ordinaryId}"]`)
     assert.equal(
       await control.command('getElementCount', `[data-testid="automation-open-${id}"]`),
