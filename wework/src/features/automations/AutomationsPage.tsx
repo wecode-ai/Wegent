@@ -175,7 +175,7 @@ export function AutomationsPage({
       setAutomations(items)
       const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
       initialSelectionResolvedRef.current = true
-      if (shouldSelectInitialAutomation && items[0] && !embedded) {
+      if (shouldSelectInitialAutomation && items[0] && ownerUserId === undefined) {
         setSelectedAutomationId(items[0].id)
         setEditing(items[0])
         setDraft(automationDraftFromAutomation(items[0], state.runtimeWork))
@@ -191,7 +191,7 @@ export function AutomationsPage({
     } finally {
       setLoading(false)
     }
-  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId, embedded])
+  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId])
 
   const loadRuns = useCallback(
     async (automationId: string) => {

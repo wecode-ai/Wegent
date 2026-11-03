@@ -112,6 +112,8 @@ it('keeps ordinary schedules separate from calendar events and restores their ex
   delete ordinary.taskRequest!.standInCalendar
   mocks.listAutomations.mockResolvedValueOnce({ items: [calendar, ordinary] })
   render(<AutomationsPage embedded />)
+  expect(await screen.findByTestId('automation-name-input')).toHaveValue('ordinary-schedule')
+  await userEvent.click(screen.getByTestId('automation-detail-close'))
   expect(await screen.findByTestId('automation-open-ordinary-schedule')).toBeVisible()
   expect(screen.queryByTestId('automation-open-calendar-event')).not.toBeInTheDocument()
   await userEvent.click(screen.getByTestId('create-automation-button'))
