@@ -427,6 +427,7 @@ export function SmartAppsMarketplacePage({
       if (shouldOpen && (installation.state === 'running' || hasSelectedModel(installation))) {
         handledTargetSmartAppIdRef.current = targetSmartAppId
       }
+      targetLookupInFlightRef.current = null
       targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setTargetInstallItem(null)
@@ -440,6 +441,7 @@ export function SmartAppsMarketplacePage({
     }
     if (installation) {
       handledTargetSmartAppIdRef.current = null
+      targetLookupInFlightRef.current = null
       targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setSelected(null)
@@ -465,6 +467,7 @@ export function SmartAppsMarketplacePage({
       catalogTargetSmartAppIdRef.current = targetSmartAppId
       targetItemsSnapshotRef.current = currentApiItems
       targetLookupFailedRef.current = null
+      targetLookupInFlightRef.current = null
       targetLookupRequestRef.current += 1
       queueMicrotask(() => {
         setTargetInstallItem(item)
@@ -480,6 +483,7 @@ export function SmartAppsMarketplacePage({
       }
       catalogTargetSmartAppIdRef.current = null
       targetItemsSnapshotRef.current = null
+      targetLookupInFlightRef.current = null
       queueMicrotask(() => {
         setTargetInstallItem(null)
         setSelected(null)
