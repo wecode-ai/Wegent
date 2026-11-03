@@ -271,16 +271,18 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
-    reporters: process.env.WEWORK_TEST_REPORT_FILE
-      ? [
-          'default',
-          ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
-          [
-            'junit',
-            { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+    ...(process.env.WEWORK_TEST_REPORT_FILE
+      ? {
+          reporters: [
+            'default',
+            ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
+            [
+              'junit',
+              { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+            ],
           ],
-        ]
-      : undefined,
+        }
+      : {}),
     server: {
       deps: {
         inline: [/@file-viewer/, /@panzoom/, /mermaid/],

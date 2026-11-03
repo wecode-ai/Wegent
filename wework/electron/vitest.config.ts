@@ -4,15 +4,17 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
-    reporters: process.env.WEWORK_TEST_REPORT_FILE
-      ? [
-          'default',
-          ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
-          [
-            'junit',
-            { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+    ...(process.env.WEWORK_TEST_REPORT_FILE
+      ? {
+          reporters: [
+            'default',
+            ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
+            [
+              'junit',
+              { outputFile: process.env.WEWORK_TEST_REPORT_FILE, includeConsoleOutput: false },
+            ],
           ],
-        ]
-      : undefined,
+        }
+      : {}),
   },
 })
