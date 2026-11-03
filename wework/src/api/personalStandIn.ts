@@ -18,6 +18,8 @@ export interface StandInSourceConnection {
   name: string
   kind: string
   policy: StandInHandlingPolicy
+  /** Host-owned intake boundary, prepared when the subscription is enabled. */
+  boundary?: { partition: string; sequence: number }
 }
 
 export interface StandInProjectPolicy extends StandInProjectRef {

@@ -2,6 +2,20 @@
 use super::*;
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
+pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
+
+#[cfg(test)]
+mod email_policy_tests {
+    use super::*;
+
+    #[test]
+    fn email_connections_always_require_native_confirmation() {
+        let mut role = json!({"connections":[{"providerId":EMAIL_PROVIDER,"profile":"account","kind":"inbox","id":"INBOX","name":"Mailbox","policy":{"automatic":true,"askBeforeAct":true}}]});
+        assert!(validate_connections(&role).is_ok());
+        role["connections"][0]["policy"]["askBeforeAct"] = json!(false);
+        assert!(validate_connections(&role).is_err());
+    }
+}
 
 pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
     let mut changed = false;
@@ -336,6 +350,8 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
                             && validate_policy(&row["policy"])
+                            && (source_provider(row) != EMAIL_PROVIDER
+                                || row["policy"]["askBeforeAct"] == true)
                             && ids.insert((
                                 row["providerId"].to_string(),
                                 row["profile"].to_string(),
@@ -530,7 +546,7 @@ impl LocalTaskStore {
     }
 }
 
-fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
+pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"];
     for source in identity
         .get_mut("connections")

@@ -909,6 +909,58 @@ test('shows the exact bound reply and localized actions while preserving native 
   })
 })
 
+test('previews complete email contents and preserves the native cancellation value', async () => {
+  const onSubmit = vi.fn(async () => true)
+  const payload = {
+    kind: 'request_user_input',
+    requestId: 'email-approval',
+    itemId: 'mail-call',
+    questions: [
+      {
+        id: 'mcp_tool_call_approval_mail-call',
+        question: 'Allow?',
+        options: [{ label: 'Allow' }, { label: 'Cancel' }],
+      },
+    ],
+  }
+  const messages = [
+    {
+      id: 'mail-turn',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        {
+          id: 'mail-call',
+          type: 'tool',
+          toolName: 'wework_stand_in.send_email',
+          toolInput: {
+            from: 'owner@example.com',
+            to: 'recipient@example.com',
+            subject: 'Review this email',
+            text: 'First paragraph\n\nComplete final paragraph',
+          },
+        },
+        { id: 'approval', type: 'tool', toolName: 'request_user_input', renderPayload: payload },
+      ],
+    },
+  ] as WorkbenchMessage[]
+  render(<RequestUserInputCard messages={messages} payload={payload} onSubmit={onSubmit} />)
+  const preview = screen.getByTestId('request-user-input-question-mcp_tool_call_approval_mail-call')
+  for (const value of [
+    'owner@example.com',
+    'recipient@example.com',
+    'Review this email',
+    'Complete final paragraph',
+  ])
+    expect(preview).toHaveTextContent(value)
+  await userEvent.click(screen.getByRole('button', { name: /不发送/ }))
+  expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      answers: { 'mcp_tool_call_approval_mail-call': { answers: ['Cancel'] } },
+    })
+  )
+})
+
 test('binds reused tool IDs to the message owning the current approval request', () => {
   const payload = {
     kind: 'request_user_input',
