@@ -120,6 +120,12 @@ export async function createDesktopScenario(options) {
   let origin
   let modelRequests = 0
   const requests = []
+  // Observe asynchronous acceptance before releasing real package bytes. A fixed
+  // six-second server delay charged every checkpoint without establishing state.
+  let releaseHostDownload
+  const hostDownloadAccepted = new Promise(accept => {
+    releaseHostDownload = accept
+  })
   const server = createServer((request, response) => {
     const url = new URL(request.url, origin)
     requests.push({
@@ -193,8 +199,9 @@ export async function createDesktopScenario(options) {
         response.destroy(new Error('Whole release downloads must not use byte ranges'))
         return
       }
-      const timer = setTimeout(() => createReadStream(pair.to.path).pipe(response), 6000)
-      response.once('close', () => clearTimeout(timer))
+      void hostDownloadAccepted.then(() => {
+        if (!response.destroyed) createReadStream(pair.to.path).pipe(response)
+      })
     } else {
       response.writeHead(404)
       response.end()
@@ -484,6 +491,7 @@ export async function createDesktopScenario(options) {
         'The download request blocked until preparation completed'
       )
       assert.notEqual(accepted.phase, 'failed', 'The download failed to start')
+      releaseHostDownload()
       let preparationPhase = 'accepted'
       let phaseStarted = performance.now()
       const observedProgress = await waitForUpdatePreparation(async () => {
