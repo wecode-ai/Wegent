@@ -34,7 +34,6 @@ on:
           - app-rollback
           - app-rollback-recovery
           - app-upgrade-recovery
-          - app-update-full
           - runtime-extraction
         default: all
       verification_release_tag:
@@ -71,6 +70,8 @@ jobs:
           node-version: "24"
       - name: Install locked archive reader
         run: pnpm --dir wework/electron install --frozen-lockfile --ignore-scripts
+      - name: Verify extraction boundaries on Windows
+        run: pnpm --dir wework/electron exec vitest run src/runtime/physical-release-files.test.ts src/runtime/bundled-runtime-materializer.test.ts
       - name: Measure the delivered runtime archive
         env:
           GH_TOKEN: ${{ github.token }}

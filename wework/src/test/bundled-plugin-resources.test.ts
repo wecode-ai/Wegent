@@ -430,7 +430,7 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'scripts/verify-release-upgrades.mjs'),
       'utf8'
     )
-    expect(upgradeVerifier).toContain('`${UPGRADE_CHECKPOINT_GROUP},app-update-full`')
+    expect(upgradeVerifier).toContain('diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP')
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

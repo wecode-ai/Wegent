@@ -159,7 +159,6 @@ export const DESKTOP_CHECKPOINTS = [
   'codex-notification-isolation',
   'split-workbench',
   'release-package-startup',
-  'app-update-full',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',

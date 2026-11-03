@@ -49,7 +49,8 @@ try {
     assert.equal(hash.digest('hex'), descriptor.archiveSha256)
   })
   await measure('inflate-and-parse', () => tar.list({ file: archive, strict: true }))
-  for (const mode of ['native', 'sync', 'async']) {
+  const modes = process.argv.includes('--compare') ? ['native', 'sync', 'async'] : ['native']
+  for (const mode of modes) {
     const destination = join(directory, mode)
     await mkdir(destination)
     await measure(`extract-${mode}`, () =>

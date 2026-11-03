@@ -129,7 +129,7 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 4. macOS arm64 和 Windows x64 独立验证。macOS x64 仅采用前述源码一致、保留自身包哈希的架构等价发布证明。
 5. 截图、测试包、快照、会话目录和临时恢复数据均不提交仓库，CI 仅上传经过筛选的诊断与结果文件。
 
-升级 E2E 只由 `Wework App` 发版流程执行，包括不发布的构建验证；普通 PR 和 `ci:all` 不执行升级专项。发版门禁调用共享 `upgrade-and-rollback` 组及 `app-update-full`，全部通过才生成并推广精确版本对的升级策略。接受标准版本统一由 `upgrade-suite.mjs` 管理，不能复用旧套件证据为新边背书。
+升级 E2E 只由 `Wework App` 发版流程执行，包括不发布的构建验证；普通 PR 和 `ci:all` 不执行升级专项。发版门禁调用共享 `upgrade-and-rollback` 组，全部通过才生成并推广精确版本对的升级策略。接受标准版本统一由 `upgrade-suite.mjs` 管理，不能复用旧套件证据为新边背书。
 
 套件 v7 的 `app-upgrade` 使用隔离 Home 下的正常默认目录，并执行升级和回退。
 它在停写后复用正式快照、profile 保留和激活事务建立旧版未启动状态，验证重启后旧版仍可用、
@@ -139,7 +139,9 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 将默认更新目录请求导向真实本地 HTTP 服务；不传入更新源或其他产品配置覆盖，不关闭 TLS 或签名校验。
 较旧来源与上一发布版同时可用时，通过两个包各自的准备入口建立未启动事务，保留原 profile 和组件所有权断言。
 
-原有 `app-update-full` checkpoint 复用这套真实版本对场景，保留慢速整包传输、请求不阻塞、禁止 Range/blockmap 和重复准备复用的断言，并与四种升级/回退场景一起在各平台 CI 执行。它不再通过复制 ZIP、修改文件名和附加字节来伪装新版本。
+套件 v11 删除与 `app-upgrade` 执行同一场景的重复 `app-update-full` checkpoint。慢速整包传输、请求不阻塞、禁止 Range/blockmap 和重复准备复用的断言仍由共用场景在四种升级/回退检查中执行。串行验证中一个版本对的任一检查失败后立即拒绝该版本对，保留原始诊断，继续验证策略要求的其他来源，不为失败版本对生成升级边。
+
+Windows 的物理宿主包与运行时解包共用隔离子进程，调用 `%SystemRoot%/System32/tar.exe`；其他平台使用锁定的 `node-tar`。包大小、SHA-256、运行时身份与签名检查保持独立。保留来源、清理、下载、宿主解包、签名和目标准备分别记录阶段耗时，不能将完整准备时间归为解压。
 
 清理器必须保留 `electron-logs` 和 `release-logs`，
 以便从目标 executor 的原始日志区分启动失败、健康检查超时和回退；不得因缺少日志而猜测修改启动行为。

@@ -12,7 +12,11 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_PACKAGE_CHECKPOINTS,
+  rejectFailedReleaseCheckpoint,
+} from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
@@ -124,7 +128,6 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
-  'app-update-full': './scenarios/app-update-full.scenario.mjs',
   ...Object.fromEntries(
     UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
@@ -358,7 +361,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'computer-use',
   'split-workbench',
   'release-package-startup',
-  'app-update-full',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
@@ -855,6 +857,8 @@ async function runParallelCheckpoints(checkpoints) {
         console.error(
           `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
         )
+        // A failed pair cannot authorize an edge; retain diagnostics and try the next source.
+        if (workerCount === 1) rejectFailedReleaseCheckpoint(checkpoint, result)
       },
     })
     if (failures.length === 0) {

@@ -165,9 +165,6 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
-formal_release_segments=(
-  app-update-full
-)
 cloud_worktree_segments=(
   cloud-worktree-capability
   cloud-worktree-create
@@ -368,7 +365,7 @@ validate_registered_checkpoint_coverage() {
       const upgradeVerifier = readFileSync("wework/scripts/verify-release-upgrades.mjs", "utf8")
       if (!releaseWorkflow.includes("node wework/scripts/verify-release-upgrades.mjs") ||
           !upgradeVerifier.includes("--parallel-segments") ||
-          !upgradeVerifier.includes("${UPGRADE_CHECKPOINT_GROUP},app-update-full")) {
+          !upgradeVerifier.includes("diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP")) {
         console.error("The release workflow must invoke the registered upgrade checkpoint group")
         process.exit(1)
       }
@@ -380,7 +377,7 @@ validate_registered_checkpoint_coverage() {
           process.exit(1)
         }
       }
-    ' -- "${core_segments[@]}" "${cloud_segments[@]}" "${formal_release_segments[@]}"
+    ' -- "${core_segments[@]}" "${cloud_segments[@]}"
   ); then
     printf 'Could not load registered desktop checkpoints\n' >&2
     return 1

@@ -228,7 +228,7 @@ async function run(environment) {
       [
         'e2e/desktop/run-checkpoints.mjs',
         '--parallel-segments',
-        diagnosticCheckpoint || `${UPGRADE_CHECKPOINT_GROUP},app-update-full`,
+        diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP,
       ],
       {
         cwd: root,

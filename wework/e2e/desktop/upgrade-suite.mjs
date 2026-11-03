@@ -1,6 +1,6 @@
 // Increment when the upgrade/rollback acceptance contract changes. Release proof
 // from an older suite cannot authorize a new edge under the current contract.
-export const UPGRADE_SUITE_VERSION = 10
+export const UPGRADE_SUITE_VERSION = 11
 export const UPGRADE_PREPARATION_PHASE_TIMEOUT_MS = 300_000
 export const UPGRADE_CHECKPOINTS = [
   'app-upgrade',
@@ -8,5 +8,10 @@ export const UPGRADE_CHECKPOINTS = [
   'app-rollback-recovery',
   'app-upgrade-recovery',
 ]
-export const UPGRADE_PACKAGE_CHECKPOINTS = [...UPGRADE_CHECKPOINTS, 'app-update-full']
+export const UPGRADE_PACKAGE_CHECKPOINTS = UPGRADE_CHECKPOINTS
 export const UPGRADE_CHECKPOINT_GROUP = 'upgrade-and-rollback'
+
+export function rejectFailedReleaseCheckpoint(checkpoint, result) {
+  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint) && result.code !== 0)
+    throw new Error(`Release package checkpoint failed: ${checkpoint}`)
+}

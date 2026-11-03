@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import semver from 'semver'
-import { extract } from 'tar'
 import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import { resolveRuntimeArchive } from './runtime-archive.js'
+import { extractPhysicalRelease } from './physical-release-files.js'
 
 export interface RuntimeDescriptor {
   dshVersion: string
@@ -120,7 +120,7 @@ async function materializeRuntime(
 
 async function extractArchive(archive: string, destination: string): Promise<void> {
   try {
-    await extract({ cwd: destination, file: archive, strict: true })
+    await extractPhysicalRelease(archive, destination)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Bundled DSH runtime extraction failed: ${detail}`, { cause: error })

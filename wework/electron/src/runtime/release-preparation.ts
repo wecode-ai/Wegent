@@ -18,7 +18,7 @@ export interface ReleasePreparationRequest {
 
 export async function preparationStep<T>(
   log: Pick<RotatingLog, 'write'>,
-  release: DesktopRelease,
+  release: Pick<DesktopRelease, 'id' | 'version'>,
   stage: string,
   run: () => Promise<T>
 ): Promise<T> {
