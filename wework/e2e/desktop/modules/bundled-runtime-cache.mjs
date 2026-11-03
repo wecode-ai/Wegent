@@ -1,14 +1,35 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 
+/** Different host releases can deliver exactly the same immutable runtime set. */
+async function bundledRuntimes(resourcesRoot) {
+  const catalog = JSON.parse(
+    await readFile(join(resourcesRoot, 'harness-runtime/runtimes.json'), 'utf8')
+  )
+  return catalog.runtimes
+    .filter(runtime => ['core', 'workbench'].includes(runtime.role))
+    .map(runtime =>
+      JSON.stringify(
+        Object.fromEntries(Object.entries(runtime).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      )
+    )
+    .sort()
+    .map(runtime => JSON.parse(runtime))
+}
+
+export async function bundledRuntimeCacheKey(resourcesRoot) {
+  const runtimes = await bundledRuntimes(resourcesRoot)
+  return createHash('sha256').update(JSON.stringify(runtimes)).digest('hex')
+}
+
 /** Install immutable, delivered runtime bytes before preparing mutable source state. */
 export async function prepareBundledRuntimeCache(resourcesRoot, runtimeRoot) {
   const resourceRoot = join(resourcesRoot, 'harness-runtime')
-  const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
-  const runtimes = catalog.runtimes.filter(runtime => ['core', 'workbench'].includes(runtime.role))
+  const runtimes = await bundledRuntimes(resourcesRoot)
   assert.deepEqual(new Set(runtimes.map(runtime => runtime.role)), new Set(['core', 'workbench']))
   const ready = await readFile(join(runtimeRoot, 'runtimes.json'), 'utf8').catch(error => {
     if (error.code === 'ENOENT') return null

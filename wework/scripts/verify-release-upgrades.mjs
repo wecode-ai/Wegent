@@ -17,6 +17,7 @@ import {
   verifyReleaseUpgradePlan,
 } from './lib/upgrade-evidence.mjs'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
+import { bundledRuntimeCacheKey } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import {
   UPGRADE_CHECKPOINT_GROUP,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
@@ -198,7 +199,14 @@ async function downloadSource(source, targetChannel) {
         directory: join(temporary, `${targetChannel}-${source.version}`),
         expected: source,
       })
-  return { ...downloaded, runtimeCache: join(temporary, 'installed-runtimes', downloaded.sha256) }
+  return {
+    ...downloaded,
+    runtimeCache: join(
+      temporary,
+      'installed-runtimes',
+      await bundledRuntimeCacheKey(downloaded.resources)
+    ),
+  }
 }
 
 async function verifySource(source, targetChannel, previous) {

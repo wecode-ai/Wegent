@@ -106,6 +106,9 @@ export async function prepareReleaseEnvironment(
   await step('runtimes', () =>
     materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
       fetch: bundledAssetsOnly,
+      // This stable program store is outside prunable release slots. Each slot
+      // keeps its own mutable catalog and profile, including during rollback.
+      reuseRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh'),
     })
   )
   const preparationHome = join(store.slot(release.id), 'preparation')

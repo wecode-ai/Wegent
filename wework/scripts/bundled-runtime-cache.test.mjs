@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
+  bundledRuntimeCacheKey,
   linkBundledRuntimeCache,
   prepareBundledRuntimeCache,
 } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
@@ -52,6 +53,21 @@ test('installs the exact bundled runtime for both roles without changing package
     JSON.parse(await readFile(join(cache, 'runtimes.json'), 'utf8')).runtimes,
     runtimes
   )
+})
+
+test('runtime cache identity follows delivered runtime metadata rather than host version or key order', async t => {
+  const { resources, cache, runtimes, save } = await fixture(t)
+  const key = await bundledRuntimeCacheKey(resources)
+  await prepareBundledRuntimeCache(resources, cache)
+  runtimes.reverse()
+  for (let index = 0; index < runtimes.length; index++)
+    runtimes[index] = Object.fromEntries(Object.entries(runtimes[index]).reverse())
+  await save()
+  assert.equal(await bundledRuntimeCacheKey(resources), key)
+  await prepareBundledRuntimeCache(resources, cache)
+  runtimes[0].archiveSha256 = 'e'.repeat(64)
+  await save()
+  assert.notEqual(await bundledRuntimeCacheKey(resources), key)
 })
 
 test('rejects damaged delivered bytes before installing an initialized source', async t => {

@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import semver from 'semver'
 import { cloudFetch } from '../host/lazy-cloud-fetch.js'
-import { publishImmutableDirectory } from './immutable-directory.js'
+import { linkImmutableDirectory, publishImmutableDirectory } from './immutable-directory.js'
 import { resolveRuntimeArchive } from './runtime-archive.js'
 import { extractPhysicalRelease } from './physical-release-files.js'
 import { serializePathOperation } from './path-operation-queue.js'
@@ -28,6 +28,7 @@ export type BundledRuntimeRole = 'core' | 'workbench'
 interface MaterializeRuntimeOptions {
   versionRequirement?: string
   fetch?: typeof fetch
+  reuseRoot?: string
 }
 
 export async function materializeBundledRuntimes(
@@ -76,9 +77,23 @@ export async function materializeBundledRuntimes(
       `Bundled Electron runtime catalog is missing a requested runtime: ${options.versionRequirement ?? roles.join(', ')}`
     )
   }
+  const archives = new Map<string, string>()
+  for (const runtime of selectedRuntimes) {
+    const identity = JSON.stringify([
+      runtime.dshVersion,
+      runtime.archiveSha256,
+      runtime.archiveBytes,
+    ])
+    if (
+      archives.has(runtime.sourceFingerprint) &&
+      archives.get(runtime.sourceFingerprint) !== identity
+    )
+      throw new Error('Bundled DSH runtime fingerprint identifies conflicting archives')
+    archives.set(runtime.sourceFingerprint, identity)
+  }
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
   for (const runtime of selectedRuntimes) {
-    await materializeRuntime(resourceRoot, cacheRoot, runtime, options.fetch ?? cloudFetch)
+    await materializeRuntime(resourceRoot, cacheRoot, runtime, options)
   }
   await writeRuntimeCatalog(cacheRoot, runtimes)
   return cacheRoot
@@ -102,11 +117,21 @@ async function materializeRuntime(
   resourceRoot: string,
   cacheRoot: string,
   runtime: RuntimeDescriptor,
-  fetchImpl: typeof fetch
+  options: MaterializeRuntimeOptions
 ): Promise<void> {
   validateDescriptor(runtime)
   const target = join(cacheRoot, runtime.sourceFingerprint)
   if (await runtimeMatches(target, runtime)) return
+  const fetchImpl = options.fetch ?? cloudFetch
+  if (options.reuseRoot && resolve(options.reuseRoot) !== resolve(cacheRoot)) {
+    const reusable = await reusableRuntime(options.reuseRoot, runtime)
+    if (reusable) {
+      // A matching cache never substitutes for integrity of the delivered archive.
+      await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
+      await linkImmutableDirectory(target, reusable, path => runtimeMatches(path, runtime))
+      return
+    }
+  }
   await publishImmutableDirectory(
     target,
     async content => {
@@ -118,6 +143,23 @@ async function materializeRuntime(
     },
     path => runtimeMatches(path, runtime)
   )
+}
+
+async function reusableRuntime(root: string, runtime: RuntimeDescriptor): Promise<string | null> {
+  let catalog: RuntimeCatalog
+  try {
+    catalog = JSON.parse(await readFile(join(root, 'runtimes.json'), 'utf8')) as RuntimeCatalog
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  const matching = catalog.runtimes.filter(candidate =>
+    ['sourceFingerprint', 'dshVersion', 'role', 'archiveSha256', 'archiveBytes'].every(
+      key => candidate[key as keyof RuntimeDescriptor] === runtime[key as keyof RuntimeDescriptor]
+    )
+  )
+  const content = join(root, runtime.sourceFingerprint)
+  return matching.length === 1 && (await runtimeMatches(content, runtime)) ? content : null
 }
 
 async function extractArchive(archive: string, destination: string): Promise<void> {

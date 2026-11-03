@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as tar from 'tar'
@@ -210,6 +210,84 @@ async function downloadableRuntimeFixture() {
     })
   return { root, resources, cache, core, legacy, bytes, catalog, fetchImpl, materialize }
 }
+
+describe('installed immutable runtime reuse', () => {
+  test('shares verified program files while keeping catalogs and release cleanup independent', async () => {
+    const f = await downloadableRuntimeFixture()
+    await materializeBundledRuntimes(f.resources, f.cache)
+    const sourceCatalog = await readFile(join(f.cache, 'runtimes.json'), 'utf8')
+    const slot = join(f.root, 'release-slot')
+    await materializeBundledRuntimes(f.resources, slot, ['core', 'workbench'], {
+      reuseRoot: f.cache,
+    })
+    const source = join(f.cache, f.core.sourceFingerprint, 'runtime.json')
+    expect(await realpath(join(slot, f.core.sourceFingerprint, 'runtime.json'))).toBe(
+      await realpath(source)
+    )
+    await writeFile(join(slot, 'runtimes.json'), '{"runtimes":[]}')
+    expect(await readFile(join(f.cache, 'runtimes.json'), 'utf8')).toBe(sourceCatalog)
+    await rm(slot, { recursive: true, force: true })
+    expect(JSON.parse(await readFile(source, 'utf8')).sourceFingerprint).toBe(
+      f.core.sourceFingerprint
+    )
+  })
+
+  test('does not reuse a fingerprint with a different archive binding', async () => {
+    const f = await downloadableRuntimeFixture()
+    await materializeBundledRuntimes(f.resources, f.cache)
+    const saved = JSON.parse(await readFile(join(f.cache, 'runtimes.json'), 'utf8'))
+    saved.runtimes[0].archiveSha256 = 'f'.repeat(64)
+    await writeFile(join(f.cache, 'runtimes.json'), JSON.stringify(saved))
+    const slot = join(f.root, 'release-slot')
+    await materializeBundledRuntimes(f.resources, slot, ['core', 'workbench'], {
+      reuseRoot: f.cache,
+    })
+    expect(await realpath(join(slot, f.core.sourceFingerprint))).not.toBe(
+      await realpath(join(f.cache, f.core.sourceFingerprint))
+    )
+    expect(JSON.parse(await readFile(join(f.cache, 'runtimes.json'), 'utf8'))).toEqual(saved)
+  })
+
+  test('a ready installed cache never bypasses integrity of the delivered archive', async () => {
+    const f = await downloadableRuntimeFixture()
+    await materializeBundledRuntimes(f.resources, f.cache)
+    const archive = join(f.resources, f.core.assetName)
+    const bytes = await readFile(archive)
+    bytes[0] ^= 1
+    await writeFile(archive, bytes)
+    const slot = join(f.root, 'release-slot')
+    await expect(
+      materializeBundledRuntimes(f.resources, slot, ['core'], { reuseRoot: f.cache })
+    ).rejects.toThrow('integrity mismatch')
+    await expect(stat(join(slot, f.core.sourceFingerprint))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  test('an incompatible installed role is preserved while the target prepares its own content', async () => {
+    const f = await downloadableRuntimeFixture()
+    await materializeBundledRuntimes(f.resources, f.cache)
+    const source = join(f.cache, f.core.sourceFingerprint, 'runtime.json')
+    const identity = JSON.parse(await readFile(source, 'utf8'))
+    identity.roles = ['workbench']
+    await writeFile(source, JSON.stringify(identity))
+    const slot = join(f.root, 'release-slot')
+    await materializeBundledRuntimes(f.resources, slot, ['core'], { reuseRoot: f.cache })
+    expect(
+      JSON.parse(await readFile(join(slot, f.core.sourceFingerprint, 'runtime.json'), 'utf8')).roles
+    ).toContain('core')
+    expect(JSON.parse(await readFile(source, 'utf8'))).toEqual(identity)
+  })
+
+  test('rejects conflicting archive identities for two roles sharing a fingerprint', async () => {
+    const f = await downloadableRuntimeFixture()
+    f.catalog.runtimes[1].archiveSha256 = 'f'.repeat(64)
+    await writeFile(join(f.resources, 'runtimes.json'), JSON.stringify(f.catalog))
+    await expect(materializeBundledRuntimes(f.resources, f.cache)).rejects.toThrow(
+      'conflicting archives'
+    )
+  })
+})
 
 describe('downloadable DSH runtimes', () => {
   test('aborts stalled downloads and removes their temporary files', async () => {
