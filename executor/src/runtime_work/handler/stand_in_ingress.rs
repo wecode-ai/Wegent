@@ -497,13 +497,19 @@ mod tests {
                     &store,
                     7,
                     source,
-                    &[role.clone()],
+                    std::slice::from_ref(&role),
                     (messages.clone(), json!({})),
                 )
                 .await
                 .unwrap();
             handler
-                .collect_connection_page(&store, 7, source, &[role.clone()], (messages, json!({})))
+                .collect_connection_page(
+                    &store,
+                    7,
+                    source,
+                    std::slice::from_ref(&role),
+                    (messages, json!({})),
+                )
                 .await
                 .unwrap();
             let works = store.list_stand_in_work(7, None).unwrap();
