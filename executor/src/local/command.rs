@@ -22,6 +22,39 @@ const MAX_TIMEOUT_SECONDS: f64 = 600.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 5 * 1024 * 1024;
 
+pub(crate) const GIT_CURRENT_BRANCH_ARGV: &[&str] =
+    &["git", "symbolic-ref", "--quiet", "--short", "HEAD"];
+pub(crate) const GIT_BRANCH_LIST_ARGV: &[&str] = &[
+    "git",
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads/",
+];
+
+fn prepare_git_branch_query(request: &mut CommandRequest) -> bool {
+    let (legacy, portable): (&[&str], &[&str]) = match request.command_key.as_deref() {
+        Some("git_branch") => (
+            &["git", "branch", "--show-current"],
+            GIT_CURRENT_BRANCH_ARGV,
+        ),
+        Some("git_branch_list") => (
+            &["git", "branch", "--format=%(refname:short)"],
+            GIT_BRANCH_LIST_ARGV,
+        ),
+        _ => return false,
+    };
+    // Backend-forwarded built-ins and local IPC use the same portable query.
+    // Preserve explicitly configured commands instead of overriding their argv.
+    if request.argv == legacy
+        || (request.argv.is_empty()
+            && (request.command == legacy.join(" ") || request.command == portable.join(" ")))
+    {
+        request.argv = portable.iter().map(|arg| (*arg).to_owned()).collect();
+        request.command = portable.join(" ");
+    }
+    request.command_key.as_deref() == Some("git_branch") && request.argv == portable
+}
+
 pub trait DeviceCommandHandler: Send + Sync {
     fn handle_execute_command<'a>(
         &'a self,
@@ -159,9 +192,10 @@ impl DeviceCommandHandler for CommandHandler {
 }
 
 impl CommandHandler {
-    pub async fn execute(&self, request: CommandRequest) -> CommandResult {
+    pub async fn execute(&self, mut request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
         log_directory_command_phase(&request, "execute_enter", started_at);
+        let current_branch_query = prepare_git_branch_query(&mut request);
         if request.command_key.as_deref() == Some("project_workspace_root") {
             return CommandResult::ok(
                 crate::workspace_paths::projects_root()
@@ -236,10 +270,21 @@ impl CommandHandler {
             decode_and_truncate(&output.stdout, request.max_output_bytes);
         let (stderr, stderr_truncated) =
             decode_and_truncate(&output.stderr, request.max_output_bytes);
-        let exit_code = output.status.code();
+        let mut exit_code = output.status.code();
+        // symbolic-ref exits 1 for detached HEAD; branch --show-current returns
+        // successful empty output. Other failures retain their original status.
+        if current_branch_query
+            && exit_code == Some(1)
+            && !stdout_truncated
+            && !stderr_truncated
+            && stdout.is_empty()
+            && stderr.is_empty()
+        {
+            exit_code = Some(0);
+        }
 
         CommandResult {
-            success: output.status.success(),
+            success: exit_code == Some(0),
             exit_code,
             stdout: Value::String(stdout),
             stderr,
