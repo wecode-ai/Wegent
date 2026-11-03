@@ -25,6 +25,31 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Parent issues and parallel board work
+
+Wework adds a personal **By parent** layout to the existing board toolbar, preserving columns and
+saved views. The ordinary board keeps its current-level projection. Parent rows show direct children,
+standalone issues, and navigation to deeper levels. Completion and parallel counts include only
+readable direct children, deduplicated by issue ID. Search and column filters affect card projections
+without changing overall parent counts. Details expose parent links, children, and child creation.
+
+The `collaboration-parent-board` checkpoint is registered in the shared desktop runner and CI list.
+It uses isolated Electron, the real local Executor, and real persistence without model responses.
+Each run creates its own project and three-level issue hierarchy.
+
+1. Preserve the ordinary board shell; enable parent rows to see development and testing in parallel.
+2. Verify bidirectional detail navigation, completion counts, collapsing, and nested boards.
+3. Tag dragging changes only source/target tags, retaining business tags, status, and parent.
+   Cross-parent empty cells and card insertion targets must not mutate storage.
+4. Completing one child updates the parent count without completing or starting other children.
+5. Create a child from details and assert its persisted `parent_id`; reload to verify relationships
+   and personal layout persistence.
+6. Inspect full and narrow windows and dark theme. Capture local evidence at each step. Focused
+   component tests cover unreadable children and foreign-project relationships.
+
+Run `pnpm --filter wework e2e:desktop --segment collaboration-parent-board`.
+Screenshots and logs stay under `wework/test-results/` and must not be committed.
+
 ### Delivery batches and conversation snapshots
 
 `collaboration-deliveries` uses an isolated Electron app, the real local Executor, and file storage;
