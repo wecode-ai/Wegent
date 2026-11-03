@@ -26,7 +26,8 @@ import { prepareInstalledSourceSnapshot } from './lib/installed-source-snapshot-
 import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
-  UPGRADE_CHECKPOINT_GROUP,
+  upgradeVerificationCheckpoint,
+  upgradeIncludesFaultRecovery,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
   UPGRADE_SUITE_VERSION,
   rejectFailedReleaseCheckpoint,
@@ -245,7 +246,12 @@ async function downloadSourceInputs(source, targetChannel, previous) {
   const from = await downloadSource(source, targetChannel)
   // Only the broken legacy selector can leave a newer, unstarted activation
   // while continuing to run A. Modern selectors correctly start that package.
-  if (previous && source.version !== previous.version && usesLegacyReleaseLayout(source.version))
+  if (
+    upgradeIncludesFaultRecovery(platform) &&
+    previous &&
+    source.version !== previous.version &&
+    usesLegacyReleaseLayout(source.version)
+  )
     from.installedSource = await downloadSource(previous, targetChannel)
   return from
 }
@@ -376,7 +382,7 @@ async function run(environment) {
       [
         'e2e/desktop/run-checkpoints.mjs',
         '--parallel-segments',
-        diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP,
+        diagnosticCheckpoint || upgradeVerificationCheckpoint(platform),
       ],
       {
         cwd: root,
@@ -396,7 +402,10 @@ async function run(environment) {
       if (signal) reject(new Error(`Upgrade verification interrupted by ${signal}`))
       else {
         try {
-          rejectFailedReleaseCheckpoint(diagnosticCheckpoint || UPGRADE_CHECKPOINT_GROUP, { code })
+          rejectFailedReleaseCheckpoint(
+            diagnosticCheckpoint || upgradeVerificationCheckpoint(platform),
+            { code }
+          )
           accept(true)
         } catch (error) {
           reject(error)

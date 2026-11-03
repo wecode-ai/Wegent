@@ -11,7 +11,8 @@ import {
 } from './lib/upgrade-source-prefetch.mjs'
 import { planUpgradeShards } from './lib/upgrade-verification-shards.mjs'
 
-async function fixture(t) {
+async function fixture(t, platform = 'windows') {
+  const arch = platform === 'windows' ? 'x64' : 'arm64'
   const directory = await mkdtemp(join(tmpdir(), 'wework-prefetch-test-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const policy = JSON.parse(
@@ -31,16 +32,16 @@ async function fixture(t) {
   const catalog = channel => ({
     schemaVersion: 1,
     channel,
-    platform: 'windows',
-    arch: 'x64',
+    platform,
+    arch,
     releases: ['0.6.2', '0.6.3'].map(release),
     edges: [],
   })
   const options = {
     directory: join(directory, 'worker'),
     planDirectory: join(directory, 'plans'),
-    platform: 'windows',
-    arch: 'x64',
+    platform,
+    arch,
     version: '0.6.4',
     releaseChannel: 'stable',
     channel: 'stable',
@@ -56,12 +57,17 @@ async function fixture(t) {
     arch: options.arch,
   })
   await mkdir(options.planDirectory)
-  await writeFile(join(options.planDirectory, 'windows-x64.json'), JSON.stringify(frozen))
+  await writeFile(join(options.planDirectory, `${platform}-${arch}.json`), JSON.stringify(frozen))
   return { options, frozen }
 }
 
 test('prefetch selects exactly the frozen source and required legacy activation input', async t => {
-  const { options, frozen } = await fixture(t)
+  const windows = await fixture(t)
+  assert.deepEqual(
+    selectedPrefetchSources(windows.frozen, windows.options).map(source => source.version),
+    ['0.6.2']
+  )
+  const { options, frozen } = await fixture(t, 'macos')
   assert.deepEqual(
     selectedPrefetchSources(frozen, options).map(source => source.version),
     ['0.6.2', '0.6.3']
@@ -87,7 +93,7 @@ test('prefetch selects exactly the frozen source and required legacy activation 
 })
 
 test('settles every input before propagating failures and rejects a changed plan', async t => {
-  const { options, frozen } = await fixture(t)
+  const { options, frozen } = await fixture(t, 'macos')
   let settled = false
   await assert.rejects(
     prefetchUpgradeSources(options, async source => {
@@ -99,7 +105,10 @@ test('settles every input before propagating failures and rejects a changed plan
   )
   assert.equal(settled, true)
   frozen.version = '0.6.5'
-  await writeFile(join(options.planDirectory, 'windows-x64.json'), JSON.stringify(frozen))
+  await writeFile(
+    join(options.planDirectory, `${options.platform}-${options.arch}.json`),
+    JSON.stringify(frozen)
+  )
   await assert.rejects(
     prefetchUpgradeSources(options, () => assert.fail('download before plan verification')),
     /Frozen upgrade plan/

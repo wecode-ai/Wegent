@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { validateUpgradeShardPlan } from './upgrade-verification-shards.mjs'
 import { downloadPublishedDesktopRelease } from './published-desktop-release.mjs'
 import { usesLegacyReleaseLayout } from '../../electron/src/runtime/legacy-release-layout.mjs'
+import { upgradeIncludesFaultRecovery } from '../../e2e/desktop/upgrade-suite.mjs'
 import { windowsTaskkillArguments } from '../../e2e/desktop/process-lifecycle.mjs'
 
 export function selectedPrefetchSources(frozen, { channel, sourceVersion }) {
@@ -17,7 +18,7 @@ export function selectedPrefetchSources(frozen, { channel, sourceVersion }) {
     assert.ok(sourceVersion === 'initial' && selected.sources.length === 0)
     return []
   }
-  const previous = selected.plan?.previous
+  const previous = upgradeIncludesFaultRecovery(frozen.platform) ? selected.plan?.previous : null
   return [
     source,
     previous && previous.version !== source.version && usesLegacyReleaseLayout(source.version)
