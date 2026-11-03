@@ -1176,19 +1176,24 @@ async fn codex_shared_app_server_corrects_compaction_turn_from_matching_user_mes
         Value::String("runtime-local-pane-1".to_owned()),
     );
 
-    let turn = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        client.run_turn_with_cancel(
+    let running_client = client.clone();
+    let mut running = tokio::task::JoinSet::new();
+    running.spawn(async move {
+        running_client.run_turn_with_cancel(
             request,
             CodexAppServerTurnOptions {
                 resume_thread_id: Some("thread-1".to_owned()),
                 ..CodexAppServerTurnOptions::default()
             },
-        ),
-    )
-    .await
-    .expect("the real user turn should settle after context compaction")
-    .expect("the corrected turn should complete");
+        ).await
+    });
+    wait_for_fixture_events(&fake_codex, "turn/start", 1).await;
+    let turn = tokio::time::timeout(std::time::Duration::from_secs(2), running.join_next())
+        .await
+        .expect("the real user turn should settle after context compaction")
+        .expect("the turn task should remain registered")
+        .expect("the turn task should not panic")
+        .expect("the corrected turn should complete");
 
     assert_eq!(
         turn.outcome,
@@ -1757,6 +1762,33 @@ done
     path
 }
 
+async fn wait_for_fixture_events(binary: &Path, event: &str, count: usize) {
+    let path = PathBuf::from(format!("{}.events", binary.display()));
+    let mut poll = tokio::time::interval(std::time::Duration::from_millis(10));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            poll.tick().await;
+            let events = fs::read_to_string(&path).unwrap_or_else(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    String::new()
+                } else {
+                    panic!("could not read fixture events: {error}")
+                }
+            });
+            if events.lines().filter(|line| *line == event).count() >= count {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        panic!(
+            "fixture did not publish {count} {event} events: {error}; events={:?}",
+            fs::read_to_string(path)
+        )
+    });
+}
+
 fn write_fake_codex_compaction_turn_correction() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "fake-codex-compaction-turn-correction-{}-{}",
@@ -1767,6 +1799,9 @@ fn write_fake_codex_compaction_turn_correction() -> PathBuf {
         &path,
         r#"#!/bin/sh
 while IFS= read -r line; do
+  method=${line#*'"method":"'}
+  method=${method%%'"'*}
+  printf '%s\n' "$method" >> "$0.events"
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
