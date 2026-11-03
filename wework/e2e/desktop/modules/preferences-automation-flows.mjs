@@ -312,8 +312,8 @@ async function ensureExperimentalFeaturesDisabled(control) {
 async function verifyAutomationLifecycle(control, executorHome, homePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
-    initialSnapshot.testIds.includes('personal-stand-in-button'),
-    'The stand-in schedules entry remained hidden behind the experimental-features preference'
+    initialSnapshot.testIds.includes('automation-button'),
+    'Independent schedules must remain available when experimental features are disabled'
   )
   await control.command('navigate', 'body', { value: '/automations' })
   await control.command('waitFor', '[data-testid="create-automation-button"]', {

@@ -185,6 +185,8 @@ impl RuntimeWorkRpcHandler {
         let (messages, next) = page;
         let mut failure = None;
         for message in messages {
+            let concrete = concrete_connection_source(source, &message)?;
+            let source = &concrete;
             if !["id", "text", "at"]
                 .iter()
                 .all(|key| message[*key].as_str().is_some_and(|text| !text.is_empty()))
@@ -279,13 +281,19 @@ impl RuntimeWorkRpcHandler {
         };
         let connection = stand_in_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
+        let mut connection = connection.clone();
+        if connection["scope"] == "all" {
+            connection.as_object_mut().unwrap().remove("scope");
+            connection["id"] = source["id"].clone();
+            connection["name"] = source["name"].clone();
+        }
         if confident {
-            store.ingest_stand_in_message(user, role_id, connection, message, work_id.as_deref())
+            store.ingest_stand_in_message(user, role_id, &connection, message, work_id.as_deref())
         } else {
             store.ingest_ungrouped_stand_in_message(
                 user,
                 role_id,
-                connection,
+                &connection,
                 message,
                 grouping_error.as_deref(),
             )
@@ -366,6 +374,31 @@ impl RuntimeWorkRpcHandler {
             decision["confident"] == true,
         ))
     }
+}
+
+fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, AppIpcError> {
+    let mut result = source.clone();
+    if source["scope"] != "all" {
+        return Ok(result);
+    }
+    let resource = &message["resource"];
+    if resource["kind"] != source["kind"]
+        || !["id", "name"].iter().all(|key| {
+            resource[*key]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty() && value.len() <= 512)
+        })
+        || resource["id"] == "*"
+    {
+        return Err(AppIpcError::new(
+            "connection_response_invalid",
+            "Missing concrete event resource",
+        ));
+    }
+    result.as_object_mut().unwrap().remove("scope");
+    result["id"] = resource["id"].clone();
+    result["name"] = resource["name"].clone();
+    Ok(result)
 }
 
 fn collection_error_latched(source: &Value, state: &Value, version: &Value) -> bool {
@@ -484,6 +517,57 @@ pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connection_all_scope_persists_distinct_conversations_and_rejects_missing_identity() {
+        for kind in ["group", "direct"] {
+            let root = tempfile::tempdir().unwrap();
+            let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+            handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+            let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":false,"askBeforeAct":true}});
+            settings["roles"][0]["connections"] = json!([source]);
+            settings["roles"][0]["enabled"] = json!(true);
+            let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let role = stand_in_identities(&settings).remove(0);
+            let source = &role["connections"][0];
+            let messages:Vec<Value> = ["first","second"].iter().map(|id| json!({"id":id,"text":"New matter","at":"2099-01-01T00:00:00Z","resource":{"kind":kind,"id":id,"name":id}})).collect();
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    source,
+                    std::slice::from_ref(&role),
+                    (messages.clone(), json!({})),
+                )
+                .await
+                .unwrap();
+            handler
+                .collect_connection_page(
+                    &store,
+                    7,
+                    source,
+                    std::slice::from_ref(&role),
+                    (messages, json!({})),
+                )
+                .await
+                .unwrap();
+            let works = store.list_stand_in_work(7, None).unwrap();
+            assert_eq!(works.len(), 2);
+            assert!(works.iter().all(|work| work["source"]["id"] != "*"
+                && work["source"].get("scope").is_none()
+                && work["source"]["profile"] == "corp"
+                && work["source"]["kind"] == kind));
+            for resource in [
+                Value::Null,
+                json!({"id":"*","kind":kind,"name":"Bad"}),
+                json!({"id":"other","kind":"wrong","name":"Bad"}),
+            ] {
+                assert!(concrete_connection_source(source, &json!({"resource":resource})).is_err());
+            }
+        }
+    }
 
     #[tokio::test]
     async fn silent_collection_keeps_manual_sources_pending_and_automatic_sources_in_intake() {

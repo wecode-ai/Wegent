@@ -499,6 +499,16 @@ impl RuntimeWorkRpcHandler {
             return Ok(None);
         }
         for mut event in selected {
+            if kind == "ignore_events" && event["kind"] == "calendar" {
+                self.automation_store
+                    .settle_coordinated_run(
+                        required(&event, "runId")?,
+                        AutomationRunStatus::Skipped,
+                        None,
+                        None,
+                    )
+                    .map_err(|error| AppIpcError::new("calendar_store_error", error))?;
+            }
             event["status"] = json!(if kind == "defer_events" {
                 "pending"
             } else {
@@ -524,6 +534,9 @@ impl RuntimeWorkRpcHandler {
                 "permission_denied",
                 "Work role cannot receive this event",
             ));
+        }
+        if event["kind"] == "calendar" {
+            self.calendar_intake_run(role, event)?;
         }
         if event["kind"] == "assignment" {
             let project = event["projectId"].as_str().unwrap_or_default();
@@ -573,6 +586,22 @@ impl RuntimeWorkRpcHandler {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Only the owning primary stand-in can follow this work",
+                ));
+            }
+            return Ok(());
+        }
+        if origin["type"] == "stand_in_schedule" {
+            let owner_matches = self
+                .automation_store
+                .get(origin["automationId"].as_str().unwrap_or_default())
+                .is_some_and(|automation| {
+                    automation.task_request["standInOwner"]["userId"] == user
+                        && automation.task_request["standInOwner"]["roleId"] == role["id"]
+                });
+            if origin["userId"] != user || origin["standInId"] != role["id"] || !owner_matches {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Calendar work is no longer owned by this identity",
                 ));
             }
             return Ok(());
@@ -695,6 +724,22 @@ impl RuntimeWorkRpcHandler {
         for event in events {
             self.validate_intake_role(role, event)?;
         }
+        if events.iter().any(|event| event["kind"] == "calendar") {
+            if events.len() != 1 {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Dispatch calendar entries individually",
+                ));
+            }
+            let (_, run) = self.calendar_intake_run(role, &events[0])?;
+            let settings = store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?;
+            let gate = self.task_send_gate(&format!("automation-operation:{}", run.automation_id));
+            let _guard = gate.lock().await;
+            self.dispatch_arrangement(&run, &settings).await?;
+            return Ok(json!({"success":true}));
+        }
         if events.iter().any(|event| event["kind"] == "assignment") {
             if events.len() != 1 {
                 return Err(AppIpcError::new(
@@ -705,8 +750,9 @@ impl RuntimeWorkRpcHandler {
             let event = &events[0];
             let project = required(event, "projectId")?;
             let kind = required(event, "projectStore")?;
-            let config =
+            let mut config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
+            config["intakeRouted"] = json!(true);
             if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
                 || config["handlingPolicy"]["automatic"] == false
             {

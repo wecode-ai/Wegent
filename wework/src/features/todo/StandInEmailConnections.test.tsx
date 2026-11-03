@@ -50,7 +50,7 @@ test('verifies account before connecting, keeps credentials out of role settings
           providerId: EMAIL_PROVIDER,
           profile: 'mail-account',
           id: 'INBOX',
-          policy: { automatic: true, askBeforeAct: true, immediate: false },
+          policy: { automatic: true, askBeforeAct: true, immediate: true },
         }),
       ],
     })
@@ -58,6 +58,52 @@ test('verifies account before connecting, keeps credentials out of role settings
   expect(JSON.stringify(onChange.mock.calls)).not.toContain('test-only-password')
   await user.click(screen.getByTestId('stand-in-email-add'))
   expect(screen.getByTestId('stand-in-email-password')).toHaveValue('')
+})
+
+test('defaults primary mailbox connections to background processing', async () => {
+  request.mockResolvedValue([{ id: 'mail-account', email: 'owner@example.com' }])
+  const onChange = vi.fn()
+  render(
+    <StandInEmailConnections
+      role={newStandInRole('mac', '@primary')}
+      local
+      disabled={false}
+      onChange={onChange}
+    />
+  )
+  await userEvent.click(await screen.findByTestId('stand-in-email-connect-mail-account'))
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      connections: [
+        expect.objectContaining({
+          policy: { automatic: true, askBeforeAct: true, immediate: false },
+        }),
+      ],
+    })
+  )
+})
+
+test('places mailbox processing in the shared connection policy section', () => {
+  request.mockResolvedValue([])
+  const role = newStandInRole('mac')
+  role.connections = [
+    {
+      providerId: EMAIL_PROVIDER,
+      profile: 'mail-account',
+      kind: 'inbox',
+      id: 'INBOX',
+      name: 'owner@example.com',
+      policy: { automatic: true, askBeforeAct: true, immediate: true },
+    },
+  ]
+  render(<StandInEmailConnections role={role} local disabled={false} onChange={vi.fn()} />)
+  expect(screen.getByTestId('stand-in-processing-settings')).toContainElement(
+    screen.getByTestId('stand-in-email-policy-mail-account')
+  )
+  expect(screen.getByTestId('stand-in-email-policy-mail-account')).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
 })
 
 test('preserves entered settings after failed verification and never creates a connection', async () => {
