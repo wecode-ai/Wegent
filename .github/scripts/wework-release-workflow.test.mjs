@@ -187,5 +187,14 @@ test("upgrade verification only consumes release artifacts and has no signing cr
     /outputs.source_run_id != ''/,
   );
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
+  assert.match(
+    workflow.concurrency.group,
+    /verification_checkpoint == 'app-update-refresh'.*!inputs.publish_release/,
+  );
+  assert.ok(
+    workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
+      "app-update-refresh",
+    ),
+  );
   assert.match(verification.if, /!cancelled\(\)/);
 });

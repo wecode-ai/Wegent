@@ -49,7 +49,7 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ inputs.verification_run_id != '' && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id) || github.workflow }}
+  group: ${{ (inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id) || github.workflow }}
   cancel-in-progress: false
 
 permissions:
