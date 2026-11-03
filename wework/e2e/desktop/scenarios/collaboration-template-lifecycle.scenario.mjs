@@ -4,11 +4,11 @@ import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fetchJson } from '../modules/shared.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import {
-  shellCommandResponse,
-  shellCommandPollResponse,
-} from '../modules/shell-command-response.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
@@ -160,17 +160,13 @@ export function createDesktopScenario({
         memberStarted = index
         await releases[index].promise
         const callId = `${MARKER}-artifact-${index}`
-        const commandResult = accountCommandResult(body.input, callId)
-        if (commandResult?.sessionId) {
-          respond(
-            response,
-            id,
-            shellCommandPollResponse(body, commandResult.pollId, commandResult.sessionId)
-          )
+        const result = accountCommandResult(body.input, callId)
+        if (result?.sessionId) {
+          respond(response, id, shellCommandPollResponse(body, result.pollId, result.sessionId))
           return true
         }
-        if (commandResult) {
-          const output = commandResult.output
+        if (result) {
+          const output = result.output
           assert.match(
             output,
             /Exit code: 0|exit_code\W*0|Process exited with code 0/,

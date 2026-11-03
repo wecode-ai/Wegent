@@ -53,6 +53,7 @@ impl RuntimeWorkRpcHandler {
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
                 }
+                handler.reconcile_local_project_coordination().await;
                 handler.drain_local_issue_queue().await;
             }
         });

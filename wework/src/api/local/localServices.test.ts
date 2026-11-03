@@ -71,6 +71,35 @@ describe('createLocalAppServices', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
+  test('requires a Wework cloud connection for default-market dependency installation', async () => {
+    const request = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 'connection/dingtalk',
+          dependencies: [
+            {
+              alias: 'dingtalk',
+              status: 'missing',
+              source: { marketplaceId: 'wework', pluginId: 'dingtalk@wework' },
+              version: '*',
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+    })
+    await expect(
+      services.standInApi!.installConnectionDependencies('device', 'connection/dingtalk', [
+        'dingtalk',
+      ])
+    ).rejects.toMatchObject({ code: 'dependency_cloud_required' })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('runtime.connections.catalog', {})
+  })
+
   test('forwards stand-in settings to the local Executor without a second device check', async () => {
     const ensure = vi.fn()
     const available = vi.fn()
@@ -4019,6 +4048,51 @@ describe('createLocalAppServices', () => {
       id: 'cloud-ollama',
       catalogReady: false,
     })
+  })
+
+  test('stores stand-in schedules without eagerly resolving a workspace or model', async () => {
+    const request = vi.fn().mockImplementation(async (method, payload) => {
+      if (method === 'runtime.automations.create') return { automation: payload.automation }
+      throw new Error(`Unexpected eager dependency: ${method}`)
+    })
+    const prepareRuntimeModel = vi.fn()
+    const automationApi = createAutomationApiFromIpc(request, request, {
+      resolveDeviceId: async () => 'local-device',
+      prepareRuntimeModel,
+    })
+    await automationApi.createAutomation({
+      source: 'local',
+      name: 'Review tomorrow',
+      prompt: 'Review progress',
+      schedule: { type: 'interval', value: 1, unit: 'days' },
+      timezone: 'UTC',
+      enabled: true,
+      conversationMode: 'continue_thread',
+      notificationPolicy: 'attention_only',
+      taskRequest: {
+        deviceId: 'local-device',
+        runtime: 'codex',
+        message: 'Review progress',
+        standInOwner: { userId: 7, roleId: '@primary' },
+      },
+      continuationPayload: {
+        address: { deviceId: 'local-device', taskId: 'original-work' },
+        message: 'Review progress',
+      },
+    })
+    expect(prepareRuntimeModel).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      {
+        automation: expect.objectContaining({
+          taskRequest: expect.objectContaining({ standInOwner: { userId: 7, roleId: '@primary' } }),
+          taskPayload: { runtime: 'codex', standaloneChatWorkspace: true },
+          continuationPayload: { taskId: 'original-work' },
+        }),
+      },
+      'local-device'
+    )
   })
 
   test('builds cloud automation payloads without leaking the local proxy', async () => {

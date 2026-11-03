@@ -20,6 +20,13 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+#[path = "project_coordination.rs"]
+mod project_coordination;
+#[path = "project_coordination_commands.rs"]
+mod project_coordination_commands;
+mod project_coordinator;
+#[path = "project_router_store.rs"]
+pub(crate) mod project_router_store;
 mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
@@ -64,6 +71,15 @@ mod stand_in_memories;
 
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
+
+#[path = "stand_in_processing.rs"]
+mod stand_in_processing;
+
+#[path = "coordination_store.rs"]
+mod coordination_store;
+
+#[path = "coordination_arrangements.rs"]
+mod coordination_arrangements;
 
 #[path = "stand_in_telemetry.rs"]
 pub(crate) mod stand_in_telemetry;
@@ -908,6 +924,15 @@ impl LocalTaskStore {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)
         };
         let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
+        if assignee_changed
+            || collaboration_group_changed
+            || assignee_user_id != current.assignee_user_id
+        {
+            metadata
+                .as_object_mut()
+                .unwrap()
+                .remove("collaboration_group_assignment_key");
+        }
         let starts_runtime_dispatch = (collaboration_group_changed
             && selected_collaboration_group.is_some())
             || (assignee_changed && assignee_agent_id.is_some());
@@ -1293,17 +1318,30 @@ impl LocalTaskStore {
     ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, message_id, client_message_id, project_id, task_id,
-                    sender_type, sender_id, sender_name, message_type, content,
-                    metadata, trigger_message_id, reply_to_message_id,
-                    thread_root_message_id, status, sequence_number, created_at, updated_at
-             FROM loop_item_comments
-             WHERE project_id = ?1 AND task_id = ?2 AND deleted_at IS NULL
-               AND sequence_number > ?3
-             ORDER BY sequence_number ASC",
+            "SELECT c.id, c.message_id, c.client_message_id, c.project_id, c.task_id,
+                    c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
+                    c.metadata, c.trigger_message_id, c.reply_to_message_id,
+                    c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
+                    e.status, e.observed_state, e.sync_state
+             FROM loop_item_comments c
+             LEFT JOIN loop_item_executions e
+               ON e.id = json_extract(c.metadata, '$.execution_id')
+              AND e.cloud_project_id = c.project_id AND e.loop_item_id = c.task_id
+              AND c.sender_type = 'agent' AND e.agent_id = c.sender_id
+             WHERE c.project_id = ?1 AND c.task_id = ?2 AND c.deleted_at IS NULL
+               AND c.sequence_number > ?3
+             ORDER BY c.sequence_number ASC",
         )?;
-        let rows =
-            statement.query_map(params![project_id, task_id, after_sequence], map_comment)?;
+        let rows = statement.query_map(params![project_id, task_id, after_sequence], |row| {
+            let mut comment = map_comment(row)?;
+            if let Some(status) = row.get::<_, Option<String>>(18)? {
+                let observed: String = row.get(19)?;
+                let sync: String = row.get(20)?;
+                comment.metadata["run_status"] =
+                    json!(local_execution_display_state(&status, &observed, &sync));
+            }
+            Ok(comment)
+        })?;
         let mut comments = Vec::new();
         for comment in rows {
             comments.push(comment?);
@@ -1782,6 +1820,7 @@ impl LocalTaskStore {
         let now = now();
         let runtime_device_id = execution_device_id.unwrap_or("local-device");
         let pending = execution_row(&connection, candidate_id)?;
+        project_coordination_commands::authorize_execution_on(&connection, &pending)?;
         let issue = get_item_from(&connection, &pending.loop_item_id, "task")?
             .ok_or(TaskRuntimeError::TaskNotFound)?;
         let conflict = issue.metadata.get("runner_binding_conflict").is_some()
@@ -1926,6 +1965,7 @@ impl LocalTaskStore {
         {
             return Ok(None);
         }
+        project_coordination_commands::authorize_execution_on(&connection, &current)?;
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -5360,7 +5400,7 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .to_owned();
     let dispatch_id = stored.get("dispatch_id").cloned();
     let dispatch_role = stored.get("dispatch_role").cloned();
-    let origin = json!({
+    let mut origin = json!({
         "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
         "projectStore": "local",
         "cloudProjectId": execution.cloud_project_id,
@@ -5375,6 +5415,10 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         },
         "run_id": stored.get("automation_run_id"),
     });
+    if let Some(context) = stored.get("project_coordination") {
+        origin["project_coordination"] = context.clone();
+        origin["userId"] = json!(execution.assigner_user_id);
+    }
 
     let payload_object = payload
         .as_object_mut()
@@ -5467,6 +5511,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             json!(format!("{title} - Assistant")),
         );
         request.insert("prompt".to_owned(), json!(message));
+        if stored.contains_key("project_coordination") {
+            request.insert("user_id".to_owned(), json!(execution.assigner_user_id));
+        }
         request.insert(
             "new_session".to_owned(),
             json!(stored.get("continueTaskId").is_none()),
@@ -5486,6 +5533,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             .as_object_mut()
             .expect("Execution extra was normalized");
         extra.insert("origin".to_owned(), origin);
+        if stored.contains_key("project_coordination") {
+            extra.insert("user_id".to_owned(), json!(execution.assigner_user_id));
+        }
         extra.insert(
             "cloudProjectId".to_owned(),
             json!(execution.cloud_project_id),

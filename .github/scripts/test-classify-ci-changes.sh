@@ -3014,6 +3014,81 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs"
 
+for suffix in '' '_tests'; do
+  handler_path="executor/src/runtime_work/handler/stand_in_processing${suffix}.rs"
+  handler_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$handler_path")"
+  node --input-type=module - "$handler_path" "$handler_output" <<'NODE'
+import assert from 'node:assert/strict'
+
+const [path, output] = process.argv.slice(2)
+const matrix = output.split('\n').find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
+const checkpoints = JSON.parse(matrix.slice(matrix.indexOf('=') + 1)).include
+  .flatMap(entry => entry.segments.split(','))
+for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch']) {
+  assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
+}
+NODE
+done
+
+coordination_router_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "executor/src/runtime_work/handler/stand_in_processing.rs")"
+for coordination_path in \
+  "wework/dsh/coordination-runtime/router.js" \
+  "wework/dsh/coordination-runtime/runtime.js" \
+  "wework/dsh/coordination-runtime/instructions.js" \
+  "wework/dsh/coordination-runtime/router.test.mjs" \
+  "executor/src/runtime_work/handler/coordination_rpc.rs" \
+  "executor/src/runtime_work/handler/stand_in_arrangements.rs" \
+  "executor/src/runtime_work/handler/stand_in_arrangements_tests.rs" \
+  "executor/src/task_runtime/coordination_arrangements.rs" \
+  "wework/e2e/desktop/scenarios/coordination-arrangements.scenario.mjs" \
+  "wework/e2e/desktop/scenarios/coordination-runtime.scenario.mjs"; do
+  assert_desktop_case "Coordination routing retains dispatch and permission coverage: $coordination_path" \
+    "$coordination_router_expected" "$coordination_path"
+done
+
+project_publication_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "wework/e2e/desktop/scenarios/stand-in-processing.scenario.mjs")"
+for publication_path in \
+  "wework/src/features/todo/ProjectCoordinatorConversation.tsx" \
+  "wework/src/features/todo/ProjectCoordinatorPublication.tsx" \
+  "wework/src/features/todo/ProjectCoordinatorPublication.test.tsx" \
+  "wework/src/features/todo/ProjectCoordinationPanel.tsx" \
+  "wework/src/features/todo/ProjectCoordinationPanel.test.tsx" \
+  "executor/src/runtime_work/handler/project_router.rs" \
+  "executor/src/runtime_work/handler/project_router_assessment.rs" \
+  "executor/src/runtime_work/handler/project_router_tests.rs" \
+  "executor/src/task_runtime/project_router_store.rs" \
+  "executor/src/runtime_work/handler/project_coordinator.rs" \
+  "executor/src/task_runtime/store/project_coordinator.rs" \
+  "executor/src/task_runtime/coordination_store.rs" \
+  "wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs"; do
+  assert_desktop_case "Project publication and routing storage retain their profile and permission checks: $publication_path" \
+    "$project_publication_expected" "$publication_path"
+done
+
+for registration_path in \
+  "wework/dsh/coordination-runtime/index.js" \
+  "wework/dsh/coordination-runtime/package.json" \
+  "wework/dsh/coordination-runtime/cordis.patch.yml"; do
+  registration_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$registration_path")"
+  node --input-type=module - "$registration_path" "$registration_output" <<'NODE'
+import assert from 'node:assert/strict'
+const [path, output] = process.argv.slice(2)
+const values = Object.fromEntries(output.trim().split('\n').map(line => {
+  const offset = line.indexOf('=')
+  return [line.slice(0, offset), line.slice(offset + 1)]
+}))
+const checkpoints = JSON.parse(values.wework_desktop_core_e2e_matrix).include.flatMap(entry => entry.segments.split(','))
+for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch', 'release-package-startup', 'core-dsh-plugin-management']) {
+  assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
+}
+assert.equal(values.wework_desktop_cloud_e2e, 'false')
+assert.equal(values.wework_desktop_other_e2e, 'false')
+NODE
+done
+
+unknown_feature_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "wework/src/features/todo/UnclassifiedFuturePanel.tsx")"
+assert_desktop_case "Unknown future coordinator features keep the conservative fallback" \
+  "$unknown_feature_expected" "wework/src/features/todo/ProjectCoordinatorFutureAutomation.tsx"
 assert_desktop_case "Parent board scenario runs its independent Core checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

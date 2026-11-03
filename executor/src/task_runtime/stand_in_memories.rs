@@ -123,6 +123,11 @@ fn valid_scope(settings: &Value, scope: &Value) -> bool {
                     .as_array()
                     .is_some_and(|roles| roles.iter().any(|role| role["id"] == scope["roleId"]))
         }
+        Some("project_coordinator") => {
+            scope.as_object().is_some_and(|row| row.len() == 3)
+                && scope["id"].as_str().is_some_and(|id| !id.trim().is_empty())
+                && matches!(scope["store"].as_str(), Some("local" | "cloud"))
+        }
         Some("project") => {
             scope["id"].as_str().is_some_and(|id| !id.is_empty())
                 && matches!(scope["store"].as_str(), Some("local" | "cloud"))
