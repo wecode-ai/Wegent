@@ -416,6 +416,12 @@ assert_case "artifact downloader validates its runtime producers and consumers" 
 
 assert_case "Node cache follows workspace and E2E consumers" "$collaboration_package" \
   ".github/actions/setup-node-workspace/action.yml"
+for path in .github/actions/build-frontend-e2e/action.yml \
+  .github/scripts/frontend-e2e-build.mjs .github/scripts/frontend-e2e-build-oci.mjs \
+  .github/scripts/frontend-e2e-build.test.mjs .github/scripts/restore-frontend-ci-build.mjs; do
+  assert_case "Frontend complete build validates its consumers: $path" \
+    "${all_false/platform_e2e=false/platform_e2e=true}" "$path"
+done
 for path in .github/actions/build-wework-core-e2e/action.yml \
   .github/actions/build-wework-macos-e2e/action.yml \
   .github/actions/build-wework-windows-e2e/action.yml \

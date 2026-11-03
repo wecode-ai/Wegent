@@ -22,6 +22,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \
+      .github/scripts/restore-frontend-ci-build.mjs | \
+      .github/scripts/archive-frontend-e2e-build.sh | .github/scripts/restore-frontend-e2e-build.sh)
+      changed[node]=true
+      ;;
     .github/ci/rust-toolchain | .github/actions/* | .github/scripts/lib/apt-packages.sh | \
       .github/workflows/ci-cache-warmup.yml)
       mark_all
@@ -69,7 +74,10 @@ classify_path() {
     .github/scripts/install-executor-rust-system-dependencies.sh)
       changed[executor_rust]=true
       ;;
-    .github/claude-code-cli/* | frontend/src/* | package.json | \
+    frontend/e2e/fixtures/claudecode-executor/*)
+      changed[docker]=true
+      ;;
+    .github/claude-code-cli/* | frontend/* | .npmrc | patches/* | package.json | \
       pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*)
       changed[node]=true
@@ -101,7 +109,7 @@ classify_path() {
       changed[backend_rs_rust]=true
       changed[wework_target]=true
       ;;
-    .npmrc | wework/*)
+    wework/*)
       changed[wework_target]=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
@@ -114,10 +122,8 @@ classify_path() {
       changed[wework_target]=true
       ;;
     shared/assets/*)
+      changed[node]=true
       changed[wework_target]=true
-      changed[docker]=true
-      ;;
-    frontend/e2e/fixtures/claudecode-executor/*)
       changed[docker]=true
       ;;
   esac

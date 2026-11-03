@@ -33,6 +33,11 @@ classify_path() {
       changed[wework]=true
       return
       ;;
+    .github/actions/build-frontend-e2e/* | .github/scripts/frontend-e2e-build*.mjs | \
+      .github/scripts/restore-frontend-ci-build.mjs)
+      changed[platform_e2e]=true
+      return
+      ;;
     .github/actions/setup-node-workspace/*)
       changed[frontend]=true
       changed[wework]=true

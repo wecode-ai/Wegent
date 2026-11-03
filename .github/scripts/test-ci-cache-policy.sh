@@ -74,6 +74,16 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
 node_only="${warmup_all_false/node=false/node=true}"
 node_and_wework_target="${node_only/wework_target=false/wework_target=true}"
 assert_warmup_case "pnpm lock" "$node_and_wework_target" "pnpm-lock.yaml"
+for frontend_input in .github/scripts/frontend-e2e-build.mjs \
+  .github/scripts/frontend-e2e-build-oci.mjs .github/scripts/restore-frontend-ci-build.mjs \
+  .github/scripts/archive-frontend-e2e-build.sh .github/scripts/restore-frontend-e2e-build.sh \
+  .github/actions/build-frontend-e2e/action.yml; do
+  assert_warmup_case "Frontend complete build: $frontend_input" "$node_only" "$frontend_input"
+done
+for frontend_input in frontend/next.config.js frontend/public/icon.svg \
+  frontend/scripts/prepare-file-viewer-assets.mjs frontend/src/locales/zh.json .npmrc patches/package.patch; do
+  assert_warmup_case "Frontend input: $frontend_input" "$node_and_wework_target" "$frontend_input"
+done
 assert_warmup_case "workspace manifest" "$node_and_wework_target" \
   "pnpm-workspace.yaml"
 assert_warmup_case "Wework manifest" "$node_and_wework_target" \
@@ -330,7 +340,7 @@ if ! grep -A3 '^  changes:$' "$warmup_workflow" |
 fi
 
 node_manifests=(
-  frontend/package.json
+  "frontend/**"
   package.json
   "packages/**"
   pnpm-lock.yaml
@@ -702,6 +712,7 @@ fi
 
 node --test "$script_dir/runtime-artifact.test.mjs"
 node --test "$script_dir/wework-core-e2e-transport.test.mjs"
+node --test "$script_dir/frontend-e2e-build.test.mjs"
 node --test "$script_dir/ci-prebuilt-images.test.mjs"
 node --test "$script_dir/resolve-ci-image.test.mjs"
 ruby "$script_dir/test-backend-rs-e2e-runtime.rb"

@@ -67,45 +67,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Restore or build verified frontend E2E output
+        uses: ./.github/actions/build-frontend-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Restore shared Next.js build cache
-        id: nextjs-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-e2e-v2-
-
-      - name: Build frontend for E2E
-        working-directory: ./frontend
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-          RUNTIME_INTERNAL_API_URL: http://localhost:8000
-          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm run build
-
-      - name: Save shared Next.js build cache
-        if: github.ref == 'refs/heads/main' && steps.nextjs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ./frontend/.next/cache
-          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
-
-      - name: Archive frontend E2E build
-        run: .github/scripts/archive-frontend-e2e-build.sh
 
       - name: Upload frontend E2E build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: frontend-next-build
-          path: .ci-artifacts/frontend-next-build.tar.zst
+          path: |
+            .ci-artifacts/frontend-next-build.tar.zst
+            .ci-artifacts/frontend-build-manifest.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -717,6 +690,8 @@ jobs:
         run: uv sync --project knowledge_doc_converter --frozen
 
       - name: Restore frontend E2E build
+        env:
+          FRONTEND_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: .github/scripts/restore-frontend-e2e-build.sh
 
       - name: Run database migrations
@@ -1685,6 +1660,8 @@ jobs:
           chmod 0755 executor/target/release/wegent-executor
 
       - name: Restore frontend E2E build
+        env:
+          FRONTEND_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: .github/scripts/restore-frontend-e2e-build.sh
 
       - name: Download fork Executor E2E runtime

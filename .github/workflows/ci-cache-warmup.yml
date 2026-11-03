@@ -12,6 +12,10 @@ on:
       - ".github/actions/**"
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
+      - ".github/scripts/frontend-e2e-build*.mjs"
+      - ".github/scripts/restore-frontend-ci-build.mjs"
+      - ".github/scripts/archive-frontend-e2e-build.sh"
+      - ".github/scripts/restore-frontend-e2e-build.sh"
       - ".github/scripts/wework-windows-e2e-build-key.mjs"
       - ".github/scripts/archive-wework-core-e2e-build.sh"
       - ".github/scripts/restore-wework-core-e2e-build.sh"
@@ -34,9 +38,7 @@ on:
       - "docker/wework-e2e/desktop.Dockerfile"
       - "executor/**"
       - "executor_manager/uv.lock"
-      - "frontend/e2e/fixtures/claudecode-executor/**"
-      - "frontend/package.json"
-      - "frontend/src/**"
+      - "frontend/**"
       - "knowledge_engine/uv.lock"
       - ".github/runtime-images/**"
       - ".github/scripts/ci-prebuilt-images.*"
@@ -51,6 +53,7 @@ on:
       - ".npmrc"
       - "package.json"
       - "packages/**"
+      - "patches/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "shared/assets/**"
@@ -63,10 +66,14 @@ on:
       prebuild:
         description: Select the prebuilds to publish without running E2E.
         type: choice
-        options: [linux, macos-runtimes]
+        options: [linux, macos-runtimes, frontend]
         default: linux
       macos_runtime_source_run:
         description: Optional upstream Wework CI run whose successful macOS producer supplies the native binaries.
+        type: string
+        default: ""
+      frontend_build_source_run:
+        description: Optional upstream E2E run whose successful frontend producer supplies a complete build.
         type: string
         default: ""
 
@@ -80,7 +87,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Cache Changes
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.prebuild == 'linux')
     runs-on: ubuntu-latest
     outputs:
       docker: ${{ steps.classify.outputs.docker }}
@@ -115,9 +122,13 @@ jobs:
   warm-node:
     name: Warm Node and Next.js Caches
     needs: changes
-    if: needs.changes.outputs.node == 'true'
+    if: ${{ !cancelled() && ((github.ref == 'refs/heads/main' && needs.changes.outputs.node == 'true') || (github.event_name == 'workflow_dispatch' && inputs.prebuild == 'frontend')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: write
 
     steps:
       - name: Checkout code
@@ -128,7 +139,7 @@ jobs:
       - name: Set up writable Node workspace cache
         uses: ./.github/actions/setup-node-workspace
         with:
-          save-cache: "true"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Add local harness CLIs to PATH
         run: |
@@ -149,37 +160,19 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Save shared local harness CLIs
-        if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .github/claude-code-cli/node_modules
           key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
-      - name: Restore shared Next.js build cache
-        id: nextjs-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Build or promote complete frontend output
+        uses: ./.github/actions/build-frontend-e2e
         with:
-          path: ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-e2e-v2-
-
-      - name: Build frontend cache
-        if: steps.nextjs-cache.outputs.cache-hit != 'true'
-        working-directory: ./frontend
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-          RUNTIME_INTERNAL_API_URL: http://localhost:8000
-          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm run build
-
-      - name: Save shared Next.js build cache
-        if: steps.nextjs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ./frontend/.next/cache
-          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
+          setup-workspace: "false"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+          publish: "true"
+          source-run: ${{ inputs.frontend_build_source_run }}
 
   warm-python:
     name: Warm Python ${{ matrix.python-version }} Cache
