@@ -214,6 +214,7 @@ export class ElectronTrayManager<
   private tray: TTray | null = null
   private state: TrayMenuState = EMPTY_STATE
   private nativeStatus: TrayNativeStatus | null = null
+  private appliedTooltip: string | null = null
   private menuTemplate: TrayMenuTemplateItem[] = []
   private menuActions = new Map<string, TrayAction>()
 
@@ -289,7 +290,15 @@ export class ElectronTrayManager<
     const state = this.effectiveState()
     this.rebuildMenu(state)
     tray.setContextMenu(this.dependencies.buildMenu(this.menuTemplate))
-    tray.setToolTip(state.usageTooltip?.trim() || this.defaultTooltip)
+    const tooltip = state.usageTooltip?.trim() || this.defaultTooltip
+    // Menu-only refreshes must not repeat the synchronous Windows shell call.
+    if (tooltip !== this.appliedTooltip) {
+      const startedAt = performance.now()
+      tray.setToolTip(tooltip)
+      this.appliedTooltip = tooltip
+      const elapsedMs = Math.round(performance.now() - startedAt)
+      if (elapsedMs >= 1000) console.warn('[tray] Native tooltip update was slow', { elapsedMs })
+    }
     if (this.platform === 'darwin' && tray.setTitle) {
       if (this.dependencies.applyIcon) {
         this.dependencies.applyIcon(tray, state)

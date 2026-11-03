@@ -298,6 +298,44 @@ describe('ElectronTrayManager', () => {
     expect(tray.setTitle).toHaveBeenLastCalledWith('7%')
   })
 
+  test('menu and native status refreshes only update a changed Windows tooltip', () => {
+    const { manager, tray, dispatchAction } = setup('win32')
+    manager.setState(state({ usageTooltip: null }))
+    manager.create()
+    for (let index = 0; index < 100; index += 1) {
+      manager.setState(
+        state({
+          usageTooltip: ' ',
+          recent: [{ id: `task-${index}`, title: `Task ${index}`, projectName: 'Project' }],
+        })
+      )
+    }
+    expect(tray.setToolTip).toHaveBeenCalledExactlyOnceWith('WeWork')
+    expect(tray.setContextMenu).toHaveBeenCalledTimes(101)
+    expect(manager.activate({ type: 'menu-item', menuItemId: 'task:task-99' })).toBe(true)
+    expect(dispatchAction).toHaveBeenLastCalledWith({
+      type: 'open-task',
+      source: 'tray-menu',
+      taskId: 'task-99',
+    })
+
+    const native = {
+      usageTitle: null,
+      usageTooltip: '1 task running',
+      runningCount: 1,
+      showRunningStatus: true,
+    }
+    manager.setNativeStatus(native)
+    manager.setState(state({ usageTooltip: null, language: 'zh-CN' }))
+    manager.setNativeStatus({ ...native })
+    expect(tray.setToolTip).toHaveBeenCalledTimes(2)
+    expect(tray.setToolTip).toHaveBeenLastCalledWith('1 task running')
+
+    manager.setNativeStatus({ ...native, usageTooltip: null, runningCount: 0 })
+    expect(tray.setToolTip).toHaveBeenCalledTimes(3)
+    expect(tray.setToolTip).toHaveBeenLastCalledWith('WeWork')
+  })
+
   test('returns a serializable snapshot without native menus or click functions', () => {
     const { manager } = setup()
     manager.setState(
