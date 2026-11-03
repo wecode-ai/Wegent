@@ -47,7 +47,10 @@ describe('EmbeddedBrowserBridge', () => {
     })
     try {
       await vi.waitFor(() =>
-        expect(browser.waitForNavigation).toHaveBeenCalledWith('workspace-browser')
+        expect(browser.waitForNavigation).toHaveBeenCalledWith(
+          'workspace-browser',
+          expect.any(Number)
+        )
       )
       expect(completed).toBe(false)
     } finally {

@@ -725,12 +725,12 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
       webPreferences.preload = browserAnnotationPreloadPath
     }
+    webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences

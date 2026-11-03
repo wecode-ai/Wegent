@@ -345,7 +345,7 @@ export class EmbeddedBrowserBridge {
     const state = this.browser.state(resolvedLabel)
     if (state.url !== url) await this.browser.navigate(resolvedLabel, url)
     await withTimeout(
-      this.browser.waitForNavigation(resolvedLabel),
+      this.browser.waitForNavigation(resolvedLabel, request.timeoutMs ?? OPEN_TIMEOUT_MS),
       request.timeoutMs ?? OPEN_TIMEOUT_MS,
       'Timed out waiting for embedded browser navigation'
     )

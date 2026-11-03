@@ -150,6 +150,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       })
       await Promise.resolve()
       expect(ready).toBe(false)
+      contents.commitUrl('https://example.test/')
       finishNavigation()
       await completion
       expect(ready).toBe(true)
@@ -179,6 +180,40 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         'ERR_NAME_NOT_RESOLVED'
       )
     } finally {
+      manager.close('workspace-browser')
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('waits for the target document when native load resolves on the bootstrap document', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-navigation-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockResolvedValue(undefined)
+    contents.isLoadingMainFrame.mockReturnValue(true)
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: false,
+      navigateExisting: true,
+    })
+    vi.useFakeTimers()
+    try {
+      let ready = false
+      const completion = manager.waitForNavigation('workspace-browser').then(() => {
+        ready = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(ready).toBe(false)
+      contents.commitUrl('https://example.test/')
+      contents.isLoadingMainFrame.mockReturnValue(false)
+      await vi.advanceTimersByTimeAsync(50)
+      await completion
+      expect(ready).toBe(true)
+    } finally {
+      vi.useRealTimers()
       manager.close('workspace-browser')
       await rm(directory, { recursive: true, force: true })
     }

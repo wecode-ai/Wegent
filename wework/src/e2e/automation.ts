@@ -1988,7 +1988,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
     case 'getWindowBackgroundPolicy':
-      return JSON.stringify(await invokeDesktopHost('e2e.getWindowBackgroundPolicy'))
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.getWindowBackgroundPolicy', {
+          browserLabel: command.value || undefined,
+        })
+      )
     case 'setReducedMotion':
       await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
       return ''

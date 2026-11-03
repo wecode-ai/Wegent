@@ -169,7 +169,9 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 程序化首次打开必须把“面板已请求打开”和“原生 WebView 已可导航”视为两个不同阶段。bridge 应保存带 request ID 的待处理导航，等任务对应的浏览器宿主获得非零可见尺寸并进入 ready 状态后再执行；监听器晚于请求注册时，前端必须通过待处理请求快照恢复事件。只有原生 WebView 已导航到请求地址后才能向工具返回成功，不能仅因右侧面板或空白 WebView 已创建就报告成功。
 
-`state().url` 在加载期间包含请求意图，不能作为导航完成证据。Electron manager 保存当前 `navigationCompletion`，bridge 的 `open` 必须等待其完成并检查导航失败，之后才允许工具继续 inspect，避免在初始空白文档被替换时丢失脚本执行。
+`state().url` 在加载期间包含请求意图，不能作为导航完成证据。Electron manager 保存当前 `navigationCompletion`；原生加载 Promise 可能在空白页交接时结束，因此还必须确认实际 URL 已匹配请求且主 frame 已停止加载。bridge 的 `open` 等待完整就绪屏障并检查导航失败后，才允许工具继续 inspect。
+
+浏览器 guest 与其他 workbench surface 使用相同的平台后台策略，必须在两类 preload 分支的公共初始化路径设置。macOS/Linux 禁用 guest 后台节流，避免隐藏任务页面暂停脚本执行；Windows 保留默认可见性生命周期，继续使用现有的全局后台计时器策略。`embedded-browser` checkpoint 在后台 inspect 前读取并断言实际 guest 的策略，不能只检查主窗口配置。
 
 任务切换或组件卸载时，关闭请求必须携带预期的原生 label。过期 pane 只能关闭自己创建的 WebView，不能关闭已经迁移或由新 pane 接管的实例。非活跃任务可以提前创建隐藏且 ready 的浏览器，但不能显示在当前任务上方。
 

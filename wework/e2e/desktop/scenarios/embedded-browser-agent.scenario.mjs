@@ -718,6 +718,16 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         true,
         `The unloaded runtime task browser open failed: ${JSON.stringify(backgroundOpenResult)}`
       )
+      const backgroundPolicy = JSON.parse(
+        await control.command('getWindowBackgroundPolicy', 'body', {
+          value: backgroundBrowserLabel,
+        })
+      )
+      assert.equal(
+        backgroundPolicy.backgroundThrottling,
+        process.platform === 'win32',
+        'The task browser did not inherit the workbench background execution policy'
+      )
       const backgroundInspect = await callBridge(
         bridgeIdentity,
         {

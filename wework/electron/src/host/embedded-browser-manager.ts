@@ -508,7 +508,7 @@ export class EmbeddedBrowserManager {
     })
     this.entries.set(label, entry)
     // Register the host before loading so renderer attachment can complete independently.
-    // Agent open requests must await navigationCompletion before inspecting this document.
+    // Agent open requests must await waitForNavigation before inspecting this document.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
   }
@@ -544,14 +544,29 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
-  async waitForNavigation(label: string): Promise<void> {
+  async waitForNavigation(label: string, timeoutMs = 10_000): Promise<void> {
     const entry = this.required(label)
     let completion: Promise<void>
     do {
       completion = entry.navigationCompletion
       await completion
     } while (completion !== entry.navigationCompletion)
-    if (entry.navigationError) throw new Error(entry.navigationError.message)
+    await waitForState(
+      () => {
+        if (entry.contents.isDestroyed()) throw new Error('Browser closed during navigation')
+        if (entry.navigationError) throw new Error(entry.navigationError.message)
+        return (
+          !entry.contents.isLoadingMainFrame() &&
+          this.currentVisibleUrl(entry) === entry.requestedUrl
+        )
+      },
+      timeoutMs,
+      'Timed out waiting for the requested browser document'
+    )
+  }
+
+  backgroundThrottling(label: string): boolean {
+    return this.required(label).contents.getBackgroundThrottling()
   }
 
   reload(label: string): void {
