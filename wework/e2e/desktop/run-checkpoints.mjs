@@ -92,7 +92,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'collaboration-issue-badges': './scenarios/collaboration-issue-badges.scenario.mjs',
-  'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'change-request-status': './scenarios/change-request-running-repair.scenario.mjs',
   'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
