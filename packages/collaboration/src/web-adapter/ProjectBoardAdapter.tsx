@@ -459,12 +459,27 @@ export function ProjectBoardAdapter({
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
           ...((column.type ?? controller.state.groupBy) === "status" &&
-          column.status === "inbox"
+          column.status === "inbox" &&
+          (!controller.currentParentId ||
+            (controller.currentParent &&
+              controller.currentParent.can_view_detail !== false &&
+              onCreateUnmatchedIssue))
             ? {
                 action: {
                   ariaLabel: `在${column.label}中新建 Issue`,
                   label: "创建第一个 Issue",
-                  onClick: onCreateIssue,
+                  onClick: () => {
+                    if (controller.currentParent && onCreateUnmatchedIssue) {
+                      onCreateUnmatchedIssue({
+                        status: column.status ?? "inbox",
+                        tags: [],
+                        parent: controller.currentParent,
+                        draftScope: `board-column:${column.key}:${controller.currentParent.id}`,
+                      });
+                    } else {
+                      onCreateIssue();
+                    }
+                  },
                 },
               }
             : {}),

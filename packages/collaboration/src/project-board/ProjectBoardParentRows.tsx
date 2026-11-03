@@ -1,6 +1,10 @@
 import { Fragment, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, GitBranch, ArrowRight } from 'lucide-react'
-import { KanbanColumnDropzone, type KanbanBoardProps } from '../kanban/KanbanBoard'
+import { ChevronDown, ChevronRight, GitBranch, ArrowRight, Plus } from 'lucide-react'
+import {
+  KanbanColumnDropzone,
+  KanbanColumnEmptyState,
+  type KanbanBoardProps,
+} from '../kanban/KanbanBoard'
 import { projectBoardRowDropId } from './projectBoardDnd'
 import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardParentRow } from './parentBoardGrouping'
@@ -33,6 +37,8 @@ export function ProjectBoardParentRows<T>({
   getColumnWidthClassName,
   renderColumnHeaderActions,
   getColumnDragHint,
+  renderColumnFooter,
+  getColumnEmptyState,
 }: ProjectBoardParentRowsProps<T> &
   Pick<
     KanbanBoardProps<ProjectBoardColumn, T>,
@@ -45,9 +51,16 @@ export function ProjectBoardParentRows<T>({
     | 'getColumnWidthClassName'
     | 'renderColumnHeaderActions'
     | 'getColumnDragHint'
+    | 'renderColumnFooter'
+    | 'getColumnEmptyState'
   > & { currentParentId: string | null }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const { DndContext, DragOverlay } = dnd
+  const columnItems = (column: ProjectBoardColumn) => [
+    ...new Map(
+      rows.flatMap(row => row.items.get(column.key) ?? []).map(item => [getItemKey(item), item])
+    ).values(),
+  ]
   const cells = (render: (column: ProjectBoardColumn) => ReactNode) =>
     columns.map(column => (
       <div key={column.key} className={`min-w-0 shrink-0 ${getColumnWidthClassName(column)}`}>
@@ -59,22 +72,35 @@ export function ProjectBoardParentRows<T>({
       <div data-testid="cloud-board-parent-rows" className="h-full overflow-y-auto px-6">
         <div className="min-w-full w-max">
           <div className="sticky top-0 z-20 flex gap-3.5 border-b border-border bg-background py-3">
-            {cells(column => (
-              <div className="group flex items-center gap-2 px-3 text-sm font-medium">
-                <span className={`h-2 w-2 rounded-full ${column.dotClass}`} />
-                {column.label}
-                <span className="ml-auto text-xs text-text-muted">
-                  {rows.reduce((count, row) => count + (row.items.get(column.key)?.length ?? 0), 0)}
-                </span>
-                {renderColumnHeaderActions?.(column, [
-                  ...new Map(
-                    rows
-                      .flatMap(row => row.items.get(column.key) ?? [])
-                      .map(item => [getItemKey(item), item])
-                  ).values(),
-                ])}
-              </div>
-            ))}
+            {cells(column => {
+              const items = columnItems(column)
+              const emptyState = items.length === 0 ? getColumnEmptyState(column, items) : undefined
+              return (
+                <>
+                  <div className="group flex items-center gap-2 px-3 text-sm font-medium">
+                    <span className={`h-2 w-2 rounded-full ${column.dotClass}`} />
+                    {column.label}
+                    <span className="ml-auto text-xs text-text-muted">
+                      {rows.reduce(
+                        (count, row) => count + (row.items.get(column.key)?.length ?? 0),
+                        0
+                      )}
+                    </span>
+                    {renderColumnHeaderActions?.(column, items)}
+                  </div>
+                  {emptyState?.action ? (
+                    <div className="mt-3">
+                      <KanbanColumnEmptyState
+                        emptyState={emptyState}
+                        testId={`cloud-todo-column-empty-add-${column.key}`}
+                        renderAddIcon={() => <Plus className="h-5 w-5" />}
+                      />
+                    </div>
+                  ) : null}
+                  {renderColumnFooter?.(column, items)}
+                </>
+              )
+            })}
           </div>
           {rows.length === 0 ? (
             <p className="p-6 text-sm text-text-muted">{t('todo.parent_board_empty')}</p>

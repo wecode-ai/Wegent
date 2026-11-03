@@ -4912,7 +4912,7 @@ export function CloudTodoWorkspace({
                         return canCreateBoardTask &&
                           !isAITableProject &&
                           (column.type ?? state.groupBy) === 'status' &&
-                          status === 'inbox' &&
+                          (status === 'inbox' || (status === 'pending' && Boolean(boardParent))) &&
                           state.quickCreateStatus === status ? (
                           <BoardQuickCreate
                             key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}

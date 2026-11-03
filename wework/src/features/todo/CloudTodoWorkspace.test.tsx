@@ -5587,6 +5587,55 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it.each([false, true])(
+    'creates through the grouped column header at child level %s',
+    async childLevel => {
+      const user = userEvent.setup()
+      const workbenchServices = services()
+      workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_id, values) => ({
+        ...item,
+        ...values,
+        id: 'WEG-NEW',
+      }))
+      const child = {
+        ...item,
+        id: 'WEG-2',
+        parent_id: item.id,
+        status: 'completed' as const,
+        title: 'Existing child',
+      }
+      workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item, child] }))
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      )
+      await user.click((await screen.findAllByText('Wegent V4'))[0])
+      await user.click(await screen.findByTestId('cloud-board-parent-layout'))
+      if (childLevel) await user.click(await screen.findByTestId('cloud-board-parent-enter-WEG-1'))
+      const status = childLevel ? 'pending' : 'inbox'
+      await user.click(await screen.findByTestId(`cloud-todo-column-add-${status}`))
+      const input = await screen.findByTestId(`cloud-todo-column-quick-create-input-${status}`)
+      fireEvent.change(input, { target: { value: 'Grouped new issue' } })
+      await user.click(screen.getByTestId(`cloud-todo-column-quick-create-confirm-${status}`))
+      await waitFor(() =>
+        expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(
+          '11',
+          expect.objectContaining({
+            title: 'Grouped new issue',
+            status,
+            ...(childLevel ? { parent_id: item.id } : {}),
+          })
+        )
+      )
+      expect(
+        vi.mocked(workbenchServices.deliveryApi!.createLoopItem).mock.calls[0][1].parent_id
+      ).toBe(childLevel ? item.id : undefined)
+    }
+  )
+
   it('opens the Wework composer with the quick title and lane', async () => {
     const workbenchServices = services()
     render(

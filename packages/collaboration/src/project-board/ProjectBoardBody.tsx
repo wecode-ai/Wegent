@@ -497,6 +497,8 @@ export function ProjectBoardBody<TItem>({
               getItemKey={getItemKey}
               renderItem={boardCard}
               renderColumnHeaderActions={columnHeaderActions}
+              getColumnEmptyState={getColumnEmptyState}
+              renderColumnFooter={(column, items) => renderColumnFooter?.(column, items, state)}
               getColumnDragHint={getColumnDragHint}
               renderDragOverlay={renderDragOverlay}
               getColumnWidthClassName={column =>

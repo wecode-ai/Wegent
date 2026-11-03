@@ -4,7 +4,7 @@
 
 // @vitest-environment jsdom
 
-import { act, Children, type ReactElement, type ReactNode } from 'react'
+import { act, Children, useState, type ReactElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
@@ -147,6 +147,60 @@ describe('ProjectBoardBody', () => {
       act(() => root.unmount())
     }
   })
+  it('opens column quick create and retains the create-first action in parent layout', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    const createFirst = vi.fn()
+    options.parentRows = {
+      rows: [],
+      translate: createCollaborationTranslator('zh-CN'),
+      getParentKey: item => item.id,
+      getParentTitle: item => item.id,
+      onOpenParent: vi.fn(),
+      onEnterParent: vi.fn(),
+    }
+    options.getColumnEmptyState = () => ({
+      hint: 'Empty',
+      action: {
+        label: 'Create first',
+        ariaLabel: 'Create first',
+        onClick: createFirst,
+      },
+    })
+    options.renderColumnHeaderActions = (_column, _items, state) => (
+      <button data-testid="quick-add" onClick={() => state.setQuickCreateStatus('inbox')}>
+        +
+      </button>
+    )
+    options.renderColumnFooter = (_column, _items, state) =>
+      state.quickCreateStatus === 'inbox' ? <input data-testid="quick-create-input" /> : null
+    function Harness() {
+      const [quickCreateStatus, setQuickCreateStatus] = useState<string | null>(null)
+      return (
+        <ProjectBoardBody
+          {...options}
+          state={{ ...options.state, quickCreateStatus, setQuickCreateStatus }}
+        />
+      )
+    }
+    try {
+      act(() => root.render(<Harness />))
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-column-empty-add-inbox"]')!
+          .click()
+      )
+      expect(createFirst).toHaveBeenCalledOnce()
+      expect(container.querySelector('[data-testid="quick-create-input"]')).toBeNull()
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="quick-add"]')!.click())
+      expect(container.querySelector('[data-testid="quick-create-input"]')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('keeps card nodes mounted when successful drop feedback moves or clears', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')

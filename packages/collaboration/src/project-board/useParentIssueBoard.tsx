@@ -4,6 +4,22 @@ import { projectBoardParentRows, type ParentBoardItem } from './parentBoardGroup
 import type { ProjectBoardColumn, ProjectBoardStatePort } from './ProjectBoardBody'
 import type { CollaborationTranslate } from '../i18n'
 
+function readPreference(key: string): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(key) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function savePreference(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, String(value))
+  } catch {
+    // Personal layout remains usable when the host cannot persist preferences.
+  }
+}
+
 export function useParentIssueBoard<T extends ParentBoardItem>({
   scope,
   enabled,
@@ -27,11 +43,13 @@ export function useParentIssueBoard<T extends ParentBoardItem>({
   ): readonly T[]
   translate: CollaborationTranslate
 }) {
-  const [preference, setPreference] = useState<{ scope: string; value: boolean } | null>(null)
+  const [preference, setPreference] = useState<{
+    scope: string
+    value: boolean
+  } | null>(null)
   const storageKey = `collaboration-board-parent-rows:v1:${scope}`
   const active =
-    enabled &&
-    (preference?.scope === scope ? preference.value : localStorage.getItem(storageKey) === 'true')
+    enabled && (preference?.scope === scope ? preference.value : readPreference(storageKey))
   return {
     scopeKey: `${scope}:${currentParentId ?? 'root'}`,
     active,
@@ -57,7 +75,7 @@ export function useParentIssueBoard<T extends ParentBoardItem>({
         aria-pressed={active}
         title={t('todo.parent_board_layout_hint')}
         onClick={() => {
-          localStorage.setItem(storageKey, String(!active))
+          savePreference(storageKey, !active)
           setPreference({ scope, value: !active })
         }}
         className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs transition max-md:h-11 ${
