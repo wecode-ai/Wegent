@@ -220,6 +220,17 @@ async function readGroupBindings(api: ApiClient, teamId: number): Promise<string
   return response.data?.group_names ?? []
 }
 
+async function openPersonalAgentEditor(page: Page, teamId: number): Promise<Locator> {
+  await page.goto('/resource-library?tab=mine&type=agent&source=mine')
+  await expect(page.getByTestId('my-resources')).toBeVisible({ timeout: 20000 })
+  const card = page.getByTestId(`team-card-${teamId}`)
+  await expect(card).toBeVisible({ timeout: 20000 })
+  await card.getByTestId(`edit-team-button-${teamId}`).click()
+  const dialog = page.getByTestId('team-edit-dialog')
+  await expect(dialog).toBeVisible({ timeout: 15000 })
+  return dialog
+}
+
 test.describe('Agent share scope', () => {
   test('developer can pick a group from the chat create dialog and the binding is kept', async ({
     browser,
@@ -264,12 +275,18 @@ test.describe('Agent share scope', () => {
         .toContain(fixture.groupName)
 
       await page.reload()
-      const reopened = await openQuickCreateDialog(page)
-      await reopened.getByTestId('capability-scope-team').focus()
-      await reopened.getByTestId('capability-scope-team').press('Enter')
-      await expect(reopened.getByTestId(`capability-scope-group-${fixture.groupName}`)).toBeVisible(
-        { timeout: 15000 }
+      await expect
+        .poll(() => readGroupBindings(fixture.developerApi, createdTeamId!), { timeout: 20000 })
+        .toContain(fixture.groupName)
+
+      const reopened = await openPersonalAgentEditor(page, createdTeamId!)
+      await expect(reopened.getByTestId('capability-scope-team')).toHaveAttribute(
+        'aria-pressed',
+        'true'
       )
+      await expect(
+        reopened.getByTestId(`capability-scope-group-${fixture.groupName}`)
+      ).toBeChecked()
     } finally {
       await page.context().close()
       await fixture.cleanup()
