@@ -42,6 +42,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     ) {
       await click(control, 'template-customize-main')
     }
+    await wait(control, 'template-role-main-role-0', '当前设备智能体')
     // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
     const human = await control.command(
       'getAttribute',
@@ -50,7 +51,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
     await control.command('select', testId('template-role-main-role-0'), { value: human })
     for (let index = 1; index < count; index++) {
-      await control.command('select', testId(`template-role-main-role-${index}`), {
+      const select = testId(`template-role-main-role-${index}`)
+      await control.command('waitFor', `${select} option`, {
+        text: '当前设备智能体',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('select', select, {
         by: 'label',
         value: '当前设备智能体',
       })

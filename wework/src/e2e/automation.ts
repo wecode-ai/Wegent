@@ -2481,6 +2481,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
+    case 'invokeDshPluginBackend': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        params?: Record<string, unknown>
+        plugin?: string
+      }
+      if (!input.plugin || !input.method) {
+        throw new Error('invokeDshPluginBackend requires plugin and method')
+      }
+      const host = window.__WEWORK_DSH_EXTENSIONS__
+      if (!host?.backend) throw new Error('The DSH plugin backend transport is unavailable')
+      const result = await host.backend
+        .scope(input.plugin)
+        .request(input.method, input.params ?? {})
+      return JSON.stringify(result ?? null)
+    }
     case 'storeLocalProxyUrl': {
       const config = saveLocalProxyUrl(command.value?.trim() ?? '')
       await flushDesktopLocalStoragePersistence()
@@ -2985,7 +3001,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
     case 'startAppUpdateDownload':
-      await invokeDesktopHost<void>('appUpdate.download')
+      await invokeDesktopHost<void>('appUpdate.download', { channel: 'stable' })
       return 'started'
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()

@@ -656,6 +656,17 @@ jobs:
           pnpm --filter @wegent/process-explorer typecheck
           pnpm --filter @wegent/process-explorer test
 
+      - name: Run Wework DSH Node tests
+        if: matrix.shard == 1
+        working-directory: ./wework
+        run: |
+          mapfile -d '' -t tests < <(find dsh -name '*.test.mjs' -print0)
+          if ((${#tests[@]} == 0)); then
+            echo 'No DSH tests found' >&2
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
         run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs
@@ -672,6 +683,7 @@ jobs:
         env:
           TZ: Asia/Shanghai
         run: |
+          WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
             --coverage \
             --passWithNoTests \
@@ -680,6 +692,7 @@ jobs:
 
           electron_pid=
           if [[ "${{ matrix.shard }}" == "1" ]]; then
+            WEWORK_TEST_REPORT_FILE=../../.ci-artifacts/wework-tests/electron.xml \
             pnpm --dir wework/electron test &
             electron_pid=$!
           fi
@@ -690,6 +703,14 @@ jobs:
             wait "$electron_pid" || status=$?
           fi
           exit "$status"
+
+      - name: Upload Wework test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-test-evidence-${{ matrix.shard }}
+          path: .ci-artifacts/wework-tests/
+          retention-days: 7
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
