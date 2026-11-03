@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, parse } from 'node:path'
+import { isAbsolute, join, parse, relative } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
@@ -34,7 +34,7 @@ async function measure(phase, operation) {
   return result
 }
 
-async function profileHistoricalSource(target, release) {
+async function profileHistoricalSource(target, release, archive) {
   const repository = process.env.GITHUB_REPOSITORY
   const catalogs = publishedUpgradePolicies({ repository, platform: 'windows', arch: 'x64' })
   const policy = JSON.parse(await readFile(new URL('../upgrade-policy.json', import.meta.url)))
@@ -64,30 +64,39 @@ async function profileHistoricalSource(target, release) {
   const moduleUrl = name =>
     pathToFileURL(join(source.resources, 'app.asar/dist/runtime', name)).href
   const script = join(directory, 'profile-historical-source.mjs')
-  const copiedHost = join(directory, 'historical-host-copy')
+  const executable = relative(join(directory, 'host'), target.executable)
+  assert.ok(!isAbsolute(executable) && !executable.startsWith('..'))
   await writeFile(
     script,
     `
-import { copyPhysicalRelease } from ${JSON.stringify(moduleUrl('physical-release-files.js'))}
+import { extractPhysicalRelease, removePhysicalRelease } from ${JSON.stringify(moduleUrl('physical-release-files.js'))}
 import { verifyReleaseSignature } from ${JSON.stringify(moduleUrl('release-signature.js'))}
-let started = performance.now()
-await copyPhysicalRelease(${JSON.stringify(dirname(source.executable))}, ${JSON.stringify(copiedHost)})
-console.log(JSON.stringify({phase:'historical-host-copy',elapsedMs:Math.round(performance.now()-started)}))
-started = performance.now()
-await verifyReleaseSignature(${JSON.stringify(source.executable)}, ${JSON.stringify(target.executable)})
-console.log(JSON.stringify({phase:'historical-signature-pair',elapsedMs:Math.round(performance.now()-started)}))
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
+for (const round of ['cold', 'warm']) {
+  const host = join(${JSON.stringify(directory)}, 'historical-target-' + round)
+  await mkdir(host)
+  let started = performance.now()
+  await extractPhysicalRelease(${JSON.stringify(archive)}, host)
+  console.log(JSON.stringify({phase:'historical-extract-' + round,elapsedMs:Math.round(performance.now()-started)}))
+  started = performance.now()
+  await verifyReleaseSignature(${JSON.stringify(source.executable)}, join(host, ${JSON.stringify(executable)}))
+  console.log(JSON.stringify({phase:'historical-signature-' + round,elapsedMs:Math.round(performance.now()-started)}))
+  started = performance.now()
+  await removePhysicalRelease(host)
+  console.log(JSON.stringify({phase:'historical-cleanup-' + round,elapsedMs:Math.round(performance.now()-started)}))
+}
 `
   )
-  const { stdout } = await execute(source.executable, [script], {
+  const operation = execute(source.executable, [script], {
     env: { ...upgradeUserEnvironment(process.env, directory), ELECTRON_RUN_AS_NODE: '1' },
     timeout: 300_000,
     windowsHide: true,
     maxBuffer: 1024 * 1024,
   })
-  console.log(stdout.trim())
-  await measure('historical-host-copy-cleanup', () =>
-    rm(copiedHost, { recursive: true, force: true })
-  )
+  operation.child.stdout.pipe(process.stdout)
+  operation.child.stderr.pipe(process.stderr)
+  await operation
 }
 
 async function deliveredHostRuntime() {
@@ -148,44 +157,7 @@ async function deliveredHostRuntime() {
     tar.extract({ file: archive, cwd: host, strict: true })
   )
   const installation = await readDesktopReleaseInstallation(host, release)
-  const literal = installation.executable.replaceAll("'", "''")
-  for (const [name, environment] of [
-    ['native', process.env],
-    ['isolated', upgradeUserEnvironment(process.env, directory)],
-  ])
-    await measure(`powershell-startup-${name}`, () =>
-      execute(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', '[Console]::Write("ready")'],
-        {
-          env: environment,
-          windowsHide: true,
-          timeout: 120_000,
-        }
-      )
-    )
-  for (const phase of ['signature-cold', 'signature-warm']) {
-    const { stdout } = await measure(phase, () =>
-      execute(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `(Get-AuthenticodeSignature -LiteralPath '${literal}').Status.ToString()`,
-        ],
-        {
-          windowsHide: true,
-          timeout: 120_000,
-          env: upgradeUserEnvironment(process.env, directory),
-        }
-      )
-    )
-    const status = stdout.replace(/^\uFEFF/, '').trim()
-    assert.ok(['Valid', 'NotSigned'].includes(status), `Unexpected signature status: ${status}`)
-    console.log(JSON.stringify({ phase, status }))
-  }
-  await profileHistoricalSource(installation, release)
+  await profileHistoricalSource(installation, release, archive)
   const resources = join(installation.resources, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resources, 'runtimes.json'), 'utf8'))
   const runtime = catalog.runtimes.find(item => item.role === 'core')
