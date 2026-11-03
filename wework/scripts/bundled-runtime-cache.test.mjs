@@ -62,14 +62,18 @@ test('rejects damaged delivered bytes before installing an initialized source', 
   await assert.rejects(prepareBundledRuntimeCache(resources, cache))
 })
 
-test('rejects conflicting archives for a shared fingerprint and paths outside resources', async t => {
+test('rejects conflicting archives for a shared fingerprint', async t => {
   const { resources, cache, runtimes, save } = await fixture(t)
   runtimes[1].archiveSha256 = 'b'.repeat(64)
   await save()
   await assert.rejects(prepareBundledRuntimeCache(resources, cache))
+})
+
+test('rejects archive paths outside resources before opening the archive', async t => {
+  const { resources, cache, runtimes, save } = await fixture(t)
   runtimes[0].assetName = '../runtime.tar.gz'
   await save()
-  await assert.rejects(prepareBundledRuntimeCache(resources, cache))
+  await assert.rejects(prepareBundledRuntimeCache(resources, cache), { code: 'ERR_ASSERTION' })
 })
 
 test('validates each role even when its archive was already extracted for the other role', async t => {
