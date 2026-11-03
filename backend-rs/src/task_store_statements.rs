@@ -482,15 +482,15 @@ const SUBTASK_LABELED_COLUMNS: &str = "{t}.id AS {t}_id, {t}.user_id AS {t}_user
     {t}.sender_user_id AS {t}_sender_user_id, {t}.reply_to_subtask_id AS {t}_reply_to_subtask_id";
 
 /// `subtask_store.list_by_task_ordered` with the source's default `order_by`,
-/// read from `table`: ordered `message_id ASC, created_at ASC`.
+/// read from `table`. The caller restores `message_id ASC, created_at ASC`
+/// outside MySQL so result JSON never enters a filesort buffer.
 pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
     format!(
         "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
         executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
         created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
         FROM {table} \n    \
-        WHERE task_id = ? \n    \
-        ORDER BY message_id ASC, created_at ASC"
+        WHERE task_id = ?"
     )
 }
 
@@ -894,14 +894,13 @@ pub fn subtask_projection(table: &str) -> String {
         .join(", ")
 }
 
-/// `subtask_store.list_assistant_by_task`: the task's ASSISTANT subtasks in
-/// message order, read from `table`.
+/// `subtask_store.list_assistant_by_task`: read the task's ASSISTANT subtasks.
+/// The caller restores message order without sending large JSON into filesort.
 pub fn assistant_subtasks_by_task_statement(table: &str) -> String {
     let projection = subtask_projection(table);
     format!(
         "SELECT {projection} \nFROM {table} \n\
-         WHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT' \n\
-         ORDER BY {table}.message_id ASC"
+         WHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT'"
     )
 }
 

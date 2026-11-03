@@ -21,6 +21,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     })
     // CI reads these runtime files from its checkout without installing workspace packages.
     for (const runtimePath of [
+      'wework/electron/src/runtime/release-preparation-progress.mjs',
       'packages/chat-core/package.json',
       'packages/chat-core/src/runtime-user-message.js',
       'packages/chat-core/test-fixtures/conversation-search-contract.json',

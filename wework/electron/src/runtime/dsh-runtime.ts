@@ -39,7 +39,7 @@ export class DshRuntime {
           args,
           cwd: options.cwd,
           env: {
-            ...options.env,
+            ...(options.env ?? process.env),
             ...(browserAuthentication ? { WEWORK_DSH_BROWSER_AUTH_FD: '5' } : {}),
           },
           name: options.name ?? 'dsh-web',

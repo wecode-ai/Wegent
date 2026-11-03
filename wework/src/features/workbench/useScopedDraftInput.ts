@@ -15,5 +15,17 @@ export function useScopedDraftInput(initialInputs: () => Record<string, string>)
     revisions.current.set(scopeKey, (revisions.current.get(scopeKey) ?? 0) + 1)
     setInputs(next)
   }, [])
-  return { inputs, setInput, getRevision }
+  const replaceInputs = useCallback((next: Record<string, string>) => {
+    const current = currentInputs.current
+    const changedScopes = [...new Set([...Object.keys(current), ...Object.keys(next)])].filter(
+      key => (current[key] ?? '') !== (next[key] ?? '')
+    )
+    if (!changedScopes.length) return
+    for (const key of changedScopes) {
+      revisions.current.set(key, (revisions.current.get(key) ?? 0) + 1)
+    }
+    currentInputs.current = { ...next }
+    setInputs(currentInputs.current)
+  }, [])
+  return { inputs, setInput, getRevision, replaceInputs }
 }

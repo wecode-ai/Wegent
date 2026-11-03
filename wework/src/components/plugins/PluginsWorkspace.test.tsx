@@ -9883,6 +9883,7 @@ describe('PluginsWorkspace', () => {
       let rejected = false
       vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
         if (command === 'executor.plugins.manifest.read') {
+          expect(args).toEqual({ marketplacePath: source.path, pluginName: 'github' })
           return Promise.resolve({ connectors: [{ slug: 'github', authPolicy: 'on_use' }] })
         }
         if (command === 'codex.app_server_request') {
@@ -9890,7 +9891,7 @@ describe('PluginsWorkspace', () => {
           if (request.method === 'plugin/list') return new Promise(() => undefined)
           if (request.method === 'plugin/read') {
             expect(request.params).toMatchObject({
-              marketplacePath: source.path,
+              marketplacePath: `${source.path}/.agents/plugins/marketplace.json`,
               remoteMarketplaceName: null,
               pluginName: 'github',
             })
