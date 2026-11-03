@@ -138,11 +138,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(recoverRuntimeConnections).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
     await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     })
     expect(store.getTask(address)?.derived.isRunning).toBe(false)
   })
@@ -223,6 +225,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       runtime: address.runtime,
       running: false,
       messages: [],
+      acceptedClientUserMessageIds: [],
       turns: [
         {
           id: 'interrupted-turn',
@@ -256,11 +259,14 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
 
     await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+          reconcileClientUserMessageIds: ['queued-follow-up'],
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     })
     await waitFor(() => {
       expect(getRuntimeConversationQueuedMessages(address)).toEqual([
@@ -312,11 +318,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
 
     await waitFor(() => {
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     })
     await waitFor(() => {
       expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
@@ -550,12 +558,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-        includeFullContent: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     )
     await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
     expect(store.getTask(address)?.execution.phase).toBe('idle')
@@ -731,12 +740,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       })
 
       await waitFor(() =>
-        expect(getRuntimeTranscript).toHaveBeenCalledWith({
-          ...address,
-          limit: 50,
-          refresh: true,
-          includeFullContent: true,
-        })
+        expect(getRuntimeTranscript).toHaveBeenCalledWith(
+          {
+            ...address,
+            limit: 5,
+          },
+          { signal: expect.any(AbortSignal) }
+        )
       )
       expect(store.getTask(address)?.turn.id).toBe('turn-2')
       expect(store.getTask(address)?.turn.outcome).toBeNull()
@@ -957,12 +967,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
 
     await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-        includeFullContent: true,
-      })
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          ...address,
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     )
     await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
@@ -1035,10 +1046,9 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       expect(getRuntimeTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           ...runtimeAddress,
-          limit: 50,
-          refresh: true,
-          includeFullContent: true,
-        })
+          limit: 5,
+        }),
+        { signal: expect.any(AbortSignal) }
       )
     )
     await waitFor(() =>

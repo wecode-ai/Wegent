@@ -6,11 +6,19 @@ import {
   subscribeDshExecutorEvents,
 } from './executorTransport'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
+import {
+  armRuntimeTransportGate,
+  readRuntimeTransportGate,
+  resetRuntimeTransportGates,
+} from '@/e2e/runtime-transport-gates'
 
 vi.mock('@/lib/model-loading-diagnostics', () => ({ logModelLoading: vi.fn() }))
 
 describe('DSH executor transport', () => {
   afterEach(() => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    resetRuntimeTransportGates()
+    vi.unstubAllEnvs()
     vi.unstubAllGlobals()
   })
 
@@ -114,6 +122,53 @@ describe('DSH executor transport', () => {
     )
   })
 
+  test('E2E observes real request parameters before response headers arrive', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    armRuntimeTransportGate({
+      id: 'read-request',
+      kind: 'request',
+      name: 'runtime.tasks.transcript',
+      hold: false,
+    })
+    let release!: (response: Response) => void
+    const headers = new Promise<Response>(resolve => {
+      release = resolve
+    })
+    const fetchMock = vi.fn<typeof fetch>(() => headers)
+    vi.stubGlobal('fetch', fetchMock)
+    const request = requestDshExecutor('runtime.tasks.transcript', {
+      taskId: 'real-task',
+      limit: 5,
+    })
+    expect(readRuntimeTransportGate('read-request')?.value).toEqual({
+      params: { taskId: 'real-task', limit: 5 },
+    })
+    expect(readRuntimeTransportGate('read-request')?.deliveries).toBe(1)
+    await Promise.resolve()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    release(new Response(JSON.stringify({ ok: true, result: { turns: [] } })))
+    await expect(request).resolves.toEqual({ turns: [] })
+  })
+
+  test('production RPCs never record request parameters in E2E gates', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    armRuntimeTransportGate({
+      id: 'production-read',
+      kind: 'request',
+      name: 'runtime.tasks.transcript',
+      hold: false,
+    })
+    vi.stubEnv('MODE', 'production')
+    vi.stubEnv('VITE_WEWORK_E2E', 'false')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ ok: true, result: {} })))
+    )
+    await requestDshExecutor('runtime.tasks.transcript', { taskId: 'private-task' })
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    expect(readRuntimeTransportGate('production-read')).toBeNull()
+  })
+
   test('preserves structured executor errors', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(
@@ -151,6 +206,31 @@ describe('DSH executor transport', () => {
       })
     )
     warning.mockRestore()
+  })
+
+  test('forwards read cancellation without serializing the signal into request parameters', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ ok: true, result: {} }))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await requestDshExecutor(
+      'runtime.tasks.transcript',
+      { taskId: 'task' },
+      { signal: controller.signal }
+    )
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).params).toEqual({
+      taskId: 'task',
+    })
+    for (const method of [
+      'runtime.tasks.send',
+      'runtime.tasks.search',
+      'runtime.tasks.transcript.search',
+    ]) {
+      await requestDshExecutor(method, { taskId: 'task' }, { signal: controller.signal })
+      expect(fetchMock.mock.lastCall?.[1]?.signal).toBeUndefined()
+    }
   })
 
   test('records fetch failure correlation without logging tool arguments', async () => {

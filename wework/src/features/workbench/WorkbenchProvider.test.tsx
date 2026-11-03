@@ -585,10 +585,12 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
     ...overrides,
   }
   const getRuntimeTranscript = api.getRuntimeTranscript as (
-    request: RuntimeTranscriptRequest
+    request: RuntimeTranscriptRequest,
+    options?: { signal?: AbortSignal }
   ) => Promise<RuntimeTranscriptResponse>
-  api.getRuntimeTranscript = vi.fn(async (request: RuntimeTranscriptRequest) =>
-    withCanonicalTranscriptTurns(await getRuntimeTranscript(request))
+  api.getRuntimeTranscript = vi.fn(
+    async (request: RuntimeTranscriptRequest, options?: { signal?: AbortSignal }) =>
+      withCanonicalTranscriptTurns(await getRuntimeTranscript(request, options))
   )
   return api
 }
@@ -7775,7 +7777,8 @@ describe('WorkbenchProvider runtime tasks', () => {
         runtimeHandle: {
           cloudProjectId: '841738010351776815',
         },
-      })
+      }),
+      { signal: expect.any(AbortSignal) }
     )
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
       deviceId: 'device-1',
@@ -14095,12 +14098,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('text:处理完成:done')
     expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('src/runtime.ts')
-    expect(getRuntimeTranscript).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      taskId: 'runtime-restored',
-      workspacePath: '/workspace/project-alpha',
-      limit: 5,
-    })
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-restored',
+        workspacePath: '/workspace/project-alpha',
+        limit: 5,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
   })
 
   test('continues a failed conversation in a new turn when the failed subtask is reused', async () => {
@@ -14294,11 +14300,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         'hidden user message|hidden assistant message'
       )
     )
-    expect(getRuntimeTranscript).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      taskId: 'codex-hidden',
-      limit: 5,
-    })
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      {
+        deviceId: 'device-1',
+        taskId: 'codex-hidden',
+        limit: 5,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
   })
 
   test('loads older runtime transcript messages before the current page', async () => {
@@ -14356,13 +14365,16 @@ describe('WorkbenchProvider runtime tasks', () => {
         'older message|recent message'
       )
     )
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
-      deviceId: 'device-1',
-      workspacePath: '/workspace/project-alpha',
-      taskId: 'runtime-a',
-      limit: 5,
-      beforeCursor: 'opaque-older-page',
-    })
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+        limit: 5,
+        beforeCursor: 'opaque-older-page',
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('done')
   })
 
@@ -14417,12 +14429,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first a|answer a')
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(3))
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
-      deviceId: 'device-1',
-      workspacePath: '/workspace/project-alpha',
-      taskId: 'runtime-a',
-      limit: 5,
-    })
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+        limit: 5,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
   })
 
   test('does not immediately reload a runtime transcript after the initial open', async () => {
@@ -14911,14 +14926,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('hydrate runtime address'))
 
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
-      deviceId: 'device-1',
-      taskId: 'runtime-a',
-      runtime: 'codex',
-      threadId: 'thread-a',
-      workspacePath: '/workspace/project-alpha',
-      limit: 5,
-    })
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        runtime: 'codex',
+        threadId: 'thread-a',
+        workspacePath: '/workspace/project-alpha',
+        limit: 5,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await waitFor(() =>
       expect(screen.getByTestId('hydrated-runtime-messages')).toHaveTextContent(
         'restored user message|restored assistant message'
@@ -17268,12 +17286,15 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
-    expect(getRuntimeTranscript).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      taskId: 'runtime-a',
-      workspacePath: '/workspace/project-alpha',
-      limit: 5,
-    })
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        limit: 5,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(screen.queryByText('后台任务已完成')).not.toBeInTheDocument()
     expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
   })
@@ -17375,13 +17396,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
-      deviceId: 'device-1',
-      taskId: 'runtime-a',
-      workspacePath: '/workspace/project-alpha',
-      limit: 50,
-      refresh: true,
-    })
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith(
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        limit: 5,
+        runtimeHandle: undefined,
+        threadId: undefined,
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await waitFor(() =>
       expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent('assistant:done')
     )
@@ -18289,7 +18314,8 @@ describe('WorkbenchProvider runtime tasks', () => {
           deviceId: 'device-1',
           taskId: 'runtime-a',
           refresh: true,
-        })
+        }),
+        { signal: expect.any(AbortSignal) }
       )
     )
     await waitFor(() => expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle'))
@@ -21630,12 +21656,15 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('open runtime skill task'))
     await waitFor(() =>
-      expect(services.runtimeWorkApi?.getRuntimeTranscript).toHaveBeenCalledWith({
-        deviceId: 'runtime-device',
-        workspacePath: '/workspace/runtime-device',
-        taskId: 'runtime-skill-task',
-        limit: 5,
-      })
+      expect(services.runtimeWorkApi?.getRuntimeTranscript).toHaveBeenCalledWith(
+        {
+          deviceId: 'runtime-device',
+          workspacePath: '/workspace/runtime-device',
+          taskId: 'runtime-skill-task',
+          limit: 5,
+        },
+        { signal: expect.any(AbortSignal) }
+      )
     )
 
     await userEvent.click(screen.getByText('list local skills'))

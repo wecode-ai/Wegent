@@ -6,6 +6,7 @@ import { LocalEndpointEventByteStream } from './local-endpoint-event-stream.js'
 import { ExecutorSessionProjector } from './session-projector.js'
 import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
 import { TranscriptSource } from './transcript-source.js'
+import { isCancellableRuntimeRead } from './read-cancellation.js'
 
 export const name = 'wework-executor-runtime'
 export const inject = ['webServer', 'sessions', 'weworkRequestSecurity']
@@ -267,6 +268,13 @@ export async function handleExecutorRpc(req, res, client) {
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  const controller = new AbortController()
+  const disconnect = () => {
+    if (!res.writableEnded) controller.abort()
+  }
+  req.once('aborted', disconnect)
+  res.once('close', disconnect)
+  res.once('error', disconnect)
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
@@ -279,23 +287,33 @@ export async function handleExecutorRpc(req, res, client) {
       method,
     })
     observeRpcResponse(res, requestId, method, startedAt)
-    const result = await client.request(body.method, body.params, undefined, requestId)
+    if (req.aborted || res.destroyed) controller.abort()
+    const result = await client.request(body.method, body.params, undefined, requestId, {
+      ...(isCancellableRuntimeRead(method) ? { signal: controller.signal } : {}),
+    })
     console.info('[wework-executor-runtime] RPC request finished', {
       request_id: requestId,
       method,
       elapsed_ms: Date.now() - startedAt,
       ok: true,
     })
-    sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
+    if (!res.destroyed && !controller.signal.aborted) {
+      sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
+    }
   } catch (error) {
     requestId ??= randomUUID()
-    console.error('[wework-executor-runtime] RPC request failed', {
+    const logFailure = controller.signal.aborted ? console.debug : console.error
+    logFailure('[wework-executor-runtime] RPC request failed', {
       request_id: requestId,
       method,
       elapsed_ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     })
-    sendError(res, error, requestId)
+    if (!res.destroyed && !controller.signal.aborted) sendError(res, error, requestId)
+  } finally {
+    req.off('aborted', disconnect)
+    res.off('close', disconnect)
+    res.off('error', disconnect)
   }
 }
 

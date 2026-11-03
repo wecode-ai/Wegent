@@ -539,13 +539,18 @@ export function settleRuntimeConversationAcceptedMessage(
 
 export function reconcileRuntimeConversationQueueAfterTransportReplacement(
   address: RuntimeTaskAddress,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  confirmation: {
+    queriedClientUserMessageIds: string[]
+    acceptedClientUserMessageIds: string[]
+  }
 ): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const acceptedMessageIds = new Set<string>()
+  const acceptedMessageIds = new Set(confirmation.acceptedClientUserMessageIds)
+  const queriedMessageIds = new Set(confirmation.queriedClientUserMessageIds)
   for (const turn of snapshotTurns) {
     if (turn.clientUserMessageId) acceptedMessageIds.add(turn.clientUserMessageId)
     for (const item of turn.items) {
@@ -555,7 +560,7 @@ export function reconcileRuntimeConversationQueueAfterTransportReplacement(
 
   const nextQueuedMessages = queuedMessages.flatMap(message => {
     if (acceptedMessageIds.has(message.id)) return []
-    if (message.status !== 'sending') return [message]
+    if (message.status !== 'sending' || !queriedMessageIds.has(message.id)) return [message]
     return [
       {
         ...message,

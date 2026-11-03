@@ -48,6 +48,7 @@ export const initialWorkbenchState: WorkbenchState = {
   projects: [],
   devices: [],
   runtimeWork: null,
+  runtimeWorkLoad: { phase: 'loading', error: null },
   currentProject: null,
   currentRuntimeTask: null,
   standaloneChatKey: 0,
@@ -60,6 +61,10 @@ export const initialWorkbenchState: WorkbenchState = {
 }
 
 export type WorkbenchAction =
+  | { type: 'runtime_work_scope_reset' }
+  | { type: 'runtime_work_load_started' }
+  | { type: 'runtime_work_load_succeeded' }
+  | { type: 'runtime_work_load_failed'; error: string }
   | {
       type: 'bootstrapped'
       user: User
@@ -81,6 +86,7 @@ export type WorkbenchAction =
   | {
       type: 'devices_refreshed'
       devices: DeviceInfo[]
+      user?: User
       standaloneDeviceId?: string | null
       standaloneWorkspacePath?: string | null
     }
@@ -1008,6 +1014,34 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
 
 function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
+    case 'runtime_work_scope_reset':
+      return {
+        ...state,
+        user: null,
+        projects: [],
+        devices: [],
+        runtimeWork: null,
+        runtimeWorkLoad: { phase: 'loading', error: null },
+        currentProject: null,
+        currentRuntimeTask: null,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
+        standaloneDeviceId: null,
+        standaloneWorkspacePath: null,
+        isBootstrapping: true,
+      }
+    case 'runtime_work_load_started':
+      return {
+        ...state,
+        runtimeWorkLoad: {
+          phase: state.runtimeWork ? 'refreshing' : 'loading',
+          error: null,
+        },
+      }
+    case 'runtime_work_load_failed':
+      return { ...state, runtimeWorkLoad: { phase: 'error', error: action.error } }
+    case 'runtime_work_load_succeeded':
+      return { ...state, runtimeWorkLoad: { phase: 'ready', error: null } }
     case 'bootstrapped': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
@@ -1093,6 +1127,8 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       return {
         ...state,
+        user: action.user ?? state.user,
+        isBootstrapping: action.user ? false : state.isBootstrapping,
         devices,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,

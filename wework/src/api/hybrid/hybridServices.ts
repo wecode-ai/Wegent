@@ -996,6 +996,11 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    async getRuntimeTask(address, options) {
+      if (address.projectSession) return null
+      const api = await runtimeApiForDevice(address.deviceId)
+      return api.getRuntimeTask ? api.getRuntimeTask(address, options) : null
+    },
     materializeRuntimeTask(data) {
       return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
     },
@@ -1032,12 +1037,13 @@ export function createHybridWorkbenchServices(
     deleteDeviceWorkspace(data: DeleteDeviceWorkspaceRequest) {
       return runtimeApiForDevice(data.deviceId).then(api => api.deleteDeviceWorkspace(data))
     },
-    async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
+    async getRuntimeTranscript(data: RuntimeTranscriptRequest, options?: { signal?: AbortSignal }) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
       try {
-        const response = await (
-          data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
-        ).getRuntimeTranscript(data)
+        const api = data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+        const response = await (options
+          ? api.getRuntimeTranscript(data, options)
+          : api.getRuntimeTranscript(data))
         const snapshot = runtimeExecutionSnapshot(data, response)
         if (
           snapshot &&

@@ -165,8 +165,10 @@ export function useWorkbenchRuntimeTasks({
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
       const { threadOnly, isolated, ...requestOptions } = options
-      const read = (request: RuntimeTranscriptRequest) =>
-        executorClient.runtime.getRuntimeTranscript(request)
+      const read = (request: RuntimeTranscriptRequest, readOptions?: { signal?: AbortSignal }) =>
+        readOptions
+          ? executorClient.runtime.getRuntimeTranscript(request, readOptions)
+          : executorClient.runtime.getRuntimeTranscript(request)
       return threadOnly
         ? readRuntimeThreadConversation(read, address, requestOptions)
         : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })

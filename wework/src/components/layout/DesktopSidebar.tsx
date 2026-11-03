@@ -148,7 +148,8 @@ import type {
   User as UserProfile,
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
-import type { CloudWorkStatus } from '@/types/workbench'
+import type { CloudWorkStatus, RuntimeWorkLoadState } from '@/types/workbench'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
 import type {
   ArchiveRuntimeConversationsResult,
   ArchiveRuntimeTaskOptions,
@@ -216,6 +217,8 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeWorkLoad?: RuntimeWorkLoadState
+  onRetryRuntimeWork?: () => Promise<void>
   gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
@@ -2919,6 +2922,8 @@ export function DesktopSidebar({
   devices,
   cloudWorkStatus,
   runtimeWork,
+  runtimeWorkLoad,
+  onRetryRuntimeWork,
   gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
@@ -3733,6 +3738,7 @@ export function DesktopSidebar({
   const displayedProjectsExpanded = projectsExpanded
   const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
   const showEmptyProjectCreateAction =
+    (!runtimeWorkLoad || runtimeWorkLoad.phase === 'ready') &&
     runtimeWork !== null &&
     runtimeWork !== undefined &&
     runtimeWorkCheck !== null &&
@@ -4082,6 +4088,11 @@ export function DesktopSidebar({
               setSidebarScrolled(event.currentTarget.scrollTop > 0)
             }}
           >
+            <RuntimeWorkLoadStatus
+              load={runtimeWorkLoad}
+              hasSnapshot={runtimeWork != null}
+              onRetry={onRetryRuntimeWork}
+            />
             <nav className="mb-4 space-y-0.5">
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
@@ -4709,14 +4720,16 @@ export function DesktopSidebar({
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
-                        <div
-                          data-testid="runtime-chat-empty"
-                          className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-                        >
-                          {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
-                            ? t('workbench.read_conversations_collapsed', '已读会话已收起')
-                            : t('workbench.no_chats', '暂无会话')}
-                        </div>
+                        runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                          <div
+                            data-testid="runtime-chat-empty"
+                            className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+                          >
+                            {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
+                              ? t('workbench.read_conversations_collapsed', '已读会话已收起')
+                              : t('workbench.no_chats', '暂无会话')}
+                          </div>
+                        )
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"

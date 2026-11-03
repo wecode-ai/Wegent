@@ -860,14 +860,21 @@ describe('runtimeConversationCache', () => {
       },
     ])
 
-    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [
+    reconcileRuntimeConversationQueueAfterTransportReplacement(
+      address,
+      [
+        {
+          id: 'turn-1',
+          status: 'done',
+          clientUserMessageId: 'accepted-message',
+          items: [],
+        },
+      ],
       {
-        id: 'turn-1',
-        status: 'done',
-        clientUserMessageId: 'accepted-message',
-        items: [],
-      },
-    ])
+        queriedClientUserMessageIds: ['accepted-message', 'interrupted-message'],
+        acceptedClientUserMessageIds: ['accepted-message'],
+      }
+    )
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([
       {
@@ -880,6 +887,26 @@ describe('runtimeConversationCache', () => {
         error: undefined,
         notice: undefined,
       },
+    ])
+  })
+
+  test('receipt confirmation acknowledges off-page sends without requeuing a newer send', () => {
+    const queued = ['off-page', 'not-accepted', 'newer-send'].map(id => ({
+      id,
+      content: id,
+      status: 'sending' as const,
+      createdAt: '2026-11-03T00:00:00.000Z',
+    }))
+    cacheRuntimeConversationQueuedMessages(address, queued)
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [], {
+      queriedClientUserMessageIds: ['off-page', 'not-accepted'],
+      acceptedClientUserMessageIds: ['off-page'],
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      expect.objectContaining({ id: 'not-accepted', status: 'queued' }),
+      queued[2],
     ])
   })
 

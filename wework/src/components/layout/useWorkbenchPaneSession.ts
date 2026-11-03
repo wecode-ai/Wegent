@@ -746,6 +746,7 @@ export function useWorkbenchPaneSession({
     }
 
     let cancelled = false
+    const transcriptRead = new AbortController()
     let cancelNavigationLoad = () => {}
     const cachedSeededMessages = getRuntimeConversationMessages(address)
     const seededMessages =
@@ -774,6 +775,7 @@ export function useWorkbenchPaneSession({
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
           limit: runtimeTranscriptPageSize,
+          signal: transcriptRead.signal,
         })
       )
       .then(transcript => {
@@ -865,6 +867,7 @@ export function useWorkbenchPaneSession({
         activeKey: runtimeTaskLoadTargetRef.current?.key,
       })
       cancelled = true
+      transcriptRead.abort()
       cancelNavigationLoad()
     }
   }, [lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptReloadVersion])

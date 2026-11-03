@@ -652,6 +652,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         devices={state.devices}
         projects={state.projects}
         runtimeWork={state.runtimeWork}
+        runtimeWorkLoad={state.runtimeWorkLoad}
         currentProjectId={activeConversationProject?.id}
         currentRuntimeTask={currentRuntimeTask}
         unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}

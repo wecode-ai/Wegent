@@ -5,6 +5,21 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('forwards cancellation separately from the serialized transcript request', async () => {
+    const controller = new AbortController()
+    const post = vi.fn().mockResolvedValue({ messages: [], turns: [] })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'cloud-device', taskId: 'task-1' }
+    await api.getRuntimeTranscript(request, { signal: controller.signal })
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      '/runtime-work/transcript',
+      {
+        ...request,
+        transcriptProtocolVersion: 2,
+      },
+      { signal: controller.signal }
+    )
+  })
   test('assembles canonical HTTP history while preserving project scope on every chunk', async () => {
     const content = Array.from({ length: 18_000 }, (_, index) =>
       createHash('sha256').update(String(index)).digest('hex')

@@ -6,6 +6,13 @@ import type {
 import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import {
+  abortableRuntimeRead,
+  cancelledRuntimeRead,
+  subscribeRuntimeRead,
+  type RuntimeReadOptions,
+  type SharedRuntimeRead,
+} from './runtimeConversationReadCancellation'
+import {
   abortRuntimeConversationHydration,
   adoptRuntimeConversationThread,
   beginRuntimeConversationHydration,
@@ -14,15 +21,19 @@ import {
   runtimeConversationKey,
 } from './runtimeConversationCache'
 
-type Reader = (request: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
+type Reader = (
+  request: RuntimeTranscriptRequest,
+  options?: RuntimeReadOptions
+) => Promise<RuntimeTranscriptResponse>
 type ReadOptions = Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress>
-type SynchronizationOptions = ReadOptions & { isolated?: boolean }
+type SynchronizationOptions = ReadOptions & RuntimeReadOptions & { isolated?: boolean }
 interface Writer {
   threadId?: string | null
   generation: number
-  pending?: Promise<RuntimePaneTranscript>
+  pending?: Promise<void>
+  controllers: Set<AbortController>
 }
-const requests = new Map<string, Promise<RuntimePaneTranscript>>()
+const requests = new Map<string, SharedRuntimeRead<RuntimePaneTranscript>>()
 const conversations = new Map<string, Writer>()
 export class SupersededConversationRead extends Error {}
 
@@ -30,9 +41,14 @@ export class SupersededConversationRead extends Error {}
 async function readRuntimeConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  options: ReadOptions
+  options: ReadOptions,
+  signal?: AbortSignal
 ): Promise<RuntimePaneTranscript> {
-  const response = await read({ ...address, ...options })
+  if (signal?.aborted) throw cancelledRuntimeRead()
+  const response = await (signal
+    ? abortableRuntimeRead(read({ ...address, ...options }, { signal }), signal)
+    : read({ ...address, ...options }))
+  if (signal?.aborted) throw cancelledRuntimeRead()
   if (!Array.isArray(response.turns))
     throw new Error('Runtime transcript response is missing canonical turns')
   return projectRuntimePaneTranscript(response)
@@ -42,13 +58,20 @@ async function readRuntimeConversation(
 export function synchronizeRuntimeConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  { isolated, ...options }: SynchronizationOptions = {}
+  { isolated, signal, ...options }: SynchronizationOptions = {}
 ): Promise<RuntimePaneTranscript> {
-  if (isolated) return readRuntimeConversation(read, address, options)
+  if (signal?.aborted) return Promise.reject(cancelledRuntimeRead())
+  if (isolated) return readRuntimeConversation(read, address, options, signal)
   const conversationKey = runtimeConversationKey(address)
-  const writer: Writer = conversations.get(conversationKey) ?? { generation: 0 }
-  if (address.threadId && writer.threadId && address.threadId !== writer.threadId)
+  const writer: Writer = conversations.get(conversationKey) ?? {
+    generation: 0,
+    controllers: new Set(),
+  }
+  if (address.threadId && writer.threadId && address.threadId !== writer.threadId) {
     writer.generation += 1
+    for (const controller of writer.controllers) controller.abort()
+    writer.pending = undefined
+  }
   if (address.threadId) writer.threadId = address.threadId
   conversations.set(conversationKey, writer)
   const generation = writer.generation
@@ -65,19 +88,30 @@ export function synchronizeRuntimeConversation(
     options.includeFullContent ?? false,
     options.conversationContextOnly ?? false,
     options.navigationOnly ?? false,
+    options.reconcileClientUserMessageIds?.slice().sort() ?? null,
   ])
   const existing = requests.get(requestKey)
-  if (existing) return existing
+  if (existing && !existing.controller.signal.aborted) return subscribeRuntimeRead(existing, signal)
+  const controller = new AbortController()
+  writer.controllers.add(controller)
   const previous = writer.pending
   const operation = beginRuntimeConversationOperation(address)
   const pending = (async () => {
     await Promise.resolve()
-    if (previous) await previous.catch(() => undefined)
+    if (previous)
+      await abortableRuntimeRead(
+        previous.catch(() => undefined),
+        controller.signal
+      )
+    if (controller.signal.aborted) throw cancelledRuntimeRead()
     if (writer.generation !== generation) throw new SupersededConversationRead()
     if (!options.navigationOnly) adoptRuntimeConversationThread(address, address.threadId)
     const token = options.navigationOnly ? null : beginRuntimeConversationHydration(address)
     try {
-      const transcript = await readRuntimeConversation(read, address, options)
+      const transcript = await abortableRuntimeRead(
+        readRuntimeConversation(read, address, options, controller.signal),
+        controller.signal
+      )
       if (writer.generation !== generation) throw new SupersededConversationRead()
       if (token && operation.isCurrent()) {
         completeRuntimeConversationHydration(
@@ -95,24 +129,35 @@ export function synchronizeRuntimeConversation(
       if (token) abortRuntimeConversationHydration(address, token)
       throw error
     }
-  })().finally(() => {
-    operation.dispose()
-    if (requests.get(requestKey) === pending) requests.delete(requestKey)
-    if (writer.pending === pending) conversations.delete(conversationKey)
+  })()
+    .catch(error => {
+      if (writer.generation !== generation) throw new SupersededConversationRead()
+      throw error
+    })
+    .finally(() => {
+      operation.dispose()
+      if (requests.get(requestKey)?.promise === pending) requests.delete(requestKey)
+      writer.controllers.delete(controller)
+    })
+  // A cancelled queued subscriber must not let the next page bypass an active writer.
+  const barrier = Promise.allSettled([previous, pending]).then(() => undefined)
+  void barrier.then(() => {
+    if (writer.pending === barrier) conversations.delete(conversationKey)
   })
-  requests.set(requestKey, pending)
-  writer.pending = pending
-  return pending
+  const shared = { promise: pending, controller, consumers: 0 }
+  requests.set(requestKey, shared)
+  writer.pending = barrier
+  return subscribeRuntimeRead(shared, signal)
 }
 
 /** Viewing a child thread does not adopt it as the task's current conversation. */
 export async function readRuntimeThreadConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  options: ReadOptions = {}
+  { signal, ...options }: ReadOptions & RuntimeReadOptions = {}
 ): Promise<RuntimePaneTranscript> {
   if (!address.threadId) throw new Error('A thread view requires an explicit thread identity')
-  const transcript = await readRuntimeConversation(read, address, options)
+  const transcript = await readRuntimeConversation(read, address, options, signal)
   if (transcript.threadId !== address.threadId)
     throw new Error('Runtime returned a different thread for the requested view')
   return transcript

@@ -213,6 +213,24 @@ async function waitForSidebarPointerSensorCleanup() {
 await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
+  test.each(['loading', 'error'] as const)(
+    'does not present a %s task list as empty',
+    async phase => {
+      const onRetryRuntimeWork = vi.fn().mockResolvedValue(undefined)
+      renderSidebar({
+        runtimeWork: null,
+        runtimeWorkLoad: { phase, error: phase === 'error' ? 'Request timed out' : null },
+        onRetryRuntimeWork,
+      })
+      expect(screen.getByTestId('runtime-work-load-status')).toBeInTheDocument()
+      expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+      if (phase === 'error') {
+        await userEvent.click(screen.getByTestId('runtime-work-load-retry'))
+        expect(onRetryRuntimeWork).toHaveBeenCalledOnce()
+      }
+    }
+  )
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
