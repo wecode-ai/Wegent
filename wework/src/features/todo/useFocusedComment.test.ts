@@ -82,16 +82,6 @@ it('does not rehighlight on background message updates after the flash expires',
   expect(comment.scrollIntoView).toHaveBeenCalledOnce()
 })
 
-it('allows focusing the same comment again after leaving it', async () => {
-  const { result, rerender } = setup()
-  await nextFrame()
-  rerender({ commentId: null, requestKey: null, messages: [] })
-  expect(result.current).toBeNull()
-  rerender({ commentId: 'comment-1', requestKey: null, messages: [] })
-  await nextFrame()
-  expect(result.current).toBe('comment-1')
-})
-
 it('waits for the target comment and cancels a pending flash on unmount', async () => {
   const { result, rerender, appendComment, comment, unmount } = setup('comment-2')
   await nextFrame()

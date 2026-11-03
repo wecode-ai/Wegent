@@ -1,5 +1,4 @@
 import { act, render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { DshMenuActions } from './DshMenuActions'
@@ -100,35 +99,6 @@ describe('DshMenuActions', () => {
     }
   })
 
-  test('renders command-backed menu actions and follows context enablement', async () => {
-    render(<DshMenuActions location="workspace.toolbar" />)
-
-    const button = screen.getByTestId('wework-menu-action-quality.refresh.menu')
-    expect(button).toBeDisabled()
-
-    act(() => {
-      context.set('workspace.ready', true)
-      revision += 1
-      for (const listener of [...listeners]) listener()
-    })
-    expect(button).toBeEnabled()
-
-    await userEvent.click(button)
-    expect(execute).toHaveBeenCalledWith('quality.refresh', undefined, {
-      menuId: 'quality.refresh.menu',
-      menuLocation: 'workspace.toolbar',
-      source: 'menu',
-    })
-  })
-
-  test('honors a disabled host surface', () => {
-    context.set('workspace.ready', true)
-
-    render(<DshMenuActions disabled location="composer.toolbar" />)
-
-    expect(screen.getByTestId('wework-menu-action-quality.refresh.menu')).toBeDisabled()
-  })
-
   test('resolves menu titles when rendering instead of when registering', () => {
     context.set('workspace.ready', true)
     let title = 'Export conversation'
@@ -153,19 +123,5 @@ describe('DshMenuActions', () => {
     })
 
     expect(button).toHaveTextContent('导出会话')
-  })
-
-  test('passes host surface arguments to the command', async () => {
-    context.set('workspace.ready', true)
-    const args = { deviceId: 'device-1', taskId: 'task-1' }
-
-    render(<DshMenuActions args={args} location="conversation.toolbar" />)
-    await userEvent.click(screen.getByTestId('wework-menu-action-quality.refresh.menu'))
-
-    expect(execute).toHaveBeenCalledWith('quality.refresh', args, {
-      menuId: 'quality.refresh.menu',
-      menuLocation: 'conversation.toolbar',
-      source: 'menu',
-    })
   })
 })

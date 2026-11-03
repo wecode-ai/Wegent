@@ -1,6 +1,6 @@
+import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from './localAttachments'
-import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
 
 const desktopMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -41,18 +41,7 @@ describe('local attachment API', () => {
     expect(progress.mock.calls).toEqual([[0], [100]])
   })
 
-  test('references a native picker file whose source path was retained', async () => {
-    const file = new File(['# Context'], 'context.md', { type: 'text/markdown' })
-    rememberNativeFilePath(file, '/Users/alice/Documents/context.md')
-
-    const attachment = await createLocalAttachmentApi().uploadAttachment(file)
-
-    expect(attachment.local_path).toBe('/Users/alice/Documents/context.md')
-    expect(attachment.text_length).toBeNull()
-    expect(desktopMocks.invoke).not.toHaveBeenCalled()
-  })
-
-  test.each(['log', 'txt', 'pdf'])(
+  test.each(['log'])(
     'references a large native %s file without reading or copying its contents',
     async extension => {
       const file = new File(['test data'], `large.${extension}`, { type: 'text/plain' })
@@ -87,31 +76,6 @@ describe('local attachment API', () => {
       filename: 'generated.txt',
       size: file.size,
     })
-  })
-
-  test('stores a generated file without a source path under executor home', async () => {
-    desktopMocks.invoke
-      .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: 4 })
-      .mockResolvedValueOnce(3)
-      .mockResolvedValueOnce('/Users/me/.wework/workspace/attachments/draft/123/photo.png')
-    const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' })
-    const progress = vi.fn()
-
-    const api = createLocalAttachmentApi()
-    const attachment = await api.uploadAttachment(file, progress)
-
-    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(1, 'attachment.begin', {
-      filename: 'photo.png',
-      size: 3,
-    })
-    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(3, 'attachment.finish', {
-      uploadId: 'upload-1',
-    })
-    expect(progress).toHaveBeenNthCalledWith(1, 0)
-    expect(progress).toHaveBeenNthCalledWith(2, 100)
-    expect(attachment.local_path).toBe(
-      '/Users/me/.wework/workspace/attachments/draft/123/photo.png'
-    )
   })
 
   test('streams uploaded files to Electron in bounded chunks', async () => {

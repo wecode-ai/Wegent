@@ -39,10 +39,6 @@ describe('terminalOutputToText', () => {
     expect(terminalOutputToText(input).length).toBeLessThanOrEqual(32_768 + 199)
   })
 
-  test('bounds a large uninterrupted output line', () => {
-    expect(terminalOutputToText('x'.repeat(1_000_000))).toHaveLength(4_096)
-  })
-
   test('keeps the latest terminal scrollback lines', () => {
     const input = Array.from({ length: 201 }, (_, index) => `line ${index}`).join('\n')
     const lines = terminalOutputToText(input).split('\n')

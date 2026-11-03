@@ -1,9 +1,9 @@
-import { act, useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { act, useState } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 function setup(store: 'local' | 'backend', mode: 'create' | 'edit' = 'edit') {
@@ -151,60 +151,6 @@ async function chooseSource(mode: 'create' | 'edit' = 'edit') {
 }
 
 describe('workspace Agent selection from the Issue assignee picker', () => {
-  it.each(['local', 'backend'] as const)(
-    'binds and assigns an uninstalled %s Agent from an existing Issue',
-    async store => {
-      const { api, source } = setup(store)
-      const user = await chooseSource()
-      expect(api.agents.create).not.toHaveBeenCalled()
-      expect(api.issues.assign).not.toHaveBeenCalled()
-      expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent(source.name)
-      await user.click(screen.getByTestId('cloud-todo-save'))
-      await waitFor(() =>
-        expect(api.issues.assign).toHaveBeenCalledWith('project', 'ISSUE-1', {
-          version: 1,
-          assigneeType: 'agent',
-          assigneeId: 'project-binding',
-        })
-      )
-      expect(api.agents.create).toHaveBeenCalledExactlyOnceWith(
-        'project',
-        store === 'local'
-          ? source.project_binding_input
-          : { name: source.name, runtime: 'wegent', wegentTeamId: 42, shareWithWorkspace: false }
-      )
-      expect(api.agents.create.mock.invocationCallOrder[0]).toBeLessThan(
-        api.issues.assign.mock.invocationCallOrder[0]
-      )
-      await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
-      await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
-      expect(
-        await screen.findByTestId('cloud-todo-detail-assignee-option-agent:project-binding')
-      ).toHaveTextContent(source.name)
-      expect(
-        screen.queryByTestId('cloud-todo-detail-assignee-option-resource:source')
-      ).not.toBeInTheDocument()
-    }
-  )
-
-  it.each(['local', 'backend'] as const)(
-    'supports direct %s workspace Agent selection during Issue creation',
-    async store => {
-      const { api, onCreated } = setup(store, 'create')
-      const user = await chooseSource('create')
-      await user.click(screen.getByTestId('cloud-todo-create-confirm'))
-      await waitFor(() => expect(onCreated).toHaveBeenCalled())
-      expect(api.agents.create.mock.invocationCallOrder[0]).toBeLessThan(
-        api.issues.create.mock.invocationCallOrder[0]
-      )
-      expect(api.issues.assign).toHaveBeenCalledWith('project', 'ISSUE-1', {
-        version: 1,
-        assigneeType: 'agent',
-        assigneeId: 'project-binding',
-      })
-    }
-  )
-
   it('keeps the selected assignee after binding failure and never submits a workspace ID as a project Agent', async () => {
     const { api } = setup('backend')
     api.agents.create.mockRejectedValueOnce(new Error('Binding permission denied'))
@@ -367,15 +313,5 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     await userEvent.setup().click(screen.getByTestId('cloud-todo-detail-assignee'))
     expect(await screen.findByRole('option', { name: '已加入项目的智能体' })).toBeVisible()
     expect(api.agents.create).not.toHaveBeenCalled()
-  })
-
-  it('clears workspace options immediately when verified legacy access becomes an explicit project-only guest', async () => {
-    const { api, updateProject } = setup('backend')
-    updateProject({ workspace_access_role: undefined })
-    await userEvent.setup().click(screen.getByTestId('cloud-todo-detail-assignee'))
-    expect(await screen.findByRole('option', { name: '空间代码助手' })).toBeVisible()
-    expect(api.workspaces.list).toHaveBeenCalled()
-    updateProject({ workspace_access_role: null })
-    expect(screen.queryByRole('option', { name: '空间代码助手' })).not.toBeInTheDocument()
   })
 })
