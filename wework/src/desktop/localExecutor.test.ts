@@ -268,6 +268,9 @@ describe('localExecutor', () => {
     describeDshExecutorMock.mockResolvedValue({ ...description, device_route_id: 'app-record-70' })
     const defaultRequest = requestDshExecutorMock.getMockImplementation()!
     requestDshExecutorMock.mockImplementation(async (...args) => {
+      if (args[0] === 'device.execute_command' && args[1]?.command_key === 'runtime_auth_status') {
+        return { success: true, stdout: { sha256: 'catalog-test-account' } }
+      }
       if (args[0] === 'codex.app_server_request') return { marketplaces: [] }
       if (args[0] === 'executor.plugins.links.list') return []
       if (args[0] === 'executor.plugins.store.list') return { storePath: '/tmp/store', plugins: [] }
