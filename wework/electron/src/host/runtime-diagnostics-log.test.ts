@@ -42,22 +42,3 @@ test('persists executor transport diagnostics with the configured prefix', async
     await rm(directory, { recursive: true, force: true })
   }
 })
-
-test('persists project resource load stages without accepting unrelated console output', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'wework-project-resource-log-'))
-  try {
-    const path = join(directory, 'runtime-launch.log')
-    const log = new RuntimeDiagnosticsLog(path)
-    await log.record(
-      1,
-      '[Wework] Project create resources diagnostic {"stage":"request-resolved","source":"resources","count":1}'
-    )
-    await log.record(1, '[Wework] Project create resources unrelated sensitive console output')
-    const contents = await readFile(path, 'utf8')
-    expect(contents).toContain('"stage":"request-resolved"')
-    expect(contents).toContain('"count":1')
-    expect(contents).not.toContain('unrelated sensitive console output')
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-})

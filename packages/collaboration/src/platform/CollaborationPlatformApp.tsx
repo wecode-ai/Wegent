@@ -2036,83 +2036,28 @@ function CollaborationPlatformAppContent({
       return;
     }
     let active = true;
-    const loadId = `${projectWorkspaceId}:${Date.now()}`;
-    const trace = (stage: string, details: Record<string, unknown> = {}) =>
-      console.info(
-        "[Wework] Project create resources diagnostic " +
-          JSON.stringify({
-            loadId,
-            workspaceId: projectWorkspaceId,
-            stage,
-            active,
-            ...details,
-          }),
-      );
-    const observe = <T,>(
-      source: string,
-      request: Promise<T>,
-      count: (value: T) => number,
-    ) => {
-      trace("request-started", { source });
-      return request.then(
-        (value) => {
-          trace("request-resolved", { source, count: count(value) });
-          return value;
-        },
-        (error: unknown) => {
-          trace("request-rejected", {
-            source,
-            errorType: error instanceof Error ? error.name : typeof error,
-          });
-          throw error;
-        },
-      );
-    };
     void Promise.all([
-      observe(
-        "members",
-        api.workspaces.listMembers(projectWorkspaceId),
-        (items) => items.length,
-      ),
-      observe(
-        "workspace-agents",
-        api.workspaces.listAgents(projectWorkspaceId),
-        (items) => items.length,
-      ),
-      observe(
-        "groups",
-        api.workspaces.listCollaborationGroups(projectWorkspaceId),
-        (items) => items.length,
-      ),
-      observe(
-        "resources",
-        Promise.resolve(
-          api.resources?.list() ?? {
-            agents: [],
-            execution_environments: [],
-          },
-        ),
-        (resources) => resources.agents.length,
-      ),
+      api.workspaces.listMembers(projectWorkspaceId),
+      api.workspaces.listAgents(projectWorkspaceId),
+      api.workspaces.listCollaborationGroups(projectWorkspaceId),
+      api.resources?.list() ?? {
+        agents: [],
+        execution_environments: [],
+      },
     ])
       .then(([members, agents, groups, resources]) => {
-        trace("load-resolved", {
-          agentCount: resources.agents.length + agents.length,
-        });
         if (!active) return;
         setProjectWorkspaceMembers(members);
         setProjectWorkspaceAgents([...resources.agents, ...agents]);
         setProjectWorkspaceGroups(groups);
       })
       .catch(() => {
-        trace("load-rejected");
         if (!active) return;
         setProjectWorkspaceMembers([]);
         setProjectWorkspaceAgents([]);
         setProjectWorkspaceGroups([]);
       });
     return () => {
-      trace("load-cancelled");
       active = false;
     };
   }, [
