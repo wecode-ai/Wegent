@@ -20,12 +20,18 @@ export async function verifyGitBranchFlows(control, workspacePath) {
   await git(['tag', excludedTag])
   await git(['update-ref', `refs/remotes/origin/${excludedRemote}`, 'HEAD'])
 
-  const selectBranch = async branch => {
+  const selectBranch = async (branch, expectedBranchCount) => {
     await control.command('clickWhenEnabled', button)
     await control.command('waitFor', list, { text: branch })
+    assert.equal(
+      Number(await control.command('getElementCount', option)),
+      expectedBranchCount,
+      'Only local branches may be selected, including while HEAD is detached'
+    )
     await control.command('fill', search, { value: branch })
     await control.command('waitFor', option, { text: branch })
     await control.command('clickWhenEnabled', option)
+    await control.command('waitFor', menu, { visible: false })
     await control.command('waitFor', button, { text: branch })
     assert.equal(await git(['symbolic-ref', '--short', 'HEAD']), branch)
   }
@@ -38,7 +44,7 @@ export async function verifyGitBranchFlows(control, workspacePath) {
   assert.ok(!branches.includes(excludedTag), 'Tags must not appear as selectable branches')
   assert.ok(!branches.includes(excludedRemote), 'Remote refs must not appear as local branches')
   await control.command('press', search, { key: 'Escape' })
-  await selectBranch(existingBranch)
+  await selectBranch(existingBranch, 2)
 
   await control.command('clickWhenEnabled', button)
   await control.command('waitFor', menu)
@@ -50,9 +56,10 @@ export async function verifyGitBranchFlows(control, workspacePath) {
   await control.command('waitFor', button, { text: createdBranch })
   assert.equal(await git(['symbolic-ref', '--short', 'HEAD']), createdBranch)
 
-  // Refresh and recover through the real executor while HEAD has no branch.
+  // The cached branch name must not bypass checkout after HEAD is detached.
   await git(['checkout', '--detach'])
-  await selectBranch(originalBranch)
+  await selectBranch(createdBranch, 3)
+  await selectBranch(originalBranch, 3)
   await git(['branch', '-d', existingBranch, createdBranch])
   await git(['tag', '-d', excludedTag])
   await git(['update-ref', '-d', `refs/remotes/origin/${excludedRemote}`])

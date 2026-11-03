@@ -32,6 +32,8 @@ To create a Git project, select a device, repository, default branch, and destin
 
 Use the branch menu in the composer to search and switch local branches, or create and check out a new branch. The list excludes tags and remote-tracking refs and places the current local branch first. Branch listing and current-branch queries use commands compatible with older Git versions, without depending on `git branch --format` or `--show-current`. A detached HEAD has an empty current branch name; local branches remain selectable.
 
+Selecting a branch performs checkout on the execution device even when its name matches the last displayed branch, so cached UI state cannot prevent recovery from detached HEAD.
+
 If another device still reports `unknown option`, confirm that its Wework executor has been updated. Git queries run on the device that owns the workspace; updating Git on another machine does not change that device's queries.
 
 ## View pull request and merge request status
