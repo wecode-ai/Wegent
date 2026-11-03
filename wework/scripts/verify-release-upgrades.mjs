@@ -22,6 +22,7 @@ import {
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
 import { withTemporaryBuildDirectory } from './lib/temporary-build-directory.mjs'
 import { preparePackagedRuntimeCache } from './lib/packaged-runtime-preparation.mjs'
+import { prepareInstalledSourceSnapshot } from './lib/installed-source-snapshot-preparation.mjs'
 import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
 import { usesLegacyReleaseLayout } from '../electron/src/runtime/legacy-release-layout.mjs'
 import {
@@ -251,11 +252,32 @@ async function downloadSourceInputs(source, targetChannel, previous) {
 
 async function prepareSourcePrograms(from, target, targetPrograms) {
   const targetKey = await bundledRuntimeCacheKey(target.resources)
-  for (const installed of [from, from.installedSource].filter(Boolean)) {
-    const matches = (await bundledRuntimeCacheKey(installed.resources)) === targetKey
-    const reuseRoot = matches ? await targetPrograms : undefined
-    await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache, { reuseRoot })
+  const preparations = []
+  let sourceError
+  try {
+    for (const installed of [from, from.installedSource].filter(Boolean)) {
+      const matches = (await bundledRuntimeCacheKey(installed.resources)) === targetKey
+      const reuseRoot = matches && targetPrograms ? await targetPrograms : undefined
+      await prepareBundledRuntimeCache(installed.resources, installed.runtimeCache, { reuseRoot })
+      if (installed === from)
+        preparations.push(
+          Promise.allSettled([
+            prepareInstalledSourceSnapshot(from, {
+              diagnosticsDirectory: join(diagnostics, 'preparation', from.version),
+            }),
+          ])
+        )
+    }
+  } catch (error) {
+    sourceError = error
   }
+  const results = (await Promise.all(preparations)).flat()
+  const errors = [
+    sourceError,
+    ...results.filter(result => result.status === 'rejected').map(result => result.reason),
+  ].filter(Boolean)
+  if (errors.length === 1) throw errors[0]
+  if (errors.length) throw new AggregateError(errors, 'Source input preparation failed')
 }
 
 async function verifySource(source, targetChannel, previous) {
@@ -277,11 +299,18 @@ async function verifySource(source, targetChannel, previous) {
       () => downloadSourceInputs(source, targetChannel, previous),
     ],
     consume: async ([target, prepared], directory) => {
-      const targetPrograms = preparePackagedRuntimeCache({
-        target,
-        directory,
-        immutableRoot: immutableRuntimeCache,
-      })
+      // Matching installed source programs already satisfy the target's reuse
+      // contract. Its real UI preparation still verifies its delivered archive.
+      const matchesSource =
+        (await bundledRuntimeCacheKey(prepared.resources)) ===
+        (await bundledRuntimeCacheKey(target.resources))
+      const targetPrograms = matchesSource
+        ? null
+        : preparePackagedRuntimeCache({
+            target,
+            directory,
+            immutableRoot: immutableRuntimeCache,
+          })
       const results = await Promise.allSettled([
         targetPrograms,
         prepareSourcePrograms(prepared, target, targetPrograms),

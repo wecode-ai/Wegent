@@ -17,7 +17,7 @@ export function upgradeVerificationMatrix(channel, sourceVersion = "") {
           channel: selected,
         },
         {
-          runner: "windows-latest",
+          runner: "windows-2022",
           platform: "windows",
           arch: "x64",
           channel: selected,

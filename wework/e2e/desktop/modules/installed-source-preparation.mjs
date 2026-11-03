@@ -11,6 +11,34 @@ import {
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep, toNamespacedPath } from 'node:path'
 
+export const SOURCE_DISABLED_PLUGIN = '@wegent/dsh-connection-dingtalk'
+
+export function installedSourcePlugins() {
+  return { version: 1, order: [], disabled: [SOURCE_DISABLED_PLUGIN] }
+}
+
+export function installedSourceSnapshotIdentity(source) {
+  return { sha256: source.sha256, plugins: installedSourcePlugins() }
+}
+
+export function installedSourcePreparationRequest(source, dataDirectory) {
+  return {
+    storeRoot: join(dataDirectory, 'releases'),
+    sourceProfile: join(dataDirectory, 'dsh-core/profiles/wework-core'),
+    release: {
+      schemaVersion: 1,
+      id: 'source-preparation',
+      version: source.version,
+      executable: source.executable,
+      resources: source.resources,
+      runtimeRoot: join(dataDirectory, 'managed-runtimes/dsh'),
+      profileRoot: join(dataDirectory, 'releases/slots/source-preparation/profile'),
+      dataSchema: source.dataSchema,
+      readableDataSchemas: source.readableDataSchemas,
+    },
+  }
+}
+
 function relocated(path, source, target) {
   const suffix = relative(toNamespacedPath(source), toNamespacedPath(path))
   if (isAbsolute(suffix) || suffix === '..' || suffix.startsWith(`..${sep}`)) return path

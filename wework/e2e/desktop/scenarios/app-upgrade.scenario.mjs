@@ -24,7 +24,13 @@ import { prepareReleaseProcess } from '../../../electron/src/runtime/release-pre
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
 import { routeUpgradeRequests } from '../modules/upgrade-request-route.mjs'
-import { installPreparedSource } from '../modules/installed-source-preparation.mjs'
+import {
+  installPreparedSource,
+  installedSourcePlugins,
+  installedSourcePreparationRequest,
+  installedSourceSnapshotIdentity,
+  SOURCE_DISABLED_PLUGIN as OPTIONAL_PLUGIN,
+} from '../modules/installed-source-preparation.mjs'
 import {
   restoreInstalledSourceSnapshot,
   saveInstalledSourceSnapshot,
@@ -52,7 +58,6 @@ import {
 const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
 const ANSWER = 'WEWORK_UPGRADE_REAL_RUNTIME_OK'
 const STORAGE_KEY = 'wework:upgrade-regression-marker'
-const OPTIONAL_PLUGIN = '@wegent/dsh-connection-dingtalk'
 
 async function waitForInterruptedRollback(root) {
   const deadline = Date.now() + 10_000
@@ -314,7 +319,7 @@ export async function createDesktopScenario(options) {
       await mkdir(profile, { recursive: true })
       await writeFile(
         join(profile, '.wework-core-plugins.json'),
-        JSON.stringify({ version: 1, order: [], disabled: [OPTIONAL_PLUGIN] })
+        JSON.stringify(installedSourcePlugins())
       )
       // A represents an installed, prepared desktop. Run its own shipped
       // preparation entry before launch; B must still prepare its isolated slot.
@@ -341,7 +346,7 @@ export async function createDesktopScenario(options) {
               cache: pair.from.preparationCache,
               slot: join(root, 'slots/source-preparation'),
               dataDirectory: electronUserDataDirectory,
-              identity: { sha256: pair.from.sha256, disabled: [OPTIONAL_PLUGIN] },
+              identity: installedSourceSnapshotIdentity(pair.from),
             }
           : null
       const restored = snapshot && (await restoreInstalledSourceSnapshot(snapshot))
@@ -351,21 +356,12 @@ export async function createDesktopScenario(options) {
         const request = join(resultDir, 'prepare-source.json')
         await writeFile(
           request,
-          JSON.stringify({
-            storeRoot: root,
-            sourceProfile: profile,
-            release: {
-              schemaVersion: 1,
-              id: 'source-preparation',
-              version: pair.from.version,
-              executable: pair.from.executable,
-              resources,
-              runtimeRoot: sourceRuntimeRoot,
-              profileRoot: join(root, 'slots/source-preparation/profile'),
-              dataSchema: pair.from.dataSchema,
-              readableDataSchemas: pair.from.readableDataSchemas,
-            },
-          })
+          JSON.stringify(
+            installedSourcePreparationRequest(
+              { ...pair.from, resources },
+              electronUserDataDirectory
+            )
+          )
         )
         console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
         const preparation = prepareReleaseProcess(

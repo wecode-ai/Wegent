@@ -606,10 +606,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-upgrade-inputs.outputs.verification_sha }}
+          sparse-checkout-cone-mode: false
           sparse-checkout: |
             .github/scripts
-            packages
-            wework
+            packages/chat-core
+            wework/package.json
+            wework/upgrade-policy.json
+            wework/electron/package.json
+            wework/electron/src
+            wework/e2e
+            wework/scripts
+            wework/dsh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"

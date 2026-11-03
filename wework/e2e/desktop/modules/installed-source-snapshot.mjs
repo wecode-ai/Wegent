@@ -16,17 +16,28 @@ import { relocateLinks, relocatePath } from './installed-source-preparation.mjs'
 // Capture only the shipped CLI's initial output, before any app or task runs.
 // Regular files are copied, never hard-linked across mutable checkpoint profiles.
 async function copyTree(source, target) {
-  await mkdir(target, { recursive: true })
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    const from = join(source, entry.name)
-    const to = join(target, entry.name)
-    if (entry.isSymbolicLink())
-      await symlink(await readlink(from), to, process.platform === 'win32' ? 'junction' : 'dir')
-    else if (entry.isDirectory()) await copyTree(from, to)
-    else {
-      assert.ok(entry.isFile(), 'Source preparation contains a special file')
-      await copyFile(from, to)
+  const files = []
+  async function collect(fromRoot, toRoot) {
+    await mkdir(toRoot, { recursive: true })
+    for (const entry of await readdir(fromRoot, { withFileTypes: true })) {
+      const from = join(fromRoot, entry.name),
+        to = join(toRoot, entry.name)
+      if (entry.isSymbolicLink())
+        await symlink(await readlink(from), to, process.platform === 'win32' ? 'junction' : 'dir')
+      else if (entry.isDirectory()) await collect(from, to)
+      else {
+        assert.ok(entry.isFile(), 'Source preparation contains a special file')
+        files.push([from, to])
+      }
     }
+  }
+  await collect(source, target)
+  for (let offset = 0; offset < files.length; offset += 8) {
+    const results = await Promise.allSettled(
+      files.slice(offset, offset + 8).map(([from, to]) => copyFile(from, to))
+    )
+    const failed = results.find(result => result.status === 'rejected')
+    if (failed) throw failed.reason
   }
 }
 
