@@ -1,5 +1,5 @@
-import { beforeEach, expect, test, vi } from 'vitest'
-import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { DshExecutorTransportError, requestDshExecutor } from '@/api/dsh/executorTransport'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import {
   clearLocalModelConfigs,
@@ -14,9 +14,16 @@ beforeEach(() => {
   resetLocalRuntimeChatStreamsForTests()
 })
 
-test.each(['runtime.codex.catalog.custom.write', 'runtime.codex.app_server.restart'])(
-  'reconciles the catalog on the next read after a retryable interruption of %s',
-  async interruptedMethod => {
+afterEach(() => vi.unstubAllGlobals())
+
+test.each(
+  ['runtime.codex.catalog.custom.write', 'runtime.codex.app_server.restart'].flatMap(
+    interruptedMethod =>
+      ['structured', 'fetch'].map(transport => ({ interruptedMethod, transport }))
+  )
+)(
+  'recovers the catalog after $transport interruption of $interruptedMethod',
+  async ({ interruptedMethod, transport }) => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'recovery',
       displayName: 'Recovery',
@@ -34,11 +41,21 @@ test.each(['runtime.codex.catalog.custom.write', 'runtime.codex.app_server.resta
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === interruptedMethod && !interrupted) {
         interrupted = true
+        if (transport === 'fetch') throw new TypeError('Failed to fetch')
         throw new DshExecutorTransportError('runtime_unavailable', 'write EPIPE', true)
       }
       if (method === 'runtime.codex.app_server.restart') return { restarted: true }
       return { success: true, runtimeWorktrees: null }
     })
+    if (transport === 'fetch') {
+      vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+        const { method } = JSON.parse(String(init.body)) as { method: string }
+        const result = await request(method)
+        return new Response(JSON.stringify({ ok: true, result }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      })
+    }
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({
         running: true,
@@ -46,7 +63,7 @@ test.each(['runtime.codex.catalog.custom.write', 'runtime.codex.app_server.resta
         deviceId: 'local-device',
         runtimeInstanceId: 'runtime-1',
       }),
-      request,
+      request: transport === 'fetch' ? requestDshExecutor : request,
       subscribe: vi.fn(),
     })
 

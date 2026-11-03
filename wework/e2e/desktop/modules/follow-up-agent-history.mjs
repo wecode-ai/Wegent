@@ -180,6 +180,11 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
           'click',
           `[data-testid="runtime-local-task-row-${otherAddress.taskId}"]`
         )
+        await waitForWorkbenchDebugState(
+          control,
+          state => state.workbench?.currentRuntimeTask?.taskId === otherAddress.taskId,
+          'The other task must become active before returning'
+        )
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitForWorkbenchDebugState(
           control,

@@ -61,9 +61,10 @@ export class DshExecutorTransportError extends Error {
     code: string,
     message: string,
     retryable = false,
-    details: Record<string, unknown> = {}
+    details: Record<string, unknown> = {},
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
     this.name = 'DshExecutorTransportError'
     this.code = code
     this.retryable = retryable
@@ -137,6 +138,7 @@ export async function requestDshExecutor<T>(
     request_id: requestId,
     method,
   })
+  const requestBody = JSON.stringify({ id: requestId, method, params })
   let response: Response
   try {
     diagnostic('fetch_started')
@@ -147,7 +149,7 @@ export async function requestDshExecutor<T>(
         'content-type': 'application/json',
         'x-request-id': requestId,
       },
-      body: JSON.stringify({ id: requestId, method, params }),
+      body: requestBody,
     })
   } catch (error) {
     diagnostic('fetch_failed')
@@ -160,7 +162,7 @@ export async function requestDshExecutor<T>(
       elapsed_ms: Date.now() - startedAt,
       error,
     })
-    throw error
+    throw connectionError(error)
   }
   diagnostic('headers_received', { status: response.status })
   console.debug('[Wework] Executor RPC response received', {
@@ -188,7 +190,7 @@ export async function requestDshExecutor<T>(
       status: response.status,
       error_type: error instanceof Error ? error.name : typeof error,
     })
-    throw error
+    throw connectionError(error)
   }
   if (!response.ok || body.ok !== true) {
     const error = transportError(response.status, body as DshExecutorErrorBody)
@@ -204,6 +206,17 @@ export async function requestDshExecutor<T>(
     throw error
   }
   return body.result
+}
+
+function connectionError(error: unknown): unknown {
+  if (!(error instanceof TypeError)) return error
+  return new DshExecutorTransportError(
+    'runtime_unavailable',
+    error.message,
+    true,
+    {},
+    { cause: error }
+  )
 }
 
 export function subscribeDshExecutorEvents(
