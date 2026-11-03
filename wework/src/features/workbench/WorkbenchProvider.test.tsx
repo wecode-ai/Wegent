@@ -17,6 +17,7 @@ import {
   clearPluginMarketplaceCache,
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import { emptyPluginComponents } from '@/features/plugins/slimPluginComponents'
@@ -26,6 +27,7 @@ import {
   qualifyLocalRuntimeWork,
 } from '@/lib/local-runtime-sidebar-identity'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
+import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
@@ -2995,6 +2997,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     clearElectronRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
+    clearLocalCodexPluginsReadStateCache()
     clearPluginMarketplaceCache()
     sessionStorage.clear()
     vi.clearAllMocks()
@@ -3871,6 +3874,138 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('does not restore Codex ownership from a composer refresh after a source-only change', async () => {
+    setElectronRuntime()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    const cacheKey = pluginMarketplaceCacheKey('', '')
+    const identity = 'team-market:shared-tool'
+    const nativeInstalled = deferred<{ marketplaces: unknown[] }>()
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: {
+        name: 'shared-tool',
+        namespace: 'team-market',
+        labels: { id: 'shared-tool@team-market' },
+      },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'team-market',
+          pluginKey: 'shared-tool',
+          marketplace: 'team-market',
+        },
+        displayName: 'Shared Tool',
+        description: 'Available from Codex and the managed store',
+        enabled: true,
+        installState: 'installed',
+        components: emptyPluginComponents(),
+      },
+      status: { state: 'enabled' },
+    }
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [plugin],
+      installedPluginsFetchedAt: 1,
+      localInstalledSources: { codex: [identity], store: [identity] },
+      localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.store.list')
+          return {
+            storePath: '/store',
+            plugins: [
+              {
+                name: 'shared-tool',
+                packageId: 'shared-tool@team-market',
+                marketplace: 'team-market',
+                enabled: true,
+                pluginPath: '/store/shared-tool',
+              },
+            ],
+          }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'app/list') return { data: [], nextCursor: null }
+          if (request.method === 'plugin/installed') return nativeInstalled.promise
+        }
+        return {}
+      }
+    )
+
+    try {
+      renderWorkbench(<RuntimeTaskSkillsProbe />)
+      await userEvent.click(screen.getByText('list local apps'))
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+          'loaded:plugin:shared-tool'
+        )
+      )
+      await waitFor(() =>
+        expect(
+          localExecutorMocks.requestLocalExecutor.mock.calls.some(
+            ([method, params]) =>
+              method === 'codex.app_server_request' &&
+              (params as { method?: string }).method === 'plugin/installed'
+          )
+        ).toBe(true)
+      )
+      const snapshot = getPluginMarketplaceCache(cacheKey)!
+      expect(snapshot.localInstalledSources).toMatchObject({
+        codex: [identity],
+        store: [identity],
+      })
+
+      act(() => {
+        writePluginInventory(cacheKey, 'local-device', {
+          installedPlugins: snapshot.installedPlugins,
+          installedPluginsFetchedAt: snapshot.installedPluginsFetchedAt,
+          localInstalledSources: { ...snapshot.localInstalledSources, codex: [] },
+        })
+      })
+      const sourceOnlySnapshot = getPluginMarketplaceCache(cacheKey)!
+      expect(sourceOnlySnapshot.installedPlugins).toEqual(snapshot.installedPlugins)
+      expect(sourceOnlySnapshot.fetchedAt).toBe(snapshot.fetchedAt)
+      expect(sourceOnlySnapshot.installedPluginsFetchedAt).toBe(snapshot.installedPluginsFetchedAt)
+      expect(sourceOnlySnapshot.mutationRevision).toBe(snapshot.mutationRevision)
+
+      await act(async () => {
+        nativeInstalled.resolve({
+          marketplaces: [
+            {
+              name: 'team-market',
+              path: '/team-market',
+              plugins: [
+                {
+                  name: 'shared-tool',
+                  id: 'shared-tool@team-market',
+                  installed: true,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        })
+        await new Promise(resolve => window.setTimeout(resolve, 0))
+      })
+
+      expect(getPluginMarketplaceCache(cacheKey)?.localInstalledSources).toMatchObject({
+        codex: [],
+        store: [identity],
+      })
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual(
+        sourceOnlySnapshot.installedPlugins
+      )
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   test('does not let an inactive workspace provider replace the composer inventory source', async () => {
     setElectronRuntime()
     const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
@@ -4012,6 +4147,72 @@ describe('WorkbenchProvider runtime tasks', () => {
       'executor.codex_home.config.read'
     )
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
+  test('revalidates account membership after uninstall while device cleanup is pending', async () => {
+    setElectronRuntime()
+    mockComposerDirectoryRoute(() => 'runtime-record-70')
+    let cleanupPending = true
+    const original = localExecutorMocks.requestLocalExecutor.getMockImplementation()!
+    localExecutorMocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list')
+        return {
+          storePath: '/store',
+          plugins: cleanupPending
+            ? [
+                {
+                  name: 'documents',
+                  packageId: 'documents-package',
+                  installedPluginId: 101,
+                  cloudPluginId: 101,
+                  marketplace: 'wegent',
+                  enabled: true,
+                  pluginPath: '/store/documents-package',
+                },
+              ]
+            : [],
+        }
+      return original(method, params)
+    })
+    pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [createCloudComposerPlugin('runtime-record-70')],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    removePluginMarketplaceInstallation(cacheKey, {
+      installedIds: [101],
+      marketplaceItemIds: [101],
+      pluginKeys: ['documents'],
+    })
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
+
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+    )
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
+    expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual([])
+    expect(getComposerApps()).toEqual([])
+
+    // Complete enrichment can refresh the timestamp before device cleanup finishes.
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPluginsFetchedAt).toBeGreaterThan(0)
+    )
+    await userEvent.click(screen.getByText('list local apps'))
+    expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual([])
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
+
+    cleanupPending = false
+    await userEvent.click(screen.getByText('list local apps'))
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
   })
 
   test('routes composer inventory through the current Runtime while retaining stable cache identity', async () => {
@@ -4289,13 +4490,28 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('reports a composer inventory failure and accepts a fresh read after recovery', async () => {
     setElectronRuntime()
-    let storeAvailable = false
+    let inventoryAvailable = false
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (
+          !inventoryAvailable &&
+          [
+            'executor.plugins.store.list',
+            'executor.plugins.personal.list',
+            'executor.codex_home.config.read',
+          ].includes(method)
+        ) {
+          throw new Error('local inventory unavailable')
+        }
         if (method === 'executor.plugins.store.list') {
-          if (!storeAvailable) throw new Error('store unavailable')
           return { storePath: '/store', plugins: [] }
+        }
+        if (method === 'executor.plugins.personal.list') {
+          return { marketplacePath: '/personal', plugins: [] }
+        }
+        if (method === 'executor.codex_home.config.read') {
+          return { enabledPluginKeys: [] }
         }
         if (method === 'codex.app_server_request') {
           if (
@@ -4313,10 +4529,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
-        'failed:Error: store unavailable'
+        'failed:Error: local inventory unavailable'
       )
     )
-    storeAvailable = true
+    inventoryAvailable = true
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
@@ -21385,7 +21601,32 @@ describe('WorkbenchProvider runtime tasks', () => {
       }) as WorkbenchServices['runtimeWorkApi'],
     })
 
-    renderWorkbench(<RuntimeTaskSkillsProbe />, services)
+    const skillSources: unknown[] = []
+    let refreshPromise: Promise<void> | undefined
+    function SkillsSourceProbe() {
+      const workbench = useWorkbench()
+      useEffect(() => {
+        skillSources.push(workbench.projectChat.listLocalSkills)
+      }, [workbench.projectChat.listLocalSkills])
+      return (
+        <button
+          type="button"
+          data-testid="refresh-skills-work-lists"
+          onClick={() => {
+            refreshPromise = workbench.refreshWorkLists()
+          }}
+        >
+          refresh skill work lists
+        </button>
+      )
+    }
+    renderWorkbench(
+      <>
+        <RuntimeTaskSkillsProbe />
+        <SkillsSourceProbe />
+      </>,
+      services
+    )
 
     await userEvent.click(screen.getByText('open runtime skill task'))
     await waitFor(() =>
@@ -21411,6 +21652,20 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
       )
     })
+
+    const skillSource = skillSources.at(-1)
+    const previousRuntimeReads = vi.mocked(services.runtimeWorkApi!.listRuntimeWork!).mock.calls
+      .length
+    await userEvent.click(screen.getByTestId('refresh-skills-work-lists'))
+    await act(async () => {
+      await refreshPromise
+    })
+    await waitFor(() =>
+      expect(services.runtimeWorkApi!.listRuntimeWork).toHaveBeenCalledTimes(
+        previousRuntimeReads + 1
+      )
+    )
+    expect(skillSources.at(-1)).toBe(skillSource)
 
     await userEvent.click(screen.getByText('list local apps'))
 

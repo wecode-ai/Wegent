@@ -4,6 +4,7 @@ import {
   configure,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -66,6 +67,11 @@ import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { navigateTo } from '@/lib/navigation'
+import {
+  closeFeedbackDialog,
+  openFeedbackDialog,
+  useFeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type {
   DeviceInfo,
@@ -2548,6 +2554,29 @@ describe('DesktopWorkbenchLayout', () => {
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: false }
     )
+  })
+
+  test('registers the active task context for the application menu feedback dialog', () => {
+    closeFeedbackDialog()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-feedback',
+          },
+        }}
+      />
+    )
+    const { result } = renderHook(() => useFeedbackDialogRequest())
+
+    act(() => openFeedbackDialog())
+
+    expect(result.current?.hasActiveTask).toBe(true)
+    closeFeedbackDialog()
   })
 
   test('ignores the implementation plan confirmation through the pane session', async () => {
@@ -10403,6 +10432,54 @@ describe('DesktopWorkbenchLayout', () => {
       }
     }
   )
+
+  test('opens a UNC reference without a workspace using its native share root', async () => {
+    const localDevice = createLocalSkillDevice()
+    const filePath = String.raw`\\server\share\report.md`
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '//server/share/report.md',
+      name: 'report.md',
+      content: 'opened standalone UNC reference',
+      truncated: false,
+      size: 31,
+      modifiedAt: null,
+    })
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, standaloneDeviceId: localDevice.device_id }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [localDevice],
+          currentStandaloneDeviceId: localDevice.device_id,
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '//server/share', entries: [] }),
+          readWorkspaceTextFile,
+        }}
+        messages={[
+          {
+            id: 'assistant-standalone-unc-file',
+            role: 'assistant',
+            content: `[report.md](${encodeURI(filePath)})`,
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened standalone UNC reference'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '//server/share/report.md',
+      '//server/share'
+    )
+  })
 
   test.each(['file', 'skill'] as const)(
     'reports home-directory lookup failures when opening a %s reference',

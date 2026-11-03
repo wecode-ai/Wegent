@@ -671,6 +671,13 @@ impl CodexNotificationEventMapper {
             "thread/started" => {
                 self.observe_root_thread(notification.params);
             }
+            "turn/started" if !self.is_subagent_delta(notification.params) => {
+                // Reset in native event order, before any item in the new turn.
+                // A later turn/start response must preserve already observed phases.
+                let root_thread_id = self.root_thread_id.clone();
+                *self = Self::default();
+                self.root_thread_id = root_thread_id;
+            }
             "turn/started" | "turn/completed" | "thread/status/changed" => {}
             "thread/goal/updated" => {
                 let goal = notification

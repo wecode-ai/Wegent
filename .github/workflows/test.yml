@@ -493,6 +493,7 @@ jobs:
           cargo test --all-features --lib local::plugin_import::hash_tests
           cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
           cargo test --all-features --lib agents::codex::tests::stopping_
+          cargo test --all-features --lib codex_app_server_starts_beyond_windows_max_path
           cargo test --all-features --lib closed_notification_stream
           cargo test --all-features --lib stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status
 
@@ -654,6 +655,29 @@ jobs:
         run: |
           pnpm --filter @wegent/process-explorer typecheck
           pnpm --filter @wegent/process-explorer test
+
+      - name: Run Wework DSH Node tests
+        if: matrix.shard == 1
+        working-directory: ./wework
+        run: |
+          mapfile -d '' -t tests < <(find dsh -name '*.test.mjs' -print0)
+          if ((${#tests[@]} == 0)); then
+            echo 'No DSH tests found' >&2
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
+      - name: Verify immutable upgrade artifact consumption
+        if: matrix.shard == 1
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs
+
+      - name: Verify isolated Electron update transport
+        if: matrix.shard == 1
+        run: |
+          sandbox_path="$(pnpm --dir wework/electron exec node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
+          sudo chown root:root "$sandbox_path"
+          sudo chmod 4755 "$sandbox_path"
+          xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
 
       - name: Run Wework tests
         env:

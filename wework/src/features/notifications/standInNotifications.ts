@@ -17,7 +17,11 @@ export interface StandInNotificationState {
 }
 
 export type StandInNotification = Omit<WeworkNotification, 'payload'> & {
-  payload: WeworkNotification['payload'] & { standIn?: StandInNotificationState }
+  payload: WeworkNotification['payload'] & {
+    standIn?: StandInNotificationState
+    standInLookupPending?: boolean
+    standInLookupError?: string
+  }
   runtimeItem?: RuntimeTaskReminderItem
   synthetic?: boolean
 }

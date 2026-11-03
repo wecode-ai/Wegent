@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   openDeveloperCommandMenu: vi.fn(),
   requestOpenTaskSearch: vi.fn(),
+  openFeedbackDialog: vi.fn(),
   dispatchBuiltinShortcutCommand: vi.fn(),
   i18nOn: vi.fn(),
   resolvedLanguage: 'zh-CN',
@@ -32,6 +33,9 @@ vi.mock('@/lib/developerCommandMenu', () => ({
 vi.mock('@/components/layout/workbenchShellEvents', () => ({
   requestOpenTaskSearch: mocks.requestOpenTaskSearch,
 }))
+vi.mock('@/features/feedback/feedbackDialogStore', () => ({
+  openFeedbackDialog: mocks.openFeedbackDialog,
+}))
 vi.mock('@/lib/keybindings', () => ({
   OPEN_TERMINAL_COMMAND: 'openTerminal',
   TOGGLE_SIDEBAR_COMMAND: 'toggleSidebar',
@@ -54,6 +58,16 @@ describe('application menu navigation actions', () => {
   test('opens settings through the workbench router', () => {
     emit('open-settings')
     expect(mocks.navigate).toHaveBeenCalledWith('/settings')
+  })
+
+  test('opens the in-app About page', () => {
+    emit('open-about')
+    expect(mocks.navigate).toHaveBeenCalledWith('/settings/about')
+  })
+
+  test('opens the in-app feedback dialog', () => {
+    emit('open-feedback')
+    expect(mocks.openFeedbackDialog).toHaveBeenCalledOnce()
   })
 
   test('opens the developer command menu', () => {

@@ -10,3 +10,6 @@ mod stream;
 
 #[path = "tests_unphased.rs"]
 mod unphased;
+
+#[path = "tests_positions.rs"]
+mod positions;

@@ -11,6 +11,11 @@
     "load_failed": "会话历史加载失败",
     "retry": "重试"
   },
+  "visualization": {
+    "loading": "正在加载可视化…",
+    "load_failed": "可视化加载失败",
+    "retry": "重试"
+  },
   "table": {
     "expand": "展开表格",
     "close": "收起表格",

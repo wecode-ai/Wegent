@@ -560,6 +560,12 @@ export async function createDesktopScenario({
       await setupAgent()
       await ensureExperimentalFeaturesEnabled(control)
       try {
+        // Unmount global transcript readers while scheduling the snapshot writers explicitly.
+        await control.command('navigate', 'body', { value: '/system-drag' })
+        await control.command('waitFor', '[data-testid="system-drag-panel"]')
+        await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+          visible: false,
+        })
         for (const testCase of cases) {
           await beginCase(testCase)
           const snapshot = await readSnapshot(testCase)
@@ -567,6 +573,10 @@ export async function createDesktopScenario({
           assert.equal(testCase.initialRequests, 1)
         }
         // Finish every controlled writer order before opening the fixture project.
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
         for (const testCase of cases) await verifyRefresh(control, testCase)
         await verifyStaleTerminals(control, cases.at(-1))
       } finally {

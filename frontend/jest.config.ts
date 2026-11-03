@@ -6,6 +6,11 @@ import type { Config } from 'jest'
 import nextJest from 'next/jest'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createRequire } from 'node:module'
+
+const collaborationRequire = createRequire(
+  resolve(__dirname, '../packages/collaboration/package.json')
+)
 
 const extensionsPath = existsSync(resolve(__dirname, 'wecode/extensions'))
   ? '<rootDir>/wecode/extensions/$1'
@@ -29,6 +34,8 @@ const config: Config = {
     '^@wegent/collaboration/tailwind-preset$':
       '<rootDir>/../packages/collaboration/tailwind-preset.js',
     '^@wegent/collaboration/(.*)$': '<rootDir>/../packages/collaboration/src/$1',
+    // Use the real CommonJS entry; JSDOM otherwise selects YAML's browser ESM export.
+    '^yaml$': collaborationRequire.resolve('yaml'),
     '^streamdown$': '<rootDir>/src/__mocks__/streamdown.tsx',
     '^@file-viewer/react$': '<rootDir>/src/__mocks__/file-viewer.tsx',
     '^@file-viewer/preset-engineering$': '<rootDir>/src/__mocks__/file-viewer-preset.ts',

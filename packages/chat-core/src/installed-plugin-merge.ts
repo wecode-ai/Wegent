@@ -40,7 +40,7 @@ function marketplaceKey(item: InstalledPlugin): string {
   return isWegentCloudMarketplace(normalized) ? 'wegent' : normalized
 }
 
-function pluginIdentity(item: InstalledPlugin): string {
+export function pluginIdentity(item: InstalledPlugin): string {
   const plugin = pluginKey(item)
   const marketplace = marketplaceKey(item)
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
@@ -54,7 +54,7 @@ export function storeDirMatchesPluginKey(dirName: string, pluginKeyValue: string
   return haystack.includes(`-${needle}-`) || haystack.endsWith(`-${needle}`)
 }
 
-function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
+export function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
   const linkedId = linkedCloudPluginId(local)
   if (linkedId !== null && typeof cloud.spec.pluginId === 'number') {
     return linkedId === cloud.spec.pluginId

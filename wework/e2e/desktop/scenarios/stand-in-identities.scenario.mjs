@@ -68,7 +68,7 @@ export function createDesktopScenario({
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('waitFor', CHAT)
       const initial = await requestExecutor(
         control,

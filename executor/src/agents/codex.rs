@@ -168,6 +168,7 @@ pub(crate) use home::{
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
+mod inline_visualization;
 mod local_connector_auth;
 mod skill_config;
 pub(crate) use skill_config::reload_skill_configuration;
@@ -3695,6 +3696,14 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
+    // Preserve the extended-length Windows path for binaries in component caches.
+    #[cfg(windows)]
+    let resolved_binary = fs::canonicalize(&resolved_binary)
+        .map_err(|error| {
+            format!("resolve codex app-server executable {resolved_binary:?}: {error}")
+        })?
+        .to_string_lossy()
+        .into_owned();
     let codex_home = launch_config
         .env
         .get(CODEX_HOME_ENV)
@@ -3708,7 +3717,15 @@ fn spawn_codex_app_server(
     }
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .map_err(|error| {
+            format!(
+                "failed to start codex app-server: {error}; binary={resolved_binary:?} \
+                 (file={}), home={:?} (directory={})",
+                Path::new(&resolved_binary).is_file(),
+                codex_home,
+                codex_home.is_dir(),
+            )
+        })
 }
 
 fn codex_app_server_command(
@@ -3767,6 +3784,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
+        inline_visualization::INSTRUCTIONS,
         external_work::SOURCE_CONTENT_INSTRUCTIONS,
         crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]

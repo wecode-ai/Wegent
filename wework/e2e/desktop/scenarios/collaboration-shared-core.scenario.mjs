@@ -738,6 +738,13 @@ export function createDesktopScenario({
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })
+        await control.command(
+          'waitFor',
+          scoped(
+            '[data-testid="issue-reply-composer"] [data-testid="send-message-button"]:enabled'
+          ),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('press', replyComposerSelector, { key: 'Enter' })
         await control.command('waitFor', scoped('[data-testid^="cloud-task-activity-replies-"]'), {
           text: '在动态卡片内回复',
