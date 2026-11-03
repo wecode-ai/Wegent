@@ -411,6 +411,7 @@ function createDebugSnapshot() {
         hasMoreBefore: false,
         loadingMoreBefore: false,
         turnNavigationCount: 0,
+        beforeCursor: null,
         loadedRanges: [{ start: 0, end: 50 }],
       },
       subagentStatuses: [],

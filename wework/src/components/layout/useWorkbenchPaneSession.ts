@@ -2786,6 +2786,7 @@ export function useWorkbenchPaneSession({
           loading: transcriptLoading,
           hasMoreBefore: transcriptHasMoreBefore,
           loadingMoreBefore: transcriptLoadingMoreBefore,
+          beforeCursor: transcriptBeforeCursor,
           turnNavigationCount: turnNavigation.length,
           loadedRanges: loadedTranscriptRanges,
         },

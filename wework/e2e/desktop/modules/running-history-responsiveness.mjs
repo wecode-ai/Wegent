@@ -96,62 +96,90 @@ export async function verifyHistoryReadResponsiveness(
   }
 }
 
-export async function restoreCompleteRunningHistory(control, taskId, timeoutMs) {
-  await waitForRestoredTranscript(control, taskId, timeoutMs)
-  const older = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
-  const deadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
-  for (let page = 0; page < LONG_HISTORY_ITEM_COUNT && Date.now() < deadline; page += 1) {
-    const performanceSnapshot = JSON.parse(
-      await control.command('performanceSnapshot', 'body', {
-        value: JSON.stringify({ collectMemory: false }),
-        timeoutMs: RESPONSIVENESS_TIMEOUT_MS,
-      })
-    )
-    if (performanceSnapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT) {
-      return performanceSnapshot
-    }
-    const before = await waitForTranscriptState(
-      control,
-      snapshot =>
-        snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
-        snapshot.pane.transcript.loading === false &&
-        snapshot.pane.transcript.loadingMoreBefore === false,
-      'The older long-history page did not settle',
-      timeoutMs
-    )
-    assert.equal(
-      before.pane.transcript.hasMoreBefore,
-      true,
-      'Pagination ended before restoring the complete long tool history'
-    )
-    await control.command('scrollIntoView', older)
-    const afterScroll = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (
-      afterScroll.pane.transcript.hasMoreBefore &&
-      !afterScroll.pane.transcript.loadingMoreBefore
-    ) {
-      await control.command('clickWhenEnabled', older)
-    }
-    let loadedItemCount = performanceSnapshot.runtimeAssistantDisplayItemCount
-    await waitForTranscriptState(
-      control,
-      snapshot =>
-        snapshot.pane?.transcript?.loadingMoreBefore === false &&
-        loadedItemCount > performanceSnapshot.runtimeAssistantDisplayItemCount,
-      'Loading older history did not restore additional real tool items',
-      timeoutMs,
-      async () => {
-        const performance = JSON.parse(
-          await control.command('performanceSnapshot', 'body', {
-            value: JSON.stringify({ collectMemory: false }),
-            timeoutMs: RESPONSIVENESS_TIMEOUT_MS,
-          })
-        )
-        loadedItemCount = performance.runtimeAssistantDisplayItemCount
-      }
+async function browseIdleRunningHistory(control, taskId, cursor, scrolledCursors, clickedCursors) {
+  if (!scrolledCursors.has(cursor)) {
+    scrolledCursors.add(cursor)
+    await control.command(
+      'scrollToRatioAsUser',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`,
+      { value: '0' }
     )
   }
-  assert.fail('The long tool history never finished paging')
+  if (clickedCursors.has(cursor)) return
+  const afterScroll = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const current = afterScroll.pane?.transcript
+  if (
+    afterScroll.workbench?.currentRuntimeTask?.taskId !== taskId ||
+    afterScroll.pane?.currentRuntimeTask?.taskId !== taskId ||
+    current?.beforeCursor !== cursor ||
+    current.loading ||
+    current.loadingMoreBefore ||
+    !current.hasMoreBefore
+  )
+    return
+  const older = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+  // A new automatic page may start after the snapshot. The existing atomic
+  // action clicks only a currently present, enabled button and never waits.
+  if ((await control.command('clickIfPresent', older)) === 'clicked') clickedCursors.add(cursor)
+}
+
+export async function restoreCompleteRunningHistory(control, taskId, timeoutMs) {
+  await waitForRestoredTranscript(control, taskId, timeoutMs)
+  const seenCursors = new Set()
+  const scrolledCursors = new Set()
+  const clickedCursors = new Set()
+  let loadedItemCount = 0
+  let lastProgressAt = Date.now()
+  let performanceSnapshot
+  await waitForTranscriptState(
+    control,
+    async snapshot => {
+      assert.equal(snapshot.workbench?.currentRuntimeTask?.taskId, taskId)
+      assert.equal(snapshot.pane?.currentRuntimeTask?.taskId, taskId)
+      const transcript = snapshot.pane.transcript
+      performanceSnapshot = JSON.parse(
+        await control.command('performanceSnapshot', 'body', {
+          value: JSON.stringify({ collectMemory: false }),
+          timeoutMs: RESPONSIVENESS_TIMEOUT_MS,
+        })
+      )
+      const count = performanceSnapshot.runtimeAssistantDisplayItemCount
+      const cursor = transcript.beforeCursor
+      // Collapsed tool groups can keep the boundary visible across consecutive
+      // automatic pages. Progress does not require an observable idle gap.
+      if (count > loadedItemCount || (cursor && !seenCursors.has(cursor))) {
+        lastProgressAt = Date.now()
+      }
+      loadedItemCount = Math.max(loadedItemCount, count)
+      if (cursor) seenCursors.add(cursor)
+      assert.ok(
+        Date.now() - lastProgressAt < timeoutMs,
+        `Loading older history made no progress: ${JSON.stringify({ count, ...transcript })}`
+      )
+      if (transcript.loading || transcript.loadingMoreBefore) return false
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-error"]`
+        ),
+        '0',
+        'Loading older history reported a transcript error'
+      )
+      if (!transcript.hasMoreBefore) {
+        assert.ok(
+          count >= LONG_HISTORY_ITEM_COUNT,
+          'Pagination ended before restoring the complete long tool history'
+        )
+        assert.equal(cursor, null, 'Completed history retained an older page cursor')
+        return true
+      }
+      await browseIdleRunningHistory(control, taskId, cursor, scrolledCursors, clickedCursors)
+      return false
+    },
+    'The long tool history never finished paging',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  return performanceSnapshot
 }
 
 export async function verifyTerminalHistoryRefresh(

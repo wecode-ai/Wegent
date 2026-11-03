@@ -119,6 +119,10 @@ flowchart LR
   they cannot overwrite the current account's newer model selection with an older
   user snapshot. Explicit profile and preference updates own that state. Clear old
   snapshots on backend or account changes and reject late responses from previous scopes.
+  Electron's local authentication user can differ from the connected cloud account.
+  Navigation refresh uses the same workbench identity as runtime services; it must
+  not write the local authentication user into connected-account state and rely on
+  a later effect to correct it.
 
 ## Verification contract
 

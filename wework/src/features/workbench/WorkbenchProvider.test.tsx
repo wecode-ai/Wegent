@@ -7225,6 +7225,90 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('keeps the connected owner and selected model throughout navigation refresh', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const cloudUser: User = {
+      id: 7,
+      user_name: 'cloud-owner',
+      email: 'cloud@example.com',
+      preferences: {
+        wework_new_chat_model_selection: { modelName: 'gpt-5.5', modelType: 'runtime' },
+      },
+    }
+    const services = createWorkbenchServices({
+      modelApi: { listModels: vi.fn().mockResolvedValue({ data: models }) },
+      userApi: {
+        updateCurrentUser: vi
+          .fn()
+          .mockImplementation(async ({ preferences }: { preferences: User['preferences'] }) => ({
+            ...cloudUser,
+            preferences,
+          })),
+      } as unknown as WorkbenchServices['userApi'],
+    })
+    const observedOwnerIds: number[] = []
+    let refreshWorkLists!: ReturnType<typeof useWorkbench>['refreshWorkLists']
+    function OwnerProbe() {
+      const workbench = useWorkbench()
+      useLayoutEffect(() => {
+        refreshWorkLists = workbench.refreshWorkLists
+        if (workbench.state.user) observedOwnerIds.push(workbench.state.user.id)
+      })
+      return <RuntimeModelSelectionProbe />
+    }
+    const connection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      user: cloudUser,
+      isConnected: true,
+      serviceKey: 'connected-owner-7',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    render(
+      <CloudConnectionContext.Provider value={connection}>
+        <WorkbenchProvider user={LOCAL_USER} services={services}>
+          <WorkbenchProbeSessionProvider>
+            <OwnerProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    await userEvent.click(screen.getByText('select mimo'))
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+    )
+    expect(observedOwnerIds).not.toContain(LOCAL_USER.id)
+    observedOwnerIds.length = 0
+    await act(async () => refreshWorkLists())
+    expect(observedOwnerIds.length).toBeGreaterThan(0)
+    expect(observedOwnerIds).not.toContain(LOCAL_USER.id)
+    expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+  })
+
   test('serializes blank new chat model selection saves', async () => {
     const models: UnifiedModel[] = [
       {

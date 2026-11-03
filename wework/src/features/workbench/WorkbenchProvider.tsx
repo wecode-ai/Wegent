@@ -1089,7 +1089,7 @@ export function WorkbenchProvider({
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
-    user,
+    user: workbenchIdentity,
     ownershipKey: JSON.stringify([cloudConnection.apiBaseUrl ?? '', workbenchIdentity.id]),
     state,
     dispatch,

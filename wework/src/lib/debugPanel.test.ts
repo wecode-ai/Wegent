@@ -64,6 +64,7 @@ function createPaneSnapshot(taskId: string): PaneSnapshotInput {
       loading: false,
       hasMoreBefore: false,
       loadingMoreBefore: false,
+      beforeCursor: null,
       turnNavigationCount: 0,
       loadedRanges: [],
     },
@@ -74,6 +75,15 @@ function createPaneSnapshot(taskId: string): PaneSnapshotInput {
 }
 
 describe('runtime pane debug snapshot', () => {
+  it('retains the opaque older-page cursor for pagination progress diagnostics', () => {
+    const snapshot = createPaneSnapshot('loaded-task')
+    snapshot.transcript.beforeCursor = 'opaque-older-page'
+
+    updateRuntimePaneDebugSnapshot(snapshot)
+
+    expect(getWorkbenchDebugSnapshot().pane?.transcript.beforeCursor).toBe('opaque-older-page')
+  })
+
   it.each(['threadId', 'thread_id'])('resolves the pane identity from runtimeHandle.%s', key => {
     const snapshot = createPaneSnapshot('loaded-task')
     snapshot.currentRuntimeTask!.runtimeHandle = { [key]: 'loaded-thread' }
