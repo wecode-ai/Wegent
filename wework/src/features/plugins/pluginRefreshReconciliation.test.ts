@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginDeviceSyncResponse } from '@/types/api'
 import { describe, expect, test, vi } from 'vitest'
 import {

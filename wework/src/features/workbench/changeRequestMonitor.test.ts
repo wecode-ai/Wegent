@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { linkedChangeRequestTarget } from '@/api/changeRequests'
 import type { DeviceCommandApi } from '@/api/environment'
 import type { DeviceCommandResponse } from '@/types/api'

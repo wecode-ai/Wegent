@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { beforeEach, describe, expect, test } from 'vitest'
 import {

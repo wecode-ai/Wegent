@@ -5,13 +5,16 @@ import {
   assistantMessage,
   codexRequestMetadata,
   createSse,
+  customToolCall,
   functionCall,
   isReplyPredictionRequest,
   readRequestBody,
   requestContainsToolOutput,
+  requestAdvertisesProgrammaticExec,
   responseCompleted,
   responseCreated,
   selectShellToolCommand,
+  selectProgrammaticExec,
 } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -116,13 +119,25 @@ export function createDesktopScenario(options) {
           ),
         ]
       } else {
-        let tool
         try {
-          tool = selectShellToolCommand(
-            body,
-            `touch '${file.replaceAll("'", "'\\''")}'`,
-            workspacePath
-          )
+          const command = `touch '${file.replaceAll("'", "'\\''")}'`
+          const approval = {
+            sandbox_permissions: 'require_escalated',
+            justification: '确认后创建隔离测试工作区中的验证文件。',
+          }
+          if (requestAdvertisesProgrammaticExec(body)) {
+            const tool = selectProgrammaticExec(
+              body,
+              `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: workspacePath, yield_time_ms: 1000, ...approval })}))`
+            )
+            const event = customToolCall('stand-in-file-write', tool.name, tool.input)
+            event.item.namespace = 'functions'
+            events = [event]
+          } else {
+            const tool = selectShellToolCommand(body, command, workspacePath)
+            Object.assign(tool.arguments, approval)
+            events = functionCall('stand-in-file-write', tool.name, tool.arguments)
+          }
         } catch (error) {
           const metadata = codexRequestMetadata(body)
           failedShellRequest = {
@@ -141,9 +156,6 @@ export function createDesktopScenario(options) {
           }
           throw error
         }
-        tool.arguments.sandbox_permissions = 'require_escalated'
-        tool.arguments.justification = '确认后创建隔离测试工作区中的验证文件。'
-        events = functionCall('stand-in-file-write', tool.name, tool.arguments)
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))

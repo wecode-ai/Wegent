@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 import { accountCommandResult } from '../e2e/desktop/modules/account-auth-command.mjs'
 import {

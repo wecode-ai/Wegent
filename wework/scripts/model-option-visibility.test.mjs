@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { ensureModelOptionVisible } from '../e2e/desktop/modules/shared.mjs'
 

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'

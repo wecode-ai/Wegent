@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import type {
   PluginAutoUpdateBatchResponse,

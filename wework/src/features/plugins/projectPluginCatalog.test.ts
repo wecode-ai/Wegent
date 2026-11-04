@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import { mergeProjectPluginCatalogs } from '@wegent/collaboration'
 import type { InstalledPlugin } from '@/types/api'

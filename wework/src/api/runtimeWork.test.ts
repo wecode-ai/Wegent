@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, test, vi } from 'vitest'
