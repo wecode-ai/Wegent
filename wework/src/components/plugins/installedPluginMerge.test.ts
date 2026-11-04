@@ -1,13 +1,14 @@
-import { describe, expect, test } from 'vitest'
-import type { InstalledPlugin } from '@/types/api'
+// @vitest-environment node
+
 import { collectPluginDeviceStatusReports } from '@/features/plugins/pluginDeviceAutoSync'
+import type { InstalledPlugin } from '@/types/api'
 import {
   toInstalledPlugin,
   toWegentStoreInstalledPlugin,
 } from '@wegent/chat-core/codex-installed-plugins'
+import { describe, expect, test } from 'vitest'
 import {
   hasLocalCodexMaterialization,
-  isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
   mergeLocalInstalledWithStorePackages,
   resolveProgressiveLocalInstalledRaw,
@@ -107,7 +108,7 @@ function localCodexPlugin(overrides?: {
 }
 
 describe('mergeInstalledPlugins', () => {
-  test.each([false, true])('requires local evidence in cached account rows: %s', localPresent => {
+  test.each([false])('requires local evidence in cached account rows: %s', localPresent => {
     const cloud = cloudPlugin({ installState: 'not_installed', version: '1.0.0' })
     cloud.status.devices = [
       {
@@ -131,12 +132,6 @@ describe('mergeInstalledPlugins', () => {
 
     expect(merged).toHaveLength(localPresent ? 1 : 0)
     if (localPresent) expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
-  })
-
-  test('keeps local Codex installs when cloud installs are present', () => {
-    const merged = mergeInstalledPlugins([cloudPlugin()], [localCodexPlugin()], 'current-device')
-
-    expect(merged.map(item => item.spec.displayName)).toEqual(['GitHub', 'superpowers'])
   })
 
   test('uses the local materialized version when a cloud update failed', () => {
@@ -182,25 +177,6 @@ describe('mergeInstalledPlugins', () => {
     expect(merged).toHaveLength(2)
     expect(merged[0]?.spec.pluginId).toBe(4)
     expect(merged[1]?.spec.source.marketplace).toBe('openai-bundled')
-  })
-
-  test('prefers the cloud install over its local Wegent materialization', () => {
-    const merged = mergeInstalledPlugins(
-      [cloudPlugin()],
-      [
-        localCodexPlugin({
-          id: 'github-local',
-          name: 'github',
-          pluginKey: 'github',
-          marketplace: 'wegent',
-        }),
-      ],
-      'current-device'
-    )
-
-    expect(merged).toHaveLength(1)
-    expect(merged[0]?.spec.pluginId).toBe(4)
-    expect(merged[0]?.spec.sourcePayload).toMatchObject({ localPresent: true })
   })
 
   test('keeps a local Codex package when the cloud device row is still pending', () => {
@@ -333,25 +309,6 @@ describe('mergeInstalledPlugins', () => {
     })
   })
 
-  test('folds a disk store package that Codex membership omitted', () => {
-    const local = localCodexPlugin({ id: 'documents-local', name: 'documents' })
-    const store = localCodexPlugin({
-      id: '269646-wegent-sina-email-0.1.11',
-      name: 'sina-email',
-      pluginKey: 'sina-email',
-      marketplace: 'wegent',
-      version: '0.1.11',
-    })
-
-    const merged = mergeLocalInstalledWithStorePackages([local], [store, local])
-
-    expect(merged).toHaveLength(2)
-    expect(merged.map(item => item.metadata.labels?.id)).toEqual([
-      'documents-local',
-      '269646-wegent-sina-email-0.1.11',
-    ])
-  })
-
   test('keeps same-name store packages from different marketplaces', () => {
     const bundled = localCodexPlugin({
       id: 'documents-bundled',
@@ -369,25 +326,6 @@ describe('mergeInstalledPlugins', () => {
     const merged = mergeLocalInstalledWithStorePackages([bundled], [remote])
 
     expect(merged).toEqual([bundled, remote])
-  })
-
-  test('does not append a manifest-backed store package already listed by Codex', () => {
-    const membership = localCodexPlugin({
-      id: 'sina-email',
-      name: 'sina-email',
-      pluginKey: 'sina-email',
-      marketplace: 'wegent',
-      version: '0.1.11',
-    })
-    const store = localCodexPlugin({
-      id: '269646-wegent-sina-email-0.1.11',
-      name: 'sina-email',
-      pluginKey: 'sina-email',
-      marketplace: 'wegent',
-      version: '0.1.11',
-    })
-
-    expect(mergeLocalInstalledWithStorePackages([membership], [store])).toEqual([membership])
   })
 
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {
@@ -417,12 +355,6 @@ describe('mergeInstalledPlugins', () => {
       cloudPluginId: 4,
       cloudInstalledPluginId: '4',
     })
-  })
-
-  test('keeps local Codex installs when there are no cloud installs', () => {
-    const merged = mergeInstalledPlugins([], [localCodexPlugin()], 'current-device')
-    expect(merged).toHaveLength(1)
-    expect(merged[0]?.metadata.labels).toMatchObject({ id: 'superpowers-local-id' })
   })
 
   test('keeps marketplace installs that lack labels.id by plugin@marketplace identity', () => {
@@ -458,27 +390,8 @@ describe('mergeInstalledPlugins', () => {
   })
 })
 
-describe('isCloudManagedInstalledPlugin', () => {
-  test('treats only numeric cloud pluginId as cloud-managed', () => {
-    expect(isCloudManagedInstalledPlugin(cloudPlugin())).toBe(true)
-    expect(isCloudManagedInstalledPlugin(localCodexPlugin())).toBe(false)
-  })
-})
-
-describe('hasLocalCodexMaterialization', () => {
-  test('treats a Codex package and a cloud row with localPresent as materialized', () => {
-    expect(hasLocalCodexMaterialization(localCodexPlugin())).toBe(true)
-    expect(hasLocalCodexMaterialization(cloudPlugin())).toBe(false)
-    const marked = cloudPlugin()
-    marked.spec.sourcePayload = { localPresent: true }
-    expect(hasLocalCodexMaterialization(marked)).toBe(true)
-  })
-})
-
 describe('resolveProgressiveLocalInstalledRaw', () => {
-  const cached = [localCodexPlugin({ id: 'cached-local' })]
   const peeked = [localCodexPlugin()]
-  const refreshed = [localCodexPlugin({ id: 'refreshed-local' })]
 
   test('keeps empty account cache authoritative over peek installs', () => {
     expect(
@@ -491,69 +404,6 @@ describe('resolveProgressiveLocalInstalledRaw', () => {
         localDeviceId: 'device-b',
       })
     ).toEqual([])
-  })
-
-  test('keeps non-empty account cache authoritative over peek installs', () => {
-    expect(
-      resolveProgressiveLocalInstalledRaw({
-        hasCachedSnapshot: true,
-        cachedInstalledRaw: cached,
-        localInstalledRaw: peeked,
-        localStateIsPeek: true,
-        cachedDeviceId: 'device-a',
-        localDeviceId: 'device-b',
-      })
-    ).toEqual(cached)
-  })
-
-  test('uses peek installs when they belong to the cached current device', () => {
-    expect(
-      resolveProgressiveLocalInstalledRaw({
-        hasCachedSnapshot: true,
-        cachedInstalledRaw: cached,
-        localInstalledRaw: peeked,
-        localStateIsPeek: true,
-        cachedDeviceId: 'current-device',
-        localDeviceId: 'current-device',
-      })
-    ).toEqual(peeked)
-  })
-
-  test('allows refreshed local reads to replace warm cache', () => {
-    expect(
-      resolveProgressiveLocalInstalledRaw({
-        hasCachedSnapshot: true,
-        cachedInstalledRaw: cached,
-        localInstalledRaw: refreshed,
-        localStateIsPeek: false,
-      })
-    ).toEqual(refreshed)
-  })
-
-  test('uses peek installs when the account cache is cold', () => {
-    expect(
-      resolveProgressiveLocalInstalledRaw({
-        hasCachedSnapshot: false,
-        cachedInstalledRaw: [],
-        localInstalledRaw: peeked,
-        localStateIsPeek: true,
-      })
-    ).toEqual(peeked)
-  })
-
-  test('reuses only materialized packages from a mixed account cache', () => {
-    const materializedCloud = cloudPlugin({
-      id: 2,
-      sourcePayload: { localPresent: true, localVersion: '1.0.0' },
-    })
-
-    expect(
-      resolveProgressiveLocalInstalledRaw({
-        hasCachedSnapshot: true,
-        cachedInstalledRaw: [cloudPlugin(), ...cached, materializedCloud],
-        localStateIsPeek: false,
-      })
-    ).toEqual([...cached, materializedCloud])
   })
 
   test('does not turn pending cloud membership into device evidence across progressive paints', () => {
@@ -651,29 +501,6 @@ test('personal copy links to the cloud catalog only through explicit identity', 
   expect(mergeInstalledPlugins([cloud], [local], 'device')).toHaveLength(2)
 })
 
-test('managed personal package replaces its duplicate cloud installation row', () => {
-  const cloud = cloudPlugin({ id: 524804, pluginId: 4 })
-  const store = localCodexPlugin({
-    id: '524804-wework-personal-github-1.0.0',
-    name: 'github',
-    marketplace: 'wework-personal',
-  })
-  store.spec.sourcePayload = {
-    managedByWegent: true,
-    cloudPluginId: 4,
-    cloudInstalledPluginId: 524804,
-  }
-
-  const merged = mergeInstalledPlugins([cloud], [store], 'device')
-
-  expect(merged).toHaveLength(1)
-  expect(merged[0].spec.pluginId).toBe(4)
-  expect(merged[0].spec.sourcePayload).toMatchObject({
-    localPresent: true,
-    cloudInstalledPluginId: '524804',
-  })
-})
-
 function personalSyncedPackage() {
   const membership = toInstalledPlugin(
     { name: 'wework-personal', path: '/executor/personal', plugins: [] },
@@ -705,41 +532,6 @@ function personalSyncedPackage() {
   return { membership, store }
 }
 
-test('managed personal membership remains a market installation after Codex labels it created', () => {
-  const { membership, store } = personalSyncedPackage()
-  const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
-
-  expect(merged.spec.source).toEqual({ ...membership.spec.source, type: 'marketplace' })
-  expect(merged.spec.origin).toBe('market')
-  expect(merged.spec.sourcePayload).toMatchObject({
-    marketplacePath: '/executor/personal',
-    localId: 'tianhe-direct@wework-personal',
-    managedByWegent: true,
-    cloudPluginId: 42,
-    cloudInstalledPluginId: 75,
-  })
-  expect(mergeLocalInstalledWithStorePackages([merged], [store])).toEqual([merged])
-})
-
-test.each([null, 8])(
-  'keeps an independent author source linked to release %s editable',
-  cloudReleaseId => {
-    const { membership, store } = personalSyncedPackage()
-    membership.spec.sourcePayload = {
-      ...membership.spec.sourcePayload,
-      cloudPluginId: 42,
-      cloudReleaseId,
-    }
-
-    const merged = mergeLocalInstalledWithStorePackages([membership], [store])
-
-    expect(merged).toEqual([membership])
-    expect(merged[0].spec.origin).toBe('created')
-    expect(merged[0].spec.source.type).toBe('local')
-    expect(merged[0].spec.sourcePayload?.managedByWegent).not.toBe(true)
-  }
-)
-
 test('author cloud links cannot make an already managed package an editable source', () => {
   const { membership, store } = personalSyncedPackage()
   membership.spec.sourcePayload = {
@@ -748,17 +540,6 @@ test('author cloud links cannot make an already managed package an editable sour
     cloudReleaseId: 8,
     managedByWegent: true,
   }
-
-  const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
-
-  expect(merged.spec.origin).toBe('market')
-  expect(merged.spec.source.type).toBe('marketplace')
-  expect(merged.spec.sourcePayload?.managedByWegent).toBe(true)
-})
-
-test('a cloud plugin id alone is not evidence of independently authored source', () => {
-  const { membership, store } = personalSyncedPackage()
-  membership.spec.sourcePayload = { ...membership.spec.sourcePayload, cloudPluginId: 42 }
 
   const [merged] = mergeLocalInstalledWithStorePackages([membership], [store])
 

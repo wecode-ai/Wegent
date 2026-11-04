@@ -603,6 +603,7 @@ class TaskRequestBuilder:
 
         execution_request = ExecutionRequest(
             task_id=task.id,
+            task_title=task.json.get("spec", {}).get("title"),
             subtask_id=subtask.id,
             team_id=team.id,
             team_name=team.name,

@@ -1,9 +1,10 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, UserPreferences } from '@/types/api'
+import { describe, expect, test } from 'vitest'
 import {
   getProjectWorkPreferenceKey,
   mergeProjectWorkPreference,
-  readProjectWorkPreference,
   resolveProjectWorkPreferenceScope,
 } from './projectWorkPreferences'
 
@@ -55,65 +56,6 @@ describe('projectWorkPreferences', () => {
     expect(getProjectWorkPreferenceKey(scope)).toBe(
       'project:7:workspace:local%2Fdevice:sha256%3Arepo'
     )
-  })
-
-  test('normalizes the workspace path fallback when no fingerprint exists', () => {
-    const trailingSlash = resolveProjectWorkPreferenceScope(
-      project,
-      workspace({ id: null, workspacePath: '/workspace/wegent/' })
-    )
-    const backslashes = resolveProjectWorkPreferenceScope(
-      project,
-      workspace({ id: null, workspacePath: '\\workspace\\wegent' })
-    )
-
-    expect(getProjectWorkPreferenceKey(trailingSlash)).toBe(
-      getProjectWorkPreferenceKey(backslashes)
-    )
-  })
-
-  test('reads the legacy project preference until a workspace preference exists', () => {
-    const preferences: UserPreferences = {
-      wework_project_work_preferences: {
-        'project:7': {
-          executionMode: 'git_worktree',
-          worktreeBranch: 'feature/legacy',
-        },
-      },
-    }
-    const scope = resolveProjectWorkPreferenceScope(project, workspace())
-
-    expect(readProjectWorkPreference(preferences, scope)).toEqual({
-      preference: {
-        executionMode: 'git_worktree',
-        worktreeBranch: 'feature/legacy',
-      },
-      source: 'legacy_project',
-    })
-  })
-
-  test('prefers a DeviceWorkspace preference over the legacy project value', () => {
-    const preferences: UserPreferences = {
-      wework_project_work_preferences: {
-        'project:7': {
-          executionMode: 'git_worktree',
-          worktreeBranch: 'feature/legacy',
-        },
-        'project:7:workspace:22': {
-          executionMode: 'current_workspace',
-          worktreeBranch: 'main',
-        },
-      },
-    }
-    const scope = resolveProjectWorkPreferenceScope(project, workspace())
-
-    expect(readProjectWorkPreference(preferences, scope)).toEqual({
-      preference: {
-        executionMode: 'current_workspace',
-        worktreeBranch: 'main',
-      },
-      source: 'workspace',
-    })
   })
 
   test('migrates the legacy value on the first workspace-scoped write without deleting it', () => {

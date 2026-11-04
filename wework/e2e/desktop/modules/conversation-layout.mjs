@@ -1,6 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
+import {
+  verifyComposerFadeAfterSubmit,
+  verifyComposerFadeBeforeSubmit,
+} from './composer-scroll-fade.mjs'
+import { verifyComposerMarkdownDraftAcknowledgement } from './composer-markdown-draft.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
@@ -70,16 +75,17 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(
-    control,
-    composerSelector,
-    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
-  )
+  const followUpPrompt = `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  // Prime scrolling while preserving the existing follow-up submission path.
+  await verifyComposerFadeBeforeSubmit(control, composerSelector, followUpPrompt)
+  await sendPrompt(control, composerSelector, followUpPrompt)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyComposerFadeAfterSubmit(control, composerSelector)
+  await verifyComposerMarkdownDraftAcknowledgement(control, composerSelector)
   await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
   await verifyConversationPanelLayout(control)
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
@@ -718,20 +724,41 @@ async function waitForElementInsideScroller(
   elementSelector,
   scrollerSelector,
   description,
-  timeoutMs = 3_000
+  timeoutMs = 3_000,
+  { occluderSelector, clipToViewport = false } = {}
 ) {
   const startedAt = Date.now()
   let element
   let scroller
+  let occluder
   while (Date.now() - startedAt < timeoutMs) {
     scroller = await getSingleElementMetrics(control, scrollerSelector, description)
     element = (await getElementMetrics(control, elementSelector)).at(-1)
-    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
-      return { element, scroller }
+    occluder = occluderSelector
+      ? (await getElementMetrics(control, occluderSelector)).at(-1)
+      : undefined
+    const bottom = Math.min(
+      scroller.bottom,
+      occluder?.height > 0 ? occluder.top : scroller.bottom,
+      clipToViewport ? scroller.viewportHeight : Infinity
+    )
+    if (
+      element &&
+      (!occluderSelector || occluder?.height > 0) &&
+      element.height > 0 &&
+      element.top >= Math.max(scroller.top, clipToViewport ? 0 : -Infinity) - 2 &&
+      element.bottom <= bottom + 2 &&
+      (!clipToViewport ||
+        (element.left >= Math.max(scroller.left, 0) - 2 &&
+          element.right <= Math.min(scroller.right, scroller.viewportWidth) + 2))
+    ) {
+      return { element, scroller, ...(occluder ? { occluder } : {}) }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
+  throw new Error(
+    `${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller, occluder })}`
+  )
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {

@@ -150,6 +150,7 @@ export interface LocalCodexLocalConfig {
   configPath: string
   remoteAppsEnabled: boolean
   enabledPluginKeys?: string[]
+  disabledPluginKeys?: string[]
 }
 
 export interface LocalCodexLocalConfigPatch {
@@ -236,7 +237,9 @@ export interface PluginIdentityReference {
 }
 
 export function codexMarketplaceManifestSource(source: string): string {
-  return `${normalizeMarketplaceSource(source).replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
+  const normalized = source.trim().replace(/\\/g, '/')
+  if (/\.json$/i.test(normalized)) return normalized
+  return `${normalized.replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
 }
 
 export interface LocalCodexPluginApi {
@@ -1683,9 +1686,11 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
     requestLocalExecutor<LocalCodexLocalConfig>('executor.codex_home.config.read').then(config => {
       if (
         !config ||
-        (config.enabledPluginKeys !== undefined &&
-          (!Array.isArray(config.enabledPluginKeys) ||
-            config.enabledPluginKeys.some(key => typeof key !== 'string')))
+        [config.enabledPluginKeys, config.disabledPluginKeys].some(
+          keys =>
+            keys !== undefined &&
+            (!Array.isArray(keys) || keys.some(key => typeof key !== 'string'))
+        )
       )
         throw new Error('Invalid local plugin configuration')
       return config
@@ -1694,6 +1699,8 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
   const personal = personalResult.status === 'fulfilled' ? personalResult.value : null
   const config = configResult.status === 'fulfilled' ? configResult.value : null
   const enabledKeys = config && new Set(config.enabledPluginKeys ?? [])
+  const installedKeys =
+    config && new Set([...(config.enabledPluginKeys ?? []), ...(config.disabledPluginKeys ?? [])])
   const marketplacePath = personal?.marketplacePath || WEWORK_PERSONAL_MARKETPLACE_ID
   let linksFailed = false
   const cloudLinks = personal?.marketplacePath
@@ -1720,14 +1727,14 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
     linksFailed ||
     [personalResult, storeResult, configResult].some(result => result.status === 'rejected')
   let personalComplete =
-    Boolean(personal && config) || personal?.plugins.length === 0 || enabledKeys?.size === 0
+    Boolean(personal && config) || personal?.plugins.length === 0 || installedKeys?.size === 0
   try {
     if (personal && config)
       personalInstalled = personal.plugins
         .filter(
           plugin =>
-            enabledKeys!.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
-            enabledKeys!.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`)
+            installedKeys!.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
+            installedKeys!.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`)
         )
         .map(plugin =>
           toInstalledPlugin(
@@ -1742,7 +1749,9 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
               id: `${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
               source: { source: 'local', path: plugin.pluginPath },
               installed: true,
-              enabled: true,
+              enabled:
+                enabledKeys!.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
+                enabledKeys!.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`),
               interface: {
                 displayName: plugin.displayName ?? plugin.name,
                 shortDescription: plugin.description ?? '',
@@ -1757,9 +1766,11 @@ export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPlugin
         plugin =>
           (!personal ||
             personal.plugins.some(item => item.name === plugin.spec.source.pluginKey)) &&
-          (!enabledKeys ||
-            enabledKeys.has(`${plugin.spec.source.pluginKey}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
-            enabledKeys.has(`${plugin.spec.source.pluginKey}@${CODEX_PERSONAL_MARKETPLACE_ID}`))
+          (!installedKeys ||
+            installedKeys.has(
+              `${plugin.spec.source.pluginKey}@${WEWORK_PERSONAL_MARKETPLACE_ID}`
+            ) ||
+            installedKeys.has(`${plugin.spec.source.pluginKey}@${CODEX_PERSONAL_MARKETPLACE_ID}`))
       )
   } catch (error) {
     partial = true
@@ -1843,7 +1854,7 @@ async function readPluginDetail(
 ): Promise<CodexPluginDetail> {
   const localMarketplace = isLocalMarketplacePath(marketplace.path)
   const response = await codexAppServerRequest<{ plugin: CodexPluginDetail }>('plugin/read', {
-    marketplacePath: localMarketplace ? marketplace.path : null,
+    marketplacePath: localMarketplace ? codexMarketplaceManifestSource(marketplace.path) : null,
     remoteMarketplaceName: localMarketplace ? null : marketplace.id,
     pluginName,
   })

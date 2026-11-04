@@ -62,6 +62,7 @@ export function AssistantMessage({
   runtimeTurn,
   conversationKey,
   isActiveTurn = false,
+  isHistoricalTurn = false,
   forceExpanded = false,
   devices,
   onRetryFailedMessage,
@@ -88,6 +89,7 @@ export function AssistantMessage({
   runtimeTurn?: RuntimeConversationTurn;
   conversationKey?: string | number | null;
   isActiveTurn?: boolean;
+  isHistoricalTurn?: boolean;
   forceExpanded?: boolean;
   devices: Array<{ device_id: string; status: string }>;
   onRetryFailedMessage?: (message: WorkbenchMessage) => void;
@@ -151,13 +153,17 @@ export function AssistantMessage({
   const hasProcessingActivity =
     hasBlocks || message.blocks?.some((block) => block.type === "thinking");
   const hasVisibleContent = Boolean(visibleContent.trim());
-  const isStreaming = !isCancelled && message.status === "streaming";
+  const isStreaming =
+    !isHistoricalTurn && !isCancelled && message.status === "streaming";
   const activeThinkingContent = isStreaming
     ? getRuntimeMessageActiveThinking(message)
     : "";
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks);
   const isAssistantSettled =
-    isCancelled || message.status === "done" || message.status === "failed";
+    isHistoricalTurn ||
+    isCancelled ||
+    message.status === "done" ||
+    message.status === "failed";
   const isAssistantRunning =
     !isAssistantSettled && (isStreaming || hasRunningBlocks);
   const canShowFinalArtifacts = !isAssistantRunning;

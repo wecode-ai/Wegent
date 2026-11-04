@@ -393,7 +393,13 @@ export function useConversationScrollController({
       !changed &&
       !loading &&
       !previous.loading &&
-      ((previous.user !== null && user !== previous.user) ||
+      // A paged Goal history can contain only assistant replies. Distinguish a
+      // new request after its tail from an older user prompt prepended by paging.
+      ((user !== null &&
+        user !== previous.user &&
+        (previous.user !== null ||
+          (previousTailIndex >= 0 &&
+            messages.findIndex(message => message.id === user) > previousTailIndex))) ||
         (previous.count === 0 && messages.at(-1)?.role === 'user') ||
         newGuidance)
     // Opening/hydrating history establishes a position; only new content in an

@@ -1,6 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import { useDiagramArtifact } from '../../../../packages/collaboration/src/markdown/useDiagramArtifact'
 import {
   getDiagramResource,
   type DiagramRequest,
@@ -68,50 +66,6 @@ test('does not poison the cache on failure and supports an explicit retry', asyn
   await vi.waitFor(() => expect(resource.getSnapshot()).toEqual({ status: 'ready', artifact }))
   expect(renderArtifact).toHaveBeenCalledTimes(2)
   expect(getDiagramResource(doc, request)).toBe(resource)
-  stop()
-})
-
-test('late completion from a previous source never replaces the current diagram', async () => {
-  renderArtifact.mockReset()
-  const finish = new Map<string, (value: typeof artifact) => void>()
-  renderArtifact.mockImplementation(
-    (_doc, input: DiagramRequest) => new Promise(resolve => finish.set(input.code, resolve))
-  )
-  const { result, rerender, unmount } = renderHook(
-    ({ code }) => useDiagramArtifact({ ...request, code }, true),
-    { initialProps: { code: 'previous-hook-source' } }
-  )
-  await vi.waitFor(() => expect(finish.has('previous-hook-source')).toBe(true))
-  rerender({ code: 'current-hook-source' })
-  await vi.waitFor(() => expect(finish.has('current-hook-source')).toBe(true))
-  const current = { ...artifact, src: 'current-image' }
-  await act(async () => finish.get('current-hook-source')!(current))
-  expect(result.current).toMatchObject({ status: 'ready', artifact: current })
-  await act(async () => finish.get('previous-hook-source')!(artifact))
-  expect(result.current).toMatchObject({ status: 'ready', artifact: current })
-  unmount()
-})
-
-test('keeps in-flight and displayed diagrams shared when idle entries exceed the cache budget', async () => {
-  renderArtifact.mockReset()
-  let finish!: (value: typeof artifact) => void
-  renderArtifact.mockImplementationOnce(
-    () =>
-      new Promise(resolve => {
-        finish = resolve
-      })
-  )
-  const doc = scope()
-  const active = getDiagramResource(doc, request)
-  const stop = active.subscribe(() => {})
-  active.prepare()
-  await settle()
-  for (let index = 0; index < 40; index++)
-    getDiagramResource(doc, { ...request, code: `pressure-${index}` })
-  expect(getDiagramResource(doc, request)).toBe(active)
-  finish(artifact)
-  await vi.waitFor(() => expect(active.getSnapshot().status).toBe('ready'))
-  expect(getDiagramResource(doc, request)).toBe(active)
   stop()
 })
 

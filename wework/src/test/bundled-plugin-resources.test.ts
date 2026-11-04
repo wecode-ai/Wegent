@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
@@ -55,7 +57,13 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledPluginExampleManifests) {
       expect(existsSync(resolve(resourcesDirectory, manifest))).toBe(true)
     }
-    expect(packageScript).toContain("join(electronRoot, 'resources', 'bundled-plugins')")
+    const componentLayout = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/bundled-component-layout.cjs'),
+      'utf8'
+    )
+    expect(componentLayout).toContain("'bundled-plugins'")
+    expect(packageScript).toContain('...bundledComponentLayout.directories.map')
+    expect(packageScript).toContain("join(electronRoot, 'resources', `${name}.tar.gz`)")
   })
 
   test('packages a runnable MCP server in the plugin example', () => {
@@ -334,8 +342,12 @@ describe('bundled plugin resources', () => {
       expect(workflow).toContain('generate-desktop-update-manifests.mjs')
       expect(workflow).toContain('plan-desktop-release.mjs')
       const concurrencyGroup = workflow.match(/^ {2}group: (.+)$/m)?.[1].trim()
-      expect(concurrencyGroup).toContain("inputs.verification_run_id != '' && format(")
-      expect(concurrencyGroup).toContain('github.ref, inputs.verification_run_id)')
+      expect(concurrencyGroup).toContain(
+        "inputs.verification_run_id != '' || (inputs.verification_checkpoint == 'app-update-refresh' && inputs.verification_source_run_id != '' && !inputs.publish_release)"
+      )
+      expect(concurrencyGroup).toContain(
+        'github.ref, inputs.verification_run_id || inputs.verification_source_run_id)'
+      )
       expect(concurrencyGroup).toMatch(/\|\| github\.workflow \}\}$/)
       expect(workflow).not.toContain('group: ${{ github.workflow }}-${{ github.ref }}')
       expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
@@ -430,7 +442,9 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'scripts/verify-release-upgrades.mjs'),
       'utf8'
     )
-    expect(upgradeVerifier).toContain('`${UPGRADE_CHECKPOINT_GROUP},app-update-full`')
+    expect(upgradeVerifier).toContain(
+      'diagnosticCheckpoint || upgradeVerificationCheckpoint(platform)'
+    )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

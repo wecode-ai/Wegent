@@ -16,22 +16,34 @@ export interface ReleasePreparationRequest {
   sourceProfile: string
 }
 
+export interface ReleasePreparationStage {
+  event: 'release-preparation-stage'
+  releaseId: string
+  version: string
+  stage: string
+}
+
 export async function preparationStep<T>(
   log: Pick<RotatingLog, 'write'>,
-  release: DesktopRelease,
+  release: Pick<DesktopRelease, 'id' | 'version'>,
   stage: string,
-  run: () => Promise<T>
+  run: () => Promise<T>,
+  onProgress?: (event: ReleasePreparationStage) => void
 ): Promise<T> {
   const startedAt = performance.now()
+  const event: ReleasePreparationStage = {
+    event: 'release-preparation-stage',
+    releaseId: release.id,
+    version: release.version,
+    stage,
+  }
+  onProgress?.(event)
   const write = (phase: string) =>
     log
       .write(
         'supervisor',
         JSON.stringify({
-          event: 'release-preparation-stage',
-          releaseId: release.id,
-          version: release.version,
-          stage,
+          ...event,
           phase,
           elapsedMs: Math.round(performance.now() - startedAt),
         })
@@ -56,7 +68,8 @@ export async function prepareReleaseEnvironment(
   resources: string,
   version: string,
   dataSchema: number,
-  readableDataSchemas: number[]
+  readableDataSchemas: number[],
+  onProgress?: (event: ReleasePreparationStage) => void
 ): Promise<void> {
   const request = JSON.parse(await readFile(requestFile, 'utf8')) as ReleasePreparationRequest
   const { release } = request
@@ -73,7 +86,7 @@ export async function prepareReleaseEnvironment(
     path: join(dirname(request.storeRoot), 'logs', 'release-preparation.log'),
   })
   const step = <T>(stage: string, run: () => Promise<T>) =>
-    preparationStep(log, release, stage, run)
+    preparationStep(log, release, stage, run, onProgress)
   const sourceRevision = await step('profile-copy', () =>
     cloneReleaseProfile(request.sourceProfile, release.profileRoot)
   )
@@ -93,6 +106,10 @@ export async function prepareReleaseEnvironment(
   await step('runtimes', () =>
     materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
       fetch: bundledAssetsOnly,
+      // This stable program store is outside prunable release slots. Each slot
+      // keeps its own mutable catalog and profile, including during rollback.
+      reuseRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh'),
+      immutableRoot: join(dirname(request.storeRoot), 'managed-runtimes', 'dsh', '.prepared'),
     })
   )
   const preparationHome = join(store.slot(release.id), 'preparation')

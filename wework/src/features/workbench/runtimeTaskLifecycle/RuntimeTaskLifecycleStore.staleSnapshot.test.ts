@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'

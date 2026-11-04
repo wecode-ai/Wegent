@@ -55,6 +55,7 @@ impl LocalTaskStore {
                 })
             };
             if previous["primary"] != settings["primary"]
+                || previous["processing"] != settings["processing"]
                 || other_roles(&previous) != other_roles(&settings)
             {
                 return Err(TaskRuntimeError::Invalid(
@@ -80,6 +81,7 @@ impl LocalTaskStore {
         device: &str,
         id: &str,
         accept: bool,
+        prepared: Option<Value>,
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -95,7 +97,12 @@ impl LocalTaskStore {
             ));
         }
         let saved = if accept {
-            self.save_personal_stand_in_on(&connection, user, device, proposal["settings"].clone())?
+            self.save_personal_stand_in_on(
+                &connection,
+                user,
+                device,
+                prepared.unwrap_or_else(|| proposal["settings"].clone()),
+            )?
         } else {
             read_personal(&connection, user, device)?
         };
@@ -106,5 +113,54 @@ impl LocalTaskStore {
         )?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    pub fn stand_in_proposal_settings(
+        &self,
+        user: i64,
+        id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let raw: String = connection.query_row(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_proposal' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.id')=?2",
+            params![user, id], |row| row.get(0),
+        )?;
+        let proposal: Value = serde_json::from_str(&raw)
+            .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        Ok(proposal["settings"].clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_proposals_cannot_change_primary_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        let previous = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let mut settings = previous.clone();
+        settings["primary"] =
+            json!({"enabled":true,"prompt":"","preferences":"Changed primary preferences"});
+        let error = store
+            .propose_stand_in_settings(
+                7,
+                "mac",
+                Some("default"),
+                "Change main preferences",
+                settings.clone(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("only propose changes to itself"));
+        assert!(store
+            .stand_in_proposal(7, Some("default"))
+            .unwrap()
+            .is_null());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), previous);
+        assert!(store
+            .propose_stand_in_settings(7, "mac", None, "Change main preferences", settings)
+            .is_ok());
     }
 }

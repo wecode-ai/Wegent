@@ -479,6 +479,10 @@ const executorTransportDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'executor-transport.log'),
   '[Wework] Executor transport diagnostic '
 )
+const electronHostDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'electron-host-transport.log'),
+  '[Wework] Electron host diagnostic '
+)
 const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'smart-app-launch.log'),
   '[Wework] Smart app launch diagnostic '
@@ -509,6 +513,17 @@ app.on('web-contents-created', (_event, contents) => {
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      message.startsWith('[process-explorer-snapshot] ')
+    ) {
+      console.info('[process-explorer-renderer]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 1024),
+      })
+    }
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+      console.info(redactLog(message).slice(0, 4096))
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       recordReleaseDiagnostic('renderer-error', {
         message: redactLog(message).slice(0, 4096),
@@ -539,6 +554,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void executorTransportDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write executor transport diagnostics', error)
+    })
+    void electronHostDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write Electron host diagnostics', error)
     })
     void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write Smart app diagnostics', error)
@@ -732,12 +750,12 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
       webPreferences.preload = browserAnnotationPreloadPath
     }
+    webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -1542,7 +1560,6 @@ async function holdStartupSplashForDesktopE2e(): Promise<void> {
 async function startupSplashInspection() {
   return {
     ...(await inspectStartupSplash(startupSplashWindow)),
-    progress: startupProgress.currentUpdate(),
     failure: lastStartupFailure,
     logDirectory: app.getPath('logs'),
   }
@@ -1731,6 +1748,7 @@ function installApplicationMenu(): void {
     },
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
+    openProcessExplorer: openProcessExplorerWindow,
     showMain: reactivateMainWindow,
     quit: () => requestApplicationShutdown(() => app.quit()),
     openExternal: url => shell.openExternal(url),
@@ -1818,6 +1836,8 @@ async function startupDiagnosticsText(): Promise<string> {
 
 function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+    const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
+    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
@@ -2116,9 +2136,13 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
-  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
-    desktopHostEvents.publish('browser.event', { ...event })
-  })
+  embeddedBrowser = new EmbeddedBrowserManager(
+    app.getPath('userData'),
+    event => {
+      desktopHostEvents.publish('browser.event', { ...event })
+    },
+    openSchemeInMainWindow
+  )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
     publish: state => {
@@ -2130,7 +2154,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    async () => (await preferences?.read())?.browserFullControl === true
   )
   startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
@@ -2750,9 +2775,19 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : components
-      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
-          'core',
-        ])
+      ? await materializeBundledRuntimes(
+          components.coreDsh,
+          packagedHarnessRuntimePaths().cache,
+          ['core'],
+          {
+            onProgress: ({ stage, phase, elapsedMs, role, archiveBytes }) =>
+              logStartupStep(`core-runtime-${stage}`, phase, {
+                phaseElapsedMs: elapsedMs,
+                role,
+                archiveBytes,
+              }),
+          }
+        )
       : developmentRuntimeRoot
   logStartupStep('core-runtime-materialize', 'completed')
   logStartupStep('node-runtime-prepare', 'started')

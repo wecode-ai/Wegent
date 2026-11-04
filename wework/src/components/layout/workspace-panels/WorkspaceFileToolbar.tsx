@@ -13,7 +13,10 @@ import {
   revealLocalFile,
   type LocalWorkspaceOpenerAvailability,
 } from '@/lib/local-terminal'
-import type { LocalWorkspaceOpenerId } from '@/lib/local-workspace-openers'
+import {
+  prioritizeWorkspaceOpener,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
@@ -222,7 +225,7 @@ export function WorkspaceFileToolbar({
   }, [isDirectory, local, path])
 
   const applicationItems = (filePath: string): ActionMenuItem[] =>
-    (openers ?? []).map(opener => ({
+    prioritizeWorkspaceOpener(openers ?? [], preferred).map(opener => ({
       testId: `workspace-file-open-file-option-${opener.label ?? opener.id}`,
       label: (
         <>

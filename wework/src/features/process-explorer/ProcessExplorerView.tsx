@@ -86,12 +86,23 @@ export function ProcessExplorerView({
 
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current
+    const startedAt = Date.now()
+    traceSnapshotLoad('requested', sequence, startedAt)
     try {
-      const next = await client.snapshot()
+      const next = await client.snapshot({ waitForSystemProcesses: false })
+      traceSnapshotLoad('received', sequence, startedAt, {
+        accepted: loadSequence.current === sequence,
+        processCount: next.processes.length,
+        degraded: next.degraded.map(item => item.code),
+      })
       if (loadSequence.current !== sequence) return
       setSnapshot(next)
       setError(null)
     } catch (loadError) {
+      traceSnapshotLoad('failed', sequence, startedAt, {
+        accepted: loadSequence.current === sequence,
+        errorName: loadError instanceof Error ? loadError.name : typeof loadError,
+      })
       if (loadSequence.current !== sequence) return
       setError(loadError)
     }
@@ -268,6 +279,15 @@ export function ProcessExplorerView({
         </div>
       ) : null}
 
+      {snapshot?.collectingSystemProcesses ? (
+        <div
+          data-testid="process-explorer-collecting"
+          className="border-b border-border px-3 py-1.5 text-xs text-text-secondary"
+        >
+          {t('process_explorer.collecting_system_processes')}
+        </div>
+      ) : null}
+
       {degradedReasons.length > 0 ? (
         <div
           data-testid="process-explorer-degraded"
@@ -440,6 +460,25 @@ export function ProcessExplorerView({
         )}
       </footer>
     </div>
+  )
+}
+
+function traceSnapshotLoad(
+  stage: string,
+  sequence: number,
+  startedAt: number,
+  details: Record<string, unknown> = {}
+): void {
+  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  console.debug(
+    '[process-explorer-snapshot] ' +
+      JSON.stringify({
+        stage,
+        sequence,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        ...details,
+      })
   )
 }
 

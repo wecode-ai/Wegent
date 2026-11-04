@@ -1,4 +1,6 @@
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { createStandInCoordinatorVerification } from '../modules/stand-in-coordinator.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import {
@@ -26,13 +28,25 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workspacePath,
   executorHome,
+  modelResponseTimeoutMs,
 }) {
+  const coordinator = createStandInCoordinatorVerification({
+    captureScreenshot,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   return {
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
       if (isReplyPredictionRequest(body)) return false
+      if (
+        JSON.stringify(body.input ?? []).includes('PROJECT_COORDINATOR_VERIFY') ||
+        JSON.stringify(body.input ?? []).includes('STAND_IN_SCHEDULE_VERIFY')
+      ) {
+        return coordinator.handleHttp(req, response, url)
+      }
       const latestUser = [...(body.input ?? [])].reverse().find(item => item.role === 'user')
       const marker = JSON.stringify(latestUser).match(
         /MEMORY_VERIFY_(ONE|UPDATED|FORGOTTEN|REMEMBER)/
@@ -123,23 +137,33 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       assert.equal(await control.command('getElementCount', `${PANEL} textarea`), '1')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-preferences"]'),
         '帮我跟进工作\n\n回复简洁，发送前确认'
       )
-      await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-execution"]')
       await captureScreenshot(control, '01-unified-profile.png', PANEL)
-      await control.command('click', '[data-testid="stand-in-add-connection"]')
+      await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
+      await openConnectionTypePicker(control)
+      await control.command('waitFor', '[data-testid="stand-in-time-connections"]', {
+        text: '日历',
+      })
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-connections-empty"]'),
+        '0'
+      )
       await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
       await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
       await captureScreenshot(control, '02-connection-editor.png', PANEL)
       await control.command('click', '[data-testid="stand-in-connections-back"]')
-      await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
+      await openConnectionTypePicker(control)
+      await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
+      await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
       await control.command('click', `${PANEL} [data-testid="project-work-button"]`)
       const option = await waitForTestIdByText(control, 'body', 'project-option-', NAME)
       await control.command('click', selector(option))
@@ -164,7 +188,7 @@ export function createDesktopScenario({
       assert.equal(saved.primary.preferences, '帮我跟进工作\n\n回复简洁，发送前确认')
       assert.equal(saved.primary.workspace.workspacePath, workspacePath)
       assert.equal(saved.primary.model.model_id, model.model_id)
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       await control.command('waitFor', `${PANEL} [data-testid="project-work-button"]`, {
         text: NAME,
@@ -208,7 +232,8 @@ export function createDesktopScenario({
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-open"]')
       await control.command('click', '[data-testid="stand-in-memory-open"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {
@@ -268,7 +293,7 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="stand-in-memory-close"]')
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
-      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-role-delete"]')
       await control.command('click', '[data-testid="stand-in-role-delete"]')
       await captureScreenshot(control, '13-role-delete-confirmation.png')
@@ -449,6 +474,7 @@ export function createDesktopScenario({
         2
       )
       await captureScreenshot(control, '22-work-split-undone.png')
+      await coordinator.verify(control)
     },
   }
 }

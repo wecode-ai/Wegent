@@ -13,6 +13,7 @@ import logging
 import re
 import zipfile
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -92,6 +93,7 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_release_components import components_with_manifest_account_auth
 from app.services.plugin_release_notification_service import (
     notify_plugin_release_available,
 )
@@ -2218,7 +2220,10 @@ class PluginMarketplaceService:
         )
 
     def _installed_payload(self, plugin: Plugin, release: PluginRelease) -> dict:
-        components = (release.scan_report_json or {}).get("components") or {}
+        components = components_with_manifest_account_auth(
+            (release.scan_report_json or {}).get("components") or {},
+            release.manifest_json or {},
+        )
         return {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "InstalledPlugin",
@@ -3123,7 +3128,23 @@ class PluginMarketplaceService:
                 and str(source.get("catalogItemId") or "") == str(matched.id)
                 and str(source.get("marketplace") or "") == expected_marketplace
             ):
-                return False
+                # Repair only the current package's auth snapshot. Do not change
+                # release selection, user preferences, or device update state.
+                if (
+                    spec.get("version") != target_release.version
+                    or (spec.get("packageRef") or {}).get("checksum")
+                    != f"sha256:{target_release.sha256}"
+                ):
+                    return False
+                components = components_with_manifest_account_auth(
+                    spec.get("components") or {}, target_release.manifest_json or {}
+                )
+                if components == (spec.get("components") or {}):
+                    return False
+                replacement = deepcopy(payload)
+                replacement["spec"]["components"] = components
+                replace_installed_kind(db, row, replacement)
+                return True
             self._apply_catalog_ref_to_installed_kind(
                 db, row, plugin=matched, release=target_release
             )
@@ -3179,9 +3200,12 @@ class PluginMarketplaceService:
                 "installState": "installed",
                 "manifest": release.manifest_json or spec.get("manifest"),
                 "interface": release.interface_json or spec.get("interface"),
-                "components": (release.scan_report_json or {}).get("components")
-                or spec.get("components")
-                or {},
+                "components": components_with_manifest_account_auth(
+                    (release.scan_report_json or {}).get("components")
+                    or spec.get("components")
+                    or {},
+                    release.manifest_json or {},
+                ),
                 "packageRef": package_ref,
                 "sourcePayload": source_payload,
             }

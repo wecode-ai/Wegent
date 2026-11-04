@@ -936,6 +936,8 @@ export function PluginsWorkspace({
           localState.marketplaceItems.length === 0 &&
           previousCloudItems.some(marketplaceItemNeedsDeviceSync)
         ) {
+          if (import.meta.env.VITE_WEWORK_E2E === 'true')
+            console.info('[plugin-catalog-publication] retained-pending-catalog')
           if (localState.deviceId) setCurrentDeviceId(localState.deviceId)
           setIsMarketplaceRefreshing(false)
           return
@@ -3027,10 +3029,7 @@ export function PluginsWorkspace({
     plugin: InstalledPlugin,
     isCurrent: () => boolean
   ) => {
-    const listedConnectors = item.components.connectors ?? []
-    const installedConnectors = plugin.spec.components.connectors ?? []
-    const connectors = listedConnectors.length > 0 ? listedConnectors : installedConnectors
-    const required = connectors.filter(
+    const required = (plugin.spec.components.connectors ?? []).filter(
       connector => requiresInstallConnectorAuth(connector) && isLocalConnector(connector)
     )
     if (required.length === 0) return
@@ -4600,16 +4599,31 @@ export function PluginsWorkspace({
         refresh: true,
       })
       .then(localState => {
-        if (cancelled) return
-        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
+        const trace = (reason: string) => {
+          if (import.meta.env.VITE_WEWORK_E2E === 'true')
+            console.info('[plugin-catalog-publication]', reason)
+        }
+        if (cancelled) {
+          trace('cancelled')
+          return
+        }
+        if (!pluginInstallationReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) {
+          trace('membership-superseded')
+          return
+        }
         if (
           !sameLocalPluginSources(
             getPluginMarketplaceCache(marketplaceCacheKeyValue),
             inventoryAtStart
           )
-        )
+        ) {
+          trace('sources-superseded')
           return
-        if (deferredCodexCatalogRequestRef.current !== requestKey) return
+        }
+        if (deferredCodexCatalogRequestRef.current !== requestKey) {
+          trace('request-superseded')
+          return
+        }
         if (localState.partial) {
           inventoryCompleteRef.current = false
           setLocalInstalledStateReadyKey(null)
@@ -4619,6 +4633,7 @@ export function PluginsWorkspace({
             message: t('workbench.plugins_load_failed', '加载插件失败'),
           })
         }
+        trace('applying')
         applyLiveCodexCatalog(localState)
       })
       .catch(() => {

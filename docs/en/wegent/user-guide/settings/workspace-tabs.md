@@ -11,6 +11,8 @@ The Wework workbench uses two browser-like tab types:
 
 ## Configure fixed tabs
 
+The default fixed tabs include Tasks, Workspace view, Agent, and **Needs your input**. Existing custom fixed-tab lists are preserved.
+
 Open **Settings → General → Fixed tabs** to:
 
 1. Add Tasks, Workspace view, Agent, or an installed Smart workbench.
@@ -27,10 +29,13 @@ Select the **+** button beside the tab strip to directly add:
 - Tasks
 - Workspace view
 - Agent
+- Needs your input
 - Installed Smart workbenches
 - Smart workbench management
 
 Tabs added from **+** are regular tabs by default. To make a Smart workbench available after every launch, add it under **Settings → General → Fixed tabs**.
+
+**Needs your input** reuses its existing tab and shows the live pending count in the title, such as **Needs your input (2)**. Once all items are handled, it shows **Needs your input (0)**. This entry is available without experimental features. To pin it, right-click its tab and select **Pin tab**.
 
 ## Smart workbench launch behavior
 

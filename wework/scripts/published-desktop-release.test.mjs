@@ -19,6 +19,7 @@ import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
 import {
   downloadPublishedDesktopArchive,
   downloadPublishedDesktopRelease,
+  readPrebuiltDesktopRelease,
 } from './lib/published-desktop-release.mjs'
 
 async function fixture(run) {
@@ -84,6 +85,30 @@ test('downloads a published target unchanged without extracting or packaging it'
       (await readdir(options.directory)).sort(),
       [release.name, 'release-windows-x64.json'].sort()
     )
+  }))
+
+test('reads unchanged producer artifacts and rejects corrupt bytes or a different identity', () =>
+  fixture(async ({ root, release, requests }) => {
+    await writeFile(join(root, 'published/release-windows-x64.json'), JSON.stringify(release))
+    const selection = {
+      directory: join(root, 'published'),
+      version: release.version,
+      platform: release.platform,
+      arch: release.arch,
+      installation: join(root, 'isolated/source'),
+    }
+    const source = await readPrebuiltDesktopRelease(selection)
+    assert.equal(source.sha256, release.sha256)
+    assert.equal(await readFile(source.executable, 'utf8'), 'delivered desktop bytes')
+    assert.deepEqual(await readFile(source.path), await readFile(release.path))
+    assert.deepEqual(requests, [])
+    await assert.rejects(
+      readPrebuiltDesktopRelease({ ...selection, version: '2.0.0' }),
+      /identity is invalid/
+    )
+    await writeFile(source.path, 'corrupted archive')
+    await assert.rejects(readPrebuiltDesktopRelease(selection), /archive changed/)
+    assert.deepEqual(requests, [])
   }))
 
 test('downloads immutable delivered bytes and reuses the verified source without packaging it', () =>
@@ -155,7 +180,7 @@ test('upgrade runner fails before any build when its producer artifact is missin
         [
           fileURLToPath(new URL('../e2e/desktop/run-checkpoints.mjs', import.meta.url)),
           '--segment',
-          'app-upgrade',
+          'app-rollback',
         ],
         { env: environment, timeout: 10_000 }
       ),

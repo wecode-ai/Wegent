@@ -155,6 +155,11 @@ describe('Electron desktop E2E automation', () => {
       expect(results.map(result => result.ok)).toEqual([true, true, true])
       expect(results.map(result => JSON.parse(result.value!).length)).toEqual([0, 1, 2])
       expect(JSON.parse(results[1].value!)[0].width).toBe(200)
+      expect(JSON.parse(results[1].value!)[0]).toMatchObject({
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      })
     } finally {
       surface.remove()
       duplicate.remove()
@@ -585,6 +590,111 @@ describe('Electron desktop E2E automation', () => {
       })
     } finally {
       debug.mockRestore()
+      button.remove()
+    }
+  })
+
+  test.each([null, 'ready', 'started', 'results'] as const)(
+    'consumes nonempty acknowledgement bodies including HTTP failure at %s',
+    async failedEndpoint => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const button = document.createElement('button')
+      button.dataset.testid = 'control-response-body-button'
+      const clicked = vi.fn()
+      button.onclick = clicked
+      document.body.append(button)
+      const acknowledgements: Array<{ endpoint: string; response: Response }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 1) return new Response(null, { status: 410 })
+          return new Response(
+            JSON.stringify({
+              id: 'response-body-click',
+              action: 'click',
+              selector: '[data-testid="control-response-body-button"]',
+            })
+          )
+        }
+        const endpoint = new URL(url).pathname.slice(1)
+        if (['ready', 'started', 'results'].includes(endpoint)) {
+          const response = new Response('{"ok":true}\n', {
+            status: endpoint === failedEndpoint ? 503 : 200,
+          })
+          acknowledgements.push({ endpoint, response })
+          return response
+        }
+        return new Response(null, { status: 204 })
+      })
+      try {
+        const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        if (failedEndpoint === 'ready') {
+          await expect(client).rejects.toThrow('registration failed with 503')
+        } else {
+          await client
+        }
+        expect(acknowledgements.map(entry => entry.endpoint)).toEqual(
+          failedEndpoint === 'ready'
+            ? ['ready']
+            : failedEndpoint === 'started'
+              ? ['ready', 'started']
+              : ['ready', 'started', 'results']
+        )
+        expect(acknowledgements.every(entry => entry.response.bodyUsed)).toBe(true)
+        expect(clicked).toHaveBeenCalledTimes(
+          failedEndpoint === 'ready' || failedEndpoint === 'started' ? 0 : 1
+        )
+      } finally {
+        button.remove()
+      }
+    }
+  )
+
+  test('finishes reading the result acknowledgement before polling again', async () => {
+    const button = document.createElement('button')
+    button.dataset.testid = 'control-ack-stream-button'
+    const clicked = vi.fn()
+    button.onclick = clicked
+    document.body.append(button)
+    let finishBody!: () => void
+    let bodyClosed = false
+    const acknowledgement = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"ok":true}\n'))
+          finishBody = () => {
+            if (bodyClosed) return
+            bodyClosed = true
+            controller.close()
+          }
+        },
+      })
+    )
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'streamed-ack',
+            action: 'click',
+            selector: '[data-testid="control-ack-stream-button"]',
+          })
+        )
+      }
+      return url.endsWith('/results') ? acknowledgement : new Response('{"ok":true}\n')
+    })
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(acknowledgement.bodyUsed).toBe(true))
+      expect(clicked).toHaveBeenCalledOnce()
+      expect(polls).toBe(1)
+      finishBody()
+      await client
+      expect(polls).toBe(2)
+    } finally {
+      finishBody()
+      await client
       button.remove()
     }
   })

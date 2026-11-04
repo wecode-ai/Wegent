@@ -187,7 +187,7 @@ export async function verifyHarnessLifecycle(
     'Making the Smart app private left it listed in the public marketplace'
   )
   await waitForMissing(control, '[data-testid="smart-app-share-dialog"]', uiTimeoutMs)
-  await control.command('click', sharedVisibilitySelector)
+  await control.command('clickWhenEnabled', sharedVisibilitySelector)
   await control.command('waitFor', '[data-testid="smart-app-share-scope-private"]', {
     timeoutMs: uiTimeoutMs,
   })
@@ -297,6 +297,11 @@ export async function verifyHarnessLifecycle(
   await verifyStoppedSmartAppInstallAllowed(control, runningInstallGuard)
 
   const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    stableMs: 300,
+    timeoutMs: uiTimeoutMs,
+  })
   const initialModelKey = await control.command('getValue', modelSelector)
   await control.command('select', modelSelector, {
     by: 'label',

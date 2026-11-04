@@ -1,3 +1,7 @@
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import {
   assertLocalRuntimeSidebarIdentity,
@@ -381,7 +385,20 @@ export function createHybridWorkbenchServices(
     listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
     user: options.user,
   })
+  const connectionDependencyProfile = { apiBaseUrl: options.apiBaseUrl, token: options.token }
+  const connectionDependencyPlugins = createLocalDevicePluginApi(
+    createPluginApi(
+      createHttpClient({
+        baseUrl: options.apiBaseUrl,
+        getToken: () => options.token,
+        redirectOnUnauthorized: false,
+      }),
+      options.apiBaseUrl
+    ),
+    deviceId => resolveLocalPluginDeviceRouteId(deviceId, connectionDependencyProfile)
+  )
   const localServices = createLocalAppServices({
+    connectionDependencyPlugins,
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
         createHttpClient({
@@ -751,11 +768,13 @@ export function createHybridWorkbenchServices(
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
-    const knownDevice = (await listKnownDevices()).find(device => deviceMatchesId(device, deviceId))
+    const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
-    const cloudDevices = await listCloudDevices()
-    return cloudDevices.find(device => deviceMatchesId(device, deviceId)) ?? null
+    await listCloudDevices()
+    return createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
   }
   const listLocalRuntimeWork = async (
     requestOptions?: Parameters<
@@ -1700,6 +1719,47 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async projectProcessing(userId, deviceId, target, check) {
+        return (await standInApiForDevice(deviceId)).projectProcessing(
+          userId,
+          deviceId,
+          target,
+          check
+        )
+      },
+      async projectCoordination(userId, deviceId, target, update) {
+        return (await standInApiForDevice(deviceId)).projectCoordination(
+          userId,
+          deviceId,
+          target,
+          update
+        )
+      },
+      async projectConversation(
+        userId,
+        deviceId,
+        projectId,
+        projectStore,
+        groupId,
+        message,
+        options
+      ) {
+        return (await standInApiForDevice(deviceId)).projectConversation(
+          userId,
+          deviceId,
+          projectId,
+          projectStore,
+          groupId,
+          message,
+          options
+        )
+      },
+      async processingStatus(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).processingStatus(userId, deviceId)
+      },
+      async checkProcessing(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).checkProcessing(userId, deviceId)
+      },
       async configureTelemetry(userId, deviceId, enabled, enabledSince) {
         return (await standInApiForDevice(deviceId)).configureTelemetry(
           userId,
@@ -1764,13 +1824,14 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
-          cursor
+          cursor,
+          ...(scope ? ([scope] as const) : [])
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {

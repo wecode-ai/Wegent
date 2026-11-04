@@ -1,5 +1,6 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import { createPreparationObserver } from './preparation-progress.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -18,6 +19,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
   PLUGIN_CREATOR_PROMPT,
+  SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
   appendProcessOutput,
@@ -348,6 +350,7 @@ class RealCloudEnvironment {
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
     this.pluginAutoUpdateFixtures = []
+    this.observePreparation = createPreparationObserver({ checkpoint: SELECTED_DESKTOP_SEGMENT })
   }
 
   async reserveBackendPorts() {
@@ -383,10 +386,14 @@ class RealCloudEnvironment {
     this.nevisSandboxService = new LocalNevisSandboxService()
     await this.nevisSandboxService.start()
 
-    const redisServer = await startRedisServer(this.redisLogPath)
+    const redisServer = await this.observePreparation('redis-start', () =>
+      startRedisServer(this.redisLogPath)
+    )
     this.redisPort = redisServer.port
     this.redis = redisServer.redis
-    const mysqlServer = await startMysqlServer(this.mysqlLogPath)
+    const mysqlServer = await this.observePreparation('mysql-start', () =>
+      startMysqlServer(this.mysqlLogPath)
+    )
     this.mysql = mysqlServer.server
     this.mysqlConnectionOptions = mysqlServer.connectionOptions
     this.databaseName = mysqlServer.databaseName
@@ -437,22 +444,28 @@ class RealCloudEnvironment {
       ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
-    await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
-      cwd: backendDirectory,
-      env: backendEnv,
-    })
+    await this.observePreparation('database-migrate', () =>
+      runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
+        cwd: backendDirectory,
+        env: backendEnv,
+      })
+    )
     await this.launchBackend({ retryPortConflicts: true })
 
     const password = `wework-desktop-e2e-${process.pid}`
-    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    })
+    const setup = await this.observePreparation('admin-auth-setup', () =>
+      fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+    )
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
-    await this.seedCloudProtocolModels()
-    await this.seedCloudVisionSidecarModels()
+    await this.observePreparation('model-seeding', async () => {
+      await this.seedCloudProtocolModels()
+      await this.seedCloudVisionSidecarModels()
+    })
   }
 
   async launchBackend({ retryPortConflicts = false } = {}) {
@@ -516,10 +529,12 @@ class RealCloudEnvironment {
       appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
     ])
-    await waitForProcessUrl(
-      `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
-      this.pythonBackend,
-      `Real cloud Python backend did not start; see ${this.backendLogPath}`
+    await this.observePreparation('python-backend-ready', () =>
+      waitForProcessUrl(
+        `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
+        this.pythonBackend,
+        `Real cloud Python backend did not start; see ${this.backendLogPath}`
+      )
     )
 
     const backendRsBinary = await resolveBackendRsBinary()
@@ -543,10 +558,12 @@ class RealCloudEnvironment {
       appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
       appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
     ])
-    await waitForProcessUrl(
-      `${this.backendUrl}/api/startup`,
-      this.rustBackend,
-      `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
+    await this.observePreparation('rust-gateway-ready', () =>
+      waitForProcessUrl(
+        `${this.backendUrl}/api/startup`,
+        this.rustBackend,
+        `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
+      )
     )
   }
 

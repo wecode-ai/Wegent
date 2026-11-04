@@ -973,6 +973,15 @@ path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/attachments/upload" # app/api/endpoints/attachments_open.py:119
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id"
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/me/project-coordinator-bindings"
 # `GET /api/v1/cloud-projects/{project_id}/collaboration-groups` — the
 # project collaboration-group listing
 # (`app/api/endpoints/project_automations.py:39`), implemented by
@@ -1050,6 +1059,10 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #path = "/socket.io/" # app/main.py:984
 
 # New APIs implemented directly in Rust.
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/coordinator-bindings/:group_id/commands/:command_id/authorization"
+
 [[routes]]
 methods = ["POST"]
 path = "/api/runtime-work/transcript/search"

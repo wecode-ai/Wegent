@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { access, cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
@@ -33,6 +35,12 @@ async function isolatedConsumer(name) {
   const consumer = join(root, name)
   const desktop = join(consumer, 'wework/e2e/desktop')
   await cp(join(wework, 'e2e/desktop'), desktop, { recursive: true })
+  const runtime = join(consumer, 'wework/electron/src/runtime')
+  await mkdir(runtime, { recursive: true })
+  await cp(
+    join(wework, 'electron/src/runtime/release-preparation-progress.mjs'),
+    join(runtime, 'release-preparation-progress.mjs')
+  )
   const chatCore = join(consumer, 'packages/chat-core')
   await mkdir(join(chatCore, 'src'), { recursive: true })
   await cp(join(wework, '../packages/chat-core/package.json'), join(chatCore, 'package.json'))

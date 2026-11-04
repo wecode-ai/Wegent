@@ -5,6 +5,7 @@ import { isElectronRuntime } from './runtime-environment'
 import { requestEmbeddedBrowserOpen } from './embedded-browser'
 import { browserDiagnosticOrigin } from './browser-url'
 import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
+import { openWeworkScheme } from '@/features/notifications/schemeEvents'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
@@ -62,6 +63,11 @@ export async function openExternalUrl(
 ): Promise<boolean> {
   const trimmed = value.trim()
   const source = options.source ?? 'unknown'
+  if (trimmed.startsWith('wework:')) {
+    const opened = openWeworkScheme(trimmed)
+    logExternalLink(opened ? 'opened' : 'rejected', trimmed, source, { target: 'wework' })
+    return opened
+  }
   if (!isHttpUrl(trimmed) && !isDingTalkUrl(trimmed)) {
     logExternalLink('rejected', value, source, { reason: 'unsupported-protocol' })
     return false

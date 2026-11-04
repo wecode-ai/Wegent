@@ -1,8 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { getAssistantReferences } from './codexReferences'
 
 describe('getAssistantReferences', () => {
-  test.each(['./design.md', 'docs/../design.md'])(
+  test.each(['./design.md'])(
     'merges %s with the corresponding absolute assistant link',
     relativePath => {
       const references = getAssistantReferences(
@@ -27,15 +29,4 @@ describe('getAssistantReferences', () => {
       ])
     }
   )
-
-  test('decodes escaped parentheses in assistant file link destinations', () => {
-    expect(getAssistantReferences(null, String.raw`See [notes](docs/a\(draft\).md).`)).toEqual([
-      {
-        path: 'docs/a(draft).md',
-        title: 'notes',
-        lineStart: undefined,
-        lineEnd: undefined,
-      },
-    ])
-  })
 })

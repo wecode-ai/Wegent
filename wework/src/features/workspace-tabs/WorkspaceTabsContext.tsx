@@ -44,6 +44,7 @@ import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
 import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
+import { acceptWorkspaceTabTransfer } from './workspaceTabTransfer'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -162,7 +163,10 @@ function loadPersistedTabs(
     return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
   }
   const kind = inferWorkspaceTabKind(pathname)
-  const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
+  const matchingDefault = defaultTabs.find(
+    tab =>
+      tab.kind === kind && (kind !== 'auxiliary' || tab.contentRoute.split('?', 1)[0] === pathname)
+  )
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
     title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),
@@ -417,8 +421,13 @@ export function WorkspaceTabsProvider({
         }
         // An expired request must not move a tab whose source is still open.
         if (!localStorage.getItem(key)) return
-        flushSync(() => dispatch({ type: 'receive', tab: receivedTab }))
+        flushSync(() => {
+          dispatch({ type: 'receive', tab: receivedTab })
+        })
         navigateTo(workspaceTabRoute(receivedTab))
+        // Preference synchronization may have mounted this tab before its return.
+        // Commit its received drafts before acknowledging the source window.
+        flushSync(() => acceptWorkspaceTabTransfer(receivedTab.id))
         localStorage.removeItem(key)
       })().catch(error => {
         console.error('Failed to accept returned workspace tab', error)

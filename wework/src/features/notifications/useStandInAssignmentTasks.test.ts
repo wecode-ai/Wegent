@@ -33,6 +33,68 @@ beforeEach(() => {
 })
 
 describe('assignment execution history', () => {
+  it.each([false, true])(
+    'retains confirmed lookup during inbox refresh (archived: %s)',
+    async hasHistory => {
+      const items = hasHistory ? [archived] : []
+      assignmentTasks.mockResolvedValue({ items })
+      const hook = renderHook(
+        ({ currentInbox }) => useStandInNotifications(currentInbox, source, 'user', true),
+        { initialProps: { currentInbox: inbox } }
+      )
+      await waitFor(() =>
+        expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+      )
+      const confirmed = hook.result.current.items[0].payload.standIn
+      let resolve!: (value: unknown) => void
+      assignmentTasks.mockImplementationOnce(
+        () =>
+          new Promise(done => {
+            resolve = done
+          })
+      )
+
+      hook.rerender({ currentInbox: { ...inbox } })
+      await waitFor(() => expect(assignmentTasks).toHaveBeenCalledTimes(2))
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+      expect(hook.result.current.items[0].payload.standIn).toEqual(confirmed)
+
+      await act(async () => resolve({ items }))
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+    }
+  )
+
+  it('invalidates confirmed history immediately when the runtime API changes', async () => {
+    const hook = renderHook(
+      ({ current }) => useStandInNotifications(inbox, current, 'user', true),
+      { initialProps: { current: source } }
+    )
+    await waitFor(() =>
+      expect(hook.result.current.items[0].payload.standIn?.status).toBe('completed')
+    )
+    let resolve!: (value: unknown) => void
+    const replacement = vi.fn(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    hook.rerender({
+      current: {
+        ...source,
+        services: {
+          ...source.services,
+          standInApi: { ...source.services!.standInApi, assignmentTasks: replacement },
+        } as unknown as WorkbenchServices,
+      },
+    })
+    expect(hook.result.current.items[0].payload.standIn).toBeUndefined()
+    expect(hook.result.current.items[0].payload.standInLookupPending).toBe(true)
+    await waitFor(() => expect(replacement).toHaveBeenCalledOnce())
+    await act(async () => resolve({ items: [] }))
+    expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+  })
+
   it('retains local history when another online executor fails and deduplicates local aliases', async () => {
     assignmentTasks.mockImplementation(async (_user, deviceId) => {
       if (deviceId === 'remote') throw new Error('Remote unavailable')
@@ -137,4 +199,44 @@ describe('assignment execution history', () => {
     )
     expect(hook.result.current.items[0].payload.standInLookupError).toBeUndefined()
   })
+
+  it.each(['account', 'assignment'] as const)(
+    'hides resolved history immediately when only the %s scope changes',
+    async changed => {
+      const hook = renderHook(
+        ({ account, currentInbox }) => useStandInNotifications(currentInbox, source, account, true),
+        { initialProps: { account: 'old', currentInbox: inbox } }
+      )
+      await waitFor(() =>
+        expect(hook.result.current.items[0].payload.standIn?.status).toBe('completed')
+      )
+      let complete!: (value: { items: [] }) => void
+      assignmentTasks.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            complete = resolve
+          })
+      )
+      hook.rerender({
+        account: changed === 'account' ? 'new' : 'old',
+        currentInbox:
+          changed === 'assignment'
+            ? {
+                ...inbox,
+                items: [
+                  {
+                    ...assignment,
+                    payload: { ...assignment.payload, humanAssignmentId: 'new-human' },
+                  },
+                ],
+              }
+            : inbox,
+      })
+      expect(hook.result.current.items[0].payload.standIn).toBeUndefined()
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(true)
+      await waitFor(() => expect(assignmentTasks).toHaveBeenCalledTimes(2))
+      await act(async () => complete({ items: [] }))
+      expect(hook.result.current.items[0].payload.standInLookupPending).toBe(false)
+    }
+  )
 })

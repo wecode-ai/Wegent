@@ -22,13 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ci:all' && github.run_id || 'code' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -150,7 +150,7 @@ jobs:
 
   check-settings-config:
     name: Check Settings Configuration
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -168,7 +168,7 @@ jobs:
         run: .github/scripts/test-classify-ci-changes.sh
 
       - name: Test Wework release gates
-        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs
+        run: node --test .github/scripts/wework-release-workflow.test.mjs .github/scripts/resolve-wework-upgrade-inputs.test.mjs .github/scripts/pnpm-install-report.test.mjs
 
       - name: Test E2E resource cleanup
         run: node --test .github/scripts/test-e2e-resource-reuse.mjs
@@ -177,7 +177,7 @@ jobs:
         run: .github/scripts/test-ci-cache-policy.sh
 
       - name: Test Windows E2E package caching and scheduling
-        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs
+        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs .github/scripts/order-wework-linux-e2e.test.mjs .github/scripts/balance-wework-unit-tests.test.mjs
 
       - name: Test shared E2E runtime revisions
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh
@@ -223,7 +223,7 @@ jobs:
 
   check-alembic-heads:
     name: Check Alembic Multi-Head
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
 
     steps:
@@ -248,7 +248,7 @@ jobs:
         check-settings-config,
         check-alembic-heads,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
 
     steps:
       - name: Check lint results

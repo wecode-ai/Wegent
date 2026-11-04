@@ -1,11 +1,11 @@
-import { APIRequestContext, expect, test } from '@playwright/test'
-import { ADMIN_USER } from '../../config/test-users'
+import { APIRequestContext } from '@playwright/test'
+import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
-import { extractTaskAnswer } from '../../utils/provider-native-test-support'
+import { collectTaskToolCalls, extractTaskAnswer } from '../../utils/provider-native-test-support'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
-const MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
-const PROVIDER_URL = process.env.E2E_CLAUDE_MODEL_SERVER_URL || MOCK_URL
+const MOCK_URL = executorMockUrl()
+const PROVIDER_URL = executorMockUrl(process.env.E2E_CLAUDE_MODEL_SERVER_URL)
 const EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const INHERITED_CEILING_MS = 500
@@ -13,7 +13,15 @@ const INHERITED_CEILING_MS = 500
 type Capture = { kind: string; timestamp: number; body: { messages: unknown[] } }
 type TaskDetail = {
   status: string
-  subtasks: Array<{ role: string; status: string; error_message?: string }>
+  model_id?: string
+  subtasks: Array<{
+    role: string
+    status: string
+    error_message?: string
+    result?: {
+      blocks?: Array<{ type: string; parent_tool_use_id?: string; content?: string }>
+    }
+  }>
 }
 
 test.describe('Real Claude background subagent lifecycle', () => {
@@ -29,8 +37,8 @@ test.describe('Real Claude background subagent lifecycle', () => {
       const botName = `${model}-bot`
       const teamName = `${model}-team`
       const login = await createApiClient(request).login(
-        ADMIN_USER.username,
-        ADMIN_USER.password,
+        EXECUTOR_USER.username,
+        EXECUTOR_USER.password,
         1
       )
       expect(login.status).toBe(200)
@@ -144,6 +152,146 @@ test.describe('Real Claude background subagent lifecycle', () => {
       }
     })
   }
+
+  test('ClaudeCode persists a child message above 1 MiB and completes after a real background notification', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const model = `e2e-claude-bg-large-${Date.now()}`
+    const shellName = `${model}-shell`
+    const botName = `${model}-bot`
+    const teamName = `${model}-team`
+    const childMarker = `BG_LARGE_CHILD_${model}`
+    const finalMarker = `BG_LARGE_PARENT_DONE_${model}`
+    const login = await createApiClient(request).login(
+      EXECUTOR_USER.username,
+      EXECUTOR_USER.password,
+      1
+    )
+    expect(login.status).toBe(200)
+    const headers = createBackendRequestHeaders(login.data!.access_token)
+    let taskId: number | undefined
+    try {
+      const configured = await request.post(`${MOCK_URL}/claude-background-scenarios`, {
+        data: { model, mode: 'large-output' },
+      })
+      expect(configured.ok(), await configured.text()).toBe(true)
+      const teamId = await createAgent(request, headers, model, shellName, botName, teamName)
+      await page.addInitScript(id => {
+        localStorage.setItem('user_onboarding_completed', 'true')
+        localStorage.setItem('wegent_last_team_id', String(id))
+        localStorage.setItem('wegent_last_team_id_chat', String(id))
+      }, teamId)
+      await page.goto(`/chat?teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+      const input = page.getByTestId('message-input')
+      await expect(input).toBeVisible()
+      const modelSelector = page.getByTestId('model-selector')
+      await expect(modelSelector).toBeEnabled()
+      await modelSelector.click()
+      await page.getByTestId('model-cascade-search-input').fill(model)
+      await page.getByTestId(`model-option-${model}`).click()
+      await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
+      await input.fill(`Run the large background output regression ${model}.`)
+      await page.getByTestId('send-button').click()
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get('taskId'), { timeout: 20_000 })
+        .not.toBeNull()
+      taskId = Number(new URL(page.url()).searchParams.get('taskId'))
+      expect(taskId).toBeGreaterThan(0)
+
+      let terminal = ''
+      await expect
+        .poll(
+          async () => {
+            const response = await request.get(`${API_URL}/api/tasks/${taskId}/runtime-check`, {
+              headers,
+            })
+            expect(response.ok(), await response.text()).toBe(true)
+            terminal = (await response.json()).task_status
+            return ['COMPLETED', 'FAILED', 'CANCELLED'].includes(terminal)
+          },
+          { timeout: 120_000 }
+        )
+        .toBe(true)
+      const detailResponse = await request.get(`${API_URL}/api/tasks/${taskId}`, { headers })
+      expect(detailResponse.ok(), await detailResponse.text()).toBe(true)
+      const detail = (await detailResponse.json()) as TaskDetail
+      expect(terminal).toBe('COMPLETED')
+      expect(detail.status).toBe('COMPLETED')
+      expect(detail.model_id).toBe(model)
+      const assistants = detail.subtasks.filter(subtask => subtask.role === 'ASSISTANT')
+      expect(assistants).toHaveLength(1)
+      expect(assistants[0].status).toBe('COMPLETED')
+      const calls = collectTaskToolCalls(detail)
+      const agents = calls.filter(call => call.name === 'Agent')
+      expect(agents).toHaveLength(1)
+      expect(agents[0].input.run_in_background).toBe(true)
+      expect(calls.map(call => call.name)).toEqual(['Agent'])
+
+      const child = assistants[0].result?.blocks?.find(
+        block =>
+          block.type === 'text' &&
+          block.parent_tool_use_id === agents[0].id &&
+          block.content?.startsWith(childMarker)
+      )
+      expect(child).toBeDefined()
+      const childBytes = Buffer.byteLength(child!.content!, 'utf8')
+      expect(childBytes).toBeGreaterThan(1024 * 1024)
+      expect(childBytes).toBeLessThan(10 * 1024 * 1024)
+      expect(child!.content!.endsWith(`${childMarker}_END`)).toBe(true)
+      expect(extractTaskAnswer(detail)).toContain(finalMarker)
+      await expect(page.getByTestId('messages-container')).toContainText(finalMarker)
+      const observed = await request.get(`${MOCK_URL}/claude-background-scenarios`, {
+        params: { model },
+      })
+      expect(observed.ok()).toBe(true)
+      const scenario = (await observed.json()) as {
+        childFinished: boolean
+        parentYielded: boolean
+        completionReceived: boolean
+        requests: Capture[]
+      }
+      expect(scenario.childFinished).toBe(true)
+      expect(scenario.parentYielded).toBe(true)
+      expect(scenario.completionReceived).toBe(true)
+      expect(scenario.requests.filter(capture => capture.kind.startsWith('child-'))).toHaveLength(1)
+      const parentTurns = scenario.requests.filter(capture => capture.kind.startsWith('parent-'))
+      expect(parentTurns).toHaveLength(3)
+      expect(JSON.stringify(parentTurns[2].body.messages)).toContain('<task-notification>')
+      await testInfo.attach('large-background-output-evidence', {
+        body: JSON.stringify({
+          taskId,
+          terminal,
+          model,
+          childBytes,
+          calls: calls.map(call => call.name),
+        }),
+        contentType: 'application/json',
+      })
+    } finally {
+      if (taskId) {
+        const removed = await request.delete(`${API_URL}/api/tasks/${taskId}`, { headers })
+        expect([200, 204, 404]).toContain(removed.status())
+      }
+      for (const [kind, name] of [
+        ['teams', teamName],
+        ['bots', botName],
+        ['models', model],
+      ]) {
+        const removed = await request.delete(
+          `${API_URL}/api/v1/namespaces/default/${kind}/${name}`,
+          { headers }
+        )
+        expect([200, 204, 404]).toContain(removed.status())
+      }
+      const shell = await request.delete(`${API_URL}/api/shells/${shellName}`, { headers })
+      expect([200, 204, 404]).toContain(shell.status())
+      const cleared = await request.delete(`${MOCK_URL}/claude-background-scenarios`, {
+        params: { model },
+      })
+      expect(cleared.ok()).toBe(true)
+    }
+  })
 })
 
 async function createAgent(

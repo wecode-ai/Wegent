@@ -12,11 +12,12 @@ production ownership is independently checked by test_rust_cutover.py.
 """
 
 from contextlib import contextmanager
+from copy import copy
 from importlib import import_module
 from typing import Iterator
 
 from fastapi import APIRouter, FastAPI
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, request_response
 from fastapi.testclient import TestClient
 
 # Only components used by HTTP contracts that cannot be replaced by a direct
@@ -117,6 +118,28 @@ _COMPONENTS = {
 }
 
 
+def _clone_application(production: FastAPI) -> FastAPI:
+    """Reuse compiled declarations with request handlers bound to a fresh app."""
+    app = FastAPI(exception_handlers=dict(production.exception_handlers))
+    for route in production.routes:
+        if isinstance(route, APIRoute):
+            # Dependency trees and model fields are compiled from immutable route
+            # declarations. Bind the request handler to this app's overrides
+            # without recompiling every production model for every test.
+            cloned = copy(route)
+            cloned.dependency_overrides_provider = app
+            cloned.app = request_response(cloned.get_route_handler())
+            app.router.routes.append(cloned)
+        else:
+            router = APIRouter()
+            router.routes.append(route)
+            app.include_router(router)
+    app.dependency_overrides.update(production.dependency_overrides)
+    app.user_middleware = list(production.user_middleware)
+    app.state._state.update(production.state._state)
+    return app
+
+
 @contextmanager
 def component_client(
     production_client: TestClient,
@@ -126,11 +149,7 @@ def component_client(
 ) -> Iterator[TestClient]:
     """Build a separate client; never re-enable a retired production route."""
     production = production_client.app
-    app = FastAPI(exception_handlers=dict(production.exception_handlers))
-    app.include_router(production.router)
-    app.dependency_overrides.update(production.dependency_overrides)
-    app.user_middleware = list(production.user_middleware)
-    app.state._state.update(production.state._state)
+    app = _clone_application(production)
     for component in components:
         module_name, name, method, path, model_name = _COMPONENTS[component]
         path = api_prefix + path.removeprefix("/api")

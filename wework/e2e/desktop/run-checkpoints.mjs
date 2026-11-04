@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,8 +9,15 @@ import {
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
-import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
-import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
+import {
+  isResourceExclusiveCheckpoint,
+  runWithCheckpointResources,
+} from './checkpoint-scheduler.mjs'
+import {
+  UPGRADE_CHECKPOINTS,
+  UPGRADE_DIAGNOSTIC_CHECKPOINTS,
+  rejectFailedReleaseCheckpoint,
+} from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
@@ -22,7 +27,7 @@ import {
 } from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
-import { extractRuntimeArchive } from '../../scripts/lib/extract-runtime-archive.mjs'
+import { prepareBundledRuntimeCache } from './modules/bundled-runtime-cache.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
@@ -50,8 +55,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
-  'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
+  'native-lifecycle': './scenarios/native-guidance.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
+  'follow-up-task-switch': './scenarios/follow-up-task-switch.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'responses-api-gateway': './scenarios/responses-api-gateway.scenario.mjs',
@@ -76,6 +82,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-collaboration-composer-isolation':
     './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
+  'plugin-legacy-upgrade': './scenarios/plugin-legacy-upgrade.scenario.mjs',
   'plugin-runtime-route-refresh': './scenarios/plugin-runtime-route-refresh.scenario.mjs',
   'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
   'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
@@ -87,7 +94,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'collaboration-issue-badges': './scenarios/collaboration-issue-badges.scenario.mjs',
-  'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'change-request-status': './scenarios/change-request-running-repair.scenario.mjs',
   'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
@@ -125,7 +132,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
-  'app-update-full': './scenarios/app-update-full.scenario.mjs',
+  'app-update-refresh': './scenarios/app-upgrade.scenario.mjs',
   ...Object.fromEntries(
     UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/retained-upgrade-baseline.scenario.mjs'])
   ),
@@ -154,19 +161,27 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
+  'collaboration-template-agents': './scenarios/collaboration-template-agents.scenario.mjs',
   'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
+  'stand-in-email': './scenarios/stand-in-email.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
   'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
+  'stand-in-processing': './scenarios/stand-in-processing.scenario.mjs',
+  'coordination-runtime': './scenarios/coordination-runtime.scenario.mjs',
+  'coordination-arrangements': './scenarios/coordination-arrangements.scenario.mjs',
+  'project-coordinator-publication': './scenarios/project-coordinator-publication.scenario.mjs',
+  'project-coordination': './scenarios/project-coordination.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
   'stand-in-cli': './scenarios/stand-in-cli.scenario.mjs',
   'stand-in-plugin-bridge': './scenarios/stand-in-plugin-bridge.scenario.mjs',
+  'stand-in-alternate-source': './scenarios/stand-in-alternate-source.scenario.mjs',
   'stand-in-assignment-notifications': './scenarios/stand-in-assignment-suite.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
@@ -202,6 +217,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -219,8 +235,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-parent-board',
   'collaboration-templates',
   'collaboration-template-lifecycle',
+  'collaboration-template-agents',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
@@ -245,6 +263,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
 
   'native-lifecycle',
   'goal-state-sync',
+  'follow-up-task-switch',
   'model-settings',
   'codex-native-catalog',
   'runtime-input-answer-persistence',
@@ -273,6 +292,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-legacy-upgrade',
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',
@@ -302,15 +322,22 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
+  'stand-in-email',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
   'stand-in-telemetry',
   'stand-in-model-catalog',
+  'stand-in-processing',
+  'coordination-runtime',
+  'coordination-arrangements',
+  'project-coordinator-publication',
+  'project-coordination',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
   'stand-in-cli',
   'stand-in-plugin-bridge',
+  'stand-in-alternate-source',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',
@@ -357,7 +384,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'computer-use',
   'split-workbench',
   'release-package-startup',
-  'app-update-full',
+  'app-update-refresh',
   ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
@@ -391,14 +418,6 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-archive-restore',
 ])
 const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
-// These checkpoints materialize packaged runtimes or repeatedly reload the full
-// renderer. Run them alone so Chromium's network service stays stable on the
-// four-vCPU desktop E2E runners.
-const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
-  'release-package-startup',
-  'collaboration-issue-task-discovery',
-])
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
 )
@@ -496,7 +515,15 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
+  if (
+    ['human-interactions', 'human-interactions-hidden', 'human-interactions-issue'].includes(
+      checkpoint
+    )
+  ) {
+    // The narrow 480x760 content viewport must fit inside the physical display.
+    nextEnv.WEWORK_E2E_XVFB_SCREEN = '1280x900x24'
+  }
+  if (UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
@@ -579,7 +606,7 @@ async function runDesktopBuild({
 
 function requirePrebuiltUpgradePair(checkpoints, environment) {
   if (
-    checkpoints.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value)) &&
+    checkpoints.some(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value)) &&
     !environment.WEWORK_E2E_UPGRADE_PAIR
   )
     throw new Error(
@@ -594,14 +621,14 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     requestedParallelCheckpoints(requestedArgs) ??
     requestedCheckpointRange(requestedArgs) ??
     []
-  const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+  const upgradeRequested = selected.some(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value))
   requirePrebuiltUpgradePair(selected, environment)
   if (upgradeRequested) {
     const pairPath = resolve(environment.WEWORK_E2E_UPGRADE_PAIR)
     const pair = JSON.parse(await readFile(pairPath, 'utf8'))
     nextEnvironment = {
       ...environment,
-      ...(selected.every(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+      ...(selected.every(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value))
         ? {
             WEWORK_E2E_APP_BIN: pair.from.executable,
             WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
@@ -636,75 +663,12 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
   }
 }
 
-async function fileSha256(path) {
-  const hash = createHash('sha256')
-  await new Promise((resolvePromise, reject) => {
-    const stream = createReadStream(path)
-    stream.on('data', chunk => hash.update(chunk))
-    stream.once('end', resolvePromise)
-    stream.once('error', reject)
-  })
-  return hash.digest('hex')
-}
-
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
-  const resourcesRoot = resolve(
+  const resources = resolve(
     dirname(appBinary),
     ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
   )
-  const resourceRoot = join(resourcesRoot, 'harness-runtime')
-  const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
-  const runtimes =
-    catalog.runtimes?.filter(runtime => ['core', 'workbench'].includes(runtime.role)) ?? []
-  const roles = new Set(runtimes.map(runtime => runtime.role))
-  if (!roles.has('core') || !roles.has('workbench')) {
-    throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
-  }
-
-  const runtimeRoot = join(parentDirectory, 'harness-runtime')
-  const startedAt = Date.now()
-  await mkdir(runtimeRoot, { recursive: true })
-  for (const runtime of runtimes) {
-    if (
-      !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
-      !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
-      !Number.isSafeInteger(runtime.archiveBytes) ||
-      runtime.archiveBytes <= 0 ||
-      typeof runtime.assetName !== 'string' ||
-      !runtime.assetName.endsWith('.tar.gz')
-    ) {
-      throw new Error('Bundled Electron runtime descriptor is invalid')
-    }
-
-    const archivePath = join(resourceRoot, runtime.assetName)
-    const archiveMetadata = await stat(archivePath)
-    if (archiveMetadata.size !== runtime.archiveBytes) {
-      throw new Error(`Bundled DSH runtime size mismatch: ${runtime.assetName}`)
-    }
-    if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
-      throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
-    }
-
-    const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
-    await mkdir(extractedRoot, { recursive: true })
-    await extractRuntimeArchive(archivePath, extractedRoot)
-    const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
-    if (
-      identity.dshVersion !== runtime.dshVersion ||
-      !(
-        identity.role === runtime.role ||
-        (Array.isArray(identity.roles) && identity.roles.includes(runtime.role))
-      ) ||
-      identity.sourceFingerprint !== runtime.sourceFingerprint
-    ) {
-      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
-    }
-  }
-  await writeFile(join(runtimeRoot, 'runtimes.json'), `${JSON.stringify({ runtimes }, null, 2)}\n`)
-  console.log(
-    `[desktop-e2e] shared harness runtimes ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
-  )
-  return runtimeRoot
+  return prepareBundledRuntimeCache(resources, join(parentDirectory, 'harness-runtime'))
 }
 
 function requestedCheckpointRange(args) {
@@ -791,7 +755,7 @@ async function runParallelCheckpoints(checkpoints) {
   try {
     const baseEnvironment = await sharedBuildEnvironment(process.env, checkpoints)
     const sharedHarnessRuntime = checkpoints.every(checkpoint =>
-      UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)
+      UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(checkpoint)
     )
       ? null
       : baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
@@ -823,12 +787,14 @@ async function runParallelCheckpoints(checkpoints) {
       `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
     )
 
+    const linuxCore =
+      process.platform === 'linux' && process.env.WEWORK_E2E_PARALLEL_SCOPE === 'core'
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
       resourceFor: checkpoint =>
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
-      exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
+      exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
@@ -854,6 +820,8 @@ async function runParallelCheckpoints(checkpoints) {
         console.error(
           `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
         )
+        // A failed pair cannot authorize an edge; retain diagnostics and try the next source.
+        if (workerCount === 1) rejectFailedReleaseCheckpoint(checkpoint, result)
       },
     })
     if (failures.length === 0) {

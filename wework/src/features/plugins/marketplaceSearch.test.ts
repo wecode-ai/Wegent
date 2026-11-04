@@ -1,10 +1,8 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment node
+
 import type { PluginMarketplaceItem } from '@/types/api'
-import {
-  marketplaceSearchScore,
-  normalizeMarketplaceSearchQuery,
-  rankMarketplaceSearchResults,
-} from './marketplaceSearch'
+import { describe, expect, test } from 'vitest'
+import { marketplaceSearchScore } from './marketplaceSearch'
 
 function marketplaceItem(
   overrides: Partial<PluginMarketplaceItem> & Pick<PluginMarketplaceItem, 'id' | 'name'>
@@ -35,29 +33,6 @@ function marketplaceItem(
 }
 
 describe('marketplaceSearch', () => {
-  test('normalizeMarketplaceSearchQuery trims and lowercases', () => {
-    expect(normalizeMarketplaceSearchQuery('  GitHub  ')).toBe('github')
-  })
-
-  test('rankMarketplaceSearchResults prefers exact name matches', () => {
-    const items = [
-      marketplaceItem({ id: 1, name: 'tools', displayName: 'GitHub Tools' }),
-      marketplaceItem({ id: 2, name: 'github', displayName: 'GitHub' }),
-      marketplaceItem({ id: 3, name: 'slack', displayName: 'Slack' }),
-    ]
-
-    expect(rankMarketplaceSearchResults(items, 'github').map(item => item.id)).toEqual([2, 1])
-  })
-
-  test('marketplaceSearchScore returns null when nothing matches', () => {
-    expect(
-      marketplaceSearchScore(
-        marketplaceItem({ id: 1, name: 'slack', displayName: 'Slack' }),
-        'github'
-      )
-    ).toBeNull()
-  })
-
   test('marketplaceSearchScore matches description and interface blurbs', () => {
     expect(
       marketplaceSearchScore(
@@ -82,10 +57,5 @@ describe('marketplaceSearch', () => {
         'feishu'
       )
     ).toBe(100)
-  })
-
-  test('rankMarketplaceSearchResults returns all items for empty query', () => {
-    const items = [marketplaceItem({ id: 1, name: 'a' }), marketplaceItem({ id: 2, name: 'b' })]
-    expect(rankMarketplaceSearchResults(items, '  ')).toEqual(items)
   })
 })

@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+xvfb_screen=${WEWORK_E2E_XVFB_SCREEN:-1280x720x24}
+if ! printf '%s\n' "$xvfb_screen" | LC_ALL=C grep -Eq '^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}x(16|24|32)$'; then
+  printf '%s\n' 'WEWORK_E2E_XVFB_SCREEN must be WIDTHxHEIGHTxDEPTH (depth 16, 24 or 32)' >&2
+  exit 2
+fi
+
 # xvfb-run reopens its error path; Node's socket-backed stdio cannot be reopened.
 xvfb_log=$(mktemp -t wework-e2e-xvfb.XXXXXX)
 cleanup() {
@@ -23,4 +29,4 @@ fi
 # Short-lived probes must not reset the display while Openbox connects.
 # xvfb-run owns the isolated server until the checkpoint exits.
 xvfb-run --error-file="$xvfb_log" \
-  --server-args="-noreset -screen 0 1280x720x24" "$@"
+  --server-args="-noreset -screen 0 $xvfb_screen" "$@"

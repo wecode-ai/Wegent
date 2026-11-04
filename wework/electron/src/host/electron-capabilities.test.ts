@@ -14,6 +14,8 @@ import {
   createElectronCapabilityRouter,
   coreGrantedCapabilities,
   cpuLoadRatioBetween,
+  e2eSystemPressureOverride,
+  systemPressureSnapshot,
   e2eOpenDialogOverride,
   e2eSaveDialogOverride,
   createWorkbenchCapabilityRouter,
@@ -94,6 +96,42 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('E2E system pressure fixture', () => {
+  const environment = {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+    WEWORK_E2E_SYSTEM_PRESSURE: 'idle',
+  }
+
+  test('requires an explicit pressure fixture and a controlled E2E process', () => {
+    expect(e2eSystemPressureOverride(environment)).toEqual({
+      cpuLoadRatio: 0.1,
+      freeMemoryRatio: 0.5,
+      userIdleSeconds: 60,
+    })
+    for (const key of Object.keys(environment)) {
+      expect(e2eSystemPressureOverride({ ...environment, [key]: undefined })).toBeNull()
+    }
+    expect(e2eSystemPressureOverride({ ...environment, VITE_WEWORK_E2E: 'false' })).toBeNull()
+    expect(
+      e2eSystemPressureOverride({ ...environment, WEWORK_E2E_SYSTEM_PRESSURE: 'unknown' })
+    ).toBeNull()
+  })
+
+  test('serves the same fixture to scheduler and diagnostic pressure probes', async () => {
+    const original = { ...process.env }
+    try {
+      Object.assign(process.env, environment)
+      expect(await systemPressureSnapshot()).toEqual(e2eSystemPressureOverride(environment))
+    } finally {
+      for (const key of Object.keys(environment)) {
+        if (original[key] === undefined) delete process.env[key]
+        else process.env[key] = original[key]
+      }
+    }
   })
 })
 
@@ -881,7 +919,11 @@ describe('registerAppUpdateCapabilities', () => {
       }),
     } as unknown as HostCapabilityRouter
     const appUpdates = {
-      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      check: vi.fn(async () => ({
+        currentVersion: '0.2.6',
+        readyToInstall: false,
+        version: '0.2.7',
+      })),
       download: vi.fn(async () => undefined),
       downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
       createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
@@ -899,22 +941,28 @@ describe('registerAppUpdateCapabilities', () => {
       handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
     ).resolves.toEqual({
       currentVersion: '0.2.6',
+      readyToInstall: false,
       version: '0.2.7',
     })
-    await handlers.get('appUpdate.download')?.({}, context)
+    await handlers.get('appUpdate.download')?.({ channel: 'stable' }, context)
     expect(await handlers.get('appUpdate.downloadProgress')?.({}, context)).toEqual({
       downloadedBytes: 25,
       totalBytes: 100,
     })
-    await handlers.get('appUpdate.install')?.({}, context)
+    await handlers.get('appUpdate.install')?.({ version: '0.2.7' }, context)
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
+    expect(appUpdates.download).toHaveBeenCalledWith('stable')
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
     expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
+    expect(appUpdates.createInstallAction).toHaveBeenCalledWith('0.2.7')
     expect(installCompletions).toHaveLength(1)
     await installCompletions[0]()
     expect(() => handlers.get('appUpdate.check')?.({ channel: 'nightly' }, context)).toThrow(
+      'channel is invalid'
+    )
+    expect(() => handlers.get('appUpdate.download')?.({ channel: 'nightly' }, context)).toThrow(
       'channel is invalid'
     )
   })
@@ -931,7 +979,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(() =>
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toThrow('App updates are unavailable')
@@ -952,7 +1000,7 @@ describe('registerAppUpdateCapabilities', () => {
 
     expect(
       handlers.get('appUpdate.download')?.(
-        {},
+        { channel: 'stable' },
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toBeNull()
@@ -1004,6 +1052,43 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each(['true', 'false'])(
+    'preserves process snapshot collection options with E2E diagnostics %s',
+    async e2e => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: (capability: HostCapability, handler: HostCapabilityHandler) =>
+          handlers.set(capability, handler),
+      } as unknown as HostCapabilityRouter
+      const snapshot = vi.fn(async () => ({ processes: [], degraded: [] }))
+      const log = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      vi.stubEnv('VITE_WEWORK_E2E', e2e)
+      try {
+        registerDesktopServiceCapabilities(
+          router,
+          { processExplorer: { snapshot } } as unknown as ElectronDesktopServices,
+          {
+            openLogDirectory: vi.fn(),
+            openDevTools: vi.fn(),
+            openProcessExplorer: vi.fn(),
+            setProcessExplorerAlwaysOnTop: vi.fn(),
+          }
+        )
+        const handler = handlers.get('diagnostics.processSnapshot')!
+        await handler({}, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true })
+        await handler({ waitForSystemProcesses: false }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false })
+        const failure = new Error('Snapshot collection failed')
+        snapshot.mockRejectedValueOnce(failure)
+        await expect(handler({}, { principal: 'test' })).rejects.toBe(failure)
+      } finally {
+        vi.unstubAllEnvs()
+        log.mockRestore()
+      }
+    }
+  )
+
   test.each([
     {
       label: 'supplied',

@@ -28,6 +28,20 @@ function previewTrigger(page: Page, filename: string): Locator {
     .getByTestId('document-link-preview-trigger')
 }
 
+function previewCard(page: Page, filename: string): Locator {
+  return page.getByTestId('document-link-preview-card').filter({ hasText: filename })
+}
+
+export async function expectSingleRenderedWatermark(
+  scope: Locator,
+  watermarkText: string
+): Promise<void> {
+  const watermark = scope.getByTestId('knowledge-document-watermark')
+  await expect(watermark).toHaveCount(1)
+  await expect(watermark).toHaveAttribute('data-watermark-text', watermarkText)
+  await expect(watermark).toHaveCSS('background-image', /data:image\/png;base64,/)
+}
+
 async function expectPdfRange(page: Page, response: Response): Promise<void> {
   expect(response.status()).toBe(206)
   const requestRange = response
@@ -106,6 +120,69 @@ async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Pr
   ).toBeVisible()
 }
 
+async function verifyVideoPreview(
+  page: Page,
+  dialog: Locator,
+  origin: string,
+  watermarkText: string
+): Promise<void> {
+  const [range] = await Promise.all([
+    page.waitForResponse(
+      response =>
+        response.url() === `${origin}/preview.mp4` &&
+        response.request().headers().range === 'bytes=0-0'
+    ),
+    previewTrigger(page, 'preview.mp4').click(),
+  ])
+  expect(range.status()).toBe(206)
+  const video = dialog.locator('video')
+  await expect(video).toBeVisible()
+  // Visibility alone cannot detect a codec failure, so require the media
+  // element to actually decode its metadata before checking the guards.
+  const loaded = video.evaluate(element => {
+    const media = element as HTMLVideoElement
+    return new Promise<boolean>(resolve => {
+      if (media.videoWidth > 0) {
+        resolve(true)
+        return
+      }
+      media.addEventListener('loadedmetadata', () => resolve(media.videoWidth > 0), {
+        once: true,
+      })
+      media.addEventListener('error', () => resolve(false), { once: true })
+    })
+  })
+  expect(await loaded, 'video media failed to load or decode').toBe(true)
+  expect((await video.getAttribute('controlslist'))?.split(/\s+/)).toContain('nofullscreen')
+  await expectSingleRenderedWatermark(dialog, watermarkText)
+}
+
+export async function verifyWatermarkFailureRecovery(
+  page: Page,
+  watermarkText: string
+): Promise<void> {
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toDataURL
+    let failNextWatermark = true
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+      if (failNextWatermark) {
+        failNextWatermark = false
+        throw new Error('E2E_WATERMARK_GENERATION_FAILED')
+      }
+      return original.apply(this, args)
+    }
+  })
+
+  await previewTrigger(page, 'preview.txt').click()
+  const dialog = page.getByTestId('document-link-preview-dialog')
+  await expect(dialog.getByTestId('knowledge-watermark-unavailable')).toBeVisible()
+  await expect(dialog.getByText('DINGTALK TEXT PREVIEW CONTENT', { exact: true })).toHaveCount(0)
+  await dialog.getByTestId('knowledge-watermark-retry').click()
+  await expect(dialog.getByText('DINGTALK TEXT PREVIEW CONTENT', { exact: true })).toBeVisible()
+  await expectSingleRenderedWatermark(dialog, watermarkText)
+  await dialog.getByRole('button', { name: /close/i }).click()
+}
+
 async function verifyOfficePreview(page: Page, dialog: Locator, origin: string): Promise<void> {
   const [request] = await Promise.all([
     // Opening the dialog can abort an earlier load after its response headers.
@@ -141,7 +218,8 @@ async function verifyUnavailableFile(page: Page, dialog: Locator, origin: string
 export async function verifyRestrictedFilePreviews(
   page: Page,
   origin: string,
-  testInfo: TestInfo
+  testInfo: TestInfo,
+  watermarkText: string
 ): Promise<void> {
   const originalUrl = page.url()
   expect(new URL(originalUrl).origin).not.toBe(origin)
@@ -184,9 +262,14 @@ export async function verifyRestrictedFilePreviews(
       ],
     })
     await verifyPdfPreview(page, dialog, origin)
+    await expectSingleRenderedWatermark(dialog, watermarkText)
     expect(page.url()).toBe(originalUrl)
     await dialog.getByRole('button', { name: /close/i }).click()
     await verifyOfficePreview(page, dialog, origin)
+    await expectSingleRenderedWatermark(dialog, watermarkText)
+    expect(page.url()).toBe(originalUrl)
+    await dialog.getByRole('button', { name: /close/i }).click()
+    await verifyVideoPreview(page, dialog, origin, watermarkText)
     expect(page.url()).toBe(originalUrl)
     await dialog.getByRole('button', { name: /close/i }).click()
     await verifyUnavailableFile(page, dialog, origin)
@@ -203,4 +286,32 @@ export async function verifyRestrictedFilePreviews(
     })
     await network.detach()
   }
+}
+
+export async function verifyAllowedPreviewCoverWatermarks(
+  page: Page,
+  watermarkText: string
+): Promise<void> {
+  for (const filename of ['preview.pdf', 'preview.docx', 'preview.mp4', 'preview.txt']) {
+    await expectSingleRenderedWatermark(previewCard(page, filename), watermarkText)
+  }
+}
+
+export async function verifyProtectedPreviewUsesOneWatermark(
+  page: Page,
+  watermarkText: string
+): Promise<void> {
+  const protectedContent = page.getByTestId('knowledge-protected-content')
+  await expectSingleRenderedWatermark(protectedContent, watermarkText)
+  for (const filename of ['preview.pdf', 'preview.docx', 'preview.mp4', 'preview.txt']) {
+    await expect(
+      previewCard(page, filename).getByTestId('knowledge-document-watermark')
+    ).toHaveCount(0)
+  }
+
+  await previewTrigger(page, 'preview.txt').click()
+  const dialog = page.getByTestId('document-link-preview-dialog')
+  await expect(dialog.getByText('DINGTALK TEXT PREVIEW CONTENT', { exact: true })).toBeVisible()
+  await expectSingleRenderedWatermark(dialog, watermarkText)
+  await dialog.getByRole('button', { name: /close/i }).click()
 }

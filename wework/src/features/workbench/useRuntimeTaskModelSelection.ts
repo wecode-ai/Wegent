@@ -3,11 +3,10 @@ import type {
   ModelOptions,
   ModelSelectionConfig,
   RuntimeTaskAddress,
-  RuntimeWorkListResponse,
+  RuntimeTaskSummary,
   UnifiedModel,
 } from '@/types/api'
 import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
-import { findRuntimeTask } from './workbenchRuntimeHelpers'
 import { findModelForSelection, modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { getRuntimeTaskChatScopeKey } from './workbenchProviderHelpers'
 
@@ -34,7 +33,7 @@ interface RuntimeTaskModelStore {
 
 interface UseRuntimeTaskModelSelectionOptions {
   userId: number
-  runtimeWork: RuntimeWorkListResponse | null
+  resolveTask: (address: RuntimeTaskAddress) => RuntimeTaskSummary | null
   modelStore: RuntimeTaskModelStore
 }
 
@@ -62,7 +61,7 @@ function modelFromTaskSnapshot(selection: ModelSelectionConfig | null): UnifiedM
 
 export function useRuntimeTaskModelSelection({
   userId,
-  runtimeWork,
+  resolveTask,
   modelStore,
 }: UseRuntimeTaskModelSelectionOptions) {
   const {
@@ -77,10 +76,10 @@ export function useRuntimeTaskModelSelection({
   } = modelStore
   const taskSelectionConfig = useCallback(
     (address: RuntimeTaskAddress) =>
-      findRuntimeTask(runtimeWork, address)?.modelSelection ??
+      resolveTask(address)?.modelSelection ??
       modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
       null,
-    [runtimeWork]
+    [resolveTask]
   )
   const resolveRuntimeTaskModelSelection = useCallback(
     (address: RuntimeTaskAddress): RuntimeTaskModelSelectionControls => {

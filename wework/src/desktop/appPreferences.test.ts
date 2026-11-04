@@ -15,6 +15,7 @@ const mergedDefaultPreferences = {
     { id: 'fixed-task', kind: 'task' },
     { id: 'fixed-board', kind: 'board' },
     { id: 'fixed-agent', kind: 'agent' },
+    { id: 'pending-interactions', kind: 'auxiliary', contentRoute: '/pending-interactions' },
   ],
   startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
@@ -38,6 +39,7 @@ const mergedDefaultPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   computerUseEnabled: false,
@@ -263,6 +265,16 @@ describe('appPreferences', () => {
       startupWorkspaceTabId: '',
     })
   })
+
+  test.each([undefined, false, 'true', 1, true])(
+    'only enables full control for boolean true (%s)',
+    async value => {
+      const { mergeAppPreferences } = await import('./appPreferences')
+      expect(mergeAppPreferences({ browserFullControl: value }).browserFullControl).toBe(
+        value === true
+      )
+    }
+  )
 
   test('normalizes stored browser preferences', async () => {
     invokeMock.mockResolvedValue({

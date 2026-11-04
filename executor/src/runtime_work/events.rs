@@ -25,8 +25,8 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     codex_user_input::async_question_payload_from_item,
     notification_mapping::{
-        codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        codex_stream_debug_enabled, log_agent_message_completion, log_dropped_notification,
+        map_text_chunk, map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -581,6 +581,12 @@ impl CodexNotificationEventMapper {
                 let output_item_id_fallback = can_reuse_active_output_id
                     .then(|| self.active_output_item_id.clone())
                     .flatten();
+                log_agent_message_completion(
+                    local_task_id,
+                    &request.subtask_id,
+                    notification.params,
+                    resolved_phase.as_deref(),
+                );
                 if is_context_compaction_notification(notification.params) {
                     self.emit_context_compaction_once(&emit_context, notification.params);
                     return;

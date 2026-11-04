@@ -11,11 +11,10 @@ import {
   USER_PASSWORD,
 } from '../modules/harness-app-fixture.mjs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { verifyDefaultOnlyDshPackage } from '../modules/dsh-runtime-cache.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import assert from 'node:assert/strict'
-import { copyFile, readFile, readdir } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
 import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
@@ -53,9 +52,8 @@ export async function createDesktopScenario({
   const archiveRegression =
     checkpoint === 'harness-app-lifecycle' ? await createSmartAppArchiveRegression(resultDir) : null
   let publishUpdatedRelease
-  // Electron falls back to HOME on Linux when XDG user directories are unavailable.
-  const downloadsPath =
-    process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
+  const downloadsPath = join(resultDir, 'downloads')
+  await mkdir(downloadsPath, { recursive: true })
   let sharedSmartAppId = null
   let ownerRequest
   return {
@@ -63,6 +61,7 @@ export async function createDesktopScenario({
     // Reproduce a workbench launched from a DSH-backed terminal. Legacy apps must
     // ignore the parent's authentication state while Core DSH keeps its own auth.
     appEnvironment: {
+      WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
       WEWORK_DSH_BROWSER_AUTH: '1',
       WEWORK_DSH_BROWSER_AUTH_FD: '99',
     },
