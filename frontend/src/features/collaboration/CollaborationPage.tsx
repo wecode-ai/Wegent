@@ -22,6 +22,7 @@ import {
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 import { CollaborationTheme, useDocumentTheme } from '@wegent/collaboration/theme'
+import { ProjectLoadingSkeleton } from '@wegent/collaboration/project-shell'
 
 import {
   createProjectChatClient,
@@ -134,7 +135,7 @@ export function CollaborationPage() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { getCurrentLanguage } = useTranslation()
+  const { getCurrentLanguage, t } = useTranslation()
   const templateLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   const requestedTemplate = searchParams.get('template')
   const [templateRequest, setTemplateRequest] = useState<{
@@ -423,6 +424,23 @@ export function CollaborationPage() {
       searchParams,
     ]
   )
+
+  // The shared app resets on template account changes. Mount it only after
+  // identity initialization so that its first interaction cannot be discarded.
+  if (!templateStore) {
+    return (
+      <CollaborationWebShell
+        sidebar={<div />}
+        main={
+          <ProjectLoadingSkeleton
+            label={t('loading')}
+            layout="list"
+            testId="collaboration-account-loading"
+          />
+        }
+      />
+    )
+  }
 
   if (requestedTemplate && templateRequestError) {
     const m = templateMessages[templateLocale]

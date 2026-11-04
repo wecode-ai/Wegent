@@ -1979,7 +1979,11 @@ function filterRuntimeChatStreamHandlers(
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
-    onRuntimeWorkChanged: route(handlers.onRuntimeWorkChanged),
+    // The local executor can create work on a remote device through MCP.
+    // Catalog invalidation carries that target address but no conversation data.
+    onRuntimeWorkChanged: localRuntime
+      ? handlers.onRuntimeWorkChanged
+      : route(handlers.onRuntimeWorkChanged),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),

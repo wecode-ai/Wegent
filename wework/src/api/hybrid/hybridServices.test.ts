@@ -1431,6 +1431,22 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
+  it('refreshes the catalog after the local executor creates a conversation on another device', () => {
+    const services = createServices()
+    const onRuntimeWorkChanged = vi.fn()
+    services.chatStream.subscribe({ onRuntimeWorkChanged })
+
+    const localHandlers = mocks.localChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const cloudHandlers = mocks.cloudRuntimeChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const remoteCreation = { deviceId: 'cloud-device', taskId: 'created-remote-task' }
+
+    localHandlers?.onRuntimeWorkChanged?.(remoteCreation)
+    expect(onRuntimeWorkChanged).toHaveBeenCalledExactlyOnceWith(remoteCreation)
+
+    cloudHandlers?.onRuntimeWorkChanged?.({ deviceId: 'local-device', taskId: 'local-task' })
+    expect(onRuntimeWorkChanged).toHaveBeenCalledTimes(1)
+  })
+
   it('routes project assignment notifications by project storage', () => {
     const services = createServices()
     const onProjectTaskAssigned = vi.fn()

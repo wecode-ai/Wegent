@@ -721,7 +721,12 @@ fn remote_creation_binds_before_dispatch_and_rolls_back_definite_rejection() {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}/deployed/api/", listener.local_addr().unwrap());
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let (event_tx, mut event_rx) = broadcast::channel(8);
+            let handler = RuntimeWorkRpcHandler::with_event_sender(
+                "control-test-device",
+                "/bin/false",
+                event_tx,
+            );
             seed(&handler, "caller");
             let mut ctx = context("caller");
             ctx.request.backend_url = Some(url);
@@ -735,6 +740,12 @@ fn remote_creation_binds_before_dispatch_and_rolls_back_definite_rejection() {
                 .unwrap();
             assert_eq!(result["device_id"], "target-device");
             assert!(result.get("runtimeHandle").is_none());
+            let changed = event_rx
+                .try_recv()
+                .expect("Accepted creation must invalidate the workbench catalog");
+            assert_eq!(changed["event"], "runtime.work.changed");
+            assert_eq!(changed["payload"]["deviceId"], "target-device");
+            assert_eq!(changed["payload"]["taskId"], result["taskId"]);
             reject.store(true, Ordering::SeqCst);
             let error = handler
                 .control_operation(&ctx, "create_conversation", args)
@@ -742,6 +753,10 @@ fn remote_creation_binds_before_dispatch_and_rolls_back_definite_rejection() {
                 .unwrap_err();
             assert_eq!(error.code, "backend_request_rejected");
             assert_eq!(calls.lock().unwrap().last().unwrap(), "rollback");
+            assert!(matches!(
+                event_rx.try_recv(),
+                Err(broadcast::error::TryRecvError::Empty)
+            ));
             server.abort();
         });
 }

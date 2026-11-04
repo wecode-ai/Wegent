@@ -94,7 +94,11 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
-    mockTemplateStore = null
+    mockTemplateStore = new CollaborationTemplateStore({
+      scope: 'web-7',
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    })
     mockPush.mockReset()
     mockReplace.mockReset()
     mockPathname = '/collaboration'
@@ -149,6 +153,23 @@ describe('CollaborationPage platform routing', () => {
     expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
       screen.getByTestId('shared-collaboration-sidebar')
     )
+  })
+
+  it('waits for the account template scope before mounting interactive collaboration content', () => {
+    const readyStore = mockTemplateStore
+    mockTemplateStore = null
+    const { rerender } = render(<CollaborationPage />)
+
+    expect(capturedHost).toBeNull()
+    expect(screen.getByTestId('collaboration-account-loading')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByTestId('shared-collaboration-sidebar')).not.toBeInTheDocument()
+
+    mockTemplateStore = readyStore
+    rerender(<CollaborationPage />)
+
+    expect(capturedHost?.templateStore).toBe(readyStore)
+    expect(screen.getByTestId('shared-collaboration-sidebar')).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-account-loading')).not.toBeInTheDocument()
   })
 
   it('opens the selected execution environment in device management', () => {
