@@ -25,7 +25,7 @@ import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
-import { collectIssueSubtreeIds } from "./board";
+import { prepareIssueArchiveSubtree } from "./issue-archive/prepareIssueArchive";
 import {
   CollaborationProjectViewShell,
   ProjectLoadingSkeleton,
@@ -316,13 +316,7 @@ export function CollaborationApp({
     setArchiveIssueError(null);
     const results = await Promise.allSettled(
       archiveIssueTargets.map(async (issue) => {
-        for (const id of collectIssueSubtreeIds(issues, issue.id)) {
-          const target =
-            id === issue.id
-              ? issue
-              : issues.find((candidate) => candidate.id === id);
-          if (target) await onPrepareIssueArchive?.(target);
-        }
+        await prepareIssueArchiveSubtree(issues, issue, onPrepareIssueArchive);
         const archived = await commands.archiveIssue(issue.id, {
           throwOnError: true,
         });

@@ -29,6 +29,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   const grandchild = await create('甘特孙任务', child.id, 'in_review')
   const undated = await create('从底部拖入甘特图', null, 'inbox', false)
   await reloadMainWindow(control, 'Gantt hierarchy fixtures did not reload')
+  await wait(`cloud-todo-card-${parent.id}`)
   await click('collaboration-gantt-tab')
   await wait(`collaboration-gantt-row-${grandchild.id}`)
   assert.equal(
