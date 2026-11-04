@@ -1,3 +1,4 @@
+import { MilestonePicker } from "./milestones/MilestonePicker";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
@@ -261,6 +262,7 @@ type TodoDraft = {
   startDate: string;
   dueDate: string;
   assigneeTarget: IssueAssigneeTarget;
+  milestoneId: string | null;
   tags: string[];
 };
 
@@ -309,6 +311,8 @@ function readTodoDraft(key: string): TodoDraft | null {
     return {
       title: typeof parsed.title === "string" ? parsed.title : "",
       markdown: typeof parsed.markdown === "string" ? parsed.markdown : "",
+      milestoneId:
+        typeof parsed.milestoneId === "string" ? parsed.milestoneId : null,
       priority: todoDraftPriorities.includes(
         parsed.priority as CloudLoopItem["priority"],
       )
@@ -614,6 +618,7 @@ export interface TodoEditorCreateProps {
   initialStatus: CloudLoopItem["status"];
   initialTitle?: string;
   initialTags?: string[];
+  initialMilestoneId?: string;
   draftScope?: string;
   onCreated: (item: CloudLoopItem) => void | Promise<void>;
   onCreateError?: (
@@ -728,6 +733,9 @@ export function TodoEditor(props: TodoEditorProps) {
       )
     : null;
   const [draft] = useState(() => (draftKey ? readTodoDraft(draftKey) : null));
+  const [createMilestoneId, setCreateMilestoneId] = useState<string | null>(
+    draft ? draft.milestoneId : (createProps?.initialMilestoneId ?? null),
+  );
   const [editingContent, setEditingContent] = useState(!readFirst);
 
   const {
@@ -1296,6 +1304,7 @@ export function TodoEditor(props: TodoEditorProps) {
       !startDate &&
       !dueDate &&
       !assigneeTarget &&
+      !createMilestoneId &&
       !tags.length
     ) {
       localStorage.removeItem(draftKey);
@@ -1304,6 +1313,7 @@ export function TodoEditor(props: TodoEditorProps) {
     const snapshot: TodoDraft = {
       title,
       markdown: description,
+      milestoneId: createMilestoneId,
       priority,
       parentId,
       startDate,
@@ -1313,6 +1323,7 @@ export function TodoEditor(props: TodoEditorProps) {
     };
     localStorage.setItem(draftKey, JSON.stringify(snapshot));
   }, [
+    createMilestoneId,
     assigneeTarget,
     description,
     draftKey,
@@ -1507,6 +1518,7 @@ export function TodoEditor(props: TodoEditorProps) {
     const createAssignee = parseIssueAssigneeTarget(assigneeTarget);
     const hasHumanAssignee = assigneeTarget.startsWith("user:");
     Object.assign(createInput, {
+      ...(createMilestoneId ? { milestone_id: createMilestoneId } : {}),
       ...(parentId ? { parent_id: parentId } : {}),
       ...(startAt ? { start_at: startAt } : {}),
       ...(dueAt ? { due_at: dueAt } : {}),
@@ -2783,6 +2795,45 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           )}
           <span className="flex-1" />
+          {editorPort.milestones &&
+          ["local", "backend"].includes(
+            (createProps?.project ?? editProps?.project)?.task_provider ?? "",
+          ) ? (
+            <MilestonePicker
+              api={editorPort.milestones}
+              compact={!isCreate}
+              projectId={
+                createProps?.project.id ?? item?.cloud_project_id ?? ""
+              }
+              value={
+                isCreate ? createMilestoneId : (item?.milestone_id ?? null)
+              }
+              disabled={!editable || saving}
+              label={t("todo.milestone", "里程碑")}
+              noneLabel={t("todo.no_milestone", "未设置里程碑")}
+              errorLabel={t("todo.milestone_error", "里程碑操作失败，请重试")}
+              retryLabel={t("todo.milestone_retry", "重试")}
+              onChange={async (value) => {
+                if (isCreate) {
+                  setCreateMilestoneId(value);
+                  return;
+                }
+                const current = latestItemRef.current;
+                if (!current || !editProps) return;
+                setSaving(true);
+                try {
+                  editProps.onUpdated(
+                    await editorPort.issues.update(current.id, {
+                      version: current.version,
+                      milestone_id: value,
+                    }),
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            />
+          ) : null}
           {props.headerActions}
           {workspacePanel && item ? (
             <IssuePropertiesPopover

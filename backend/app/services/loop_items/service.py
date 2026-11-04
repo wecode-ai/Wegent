@@ -104,6 +104,7 @@ from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
+from app.services.project_milestones import require_milestone
 from app.stores.tasks import task_store
 from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
@@ -600,6 +601,8 @@ class LoopItemService:
             if values.runner_selection is not None
             else (automation_context or {}).get("runner_selection")
         )
+        milestone_id = payload.pop("milestone_id", None)
+        require_milestone(db, project.id, milestone_id)
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -611,7 +614,9 @@ class LoopItemService:
         group_id = payload.pop("assignee_group_id", None)
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
-        task_metadata: dict = {}
+        task_metadata: dict[str, Any] = {}
+        if milestone_id is not None:
+            task_metadata["milestone_id"] = milestone_id
         task_metadata["security_level"] = default_issue_security(project)
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
@@ -1585,7 +1590,7 @@ class LoopItemService:
         meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
-                field in {"tags", "workflow"}
+                field in {"tags", "workflow", "milestone_id"}
                 or getattr(item, field, None) != getattr(values, field)
             )
             for field in (
@@ -1600,6 +1605,7 @@ class LoopItemService:
                 "due_at",
                 "parent_id",
                 "tags",
+                "milestone_id",
                 "workflow",
                 "security_level",
             )
@@ -1659,6 +1665,7 @@ class LoopItemService:
             )
         if (
             "tags" in values.model_fields_set
+            or "milestone_id" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
             or "security_level" in values.model_fields_set
@@ -1666,6 +1673,13 @@ class LoopItemService:
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
+            if "milestone_id" in values.model_fields_set:
+                require_milestone(db, item.cloud_project_id, values.milestone_id)
+                updates.pop("milestone_id")
+                if values.milestone_id is None:
+                    metadata.pop("milestone_id", None)
+                else:
+                    metadata["milestone_id"] = values.milestone_id
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
             if "security_level" in values.model_fields_set:

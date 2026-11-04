@@ -1,3 +1,4 @@
+import type { Milestone, MilestoneInput } from '@wegent/collaboration'
 import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { deliveryUpdateForm } from '@wegent/collaboration'
@@ -119,6 +120,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
   assignee_group_id?: string | null
@@ -934,10 +936,36 @@ export function createDeliveryApi(client: HttpClient) {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
       return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`)
     },
+    getMilestonesCacheScope() {
+      return client.getCacheScope?.() ?? client
+    },
+    listMilestones(projectId: string): Promise<Milestone[]> {
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`)
+    },
+    createMilestone(projectId: string, input: MilestoneInput): Promise<Milestone> {
+      return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`, input)
+    },
+    updateMilestone(
+      projectId: string,
+      id: string,
+      input: MilestoneInput & { version: number }
+    ): Promise<Milestone> {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(id)}`,
+        input
+      )
+    },
+    deleteMilestone(projectId: string, id: string, version: number): Promise<void> {
+      return client.delete(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(id)}`,
+        { version }
+      )
+    },
     createLoopItem(
       projectId: CloudProjectIdInput,
       data: {
         title: string
+        milestone_id?: string | null
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
@@ -973,6 +1001,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'due_at'
           | 'tags'
           | 'security_level'
+          | 'milestone_id'
         >
       > & {
         version: number

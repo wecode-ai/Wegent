@@ -1,3 +1,7 @@
+import { MilestoneBulkAction } from "./milestones/MilestoneBulkAction";
+import { MilestonesPage } from "./milestones/MilestonesPage";
+import { MilestonePicker } from "./milestones/MilestonePicker";
+import { milestoneMessages } from "./milestones/messages";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -192,6 +196,10 @@ export function CollaborationApp({
   );
   const archiveLoadGeneration = useRef(0);
   const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null);
+  const [milestoneFilter, setMilestoneFilter] = useState<{
+    projectId: string;
+    value: string | null;
+  } | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
@@ -431,6 +439,145 @@ export function CollaborationApp({
     />
   ) : null;
 
+  const currentMilestoneFilter =
+    milestoneFilter && milestoneFilter.projectId === project?.id
+      ? milestoneFilter.value
+      : "all";
+  const filteredIssues = issues.filter(
+    (issue) =>
+      currentMilestoneFilter === "all" ||
+      (issue.milestone_id ?? null) === currentMilestoneFilter,
+  );
+  const milestoneLabels = milestoneMessages[locale];
+  const milestonesEnabled = Boolean(
+    api.milestones &&
+    project &&
+    ["local", "backend"].includes(project.task_provider),
+  );
+
+  const renderIssueTable = (
+    tableIssues: CollaborationIssue[],
+    view: CollaborationView,
+    tableAssignments: Record<
+      string,
+      CollaborationAssignment[]
+    > = assignmentsByIssueId,
+    options: { emptyLabel?: string; milestoneId?: string } = {},
+  ) => {
+    if (!project) return null;
+    return (
+      <ProjectIssueTable
+        issues={tableIssues}
+        renderBulkActions={
+          milestonesEnabled
+            ? (selected) => (
+                <MilestoneBulkAction
+                  api={api}
+                  projectId={project.id}
+                  issues={selected}
+                  locale={locale}
+                  onUpdated={commands.replaceIssue}
+                />
+              )
+            : undefined
+        }
+        assignmentsByIssueId={tableAssignments}
+        emptyLabel={options.emptyLabel ?? messages.noIssues}
+        issueLabel={messages.issueTitle}
+        statusLabel={messages.issueStatus}
+        assignmentsLabel={messages.assignments}
+        executionLabel={messages.executionStatus}
+        updatedLabel={messages.updatedAt}
+        startAtLabel={messages.startTime}
+        dueAtLabel={messages.endTime}
+        projectKey={project.project_key}
+        searchPlaceholder={messages.searchIssues}
+        createLabel={messages.createIssue}
+        allLabel={locale === "zh-CN" ? "全部" : "All"}
+        tagLabel={messages.issueTags}
+        actionsLabel={translate("common.actions", "操作")}
+        deleteLabel={translate("todo.archive_issue", "归档任务")}
+        selectAllLabel={
+          locale === "zh-CN"
+            ? "选择当前筛选结果中的全部任务"
+            : "Select all visible issues"
+        }
+        selectIssueLabel={locale === "zh-CN" ? "选择任务" : "Select issue"}
+        selectedLabel={locale === "zh-CN" ? "项已选择" : "selected"}
+        batchStatusLabel={locale === "zh-CN" ? "批量修改状态" : "Change status"}
+        batchApplyLabel={locale === "zh-CN" ? "应用" : "Apply"}
+        batchDeleteLabel={locale === "zh-CN" ? "批量归档" : "Archive selected"}
+        availableStatuses={projectStatuses(project, messages, translate).map(
+          (status) => status.id,
+        )}
+        canDelete={(issue) => issue.status === "completed"}
+        onDelete={
+          issueArchiveAvailable
+            ? (issue) => {
+                if (issue.status === "completed") requestIssueArchive(issue);
+              }
+            : undefined
+        }
+        onBulkDelete={
+          issueArchiveAvailable
+            ? (selectedIssues) => {
+                const completedIssues = selectedIssues.filter(
+                  (issue) => issue.status === "completed",
+                );
+                if (completedIssues.length === 0) return;
+                setArchiveIssueError(null);
+                setArchiveIssueTargets(completedIssues);
+              }
+            : undefined
+        }
+        batchFailedLabel={translate(
+          "todo.batch_status_failed",
+          "部分任务更新失败，请查看以下原因并重试。",
+        )}
+        onBulkStatusChange={(selectedIssues, status) =>
+          bulkIssueStatus(
+            selectedIssues,
+            (issue) =>
+              commands.updateIssue(
+                issue.id,
+                { version: issue.version, status },
+                { throwOnError: true },
+              ),
+            (error) =>
+              runnerEnvironmentError(error, translate) ??
+              (error instanceof Error ? error.message : messages.saveFailed),
+          )
+        }
+        statusName={(status) =>
+          projectStatuses(project, messages, translate).find(
+            (candidate) => candidate.id === status,
+          )?.name ?? status
+        }
+        onCreate={
+          options.milestoneId
+            ? () => {
+                setCreateIssueDefaults({
+                  status: project.board_config?.statuses?.[0]?.id ?? "inbox",
+                  tags: [],
+                  parent: null,
+                  milestoneId: options.milestoneId,
+                  draftScope: `milestone:${options.milestoneId}`,
+                });
+                setCreateIssueOpen(true);
+              }
+            : requestIssueCreate
+        }
+        onOpen={(issue) =>
+          host.navigate({
+            projectId: project.id,
+            issueId: issue.id,
+            view,
+          })
+        }
+      />
+    );
+  };
+
   if (loading) {
     return (
       <ProjectLoadingSkeleton
@@ -534,6 +681,43 @@ export function CollaborationApp({
                 manage: messages.settings,
               }}
               extensions={[
+                {
+                  id: "milestones",
+                  label: milestoneLabels.title,
+                  testId: "collaboration-milestones-tab",
+                  available: milestonesEnabled,
+                  content:
+                    host.location.view === "milestones" ? (
+                      <MilestonesPage
+                        key={project.id}
+                        api={api}
+                        project={project}
+                        issues={issues}
+                        locale={locale}
+                        onOpenArchive={
+                          issueArchiveAvailable ? openArchiveDrawer : undefined
+                        }
+                        onChanged={() =>
+                          commands.loadProjectSnapshot(project.id, {
+                            invalidate: true,
+                          })
+                        }
+                        renderIssues={(
+                          linkedIssues,
+                          linkedAssignments,
+                          emptyLabel,
+                          milestoneId,
+                        ) =>
+                          renderIssueTable(
+                            linkedIssues,
+                            "milestones",
+                            linkedAssignments,
+                            { emptyLabel, milestoneId },
+                          )
+                        }
+                      />
+                    ) : null,
+                },
                 {
                   id: "calendar",
                   label: messages.calendar,
@@ -652,6 +836,26 @@ export function CollaborationApp({
               }
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
+                  {milestonesEnabled &&
+                  (host.location.view === "board" ||
+                    host.location.view === "table") ? (
+                    <MilestonePicker
+                      api={api.milestones}
+                      projectId={project.id}
+                      value={currentMilestoneFilter}
+                      onChange={(value) =>
+                        setMilestoneFilter({ projectId: project.id, value })
+                      }
+                      label={milestoneLabels.title}
+                      noneLabel={milestoneLabels.none}
+                      allLabel={milestoneLabels.all}
+                      errorLabel={milestoneLabels.error}
+                      retryLabel={milestoneLabels.retry}
+                      compact={!showLabels}
+                      onMissingValue={() => setMilestoneFilter(null)}
+                      testId="milestone-filter"
+                    />
+                  ) : null}
                   {host.renderProjectHeaderAction?.(project)}
                   {host.location.view === "board" ||
                   host.location.view === "calendar" ||
@@ -740,7 +944,7 @@ export function CollaborationApp({
                       agents={agents ?? []}
                       boardError={error}
                       project={project}
-                      issues={issues}
+                      issues={filteredIssues}
                       members={members ?? []}
                       statuses={projectStatuses(project, messages, translate)}
                       taskBindings={taskBindings}
@@ -878,102 +1082,7 @@ export function CollaborationApp({
                 ),
                 table: (
                   <div className="collaboration-project-content">
-                    <ProjectIssueTable
-                      issues={issues}
-                      assignmentsByIssueId={assignmentsByIssueId}
-                      emptyLabel={messages.noIssues}
-                      issueLabel={messages.issueTitle}
-                      statusLabel={messages.issueStatus}
-                      assignmentsLabel={messages.assignments}
-                      executionLabel={messages.executionStatus}
-                      updatedLabel={messages.updatedAt}
-                      startAtLabel={messages.startTime}
-                      dueAtLabel={messages.endTime}
-                      projectKey={project.project_key}
-                      searchPlaceholder={messages.searchIssues}
-                      createLabel={messages.createIssue}
-                      allLabel={locale === "zh-CN" ? "全部" : "All"}
-                      tagLabel={messages.issueTags}
-                      actionsLabel={translate("common.actions", "操作")}
-                      deleteLabel={translate("todo.archive_issue", "归档任务")}
-                      selectAllLabel={
-                        locale === "zh-CN"
-                          ? "选择当前筛选结果中的全部任务"
-                          : "Select all visible issues"
-                      }
-                      selectIssueLabel={
-                        locale === "zh-CN" ? "选择任务" : "Select issue"
-                      }
-                      selectedLabel={
-                        locale === "zh-CN" ? "项已选择" : "selected"
-                      }
-                      batchStatusLabel={
-                        locale === "zh-CN" ? "批量修改状态" : "Change status"
-                      }
-                      batchApplyLabel={locale === "zh-CN" ? "应用" : "Apply"}
-                      batchDeleteLabel={
-                        locale === "zh-CN" ? "批量归档" : "Archive selected"
-                      }
-                      availableStatuses={projectStatuses(
-                        project,
-                        messages,
-                        translate,
-                      ).map((status) => status.id)}
-                      canDelete={(issue) => issue.status === "completed"}
-                      onDelete={
-                        issueArchiveAvailable
-                          ? (issue) => {
-                              if (issue.status === "completed")
-                                requestIssueArchive(issue);
-                            }
-                          : undefined
-                      }
-                      onBulkDelete={
-                        issueArchiveAvailable
-                          ? (selectedIssues) => {
-                              const completedIssues = selectedIssues.filter(
-                                (issue) => issue.status === "completed",
-                              );
-                              if (completedIssues.length === 0) return;
-                              setArchiveIssueError(null);
-                              setArchiveIssueTargets(completedIssues);
-                            }
-                          : undefined
-                      }
-                      batchFailedLabel={translate(
-                        "todo.batch_status_failed",
-                        "部分任务更新失败，请查看以下原因并重试。",
-                      )}
-                      onBulkStatusChange={(selectedIssues, status) =>
-                        bulkIssueStatus(
-                          selectedIssues,
-                          (issue) =>
-                            commands.updateIssue(
-                              issue.id,
-                              { version: issue.version, status },
-                              { throwOnError: true },
-                            ),
-                          (error) =>
-                            runnerEnvironmentError(error, translate) ??
-                            (error instanceof Error
-                              ? error.message
-                              : messages.saveFailed),
-                        )
-                      }
-                      statusName={(status) =>
-                        projectStatuses(project, messages, translate).find(
-                          (candidate) => candidate.id === status,
-                        )?.name ?? status
-                      }
-                      onCreate={requestIssueCreate}
-                      onOpen={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "table",
-                        })
-                      }
-                    />
+                    {renderIssueTable(filteredIssues, "table")}
                   </div>
                 ),
                 files: (
@@ -1211,7 +1320,9 @@ export function CollaborationApp({
                 host.navigate({
                   projectId: project.id,
                   issueId: created.id,
-                  view: "board",
+                  view: createIssueDefaults?.milestoneId
+                    ? "milestones"
+                    : "board",
                 });
               }}
               onError={() => commands.reportError(messages.saveFailed)}

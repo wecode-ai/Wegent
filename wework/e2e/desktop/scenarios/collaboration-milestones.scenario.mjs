@@ -1,0 +1,433 @@
+import assert from 'node:assert/strict'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
+import {
+  createLocalCollaborationProject,
+  configureFirstProjectExecutionEnvironment,
+  reloadMainWindow,
+  selectCollaborationDomain,
+} from '../modules/workspace-flows.mjs'
+
+const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const scoped = testId => `${CONTENT} [data-testid="${testId}"]`
+
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  let cloud
+  let workspace
+  let project
+  let milestone
+  let issue
+  const request = async (path, method = 'GET', body, expectedStatus, token = cloud.authToken) => {
+    const response = await fetch(`${cloud.backendUrl}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const text = await response.text()
+    if (expectedStatus === undefined) {
+      assert.equal(response.ok, true, `${method} ${path}: ${response.status} ${text}`)
+    } else {
+      assert.equal(response.status, expectedStatus, `${method} ${path}: ${text}`)
+    }
+    return text ? JSON.parse(text) : null
+  }
+  const openMilestones = async control => {
+    await control.command('waitFor', scoped('collaboration-milestones-tab'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', scoped('collaboration-milestones-tab'))
+    await control.command('waitFor', scoped('milestones-page'), { timeoutMs: uiTimeoutMs })
+  }
+  const deleteMilestone = async (control, id) => {
+    await control.command('clickWhenEnabled', scoped(`milestone-delete-${id}`))
+    await captureScreenshot(control, `milestones-delete-confirm-${id}.png`, 'body')
+    await control.command('click', scoped('milestone-delete-cancel'))
+    await control.command('waitFor', scoped(`milestone-${id}`))
+    await control.command('clickWhenEnabled', scoped(`milestone-delete-${id}`))
+    await control.command('clickWhenEnabled', scoped('milestone-delete-confirm'))
+    await control.command('waitFor', scoped(`milestone-${id}`), {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+  }
+  const bulkMilestone = async (control, id) => {
+    await control.command('click', scoped('collaboration-tab-table'))
+    await control.command('waitFor', scoped('collaboration-issue-table'))
+    const unchecked = `${scoped('collaboration-issue-table-select-all')}:not(:checked)`
+    if (Number(await control.command('getElementCount', unchecked)) > 0) {
+      await control.command('click', unchecked)
+    }
+    await control.command('waitFor', `${scoped('milestone-bulk-select')}:enabled`)
+    await control.command('select', scoped('milestone-bulk-select'), { value: id ?? '' })
+    await control.command('clickWhenEnabled', scoped('milestone-bulk-apply'))
+    await control.command('waitFor', `${scoped('milestone-bulk-apply')}:enabled`)
+  }
+
+  return {
+    requiresCloudEnvironment: true,
+    async prepareCloud(environment) {
+      cloud = environment
+      await request('/api/admin/setup-complete', 'POST')
+      workspace = await request('/api/v1/workspaces', 'POST', { name: `Milestones ${process.pid}` })
+      project = await request('/api/v1/cloud-projects', 'POST', {
+        workspace_id: workspace.id,
+        name: 'Milestone lifecycle',
+        task_provider: 'local',
+      })
+      const aliasPath = `/api/v1/cloud-projects/00${project.id}/milestones`
+      const aliasMilestone = await request(aliasPath, 'POST', {
+        title: 'Canonical project identity',
+        state: 'open',
+      })
+      assert.equal(aliasMilestone.project_id, String(project.id))
+      const aliasUpdated = await request(`${aliasPath}/${aliasMilestone.id}`, 'PATCH', {
+        title: 'Canonical updated',
+        state: 'closed',
+        version: aliasMilestone.version,
+      })
+      assert.equal((await request(aliasPath))[0].title, 'Canonical updated')
+      await request(`${aliasPath}/${aliasMilestone.id}`, 'DELETE', {
+        version: aliasUpdated.version,
+      })
+      milestone = await request(`/api/v1/cloud-projects/${project.id}/milestones`, 'POST', {
+        title: 'Cloud release',
+        description: 'Shared delivery goal',
+        due_on: '2027-01-01',
+        state: 'open',
+      })
+      const milestonePath = `/api/v1/cloud-projects/${project.id}/milestones/${milestone.id}`
+      await request(
+        milestonePath,
+        'PATCH',
+        { title: 'Stale update', version: milestone.version + 1 },
+        409
+      )
+      await request(milestonePath, 'DELETE', { version: milestone.version + 1 }, 409)
+      issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
+        title: 'Cloud milestone Issue',
+        milestone_id: milestone.id,
+        status: 'completed',
+      })
+      await request(`/api/v1/loop-items/${issue.id}`, 'DELETE')
+      const archived = (await request(`/api/v1/cloud-projects/${project.id}/milestones`))[0]
+      assert.equal(archived.closed_issues, 1)
+      assert.equal(archived.archived_issues, 1)
+      const userName = `milestones-viewer-${process.pid}`
+      const password = 'milestones-e2e-fixture'
+      const viewer = await request('/api/admin/users', 'POST', {
+        user_name: userName,
+        password,
+        role: 'user',
+        auth_source: 'password',
+      })
+      const login = await request('/api/auth/login', 'POST', { user_name: userName, password })
+      await request(`/api/v1/cloud-projects/${project.id}/members`, 'POST', {
+        user_id: viewer.id,
+        role: 'Viewer',
+      })
+      const path = `/api/v1/cloud-projects/${project.id}/milestones`
+      assert.equal(
+        (await request(path, 'GET', undefined, 200, login.access_token))[0].closed_issues,
+        1
+      )
+      await request(path, 'POST', { title: 'Forbidden' }, 403, login.access_token)
+      await request(
+        `${path}/${milestone.id}`,
+        'PATCH',
+        { title: 'Forbidden', version: milestone.version },
+        403,
+        login.access_token
+      )
+      await request(
+        `${path}/${milestone.id}`,
+        'DELETE',
+        { version: milestone.version },
+        403,
+        login.access_token
+      )
+      const hidden = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, 'POST', {
+        title: 'Private delivery',
+        status: 'completed',
+        milestone_id: milestone.id,
+      })
+      const secured = await request(`/api/v1/loop-items/${hidden.id}`, 'PATCH', {
+        version: hidden.version,
+        security_level: 'related',
+      })
+      assert.equal((await request(path))[0].closed_issues, 2)
+      assert.equal(
+        (await request(path, 'GET', undefined, 200, login.access_token))[0].closed_issues,
+        1
+      )
+      await request(`/api/v1/loop-items/${hidden.id}`, 'PATCH', {
+        version: secured.version,
+        status: 'pending',
+      })
+      await request(`/api/v1/loop-items/${hidden.id}`, 'DELETE')
+      const archivedUnfinished = (await request(path))[0]
+      assert.equal(archivedUnfinished.closed_issues, 1)
+      assert.equal(archivedUnfinished.open_issues, 1)
+      assert.equal(archivedUnfinished.archived_issues, 2)
+      const visibleArchived = (await request(path, 'GET', undefined, 200, login.access_token))[0]
+      assert.equal(visibleArchived.open_issues, 0)
+      assert.equal(visibleArchived.archived_issues, 1)
+      await request(`/api/v1/loop-items/${hidden.id}/restore`, 'POST')
+      const restoredHidden = await request(`/api/v1/loop-items/${hidden.id}`)
+      await request(`/api/v1/loop-items/${hidden.id}`, 'PATCH', {
+        version: restoredHidden.version,
+        milestone_id: null,
+      })
+      await request(`/api/v1/loop-items/${hidden.id}`, 'DELETE')
+    },
+    async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
+      await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
+      await control.command('waitFor', scoped('collaboration-tab-board'), {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
+        text: '100%',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'milestones-01-cloud-archived-completion.png', 'body')
+      await control.command('click', scoped(`milestone-open-${milestone.id}`))
+      await control.command('waitFor', scoped('milestone-view-archive'))
+      await captureScreenshot(control, 'milestones-02-cloud-archived-detail.png', 'body')
+      await control.command('click', scoped('milestones-back'))
+      await control.command('clickWhenEnabled', scoped(`milestone-state-${milestone.id}`))
+      await control.command('click', scoped('milestones-closed'))
+      await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
+        timeoutMs: uiTimeoutMs,
+      })
+      const closed = (await request(`/api/v1/cloud-projects/${project.id}/milestones`))[0]
+      assert.equal(closed.state, 'closed')
+      assert.equal(closed.closed_issues, 1)
+      await captureScreenshot(control, 'milestones-03-cloud-closed.png', 'body')
+      await control.command('clickWhenEnabled', scoped(`milestone-state-${milestone.id}`))
+      await control.command('click', scoped('milestones-open'))
+      await control.command('waitFor', scoped(`milestone-${milestone.id}`), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await deleteMilestone(control, milestone.id)
+      await request(`/api/v1/loop-items/${issue.id}/restore`, 'POST')
+      const preserved = await request(`/api/v1/loop-items/${issue.id}`)
+      assert.equal(preserved.title, issue.title)
+      assert.equal(preserved.milestone_id, null)
+
+      await selectCollaborationDomain(control, CONTENT, 'local')
+      await createLocalCollaborationProject(control, CONTENT, `Local milestones ${process.pid}`)
+      const localProject = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
+        candidate => candidate.name === `Local milestones ${process.pid}`
+      )
+      assert.ok(localProject)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      await openMilestones(control)
+      await captureScreenshot(control, 'milestones-04-local-empty.png', 'body')
+      await control.command('click', scoped('milestone-create'))
+      await control.command('fill', scoped('milestone-title'), { value: 'Local release' })
+      await control.command('fill', scoped('milestone-description'), {
+        value: `本地与云端统一的交付目标，归档后保持进度。\n${'LongUnbrokenDeliveryIdentifier'.repeat(12)}`,
+      })
+      await control.command('fill', scoped('milestone-due'), { value: '2027-01-01' })
+      await captureScreenshot(control, 'milestones-05-local-form.png', 'body')
+      await control.command('clickWhenEnabled', scoped('milestone-save'))
+      const firstMilestone = `${CONTENT} [data-testid^="milestone-open-ms-"]`
+      await control.command('waitFor', firstMilestone, {
+        text: 'Local release',
+        timeoutMs: uiTimeoutMs,
+      })
+      const localId = (
+        await control.command('getAttribute', firstMilestone, { value: 'data-testid' })
+      ).slice('milestone-open-'.length)
+      await control.command('click', scoped(`milestone-edit-${localId}`))
+      await control.command('fill', scoped('milestone-title'), {
+        value: 'Local release · 协作交付目标',
+      })
+      await control.command('clickWhenEnabled', scoped('milestone-save'))
+      await control.command('waitFor', scoped(`milestone-open-${localId}`), {
+        text: '协作交付目标',
+      })
+      await captureScreenshot(control, 'milestones-05c-local-edited.png', 'body')
+      await control.command('click', scoped('collaboration-tab-board'))
+      await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
+      await control.command('select', scoped('issue-milestone'), { value: localId })
+      await control.command('fill', scoped('cloud-todo-title'), { value: 'Local milestone Issue' })
+      await control.command('click', scoped('cloud-todo-modal-close'))
+      await control.command('clickWhenEnabled', scoped('collaboration-issue-create'))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      await captureScreenshot(control, 'milestones-05b-local-restored-draft.png', 'body')
+      await control.command('click', scoped('cloud-todo-modal-close'))
+      const localIssue = await createCollaborationBoardIssue(
+        control,
+        'Local milestone Issue',
+        'completed',
+        uiTimeoutMs
+      )
+      await control.command('click', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      await control.command('select', scoped('issue-milestone'), { value: '' })
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('select', scoped('issue-milestone'), { value: localId })
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), localId)
+      await captureScreenshot(control, 'milestones-06-local-issue-assignment.png', 'body')
+      await control.command('click', scoped('cloud-todo-detail-close'))
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${localId}`), {
+        text: '100%',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'milestones-07-local-progress.png', 'body')
+      const windowSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 900, height: 760 }),
+      })
+      await captureScreenshot(control, 'milestones-07b-local-narrow.png', 'body')
+      const [narrowPage] = JSON.parse(
+        await control.command('getElementMetrics', scoped('milestones-page'))
+      )
+      assert.ok(
+        narrowPage.scrollWidth <= narrowPage.clientWidth + 1,
+        `Milestone content must fit the narrow window: ${JSON.stringify(narrowPage)}`
+      )
+      await control.command('setMainWindowSize', 'body', { value: windowSize })
+      await control.command('click', scoped(`milestone-open-${localId}`))
+      await control.command('waitFor', scoped('collaboration-issue-table'))
+      await captureScreenshot(control, 'milestones-08-local-detail.png', 'body')
+      await control.command('click', scoped('milestones-back'))
+      await reloadMainWindow(control, 'Local milestones must survive reopening')
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${localId}`), {
+        text: '100%',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('collaboration-tab-board'))
+      await control.command('hover', scoped(`collaboration-issue-${localIssue}`))
+      await control.command('click', scoped(`cloud-todo-card-more-${localIssue}`))
+      await control.command('click', scoped(`cloud-todo-card-archive-${localIssue}`))
+      await control.command('clickWhenEnabled', scoped('collaboration-issue-archive-confirm'))
+      await control.command('waitFor', scoped(`collaboration-issue-${localIssue}`), {
+        visible: false,
+      })
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${localId}`), { text: '100%' })
+      await control.command('click', scoped(`milestone-open-${localId}`))
+      await control.command('click', scoped('milestone-view-archive'))
+      await control.command('waitFor', scoped(`collaboration-archived-issue-${localIssue}`))
+      await captureScreenshot(control, 'milestones-08b-local-archived-completion.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        scoped(`collaboration-archived-issue-restore-${localIssue}`)
+      )
+      await control.command('waitFor', scoped(`collaboration-archived-issue-${localIssue}`), {
+        visible: false,
+      })
+      await control.command('click', scoped('collaboration-issue-archive-drawer-close'))
+      await control.command('click', scoped('milestones-back'))
+      await control.command('waitFor', scoped(`milestone-${localId}`), { text: '100%' })
+      await control.command('click', scoped('milestone-create'))
+      await control.command('fill', scoped('milestone-title'), { value: 'Follow-up release' })
+      await control.command('clickWhenEnabled', scoped('milestone-save'))
+      await control.command('waitFor', scoped('milestones-page'), { text: 'Follow-up release' })
+      const followUp = (
+        await requestExecutor(
+          control,
+          'milestones.list',
+          { project_id: localProject.id },
+          uiTimeoutMs
+        )
+      ).find(candidate => candidate.title === 'Follow-up release')
+      assert.ok(followUp)
+      await control.command('click', scoped(`milestone-open-${followUp.id}`))
+      await control.command('click', scoped('collaboration-issue-table-empty-create'))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), followUp.id)
+      await control.command('fill', scoped('cloud-todo-title'), {
+        value: 'Remaining local delivery',
+      })
+      await control.command('select', scoped('issue-milestone'), { value: '' })
+      await control.command('click', scoped('cloud-todo-modal-close'))
+      await control.command('click', scoped('collaboration-issue-table-empty-create'))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`)
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), '')
+      await control.command('select', scoped('issue-milestone'), { value: followUp.id })
+      await captureScreenshot(control, 'milestones-08e-context-create.png', 'body')
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
+      await control.command('waitFor', scoped('collaboration-issue-detail'), {
+        text: 'Remaining local delivery',
+      })
+      await control.command('click', scoped('cloud-todo-detail-close'))
+      await control.command('click', scoped('milestones-back'))
+      await bulkMilestone(control, followUp.id)
+      await captureScreenshot(control, 'milestones-08c-local-table-bulk.png', 'body')
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${followUp.id}`), { text: '50%' })
+      await captureScreenshot(control, 'milestones-08d-local-multiple-progress.png', 'body')
+      await bulkMilestone(control, null)
+      await openMilestones(control)
+      await control.command('waitFor', scoped(`milestone-${followUp.id}`), { text: '0%' })
+      const cleared = (
+        await requestExecutor(
+          control,
+          'milestones.list',
+          { project_id: localProject.id },
+          uiTimeoutMs
+        )
+      ).find(candidate => candidate.id === followUp.id)
+      assert.equal(cleared.open_issues + cleared.closed_issues, 0)
+      await bulkMilestone(control, localId)
+      await control.command('click', scoped('collaboration-tab-board'))
+      await control.command('waitFor', `${scoped('milestone-filter')}:enabled`)
+      await control.command('select', scoped('milestone-filter'), { value: localId })
+      await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`))
+      await openMilestones(control)
+      await deleteMilestone(control, localId)
+      await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
+      await control.command('click', scoped('collaboration-tab-board'))
+      await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`), {
+        text: 'Local milestone Issue',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped(`cloud-todo-card-${localIssue}`))
+      await control.command('waitFor', `${scoped('issue-milestone')}:enabled`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getValue', scoped('issue-milestone')), '')
+      await control.command('click', scoped('cloud-todo-detail-close'))
+      await control.command('navigate', 'body', { value: '/settings/appearance' })
+      await control.command('waitFor', '[data-testid="appearance-mode-dark"]')
+      await control.command('click', '[data-testid="appearance-mode-dark"]')
+      await control.command('waitFor', 'html[data-theme="dark"]')
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/local/${localProject.id}`,
+      })
+      await openMilestones(control)
+      await control.command('click', scoped('milestone-create'))
+      await control.command('fill', scoped('milestone-title'), {
+        value: '夜间发布里程碑 / Dark mode release',
+      })
+      await captureScreenshot(control, 'milestones-10-local-dark-form.png', 'body')
+      await control.command('click', scoped('milestone-cancel'))
+    },
+    async cleanup() {
+      if (project) {
+        const current = await request(`/api/v1/cloud-projects/${project.id}`)
+        await request(`/api/v1/cloud-projects/${project.id}?version=${current.version}`, 'DELETE')
+      }
+      if (workspace) {
+        const current = await request(`/api/v1/workspaces/${workspace.id}`)
+        await request(`/api/v1/workspaces/${workspace.id}?version=${current.version}`, 'DELETE')
+      }
+    },
+  }
+}

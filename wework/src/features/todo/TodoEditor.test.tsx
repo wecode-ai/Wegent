@@ -47,6 +47,48 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('restores a selected milestone when reopening an Issue creation draft', async () => {
+    const user = userEvent.setup({ delay: null })
+    const createApi = {
+      ...api,
+      listMilestones: vi.fn(async () => [
+        {
+          id: 'ms-draft',
+          project_id: '11',
+          title: 'Draft release',
+          state: 'open',
+          version: 1,
+          open_issues: 0,
+          closed_issues: 0,
+        },
+      ]),
+    } as never
+    const props = {
+      mode: 'create' as const,
+      project: { ...project, task_provider: 'local', access_role: 'Owner' },
+      initialParent: null,
+      initialStatus: 'inbox' as const,
+      allItems: [],
+      onCreated: vi.fn(),
+      onClose: vi.fn(),
+      api: createApi,
+      currentUserId: 1,
+    }
+    const first = render(<TodoEditor {...props} />)
+    await screen.findByText('Draft release')
+    await user.selectOptions(screen.getByTestId('issue-milestone'), 'ms-draft')
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('wework-todo-draft:11:inbox')!)).toMatchObject({
+        milestoneId: 'ms-draft',
+      })
+    )
+    first.unmount()
+    render(<TodoEditor {...props} />)
+    await screen.findByText('Draft release')
+    expect(screen.getByTestId('issue-milestone')).toHaveValue('ms-draft')
+    localStorage.removeItem('wework-todo-draft:11:inbox')
+  })
+
   it.each(['draft', 'source'] as const)(
     'preserves newer %s status changes when a pending save is rejected',
     async change => {

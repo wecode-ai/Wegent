@@ -215,6 +215,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-attachment-preview':
     './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
+  'collaboration-milestones': './scenarios/collaboration-milestones.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
@@ -363,6 +364,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
+  'collaboration-milestones',
   'collaboration-board-sorting',
   'collaboration-board-backlog',
   'collaboration-board-move-recovery',

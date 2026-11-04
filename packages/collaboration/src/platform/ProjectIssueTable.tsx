@@ -10,11 +10,11 @@ import {
   ChevronDown,
   Search,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { canEditCollaborationIssue } from "../permissions";
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
-import type { IssueStatusFailure } from './bulkIssueStatus'
+import type { IssueStatusFailure } from "./bulkIssueStatus";
 
 type IssueTableSortKey =
   | "title"
@@ -56,12 +56,13 @@ export function ProjectIssueTable({
   batchStatusLabel = "Change status",
   batchApplyLabel = "Apply",
   batchDeleteLabel = "Archive selected",
-  batchFailedLabel = 'Status update failed',
+  batchFailedLabel = "Status update failed",
   availableStatuses,
   statusName = (status) => status,
   onCreate,
   canDelete = () => true,
   onDelete,
+  renderBulkActions,
   onBulkStatusChange,
   onBulkDelete,
   onOpen,
@@ -90,12 +91,13 @@ export function ProjectIssueTable({
   batchStatusLabel?: string;
   batchApplyLabel?: string;
   batchDeleteLabel?: string;
-  batchFailedLabel?: string
+  batchFailedLabel?: string;
   availableStatuses?: readonly string[];
   statusName?(status: string): string;
   onCreate?(): void;
   canDelete?(issue: CollaborationIssue): boolean;
   onDelete?(issue: CollaborationIssue): void;
+  renderBulkActions?(issues: CollaborationIssue[]): ReactNode;
   onBulkStatusChange?(
     issues: CollaborationIssue[],
     status: string,
@@ -113,8 +115,8 @@ export function ProjectIssueTable({
   );
   const [batchStatus, setBatchStatus] = useState("");
   const [batchBusy, setBatchBusy] = useState(false);
-  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([])
-  const batchScope = useRef({})
+  const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([]);
+  const batchScope = useRef({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const currentAssignmentByIssueId = useMemo(
     () =>
@@ -157,7 +159,7 @@ export function ProjectIssueTable({
     [availableStatuses, currentAssignmentByIssueId, issues],
   );
   useEffect(() => {
-    batchScope.current = {}
+    batchScope.current = {};
     setQuery("");
     setStatusFilter("");
     setAssigneeFilter("");
@@ -165,11 +167,11 @@ export function ProjectIssueTable({
     setSort(null);
     setSelectedIssueIds(new Set());
     setBatchStatus("");
-    setBatchFailures([])
-    setBatchBusy(false)
+    setBatchFailures([]);
+    setBatchBusy(false);
     return () => {
-      batchScope.current = {}
-    }
+      batchScope.current = {};
+    };
   }, [projectKey]);
   useEffect(() => {
     if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
@@ -316,24 +318,24 @@ export function ProjectIssueTable({
       return;
     }
     setBatchBusy(true);
-    setBatchFailures([])
-    const scope = batchScope.current
+    setBatchFailures([]);
+    const scope = batchScope.current;
     try {
-      const failures = await onBulkStatusChange(selectedIssues, batchStatus)
-      if (batchScope.current !== scope) return
-      setBatchFailures(failures)
-      setSelectedIssueIds(new Set(failures.map(failure => failure.issueId)))
-      if (failures.length === 0) setBatchStatus('')
+      const failures = await onBulkStatusChange(selectedIssues, batchStatus);
+      if (batchScope.current !== scope) return;
+      setBatchFailures(failures);
+      setSelectedIssueIds(new Set(failures.map((failure) => failure.issueId)));
+      if (failures.length === 0) setBatchStatus("");
     } catch (error) {
-      if (batchScope.current !== scope) return
+      if (batchScope.current !== scope) return;
       setBatchFailures(
-        selectedIssues.map(issue => ({
+        selectedIssues.map((issue) => ({
           issueId: issue.id,
           message: error instanceof Error ? error.message : batchFailedLabel,
-        }))
-      )
+        })),
+      );
     } finally {
-      if (batchScope.current === scope) setBatchBusy(false)
+      if (batchScope.current === scope) setBatchBusy(false);
     }
   };
   const toggleSort = (key: IssueTableSortKey) => {
@@ -412,6 +414,7 @@ export function ProjectIssueTable({
             <strong>
               {selectedIssues.length} {selectedLabel}
             </strong>
+            {renderBulkActions?.(selectedIssues)}
             {onBulkStatusChange ? (
               <>
                 <select
@@ -469,10 +472,11 @@ export function ProjectIssueTable({
         >
           <strong>{batchFailedLabel}</strong>
           <ul>
-            {batchFailures.map(failure => (
+            {batchFailures.map((failure) => (
               <li key={failure.issueId}>
-                {issues.find(issue => issue.id === failure.issueId)?.title ?? failure.issueId}:{' '}
-                {failure.message}
+                {issues.find((issue) => issue.id === failure.issueId)?.title ??
+                  failure.issueId}
+                : {failure.message}
               </li>
             ))}
           </ul>
