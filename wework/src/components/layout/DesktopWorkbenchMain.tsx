@@ -225,7 +225,10 @@ import {
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
-import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+} from './requestUserInputOverlay'
 import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
   getRuntimeWorkbenchPaneKeys,
@@ -5514,7 +5517,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         })
                                       }}
                                       onIgnore={() =>
-                                        paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                                        paneSession.ignoreRequestUserInput(
+                                          pendingRequestUserInputPayloads(
+                                            paneMessages,
+                                            paneSession.answeredRequestUserInputIds
+                                          )
+                                        )
                                       }
                                     />
                                   ) : (

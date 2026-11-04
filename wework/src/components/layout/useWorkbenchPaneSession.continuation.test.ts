@@ -1100,3 +1100,20 @@ describe('composer cancellation rollback', () => {
     }
   )
 })
+
+test.each([true, false])(
+  'dismisses a question group with one cancellation and restores all IDs on failure (%s)',
+  async accepted => {
+    const { result } = await renderSession()
+    mocks.cancel.mockResolvedValueOnce(accepted)
+    await act(async () => {
+      await result.current.ignoreRequestUserInput([
+        { kind: 'request_user_input', delivery: 'async', itemId: 'first' },
+        { kind: 'request_user_input', delivery: 'async', itemId: 'second' },
+      ])
+    })
+    expect(mocks.cancel).toHaveBeenCalledTimes(1)
+    expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
+    expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
+  }
+)

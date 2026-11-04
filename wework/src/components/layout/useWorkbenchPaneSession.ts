@@ -1388,31 +1388,21 @@ export function useWorkbenchPaneSession({
   )
 
   const ignoreRequestUserInput = useCallback(
-    async (payload: RequestUserInputPayload) => {
-      const requestUserInputKey = requestUserInputPayloadKey(payload)
-      if (requestUserInputKey) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
+    async (payload: RequestUserInputPayload | RequestUserInputPayload[]) => {
+      const requestUserInputKeys = (Array.isArray(payload) ? payload : [payload])
+        .map(requestUserInputPayloadKey)
+        .filter((key): key is string => Boolean(key))
+      setAnsweredRequestUserInputIds(current => new Set([...current, ...requestUserInputKeys]))
 
-      if (!currentRuntimeTask) {
-        return
-      }
+      if (!currentRuntimeTask) return
 
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       if (!cancelled) {
-        if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (!current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.delete(requestUserInputKey)
-            return next
-          })
-        }
+        setAnsweredRequestUserInputIds(current => {
+          const next = new Set(current)
+          for (const key of requestUserInputKeys) next.delete(key)
+          return next
+        })
         return
       }
 

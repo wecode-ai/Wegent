@@ -134,6 +134,10 @@ task-list reloads. Executor clears them when it accepts the next message or
 in-turn guidance, or when execution fails or is cancelled. Completing a turn or
 the question's tool call does not constitute an answer.
 
+Consecutive async questions in one turn accumulate in the workbench's response form in arrival order. Newly arriving questions preserve existing drafts, and request identity distinguishes repeated question IDs across calls. Submission sends all answers together in question order. Reply attribution uses the entire question group, and answered questions stay settled after reload. Blocking approvals and authorization requests remain independent.
+
+The desktop `runtime-input-answer-persistence` checkpoint also covers three consecutive questions, preservation of an in-progress draft, combined answer delivery through real Codex, and response state after reload.
+
 The desktop `priority-filter` checkpoint covers the async bell regression: wait
 for execution to finish, verify the bell in the current and background task,
 then submit an answer and verify that the reminder disappears.
