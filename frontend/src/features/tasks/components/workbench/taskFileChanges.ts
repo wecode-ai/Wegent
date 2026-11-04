@@ -8,10 +8,15 @@ import type { TaskFileChanges } from '@/types/api'
 export function selectTaskFileChanges(messages: Iterable<UnifiedMessage>): TaskFileChanges | null {
   const turns = Array.from(messages)
     .filter(message => message.type === 'ai' && message.status === 'completed')
-    .sort(
-      (left, right) =>
-        left.timestamp - right.timestamp || (left.messageId ?? 0) - (right.messageId ?? 0)
-    )
+    .sort((left, right) => {
+      // Match conversation ordering: recovered and live timestamps may use different clocks.
+      if (left.messageId !== undefined && right.messageId !== undefined) {
+        return left.messageId - right.messageId || left.timestamp - right.timestamp
+      }
+      if (left.messageId !== undefined) return -1
+      if (right.messageId !== undefined) return 1
+      return left.timestamp - right.timestamp
+    })
     .map(
       message =>
         (message.result as { task_file_changes?: TaskFileChanges } | undefined)?.task_file_changes

@@ -196,13 +196,15 @@ describe('Workbench', () => {
     expect(taskApis.getBranchDiff).not.toHaveBeenCalled()
   })
 
-  test('shows the latest cumulative snapshot and clears it when the changes are reverted', () => {
+  test('clears the latest cumulative snapshot across recovered and live message clocks', () => {
+    const recoveredAt = Date.UTC(2026, 10, 4, 20, 24, 58)
     const message = (id: number, fileChanges: TaskFileChanges): UnifiedMessage => ({
       id: String(id),
       type: 'ai',
       status: 'completed',
       content: '',
-      timestamp: id,
+      timestamp: recoveredAt + id,
+      messageId: id * 2,
       result: { task_file_changes: fileChanges } as UnifiedMessage['result'],
     })
     const cumulative: TaskFileChanges = {
@@ -231,7 +233,8 @@ describe('Workbench', () => {
     expect(screen.getByTestId('diff-file-content')).toHaveTextContent('second file')
 
     const restored: TaskFileChanges = { status: 'active', files: [], diff: '' }
-    const latest = selectTaskFileChanges([first, second, readOnly, message(4, restored)])
+    const live = { ...message(4, restored), timestamp: recoveredAt - 8 * 60 * 60 * 1000 + 4 }
+    const latest = selectTaskFileChanges([live, first, second, readOnly])
     expect(latest).toBe(restored)
     rerender(<Workbench {...props} taskNumber="#1" taskStatus="COMPLETED" fileChanges={latest} />)
     expect(screen.queryByTestId('diff-file-toggle')).not.toBeInTheDocument()
@@ -336,13 +339,13 @@ describe('Workbench', () => {
     expect(screen.getByTestId('diff-file-content')).not.toHaveTextContent('after token')
   })
 
-  test('orders snapshots by time when a completed message has no server message ID yet', () => {
+  test('orders unnumbered completed snapshots after server turns, then by time', () => {
     const previous: UnifiedMessage = {
       id: 'older',
       type: 'ai',
       status: 'completed',
       content: '',
-      timestamp: 100,
+      timestamp: 400,
       messageId: 316109593140201,
       result: { task_file_changes: changes } as UnifiedMessage['result'],
     }
@@ -355,7 +358,17 @@ describe('Workbench', () => {
       timestamp: 200,
       result: { task_file_changes: newerChanges } as UnifiedMessage['result'],
     }
-    expect(selectTaskFileChanges([newer, previous])).toBe(newerChanges)
+    const earlier = { ...newer, id: 'unnumbered-earlier', timestamp: 150, result: previous.result }
+    for (const messages of [
+      [previous, earlier, newer],
+      [previous, newer, earlier],
+      [earlier, previous, newer],
+      [earlier, newer, previous],
+      [newer, previous, earlier],
+      [newer, earlier, previous],
+    ]) {
+      expect(selectTaskFileChanges(messages)).toBe(newerChanges)
+    }
     expect(selectTaskFileChanges([{ ...newer, status: 'streaming' }, previous])).toBe(changes)
   })
 
