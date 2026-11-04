@@ -120,9 +120,13 @@ function findConversationViewportAnchor(
           chunk => chunk.dataset.markdownChunkIndex === anchor.chunkIndex
         )
   const candidate = scope?.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)[anchor.anchorIndex]
-  // Resolve only the same paragraph in the same immutable item/chunk; a message-wide
+  // Resolve only the same paragraph in the same item/chunk; a message-wide
   // ordinal can identify unrelated text after preceding Markdown chunks mount.
-  return candidate?.textContent === anchor.text ? candidate : null
+  // Appending streamed text preserves all previously sampled character positions.
+  const text = candidate?.textContent
+  return text === anchor.text || (anchor.text.length > 0 && text?.startsWith(anchor.text))
+    ? (candidate ?? null)
+    : null
 }
 
 function findMessageItem(

@@ -12,9 +12,14 @@ afterEach(() => {
   else Reflect.deleteProperty(document, 'caretRangeFromPoint')
 })
 
-test.each([true, false])(
-  'restores the same paragraph after earlier Markdown chunks change representation (runtime item: %s)',
-  runtimeItem => {
+test.each([
+  [true, false],
+  [false, false],
+  [true, true],
+  [false, true],
+])(
+  'restores the same paragraph after earlier Markdown chunks change representation (runtime item: %s, appends while away: %s)',
+  (runtimeItem, appends) => {
     const scroller = document.createElement('div')
     scroller.innerHTML = `<article data-message-id="message"><div ${runtimeItem ? 'data-runtime-item-id="item"' : ''}><div data-markdown-chunk-index="0"><p data-scroll-anchor>prefix</p></div><div data-markdown-chunk-index="1"><p data-scroll-anchor>Reading the same paragraph</p></div></div></article>`
     document.body.append(scroller)
@@ -58,6 +63,9 @@ test.each([true, false])(
     const restored = scroller.firstElementChild!.cloneNode(true) as HTMLElement
     restored.querySelector('[data-markdown-chunk-index="0"]')!.textContent =
       '# **A raw Markdown placeholder has different characters from rendered markup.**'
+    if (appends)
+      restored.querySelector('[data-markdown-chunk-index="1"] p')!.textContent +=
+        ' More text streamed while this task was inactive.'
     scroller.replaceChildren(restored)
     bounds()
 
