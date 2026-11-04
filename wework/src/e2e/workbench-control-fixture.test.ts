@@ -1,6 +1,11 @@
 // @vitest-environment node
 
 import { afterEach, expect, test, vi } from 'vitest'
+import { Readable } from 'node:stream'
+import {
+  createComposerDocument,
+  serializeComposerDocument,
+} from '@wegent/collaboration/composer/composerProseMirrorModel'
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/workbench-control.scenario.mjs'
 import { CLOUD_DEVICE_ID } from '../../e2e/desktop/modules/shared.mjs'
 
@@ -129,3 +134,33 @@ test.each(['executor', 'viewer'])(
     }
   }
 )
+
+test('control model recognizes the source message after real composer link serialization', async () => {
+  const { scenario } = await prepareFixture({})
+  const reachedUi = new Error('Reached the UI')
+  await expect(
+    scenario.verify({
+      command: vi.fn(async () => {
+        throw reachedUi
+      }),
+    })
+  ).rejects.toBe(reachedUi)
+  const url = 'https://github.com/synthetic/control-e2e/pull/43'
+  const prompt = `WEWORK_CONTROL_SOURCE_E2E: this conversation owns ${url}`
+  const text = serializeComposerDocument(createComposerDocument(prompt))
+  expect(text).toContain(`[synthetic/control-e2e#43](${url})`)
+  const request = Object.assign(
+    Readable.from([JSON.stringify({ input: [{ role: 'user', content: text }] })]),
+    { method: 'POST' }
+  )
+  const response = { writeHead: vi.fn(), end: vi.fn() }
+  try {
+    expect(
+      await scenario.handleHttp(request, response, new URL('http://model.test/responses'))
+    ).toBe(true)
+    expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+    expect(response.end.mock.calls[0][0]).toContain('WEWORK_CONTROL_SOURCE_READY')
+  } finally {
+    await scenario.cleanup()
+  }
+})

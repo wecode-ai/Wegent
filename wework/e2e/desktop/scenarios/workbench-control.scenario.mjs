@@ -24,7 +24,8 @@ import {
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
 const PR = 'https://github.com/synthetic/control-e2e/pull/43'
-const SOURCE = `WEWORK_CONTROL_SOURCE_E2E: this conversation owns ${PR}`
+const SOURCE = 'WEWORK_CONTROL_SOURCE_E2E'
+const SOURCE_MESSAGE = `${SOURCE}: this conversation owns ${PR}`
 const CONTROLLER = 'WEWORK_CONTROL_CONTROLLER_E2E'
 const CREATED = 'WEWORK_CONTROL_CREATED_E2E'
 const CLOUD_CREATED = 'WEWORK_CONTROL_CLOUD_CREATED_E2E'
@@ -119,7 +120,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     [
       'read_conversation',
       () => ({ conversation_id: sourceId }),
-      value => assert.ok(JSON.stringify(value).includes(SOURCE)),
+      value => {
+        const transcript = JSON.stringify(value)
+        assert.ok(transcript.includes(SOURCE))
+        assert.ok(transcript.includes(PR), 'Source transcript must retain the original PR URL')
+      },
     ],
     ['bind_change_request', () => ({ conversation_id: sourceId, url: PR })],
     [
@@ -567,7 +572,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await control.command('fill', COMPOSER, { value: prompt })
         await control.command('press', COMPOSER, { key: 'Enter' })
       }
-      await send(SOURCE)
+      await send(SOURCE_MESSAGE)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_SOURCE_READY',
       })
