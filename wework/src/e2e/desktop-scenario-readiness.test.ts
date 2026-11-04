@@ -56,12 +56,30 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
-      experimentalFeaturesEnabled: true,
       async command(action: string, selector: string) {
         calls.push({ action, selector })
+        if (action === 'getElementCount') {
+          assert.equal(selector, '[data-testid="settings-button"]')
+          return '1'
+        }
+        if (action === 'snapshot') {
+          assert.equal(selector, 'body')
+          return JSON.stringify({ testIds: ['general-experimental-features-toggle'] })
+        }
+        if (action === 'getAttribute') {
+          assert.equal(selector, '[data-testid="general-experimental-features-toggle"]')
+          return 'true'
+        }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
+          assert.ok(
+            calls.some(
+              call =>
+                call.action === 'click' && call.selector === '[data-testid="settings-back-button"]'
+            ),
+            'Experimental preferences must be ready before navigating'
+          )
           waiting.release()
           await mounted.promise
         }
@@ -72,12 +90,18 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       () => new Error('Expected the owner-page boundary'),
       (error: unknown) => error
     )
-  assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
-  assert.equal(
-    calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
-    false
-  )
-  mounted.release()
+  try {
+    assert.equal(
+      await Promise.race([waiting.promise.then(() => 'waiting'), verification]),
+      'waiting'
+    )
+    assert.equal(
+      calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
+      false
+    )
+  } finally {
+    mounted.release()
+  }
   assert.equal(await verification, reachedOwner)
 })
 
