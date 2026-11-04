@@ -20,17 +20,19 @@ export function createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbench
   return {
     async prepareApp(context) {
       codexHome = context.codexHome
-      const binary = join(
-        resultDir,
-        process.platform === 'win32' ? 'dws-fixture.exe' : 'dws-fixture'
-      )
-      await run('rustc', [
-        fileURLToPath(new URL('../fixtures/connection-dingtalk-cli.rs', import.meta.url)),
-        '--edition',
-        '2021',
-        '-o',
-        binary,
-      ])
+      const preparedBinary = process.env.WEWORK_E2E_DWS_FIXTURE_BIN
+      const binary =
+        preparedBinary ??
+        join(resultDir, process.platform === 'win32' ? 'dws-fixture.exe' : 'dws-fixture')
+      if (!preparedBinary) {
+        await run('rustc', [
+          fileURLToPath(new URL('../fixtures/connection-dingtalk-cli.rs', import.meta.url)),
+          '--edition',
+          '2021',
+          '-o',
+          binary,
+        ])
+      }
       context.appEnvironment.DWS_BINARY_PATH = binary
       await mkdir(join(root, '.agents/plugins'), { recursive: true })
       await mkdir(join(root, 'dingtalk/.codex-plugin'), { recursive: true })
