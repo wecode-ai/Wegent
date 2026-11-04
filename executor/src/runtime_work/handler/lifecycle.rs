@@ -11,6 +11,40 @@ use crate::runtime_work::{
 use crate::runtime_work::lifecycle::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn bind_native_turn_start(
+        &self,
+        task_id: &str,
+        request: &ExecutionRequest,
+        execution_id: u64,
+        thread_id: &str,
+        turn_id: &str,
+    ) {
+        let mut changed = false;
+        let link = self.store.update_task(task_id, |link| {
+            let Some(mut state) = native_execution_state(link) else {
+                return;
+            };
+            if !self.is_current_local_task_execution(task_id, execution_id)
+                || link.thread_id.as_deref() != Some(thread_id)
+                || state.phase != NativeExecutionPhase::Starting
+                || state.turn_id.is_some()
+            {
+                return;
+            }
+            state.phase = NativeExecutionPhase::Running;
+            state.turn_id = Some(turn_id.to_owned());
+            state.latest_turn_id = Some(turn_id.to_owned());
+            state.request_turn_id = Some(turn_id.to_owned());
+            state.revision = next_runtime_event_sequence().to_string();
+            state.updated_at = now_ms();
+            project_native_execution(link, &state);
+            changed = true;
+        });
+        if let Some(link) = link.filter(|_| changed) {
+            self.publish_native_execution(task_id, request, link);
+        }
+    }
+
     pub(super) fn sync_native_queue_admissions(
         &self,
         mut previous: HashSet<String>,
@@ -252,9 +286,10 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
             if started
-                && previous
-                    .as_ref()
-                    .is_some_and(|state| state.latest_turn_id.as_ref() == Some(&turn_id))
+                && previous.as_ref().is_some_and(|state| {
+                    state.latest_turn_id.as_ref() == Some(&turn_id)
+                        && state.process_generation.is_some()
+                })
             {
                 return;
             }

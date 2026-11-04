@@ -3022,7 +3022,10 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/ordinary-mcp-regression.mjs"
 
-assert_desktop_case "native lifecycle regression is covered by the shared Core CI runner" \
+for native_scenario in \
+  wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs \
+  wework/e2e/desktop/scenarios/native-guidance.scenario.mjs; do
+  assert_desktop_case "native lifecycle regression is covered by the shared Core CI runner: $native_scenario" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"native-lifecycle"}]}
@@ -3030,7 +3033,8 @@ wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs"
+  "$native_scenario"
+done
 
 for telemetry_scenario in \
   wework/e2e/desktop/scenarios/telemetry-policy.scenario.mjs \

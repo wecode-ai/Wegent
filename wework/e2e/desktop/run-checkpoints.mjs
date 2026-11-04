@@ -52,7 +52,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
-  'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
+  'native-lifecycle': './scenarios/native-guidance.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'follow-up-task-switch': './scenarios/follow-up-task-switch.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
