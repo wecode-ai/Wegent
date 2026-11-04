@@ -912,20 +912,26 @@ export function createHybridWorkbenchServices(
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
     },
-    async updateRuntimeSettings(deviceId, maxConcurrentTasks) {
+    async updateRuntimeSettings(deviceId, limits) {
       if (!isLocalDeviceId(deviceId)) {
-        return deviceApi(deviceId).updateRuntimeSettings(deviceId, maxConcurrentTasks)
+        return deviceApi(deviceId).updateRuntimeSettings(deviceId, limits)
       }
       const settings = await localServices.runtimeWorkApi!.updateRuntimeSettings({
-        maxConcurrentTasks,
+        maxConcurrentTasks: limits.max_concurrent_tasks,
+        maxConcurrentStandInTasks: limits.max_concurrent_stand_in_tasks,
+        maxConcurrentAgentTasks: limits.max_concurrent_agent_tasks,
       })
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }

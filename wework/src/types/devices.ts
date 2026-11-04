@@ -66,6 +66,8 @@ export interface DeviceListResponse {
 export interface DeviceRuntimeSettingsResponse {
   device_id: string
   max_concurrent_tasks: number
+  max_concurrent_stand_in_tasks?: number
+  max_concurrent_agent_tasks?: number
   active_tasks: number
   queued_tasks: number
 }

@@ -501,8 +501,9 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     let execution = start_test_execution(&handler, "task-1");
     {
         let mut scheduler = handler.turn_scheduler.lock().unwrap();
-        scheduler.active_task_ids.insert("task-1".into());
-        scheduler.active_tasks = 1;
+        scheduler
+            .active_task_ids
+            .insert("task-1".into(), RuntimeTaskKind::Personal);
     }
     handler.route_codex_notification(notification("turn/started", "turn-1"));
     let payload = json!({
@@ -522,7 +523,10 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     assert_eq!(continuation["status"], "queued");
     assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
     assert!(handler.is_current_local_task_execution("task-1", execution));
-    assert_eq!(handler.turn_scheduler.lock().unwrap().active_tasks, 1);
+    assert_eq!(
+        handler.turn_scheduler.lock().unwrap().active_task_ids.len(),
+        1
+    );
 
     let duplicate = handler.send_message(payload).await.unwrap();
     assert_eq!(duplicate["success"], false);
@@ -570,6 +574,7 @@ async fn queued_goal_recovery_preserves_owned_recovery_without_claiming_a_model_
         .insert(RESUME_GOAL_ONLY_MARKER.into(), json!(true));
     handler
         .queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id: "task-1".into(),
             runtime: "codex".into(),
             request,
@@ -612,6 +617,7 @@ async fn queue_admission_and_cancellation_publish_new_versions_without_rewriting
         .unwrap();
     handler
         .queue_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id: "task-1".into(),
             runtime: "codex".into(),
             request,

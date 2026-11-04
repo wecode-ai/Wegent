@@ -111,7 +111,6 @@ impl RuntimeWorkRpcHandler {
             let mut scheduler = self.turn_scheduler.lock().expect("turn scheduler poisoned");
             let previous = scheduler.clone();
             scheduler.active_task_ids.remove(&turn.local_task_id);
-            scheduler.active_tasks = scheduler.active_task_ids.len();
             scheduler.queued_turns.push_front(turn.clone());
             scheduler.refresh_automatic_waits(&self.store, None);
             let ready = scheduler.take_available();
@@ -157,6 +156,7 @@ mod tests {
         request.extra.insert("user_id".into(), json!(7));
         apply_runtime_payload_metadata(&mut request, &payload);
         SpawnTurnRequest {
+            task_kind: None,
             local_task_id: "waiting-work".into(),
             runtime: "codex".into(),
             request,
@@ -185,8 +185,7 @@ mod tests {
             .lock()
             .unwrap()
             .active_task_ids
-            .insert("waiting-work".into());
-        handler.turn_scheduler.lock().unwrap().active_tasks = 1;
+            .insert("waiting-work".into(), RuntimeTaskKind::Personal);
         handler.queue_turn(automatic_turn()).await.unwrap();
         handler.set_interaction_status("waiting-work", Some("waitingForUserInput"));
         handler.finish_scheduled_turn("waiting-work").await;
