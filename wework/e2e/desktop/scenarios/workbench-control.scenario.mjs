@@ -541,13 +541,25 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       })
       assert.equal(scoped.accepted, true)
       assert.equal(scoped.workspacePath, workspacePath)
-      scopedTask = await cloudEnvironment.waitForRuntimeTask({
-        deviceId: CLOUD_DEVICE_ID,
+      assert.equal(scoped.deviceId, CLOUD_DEVICE_ID)
+      const scopedAddress = {
+        deviceId: scoped.deviceId,
         taskId: scoped.taskId,
         workspacePath: scoped.workspacePath,
-      })
+      }
+      scopedTask = await cloudEnvironment.waitForRuntimeTask(scopedAddress)
       scopedConversationId = `conv_${Buffer.from(JSON.stringify([CLOUD_DEVICE_ID, scoped.taskId])).toString('base64url')}`
-      assert.equal(scopedTask.runtimeHandle.origin.dispatch_role, 'executor')
+      const scopedContext = await request('/api/runtime-work/transcript', {
+        ...scopedAddress,
+        conversationContextOnly: true,
+        limit: 1,
+      })
+      assert.equal(scopedContext.taskId, scoped.taskId)
+      assert.equal(scopedContext.workspacePath, workspacePath)
+      assert.equal(scopedContext.origin.type, 'board_task')
+      assert.equal(scopedContext.origin.cloudProjectId, String(cloudProject.id))
+      assert.equal(scopedContext.origin.loopItemId, String(issue.id))
+      assert.equal(scopedContext.origin.dispatch_role, 'executor')
       const send = async prompt => {
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', COMPOSER)
