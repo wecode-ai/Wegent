@@ -886,7 +886,7 @@ async function verifySmartAppAssetInheritance(
   await ownerRequest(`/api/smart-apps/submissions/${cancelled.submissionId}/cancel`, {
     method: 'POST',
   })
-  await assertCurrentSmartAppAssetDigests(client, smartAppId, {
+  await assertCurrentSmartAppAssetDigests(client.ownerRequest, smartAppId, {
     version: '0.2.2',
     iconDataUrl: SMART_APP_ALT_ICON_DATA_URL,
     screenshotDataUrls: [SMART_APP_ALT_SCREENSHOT_DATA_URL],
@@ -911,7 +911,7 @@ async function verifySmartAppAssetInheritance(
     200,
     'A publication without an uploaded package succeeded'
   )
-  await assertCurrentSmartAppAssetDigests(client, smartAppId, {
+  await assertCurrentSmartAppAssetDigests(client.ownerRequest, smartAppId, {
     version: '0.2.2',
     iconDataUrl: SMART_APP_ALT_ICON_DATA_URL,
     screenshotDataUrls: [SMART_APP_ALT_SCREENSHOT_DATA_URL],
