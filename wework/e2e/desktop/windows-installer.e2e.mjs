@@ -211,9 +211,9 @@ async function readUninstallEntries() {
         '} |',
         '  ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |',
         "  Where-Object { $_.DisplayName -like 'WeWork*' }",
-        '$entries | Select-Object DisplayName, InstallLocation, UninstallString, QuietUninstallString',
-        '  | ConvertTo-Json -Compress',
-      ].join(' '),
+        '$entries | Select-Object DisplayName, InstallLocation, UninstallString, QuietUninstallString |',
+        '  ConvertTo-Json -Compress',
+      ].join('\n'),
     ],
     { encoding: 'utf8', windowsHide: true }
   ).trim()
