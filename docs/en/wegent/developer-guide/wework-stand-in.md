@@ -67,7 +67,7 @@ Verification uses isolated Electron with real local Executor, SQLite, plugin reg
 | Opt into stand-ins                 | Disable experiments, then enable and open stand-ins                                   | Entry visibility follows the preference; all roles are visible and selectable at the top                                                                      | application-menu, stand-in-identities                                  |
 | Install and connect sources        | Open a source with missing dependencies, missing authorization and ready dependencies | Install, authorization and selection stages are exclusive; declared tool and account identities are exact; failures retain recovery                           | stand-in-plugin-bridge, connection protocol tests                      |
 | Select batches or continuous all   | Start with all, filter and select multiple resources, save and reopen                 | Wildcard scope remains account- and kind-bound and includes newly accessible resources; batches preserve other accounts                                       | stand-in-plugin-bridge, stand_in_identity_contract                     |
-| Configure connections consistently | Open projects, calendar and message sources; edit and return                          | Shared headers and processing controls; one top-level back action; drafts retain leave protection                                                             | stand-in-profile-settings, stand-in-connections, component tests          |
+| Configure connections consistently | Open projects, calendar and message sources; edit and return                          | Shared headers and processing controls; one top-level back action; drafts retain leave protection                                                             | stand-in-profile-settings, stand-in-connections, component tests       |
 | Route direct processing            | Use role defaults, then disable and enable direct processing                          | Direct processing bypasses semantic assessment while revalidating ownership and sources; background intake batches; user input and approvals remain protected | coordination-runtime, coordination-arrangements, native protocol tests |
 | Record timed calendar events       | Save connection policy, then create, edit and trigger an event                        | Due events enter durable intake using current owning identity settings; no per-event execution environment or processing override                             | stand-in-profile-settings, stand-in-plugin-bridge, native timer tests  |
 | Retain independent schedules       | Enter Scheduled from sidebar or system menu, then reopen Calendar                     | Original task scheduling controls remain; lists, editing and cancellation tools are isolated; older schedules are not implicitly converted                    | application-menu, stand-in-plugin-bridge                               |
@@ -193,3 +193,45 @@ The existing SQLite transaction records a routing intent and immutable routing r
 Changed, paused or cancelled arrangements cannot start a new command. Queued commands recheck their current identity, arrangement version and original work's native questions and approvals before launch. An accepted command's original receipt remains authoritative even if the arrangement is later edited or deleted. Waiting or uncertain commands require attention in the original work and are never resent automatically. Legacy owned runs without a durable receipt require review instead of automatic replay. Unowned legacy automations retain their existing runner.
 
 Calendar due runs use the existing per-automation history budget of 100 as their active queue limit. At capacity, existing pending/running runs and the next due time remain intact; collection resumes when a slot is released. A failed calendar enqueue marks only that run as needing attention and does not block other calendars.
+
+## First-use feature choices and recurring reviews
+
+`runtime.stand_in.onboarding.get/complete` reads and submits feature choices for
+the current account on the selected Executor. Reads require no model, cloud
+catalog or execution preparation. Completion and the review arrangement share
+one Automation storage write. Opting out also records completion; closing does
+not. Existing users see onboarding once. Confirming a selected review materializes
+the UI's implicit primary profile only when absent, preserving explicit pauses
+and the calendar connection policy.
+
+Onboarding and the calendar share the Executor's `weekly_review` template,
+defaulting to Monday 09:00 in Asia/Shanghai. Deleting an arrangement retains the
+completion record, preventing recreation on repeat submissions. Users may
+explicitly add it again through the primary calendar template.
+
+Review executions expose only the read-only `read_review_history` stand-in tool.
+The host verifies account, device, actor task, current arrangement version and
+the actual run binding before paginating task discovery and native transcripts
+over a fixed seven-day window. Prior reports are read separately. Primary
+identity management conversations may also use this tool; external work,
+scenario roles and project coordinators cannot. Native permissions and approvals
+remain in force, and history conveys no authority. Reports disclose missing
+timestamps, failed reads and truncation without automatically changing memories,
+settings or sending externally.
+
+### User stories and acceptance coverage
+
+| User story                            | Acceptance behavior                                                                                                                 | Automated coverage                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Understand the feature on first use   | Review checked by default; device scope, seven days, Beijing time and management entry are visible; no creation before confirmation | Component tests and the existing `stand-in-profile-settings` desktop checkpoint                                |
+| Decide later or opt out               | Closing saves nothing; reopening shows choices; confirming an unchecked review saves only completion                                | Desktop deferred/unchecked states, component tests and durable Executor opt-out tests                          |
+| Adjust the schedule                   | Save a custom Monday time and inspect the calendar entry                                                                            | Desktop onboarding at 10:30 and template editor tests                                                          |
+| Stop reviews                          | Pause or delete without restoration on repeated completion or restart                                                               | Desktop operations, Automation reload and concurrency tests                                                    |
+| Restart reviews and read results      | Add the calendar template and open the report in its original work conversation                                                     | The same desktop checkpoint with real Executor, native MCP and transcripts; only model responses are simulated |
+| Trust evidence boundaries             | Paginate over 100 tasks and 50 messages, fix the seven-day window, reject other accounts, roles and forged runs                     | Executor native protocol pagination and permission tests, plus desktop history reads                           |
+| Use different themes and window sizes | No horizontal overflow; legible light/dark states; keyboard selection; no duplicate pending submissions                             | Desktop captures/geometry checks and component pending/failure recovery tests                                  |
+
+Review coverage composes with the existing profile checkpoint, retaining every
+original assertion and sharing its build, startup and model protocol fixtures.
+No separate CI job is added. Screenshots and logs stay in test artifacts rather
+than repository commits.

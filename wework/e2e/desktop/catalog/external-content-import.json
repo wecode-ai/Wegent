@@ -1,0 +1,12 @@
+{
+  "order": 80000,
+  "scenario": "./scenarios/external-content-import.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 64000,
+      "shard": 6,
+      "position": 14000
+    }
+  }
+}

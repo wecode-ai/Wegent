@@ -96,11 +96,14 @@ export function createDeviceApi(client: HttpClient) {
 
     updateRuntimeSettings(
       deviceId: string,
-      maxConcurrentTasks: number
+      settings: Partial<
+        Pick<
+          DeviceRuntimeSettingsResponse,
+          'max_concurrent_tasks' | 'max_concurrent_stand_in_tasks' | 'max_concurrent_agent_tasks'
+        >
+      >
     ): Promise<DeviceRuntimeSettingsResponse> {
-      return client.put(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`, {
-        max_concurrent_tasks: maxConcurrentTasks,
-      })
+      return client.put(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`, settings)
     },
 
     async getHomeDirectory(deviceId: string): Promise<string> {

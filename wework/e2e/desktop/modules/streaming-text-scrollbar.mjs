@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { waitForTopMetrics } from './conversation-layout.mjs'
+import { verifyConversationSwitchScrollStability } from './streaming-text-switch-stability.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   ASSISTANT_CONTENT_SELECTOR,
@@ -110,7 +111,7 @@ async function verifySearchScrollbarInput(control) {
   await control.command('nativePress', input, { key: 'Escape' })
 }
 
-export function createConversationScrollbarChecks({ uiTimeoutMs }) {
+export function createConversationScrollbarChecks({ resultDir, uiTimeoutMs }) {
   const scrollbar = SCROLLBAR
   return {
     async handleModelRequest(body, response, id) {
@@ -170,6 +171,7 @@ export function createConversationScrollbarChecks({ uiTimeoutMs }) {
         'The restored scrollbar thumb'
       )
       assert.ok(Math.abs(thumb.top - track.top) <= 2, 'The thumb must match the restored viewport')
+      await verifyConversationSwitchScrollStability(control, { address, resultDir, uiTimeoutMs })
     },
   }
 }

@@ -765,7 +765,10 @@ impl RuntimeWorkRpcHandler {
         }
         if let (Some(runtime_handle), Some(origin)) = (
             link.runtime_handle.as_object_mut(),
-            payload.get("origin").filter(|value| value.is_object()),
+            request
+                .extra
+                .get("origin")
+                .filter(|value| value.is_object()),
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }
@@ -807,6 +810,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             let turn = SpawnTurnRequest {
+                task_kind: None,
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
                 request,
@@ -1316,6 +1320,7 @@ impl RuntimeWorkRpcHandler {
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -1578,6 +1583,7 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
         self.spawn_turn(SpawnTurnRequest {
+            task_kind: None,
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -1869,12 +1875,6 @@ impl RuntimeWorkRpcHandler {
             "approvalPolicy".to_owned(),
             codex_runtime_approval_policy(&request),
         );
-        // A history read can cold-resume a thread before its next turn. Codex
-        // preserves that loaded thread's shell policy on subsequent resumes.
-        params.insert(
-            "config".to_owned(),
-            Value::Object(crate::agents::task_identity_thread_config(&request)),
-        );
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {
             params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
@@ -1885,9 +1885,7 @@ impl RuntimeWorkRpcHandler {
 
         self.register_thread_event_route_from_store(thread_id);
         self.ensure_notification_router().await;
-        let response = client
-            .request("thread/resume", Value::Object(params))
-            .await?;
+        let response = client.resume_thread_for_action(&request, params).await?;
         Ok(response
             .get("thread")
             .and_then(|thread| string_field(thread, "id"))

@@ -2,6 +2,31 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn has_pending_stand_in_assignment(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+    ) -> Result<bool, AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        Ok(store
+            .stand_in_events(config["userId"].as_i64().unwrap_or_default())
+            .map_err(super::stand_in::settings_error)?
+            .iter()
+            .any(|event| {
+                event["kind"] == "assignment"
+                    && event["status"] == "pending"
+                    && event["projectId"] == config["projectId"]
+                    && event["projectStore"] == config["projectStore"]
+                    && event["issueId"] == issue["id"]
+                    && event["assignmentId"] == binding["assignmentId"]
+                    && event["roleIds"]
+                        .as_array()
+                        .is_some_and(|roles| roles.contains(&config["id"]))
+            }))
+    }
+
     pub(super) async fn dispatch_stand_in_task(
         &self,
         payload: Value,
@@ -96,6 +121,8 @@ impl RuntimeWorkRpcHandler {
             } else {
                 &binding["assignmentId"]
             };
+            self.accept_stand_in_assignment(config, issue, binding)
+                .await?;
             store.enqueue_stand_in_event(user, json!(["assignment",config["projectStore"],config["projectId"],issue["id"],assignment,config["id"]]), json!({
                 "kind":"assignment","roleScoped":true,"roleIds":[config["id"]],
                 "projectId":config["projectId"],"projectStore":config["projectStore"],

@@ -154,6 +154,7 @@ interface WorkbenchPaneSessionOptions {
 }
 
 interface SendRequestUserInputResponseOptions {
+  requestUserInputResponses?: readonly RequestUserInputResponse[]
   appendUserMessage?: boolean
   forceDefaultCollaborationMode?: boolean
 }
@@ -1059,16 +1060,19 @@ export function useWorkbenchPaneSession({
     [dispatchMessages]
   )
 
-  const applyLocalRequestUserInputResponse = useCallback(
-    (response: RequestUserInputResponse) => {
+  const applyLocalRequestUserInputResponses = useCallback(
+    (responses: readonly RequestUserInputResponse[]) => {
       if (!currentRuntimeTask) return
       const previousCount = messagesRef.current.length
       const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
-        applyRequestUserInputResponseToBlock(block, response)
+        responses.reduce(
+          (current, response) => applyRequestUserInputResponseToBlock(current, response),
+          block
+        )
       )
       debugRuntimePaneMessageFlow('request-user-input-response-applied', {
         address: runtimeAddressDebug(currentRuntimeTask),
-        requestUserInputKey: requestUserInputResponseKey(response),
+        requestUserInputKeys: responses.map(requestUserInputResponseKey),
         previousCount,
         nextCount: nextMessages.length,
         nextMessages: summarizeWorkbenchMessages(nextMessages),
@@ -1394,31 +1398,21 @@ export function useWorkbenchPaneSession({
   )
 
   const ignoreRequestUserInput = useCallback(
-    async (payload: RequestUserInputPayload) => {
-      const requestUserInputKey = requestUserInputPayloadKey(payload)
-      if (requestUserInputKey) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
+    async (payload: RequestUserInputPayload | RequestUserInputPayload[]) => {
+      const requestUserInputKeys = (Array.isArray(payload) ? payload : [payload])
+        .map(requestUserInputPayloadKey)
+        .filter((key): key is string => Boolean(key))
+      setAnsweredRequestUserInputIds(current => new Set([...current, ...requestUserInputKeys]))
 
-      if (!currentRuntimeTask) {
-        return
-      }
+      if (!currentRuntimeTask) return
 
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       if (!cancelled) {
-        if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (!current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.delete(requestUserInputKey)
-            return next
-          })
-        }
+        setAnsweredRequestUserInputIds(current => {
+          const next = new Set(current)
+          for (const key of requestUserInputKeys) next.delete(key)
+          return next
+        })
         return
       }
 
@@ -1669,22 +1663,21 @@ export function useWorkbenchPaneSession({
         }
         if (!operation.isCurrent()) return false
         if (answerIsUserMessage) lifecycleStore.userInputResponded(currentRuntimeTask)
-        if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.add(requestUserInputKey)
-            return next
-          })
+        const responses = options.requestUserInputResponses ?? [response]
+        const answeredKeys = responses
+          .map(requestUserInputResponseKey)
+          .filter((key): key is string => Boolean(key))
+        if (answeredKeys.length > 0) {
+          setAnsweredRequestUserInputIds(current => new Set([...current, ...answeredKeys]))
         }
-        applyLocalRequestUserInputResponse(response)
+        applyLocalRequestUserInputResponses(responses)
         return true
       } finally {
         operation.dispose()
       }
     },
     [
-      applyLocalRequestUserInputResponse,
+      applyLocalRequestUserInputResponses,
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,

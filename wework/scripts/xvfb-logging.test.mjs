@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-xvfb.sh')
+const fixtureTimeoutMs = 10_000
 
 it.each([
   { exitCode: 0 },
@@ -54,7 +55,7 @@ if [ "\${XVFB_TEST_REMOVE_LOG:-}" = 1 ]; then rm -f "$error_file"; fi
           XVFB_TEST_REMOVE_LOG: removeLog ? '1' : '0',
         },
         encoding: 'utf8',
-        timeout: 10_000,
+        timeout: fixtureTimeoutMs,
       })
       expect(result.error).toBeUndefined()
       expect(result.status, result.stderr).toBe(exitCode)
@@ -73,7 +74,9 @@ if [ "\${XVFB_TEST_REMOVE_LOG:-}" = 1 ]; then rm -f "$error_file"; fi
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
-  }
+  },
+  // The outer deadline must include the synchronous child's existing timeout.
+  fixtureTimeoutMs + 5_000
 )
 
 it.each(['1280x900', '0x900x24', '1280x-1x24', '1280x900x8', '1280x900x24 -ac'])(

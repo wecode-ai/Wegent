@@ -218,6 +218,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required with commandId"))?;
         let runtime = string_field(payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         let turn = SpawnTurnRequest {
+            task_kind: None,
             local_task_id: task,
             runtime,
             request,

@@ -10,10 +10,12 @@
 mod cancel_task;
 pub(crate) mod delete_task;
 mod models;
+pub(crate) use models::TaskUpdateBody;
 mod router;
 mod socketio;
 mod task_crd;
 mod update_task;
+pub(crate) use update_task::update_task;
 
 #[cfg(test)]
 #[path = "tests.rs"]

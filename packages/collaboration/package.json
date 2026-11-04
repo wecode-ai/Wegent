@@ -434,6 +434,10 @@
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
     },
+    "./controls/Textarea": {
+      "types": "./src/controls/Textarea.tsx",
+      "import": "./src/controls/Textarea.tsx"
+    },
     "./templates": {
       "types": "./src/templates/index.ts",
       "import": "./src/templates/index.ts"

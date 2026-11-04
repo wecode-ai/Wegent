@@ -2822,10 +2822,8 @@ export function createRuntimeWorkApiFromIpc(
     getRuntimeSettings(): Promise<RuntimeSettings> {
       return request('runtime.settings.get', {})
     },
-    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
-      return request('runtime.settings.update', {
-        maxConcurrentTasks: data.maxConcurrentTasks,
-      })
+    updateRuntimeSettings(data: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
+      return request('runtime.settings.update', data)
     },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
@@ -3880,15 +3878,26 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }
     },
-    async updateRuntimeSettings(deviceId: string, maxConcurrentTasks: number) {
-      const settings = await runtimeWorkApi.updateRuntimeSettings({ maxConcurrentTasks })
+    async updateRuntimeSettings(
+      deviceId: string,
+      limits: Parameters<WorkbenchServices['deviceApi']['updateRuntimeSettings']>[1]
+    ) {
+      const settings = await runtimeWorkApi.updateRuntimeSettings({
+        maxConcurrentTasks: limits.max_concurrent_tasks,
+        maxConcurrentStandInTasks: limits.max_concurrent_stand_in_tasks,
+        maxConcurrentAgentTasks: limits.max_concurrent_agent_tasks,
+      })
       return {
         device_id: deviceId,
         max_concurrent_tasks: settings.maxConcurrentTasks,
+        max_concurrent_stand_in_tasks: settings.maxConcurrentStandInTasks,
+        max_concurrent_agent_tasks: settings.maxConcurrentAgentTasks,
         active_tasks: 0,
         queued_tasks: 0,
       }

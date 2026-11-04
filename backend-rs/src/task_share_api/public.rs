@@ -25,7 +25,7 @@ use crate::attachments::share_token::decode_payload;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::task_detail_api::repository::{ContextRow, list_contexts};
-use crate::task_detail_api::views::context_brief;
+use crate::task_detail_api::views::context_brief_fields;
 
 /// `ContextType.KNOWLEDGE_BASE.value`: the context type the public view omits.
 const KNOWLEDGE_BASE: &str = "knowledge_base";
@@ -401,7 +401,10 @@ fn public_context(context: ContextRow) -> Option<PublicContextData> {
     ) {
         return None;
     }
-    let brief = context_brief(&context);
+    // `shared_task.py` builds `ctx_dict` directly, without
+    // `SubtaskContextBrief.from_model`, so the public projection has no enum
+    // validation.
+    let brief = context_brief_fields(&context);
     Some(PublicContextData {
         id: context.subtask_contexts_id,
         context_type: context.subtask_contexts_context_type.clone(),

@@ -427,7 +427,7 @@ async def _resolve_continuation_device_id(
     return device_id
 
 
-@router.post("")
+# @router.post("")
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(
     span_name="openapi.create_response",

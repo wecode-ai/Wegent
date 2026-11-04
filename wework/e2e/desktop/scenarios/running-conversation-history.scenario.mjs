@@ -643,8 +643,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
-      await control.command('click', switchTaskRow)
-      await verifyLegacySearch(control, uiTimeoutMs)
+      await verifyLegacySearch(control, switchTaskId, uiTimeoutMs)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="runtime-local-task-row-${cachedTaskId}"]`,

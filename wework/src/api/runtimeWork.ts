@@ -110,7 +110,7 @@ export function createRuntimeWorkApi(client: HttpClient) {
     getRuntimeSettings(): Promise<RuntimeSettings> {
       return client.get('/runtime-work/settings')
     },
-    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
+    updateRuntimeSettings(data: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
       return client.put('/runtime-work/settings', data)
     },
     updateKeybindings(data: {

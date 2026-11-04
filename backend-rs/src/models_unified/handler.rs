@@ -93,8 +93,8 @@ async fn unified_models(
     // Aggregation reads MySQL, Redis, and ERP through `list_available_models`.
     match list_available_models(
         &state.mysql,
-        state.erp.as_ref(),
         state.redis(),
+        &state.entity_resolvers,
         &user.0,
         &query,
     )

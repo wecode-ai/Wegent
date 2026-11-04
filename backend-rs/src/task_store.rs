@@ -69,6 +69,7 @@ pub use crate::task_store_public_share::TaskStorePublicShare;
 pub use crate::task_store_statements::*;
 pub use crate::task_store_subtask_content::{SubtaskContentField, execute_subtask_content_update};
 
+pub use crate::task_store_tables::StreamingSubtask;
 pub use crate::task_store_traits::{DeletedSubtasks, TaskStore};
 
 #[async_trait]
@@ -275,6 +276,19 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         user_id: i32,
     ) -> MysqlResult<Vec<MysqlRow>> {
         ordered_subtasks_for_user(&self.mysql, SUBTASKS_TABLE, task_id, user_id).await
+    }
+
+    async fn list_subtasks_for_user_ordered_labeled(
+        &self,
+        task_id: i64,
+        user_id: i32,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        self.mysql
+            .fetch_all(
+                subtasks_by_task_for_user_ordered_statement(SUBTASKS_TABLE),
+                (task_id, user_id),
+            )
+            .await
     }
 
     async fn get_active_task_owned(
@@ -759,6 +773,35 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             subtasks: SUBTASKS_TABLE.to_owned(),
             ownership: MessageEditOwnership::StatementFilter,
         })
+    }
+
+    async fn streaming_subtask_by_id(
+        &self,
+        subtask_id: i64,
+    ) -> MysqlResult<Option<crate::task_store_tables::StreamingSubtask>> {
+        let row: Option<MysqlRow> = self
+            .mysql
+            .fetch_optional(subtask_by_id_statement(SUBTASKS_TABLE), (subtask_id,))
+            .await?;
+        row.as_ref()
+            .map(crate::task_store_tables::StreamingSubtask::from_row)
+            .transpose()
+    }
+
+    async fn latest_running_assistant_subtask(
+        &self,
+        task_id: i64,
+    ) -> MysqlResult<Option<crate::task_store_tables::StreamingSubtask>> {
+        let row: Option<MysqlRow> = self
+            .mysql
+            .fetch_optional(
+                latest_running_assistant_subtask_statement(SUBTASKS_TABLE),
+                (task_id,),
+            )
+            .await?;
+        row.as_ref()
+            .map(crate::task_store_tables::StreamingSubtask::from_row)
+            .transpose()
     }
 
     fn table_templates(&self) -> TableTemplates {

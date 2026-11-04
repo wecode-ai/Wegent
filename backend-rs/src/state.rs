@@ -61,6 +61,13 @@ pub struct AppState {
     pub jwt_algorithm: String,
     pub mysql: brz_mysql::MysqlService,
     pub redis: Option<brz_redis::RedisService>,
+    /// `session_manager.subscribe_callback_channel`
+    /// (`app/services/chat/storage/session.py:613-660`): the provider that
+    /// opens the dedicated Redis Pub/Sub subscription the HTTP+Callback
+    /// streaming branch reads (`callback:channel:{subtask_id}`).
+    pub(crate) callback_subscriptions: Option<
+        std::sync::Arc<dyn crate::responses::create::callback_source::CallbackSubscriptions>,
+    >,
     /// Process-lifetime Celery publisher for work the source detaches from a
     /// request (`index_document_task.delay(...)`). Its subscriber keeps the
     /// result-backend lane off the shared Redis writer session.

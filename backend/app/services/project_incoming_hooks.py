@@ -10,13 +10,14 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.session import SessionLocal
 from app.models.delivery import (
@@ -46,7 +47,26 @@ from app.services.project_event_sources import (
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
 MAX_PROCESS_ATTEMPTS = 5
+PROCESSING_LEASE_SECONDS = 300
 logger = logging.getLogger(__name__)
+
+
+def _expired_processing(now: datetime) -> ColumnElement[bool]:
+    return and_(
+        ProjectIncomingEvent.status == "processing",
+        ProjectIncomingEvent.metadata_json["collection_mode"].as_string() == "internal",
+        or_(
+            and_(
+                ~loop_datetime_is_unset(ProjectIncomingEvent.due_at),
+                ProjectIncomingEvent.due_at <= now,
+            ),
+            and_(
+                loop_datetime_is_unset(ProjectIncomingEvent.due_at),
+                ProjectIncomingEvent.metadata_json["processing_started_at"].as_string()
+                <= (now - timedelta(seconds=PROCESSING_LEASE_SECONDS)).isoformat(),
+            ),
+        ),
+    )
 
 
 def parse_incoming_body(raw_body: bytes, content_type: str) -> Mapping[str, Any]:
@@ -410,21 +430,33 @@ class ProjectIncomingHookService:
         return await self._process_claimed_event(db, event_id)
 
     def _claim_event(self, db: Session, event_id: str) -> bool:
+        now = utcnow()
         event = (
             db.query(ProjectIncomingEvent)
-            .filter(ProjectIncomingEvent.id == event_id)
+            .filter(
+                ProjectIncomingEvent.id == event_id,
+                or_(
+                    ProjectIncomingEvent.status != "processing",
+                    _expired_processing(now),
+                ),
+            )
             .with_for_update()
             .one_or_none()
         )
-        if event is None or event.status in {"processing", "processed", "ignored"}:
+        if event is None or event.status in {"processed", "ignored"}:
             return 0
         metadata = self.metadata(event)
         attempts = int(metadata.get("attempt_count") or 0)
         if attempts >= MAX_PROCESS_ATTEMPTS:
+            event.status = "failed"
+            event.due_at = None
+            db.commit()
             return 0
         event.status = "processing"
+        if metadata.get("collection_mode") == "internal":
+            event.due_at = now + timedelta(seconds=PROCESSING_LEASE_SECONDS)
         metadata["attempt_count"] = attempts + 1
-        metadata["processing_started_at"] = utcnow().isoformat()
+        metadata["processing_started_at"] = now.isoformat()
         event.metadata_json = metadata
         event.version += 1
         db.commit()
@@ -445,6 +477,10 @@ class ProjectIncomingHookService:
             payload = metadata.get("payload")
             if not isinstance(payload, dict):
                 raise RuntimeError("Incoming event payload is unavailable")
+            if metadata.get("collection_mode") == "internal":
+                from app.services.project_internal_events import process_internal_event
+
+                return await process_internal_event(db, event, hook)
             normalized = normalize_webhook_events(
                 str(hook_metadata.get("source_type") or hook.source or ""),
                 payload,
@@ -540,8 +576,25 @@ class ProjectIncomingHookService:
         *,
         automation_id: str | None = None,
     ) -> int:
-        """Persist a Wework domain event before matching automation rules."""
+        """Commit an internal domain event, then use the durable processor."""
+        row = self.queue_internal(db, event, automation_id=automation_id)
+        if row is None:
+            return 0
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return 0
+        return await self.process_event(db, str(row.id))
 
+    def queue_internal(
+        self,
+        db: Session,
+        event: ProjectAutomationEvent,
+        *,
+        automation_id: str | None = None,
+    ) -> ProjectIncomingEvent | None:
+        """Persist an internal event in its caller's transaction."""
         hook = self._ensure_internal_subscription(db, event.project_id)
         public_id = self._internal_event_public_id(hook, event)
         existing = (
@@ -550,19 +603,21 @@ class ProjectIncomingHookService:
             .first()
         )
         if existing is not None:
-            return 0
+            return None
         row = ProjectIncomingEvent(
             public_id=public_id,
             cloud_project_id=event.project_id,
             parent_id=str(hook.id),
             title=event.event_type,
             source="wework",
-            status="processing",
+            status="received",
             created_by_user_id=event.actor_user_id or hook.created_by_user_id,
             metadata_json={
                 "schema_version": 1,
                 "collection_mode": "internal",
-                "attempt_count": 1,
+                "attempt_count": 0,
+                "automation_id": automation_id,
+                "actor_user_id": event.actor_user_id,
                 "normalized_events": [
                     {
                         "event_type": event.event_type,
@@ -577,39 +632,7 @@ class ProjectIncomingHookService:
             },
         )
         db.add(row)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            return 0
-        from app.services.project_automations import (
-            project_automation_processor,
-        )
-
-        runs = await project_automation_processor.process_with_runs(
-            db,
-            ProjectAutomationEvent(
-                event_type=event.event_type,
-                project_id=event.project_id,
-                subject_id=event.subject_id,
-                subject_type=event.subject_type,
-                source="wework",
-                actor_user_id=event.actor_user_id,
-                payload=event.payload,
-                event_id=public_id,
-                subscription_id=str(hook.id),
-            ),
-            automation_id=automation_id,
-        )
-        self._finish_event(
-            db,
-            str(row.id),
-            status_value="processed",
-            normalized_events=self.metadata(row).get("normalized_events") or [],
-            matched_runs=[str(run.id) for run in runs],
-            reason=None if runs else "No automation rule matched",
-        )
-        return len(runs)
+        return row
 
     async def check_pending(self, db: Session) -> int:
         now = utcnow()
@@ -625,6 +648,7 @@ class ProjectIncomingHookService:
                             ~loop_datetime_is_unset(ProjectIncomingEvent.due_at),
                             ProjectIncomingEvent.due_at <= now,
                         ),
+                        _expired_processing(now),
                     ),
                     loop_datetime_is_unset(ProjectIncomingEvent.deleted_at),
                 )
@@ -638,10 +662,13 @@ class ProjectIncomingHookService:
             metadata = self.metadata(event)
             attempts = int(metadata.get("attempt_count") or 0)
             if attempts >= MAX_PROCESS_ATTEMPTS:
+                event.status = "failed"
                 event.due_at = None
                 db.commit()
                 continue
             event.status = "processing"
+            if metadata.get("collection_mode") == "internal":
+                event.due_at = now + timedelta(seconds=PROCESSING_LEASE_SECONDS)
             metadata["attempt_count"] = attempts + 1
             metadata["processing_started_at"] = now.isoformat()
             event.metadata_json = metadata
@@ -863,9 +890,26 @@ class ProjectIncomingHookService:
         )
         if hook is not None:
             return hook
-        project = db.get(CloudProject, project_id)
+        project = (
+            db.query(CloudProject)
+            .filter(CloudProject.id == project_id)
+            .with_for_update()
+            .one_or_none()
+        )
         if project is None:
             raise RuntimeError("Cloud project is unavailable")
+        hook = (
+            db.query(ProjectIncomingHook)
+            .filter(
+                ProjectIncomingHook.cloud_project_id == project_id,
+                ProjectIncomingHook.source == "wework",
+                loop_datetime_is_unset(ProjectIncomingHook.deleted_at),
+            )
+            .with_for_update()
+            .one_or_none()
+        )
+        if hook is not None:
+            return hook
         hook = ProjectIncomingHook(
             public_id=hashlib.sha256(
                 f"wework-project:{project_id}".encode()
@@ -892,8 +936,7 @@ class ProjectIncomingHookService:
             },
         )
         db.add(hook)
-        db.commit()
-        db.refresh(hook)
+        db.flush()
         return hook
 
     @staticmethod

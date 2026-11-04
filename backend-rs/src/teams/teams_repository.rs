@@ -116,25 +116,6 @@ pub struct TeamRow {
     pub access_source: String,
 }
 
-/// `namespace` row (full column list, matching `db.query(Namespace)`).
-#[derive(Debug, FromMysqlRow)]
-pub struct NamespaceRow {
-    pub namespace_id: i64,
-    pub namespace_name: String,
-}
-
-/// `resource_members` row (full column list, matching
-/// `db.query(ResourceMember)`).
-#[derive(Debug, FromMysqlRow)]
-pub struct MemberRow {
-    pub resource_members_resource_id: i64,
-    /// Selected to match the source column list; the value is not read here.
-    #[allow(dead_code)]
-    pub resource_members_entity_id: String,
-    #[mysql(rename = "resource_members_role")]
-    pub resource_members_role: String,
-}
-
 /// `kinds` row for bots, shells, and models.
 #[derive(Debug, Clone, FromMysqlRow)]
 pub struct KindRow {
@@ -243,258 +224,20 @@ where
 /// Namespace rows by id (`iter_user_groups_with_roles` step 1 tail). `ids`
 /// keeps the caller's order (the source passes the raw membership row ids,
 /// duplicates included).
-pub async fn namespaces_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<NamespaceRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let sql = format!(
-        "SELECT {NAMESPACE_COLUMNS} \
-         FROM namespace \
-         WHERE namespace.id IN ({}) AND namespace.is_active = 1",
-        placeholders(ids.len()),
-    );
-    mysql.fetch_all(sql.as_str(), ids.to_vec()).await
-}
-
-/// Direct user memberships of namespaces
-/// (`iter_user_groups_with_roles` step 1).
-pub async fn direct_namespace_memberships<M>(mysql: &M, user_id: i64) -> MysqlResult<Vec<MemberRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .fetch_all(
-            "SELECT {MEMBER_COLUMNS} \
-             FROM resource_members \
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status = 'approved'"
-                .replace("{MEMBER_COLUMNS}", MEMBER_COLUMNS)
-                .as_str(),
-            (user_id.to_string(),),
-        )
-        .await
-}
-
 /// Resource ids for direct user memberships
 /// (`NamespaceEntityResolver.get_resource_ids_by_entity` step 1).
-pub async fn direct_namespace_resource_ids<M>(mysql: &M, user_id: i64) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        resource_members_resource_id: i64,
-    }
-    let rows: Vec<Row> = mysql
-        .fetch_all(
-            "SELECT resource_members.resource_id AS resource_members_resource_id \
-             FROM resource_members \
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status = 'approved'",
-            (user_id.to_string(),),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
-}
-
 /// Namespace ids bound to an external entity type
 /// (`NamespaceEntityResolver.get_resource_ids_by_entity` step 2).
-pub async fn external_namespace_bindings<M>(
-    mysql: &M,
-    entity_type: &str,
-) -> MysqlResult<Vec<(i64, String)>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        resource_members_resource_id: i64,
-        resource_members_entity_id: String,
-    }
-    let rows: Vec<Row> = mysql
-        .fetch_all(
-            "SELECT resource_members.resource_id AS resource_members_resource_id, \
-             resource_members.entity_id AS resource_members_entity_id \
-             FROM resource_members \
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = ? \
-             AND resource_members.status = 'approved'",
-            (entity_type,),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            (
-                row.resource_members_resource_id,
-                row.resource_members_entity_id,
-            )
-        })
-        .collect())
-}
-
-/// Namespace-grant members (`entity_type='namespace'`) for the given
-/// namespace ids. `ids` keeps the source's `set` iteration order
-/// (`list(set(direct) | entity)`), reproduced by the caller.
-pub async fn namespace_entity_resource_ids<M>(
-    mysql: &M,
-    namespace_ids: &[i64],
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    if namespace_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        resource_members_resource_id: i64,
-    }
-    let sql = format!(
-        "SELECT resource_members.resource_id AS resource_members_resource_id \
-         FROM resource_members \
-         WHERE resource_members.resource_type IN ('Namespace') \
-         AND resource_members.entity_type = 'namespace' \
-         AND resource_members.entity_id IN ({}) \
-         AND resource_members.status = 'approved'",
-        placeholders(namespace_ids.len()),
-    );
-    let rows: Vec<Row> = mysql
-        .fetch_all(
-            sql.as_str(),
-            namespace_ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<String>>(),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
-}
-
-/// Distinct external entity ids bound to any namespace
-/// (`EntityResolver.get_resource_ids_by_entity` step 1).
-pub async fn distinct_external_entity_ids<M>(
-    mysql: &M,
-    entity_type: &str,
-) -> MysqlResult<Vec<String>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        resource_members_entity_id: String,
-    }
-    let rows: Vec<Row> = mysql
-        .fetch_all(
-            "SELECT DISTINCT resource_members.entity_id AS resource_members_entity_id \
-             FROM resource_members \
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.entity_type = ? \
-             AND resource_members.entity_id IS NOT NULL \
-             AND resource_members.status = 'approved'",
-            (entity_type,),
-        )
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_entity_id)
-        .collect())
-}
-
 /// Distinct namespace ids bound to the matched external entities
 /// (`list_resources_by_entity_match`).
-pub async fn namespace_ids_for_external_entities<M>(
-    mysql: &M,
-    entity_type: &str,
-    entity_ids: &[String],
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    if entity_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        resource_members_resource_id: i64,
-    }
-    let sql = format!(
-        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \
-         FROM resource_members \
-         WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.entity_type = ? \
-         AND resource_members.entity_id IN ({}) \
-         AND resource_members.status = 'approved'",
-        placeholders(entity_ids.len()),
-    );
-    let rows: Vec<Row> = mysql
-        .fetch_all(sql.as_str(), {
-            let mut args = vec![entity_type.to_owned()];
-            args.extend(entity_ids.iter().cloned());
-            args
-        })
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_resource_id)
-        .collect())
-}
-
 /// External entity members of the given namespaces
 /// (`iter_user_groups_with_roles` step 2).
 ///
 /// `resource_members.resource_id` is an integer column: the source builds the
 /// IN list from the resolver's integer resource ids, so the target binds them
 /// as integers and only `entity_type` as a string.
-pub async fn external_members_for_namespaces<M>(
-    mysql: &M,
-    entity_type: &str,
-    namespace_ids: &[i64],
-) -> MysqlResult<Vec<MemberRow>>
-where
-    M: Mysql,
-{
-    if namespace_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let sql = format!(
-        "SELECT {MEMBER_COLUMNS} \
-         FROM resource_members \
-         WHERE resource_members.resource_type = 'Namespace' \
-         AND resource_members.resource_id IN ({}) \
-         AND resource_members.entity_type = ? \
-         AND resource_members.status = 'approved'",
-        placeholders(namespace_ids.len()),
-    );
-    mysql
-        .fetch_all(
-            sql.as_str(),
-            external_member_args(entity_type, namespace_ids),
-        )
-        .await
-}
-
 /// The external-members query's bound values: the integer namespace ids in the
 /// caller's order, then the string entity type.
-fn external_member_args(entity_type: &str, namespace_ids: &[i64]) -> Vec<BindingArg> {
-    let mut args: Vec<BindingArg> = namespace_ids.iter().copied().map(BindingArg::Int).collect();
-    args.push(BindingArg::Str(entity_type.to_owned()));
-    args
-}
-
 /// Namespace ids by names, active only
 /// (`_get_accessible_authorization_namespace_ids` tail). `names` is sorted by
 /// the caller exactly like the source's `sorted(effective_roles)`.
@@ -527,27 +270,6 @@ mod tests {
     fn placeholders_render() {
         assert_eq!(placeholders(1), "?");
         assert_eq!(placeholders(3), "?, ?, ?");
-    }
-
-    #[test]
-    fn namespace_member_ids_bind_as_integers() {
-        // The recorded statement renders `resource_members.resource_id IN (245)`
-        // as an integer literal, so the target must not bind a string.
-        assert_eq!(
-            external_member_args("org_department", &[245]),
-            vec![
-                BindingArg::Int(245),
-                BindingArg::Str("org_department".to_string()),
-            ]
-        );
-        assert_eq!(
-            external_member_args("org_department", &[703, 660]),
-            vec![
-                BindingArg::Int(703),
-                BindingArg::Int(660),
-                BindingArg::Str("org_department".to_string()),
-            ]
-        );
     }
 
     #[test]
