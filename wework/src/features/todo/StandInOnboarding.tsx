@@ -8,12 +8,16 @@ export function StandInOnboarding({
   api,
   userId,
   deviceId,
+  active = true,
+  bypass = false,
   onClose,
   children,
 }: {
   api: StandInExecutorApi
   userId: number
   deviceId: string
+  active?: boolean
+  bypass?: boolean
   onClose?(): void
   children: ReactNode
 }) {
@@ -26,7 +30,7 @@ export function StandInOnboarding({
   const [attempt, setAttempt] = useState(0)
   const [saving, setSaving] = useState(false)
   useEffect(() => {
-    if (!deviceId) return
+    if (!deviceId || !active || bypass) return
     let current = true
     void api.onboarding(userId, deviceId, i18n.language).then(
       value => {
@@ -42,7 +46,7 @@ export function StandInOnboarding({
     return () => {
       current = false
     }
-  }, [api, userId, deviceId, i18n.language, attempt])
+  }, [api, userId, deviceId, i18n.language, attempt, active, bypass])
   const complete = async () => {
     if (saving) return
     setSaving(true)
@@ -66,7 +70,7 @@ export function StandInOnboarding({
       setSaving(false)
     }
   }
-  if (result?.state.completed) return children
+  if (bypass || result?.state.completed) return children
   return (
     <section
       className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-5 py-8 text-text-primary md:py-12"

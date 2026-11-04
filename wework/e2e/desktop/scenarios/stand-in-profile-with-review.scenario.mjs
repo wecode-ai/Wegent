@@ -144,6 +144,7 @@ export function createDesktopScenario(options) {
 
       // The original checkpoint retains every assertion and establishes its own model/calendar prerequisites.
       await original.verify(control)
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
       await control.command('click', '[data-testid="stand-in-primary-connections-open"]')

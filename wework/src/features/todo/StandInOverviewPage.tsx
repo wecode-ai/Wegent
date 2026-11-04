@@ -573,12 +573,14 @@ export function StandInOverviewPage({
       </main>
     </section>
   )
-  return api && active && (deviceId || !state.error) ? (
+  return api ? (
     <StandInOnboarding
       key={`${props.userId}:${deviceId}`}
       api={api}
       userId={props.userId}
       deviceId={deviceId ?? ''}
+      active={active}
+      bypass={Boolean(props.initialProfileId || (!deviceId && state.error))}
       onClose={props.onCancel}
     >
       {content}
