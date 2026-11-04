@@ -4,6 +4,9 @@
 
 import {
   ArrowRightLeft,
+  Bot,
+  UserRound,
+  UsersRound,
   CalendarClock,
   Sparkles,
   Tag,
@@ -13,6 +16,12 @@ import {
   AUTOMATION_EVENT_TYPES,
   type AutomationEventType,
 } from "../automation/types";
+import type { CollaborationTranslate } from "../i18n";
+import type {
+  CollaborationAgent,
+  CollaborationGroup,
+  CollaborationMember,
+} from "../types";
 import type {
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
@@ -277,5 +286,40 @@ export function draftFromRule(
     targetId: rule.targetId,
     enabled: rule.enabled,
     runnerSelection: rule.runnerSelection,
+  };
+}
+
+export const TARGET_ICONS = {
+  human: UserRound,
+  agent: Bot,
+  collaboration_group: UsersRound,
+};
+
+export function targetOptionsFor(
+  members: CollaborationMember[],
+  agents: CollaborationAgent[],
+  groups: CollaborationGroup[],
+) {
+  return {
+    human: members.map((member) => ({
+      id: String(member.user_id),
+      name: member.user_name,
+    })),
+    agent: agents.map((agent) => ({ id: agent.id, name: agent.name })),
+    collaboration_group: groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+    })),
+  };
+}
+
+export function targetLabels(translate: CollaborationTranslate) {
+  return {
+    agent: translate("todo.target_agent", "智能体"),
+    human: translate("todo.project_members", "项目成员"),
+    collaboration_group: translate(
+      "todo.target_collaboration_group",
+      "协作小组",
+    ),
   };
 }

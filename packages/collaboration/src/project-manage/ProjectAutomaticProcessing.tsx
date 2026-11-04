@@ -3,26 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  Bot,
   Check,
   ChevronDown,
   Pencil,
   Plus,
   Search,
   Trash2,
-  UserRound,
-  UsersRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ConnectionRulesPanel } from "../automation/ConnectionRulesPanel";
 import { AutomationInstructionField } from "../automation/AutomationInstructionField";
-import type {
-  ConnectionRulesApi,
-  ConnectionProjectTarget,
-  ConnectionAutomationRule,
-} from "../automation/connectionRules";
 import { collaborationMessages, type CollaborationTranslate } from "../i18n";
 import { projectStatuses } from "../board";
 import type {
@@ -37,10 +28,18 @@ import type {
   CollaborationMember,
   CollaborationProject,
 } from "../types";
+import { AutomaticProcessingSwitch } from "./AutomaticProcessingSwitch";
+import {
+  useProjectConnectionRules,
+  type ProjectConnectionRuleOptions,
+} from "./useProjectConnectionRules";
 import { useAutomaticProcessingRules } from "./useAutomaticProcessingRules";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { AutomaticProcessingTriggerFields } from "./AutomaticProcessingTriggerFields";
 import {
+  TARGET_ICONS,
+  targetOptionsFor,
+  targetLabels,
   EMPTY_DRAFT,
   draftFromRule,
   eventLabel,
@@ -50,45 +49,6 @@ import {
   type TargetKind,
   type TriggerKind,
 } from "./automaticProcessing";
-
-function AutomaticProcessingSwitch({
-  checked,
-  disabled,
-  label,
-  onChange,
-  testId,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  label: string;
-  onChange(checked: boolean): void;
-  testId: string;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-label={label}
-      className="inline-flex shrink-0 rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        className={`relative inline-flex h-5 w-8 items-center rounded-full transition-colors ${
-          checked ? "bg-blue-500" : "bg-text-muted/30"
-        }`}
-      >
-        <span
-          className={`h-4 w-4 rounded-full border border-white bg-white shadow-sm transition-transform ${
-            checked ? "translate-x-[14px]" : "translate-x-0.5"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
 
 export function ProjectAutomaticProcessing({
   api,
@@ -108,11 +68,7 @@ export function ProjectAutomaticProcessing({
   agents: CollaborationAgent[];
   locale: "zh-CN" | "en";
   translate: CollaborationTranslate;
-  connectionRules?: ConnectionRulesApi;
-  connectionProject?: ConnectionProjectTarget;
-  renderConnectionRunnerSelection?: import("../automation/ConnectionRulesPanel").ConnectionRulesPanelProps["renderRunnerSelection"];
-  onOpenConnectionIssue?(issueId: string): void | Promise<void>;
-}) {
+} & ProjectConnectionRuleOptions) {
   const {
     rules,
     loading,
@@ -128,30 +84,6 @@ export function ProjectAutomaticProcessing({
   const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([]);
   const [sourceCatalog, setSourceCatalog] = useState<Record<string, unknown>[]>(
     [],
-  );
-  const sourceProjectKey = `${connectionProject?.store}:${connectionProject?.id}`;
-  const [privateRules, setPrivateRules] = useState<{
-    project: string;
-    ids: string[];
-  } | null>(null);
-  const sourceRulesChanged = useCallback(
-    (rules: ConnectionAutomationRule[]) => {
-      setPrivateRules({
-        project: sourceProjectKey,
-        ids: rules.map((rule) => rule.cloudRuleId ?? rule.id),
-      });
-    },
-    [sourceProjectKey],
-  );
-  const sourcesLoading = Boolean(
-    connectionRules &&
-    connectionProject &&
-    privateRules?.project !== sourceProjectKey,
-  );
-  const privateRuleIds =
-    privateRules?.project === sourceProjectKey ? privateRules.ids : [];
-  const visibleRules = rules.filter(
-    (rule) => !privateRuleIds.includes(rule.id),
   );
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT);
   const [editing, setEditing] = useState(false);
@@ -278,33 +210,13 @@ export function ProjectAutomaticProcessing({
   }, [agents]);
 
   const targetOptions = useMemo(
-    () => ({
-      human: availableMembers.map((member) => ({
-        id: String(member.user_id),
-        name: member.user_name,
-      })),
-      agent: availableAgents.map((agent) => ({
-        id: agent.id,
-        name: agent.name,
-      })),
-      collaboration_group: groups.map((group) => ({
-        id: group.id,
-        name: group.name,
-      })),
-    }),
+    () => targetOptionsFor(availableMembers, availableAgents, groups),
     [availableAgents, groups, availableMembers],
   );
   const targetAvailable = targetOptions[draft.targetKind].some(
     (option) => option.id === draft.targetId,
   );
-  const targetKindLabel = {
-    agent: translate("todo.target_agent", "智能体"),
-    human: translate("todo.project_members", "项目成员"),
-    collaboration_group: translate(
-      "todo.target_collaboration_group",
-      "协作小组",
-    ),
-  } satisfies Record<TargetKind, string>;
+  const targetKindLabel = targetLabels(translate);
   const selectedTargetName =
     targetOptions[draft.targetKind].find(
       (option) => option.id === draft.targetId,
@@ -313,32 +225,15 @@ export function ProjectAutomaticProcessing({
   const filteredTargets = targetOptions[draft.targetKind].filter((option) =>
     option.name.toLocaleLowerCase().includes(normalizedTargetQuery),
   );
-  const targetKinds = [
-    {
-      kind: "human",
-      label: targetKindLabel.human,
-      icon: UserRound,
-      options: targetOptions.human,
-    },
-    {
-      kind: "agent",
-      label: targetKindLabel.agent,
-      icon: Bot,
-      options: targetOptions.agent,
-    },
-    {
-      kind: "collaboration_group",
-      label: targetKindLabel.collaboration_group,
-      icon: UsersRound,
-      options: targetOptions.collaboration_group,
-    },
-  ] as const;
-  const SelectedTargetIcon =
-    draft.targetKind === "agent"
-      ? Bot
-      : draft.targetKind === "human"
-        ? UserRound
-        : UsersRound;
+  const targetKinds = (["human", "agent", "collaboration_group"] as const).map(
+    (kind) => ({
+      kind,
+      label: targetKindLabel[kind],
+      icon: TARGET_ICONS[kind],
+      options: targetOptions[kind],
+    }),
+  );
+  const SelectedTargetIcon = TARGET_ICONS[draft.targetKind];
   const statuses = projectStatuses(
     project,
     collaborationMessages[locale],
@@ -581,6 +476,19 @@ export function ProjectAutomaticProcessing({
     }
   }
 
+  const { visibleRules, sourcesLoading, connectionRulesPanel } =
+    useProjectConnectionRules({
+      connectionRules,
+      connectionProject,
+      renderConnectionRunnerSelection,
+      onOpenConnectionIssue,
+      rules,
+      targetKinds,
+      translate,
+      disabled: !canManage || optionsLoading || Boolean(optionsError),
+      onMutation: () => void load(),
+    });
+
   return (
     <ProjectSettingsPage
       actions={
@@ -709,25 +617,7 @@ export function ProjectAutomaticProcessing({
         )}
       </div>
 
-      {connectionRules && connectionProject ? (
-        <ConnectionRulesPanel
-          api={connectionRules}
-          renderRunnerSelection={renderConnectionRunnerSelection}
-          onOpenIssue={onOpenConnectionIssue}
-          onRulesChange={sourceRulesChanged}
-          onMutation={() => void load()}
-          project={connectionProject}
-          targets={targetKinds.flatMap((target) =>
-            target.options.map((option) => ({
-              id: option.id,
-              kind: target.kind,
-              name: option.name,
-            })),
-          )}
-          translate={translate}
-          disabled={!canManage || optionsLoading || Boolean(optionsError)}
-        />
-      ) : null}
+      {connectionRulesPanel}
 
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
