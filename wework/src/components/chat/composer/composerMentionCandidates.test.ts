@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { CloudProject } from '@/api/deliveries'
 import { describe, expect, test } from 'vitest'
 import { parseCloudProjectScopeQuery } from './composerAutocomplete'

@@ -6,7 +6,7 @@ import {
   registerHarnessAppTab,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'

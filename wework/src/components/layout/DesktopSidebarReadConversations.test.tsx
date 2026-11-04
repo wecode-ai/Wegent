@@ -4,7 +4,7 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 import { setActiveKeybindings } from '@/lib/keybindings'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

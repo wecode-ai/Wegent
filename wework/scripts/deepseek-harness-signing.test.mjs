@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'

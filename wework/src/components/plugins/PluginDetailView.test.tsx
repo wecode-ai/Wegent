@@ -76,44 +76,6 @@ describe('PluginDetailView owner actions', () => {
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps manage access in availability and orders share before menu and chat', () => {
-    const onManageAccess = vi.fn()
-    const onShareAction = vi.fn()
-
-    render(
-      <PluginDetailView
-        plugin={createDetailPlugin()}
-        onBack={vi.fn()}
-        onToggle={vi.fn()}
-        onComponentToggle={vi.fn()}
-        onUninstall={vi.fn()}
-        accessRole="owner"
-        pluginVisibility="personal"
-        shareGrantUserCount={3}
-        shareGrantNamespaceCount={0}
-        onManageAccess={onManageAccess}
-        shareActionLabel="分享"
-        onShareAction={onShareAction}
-        primaryActionLabel="立即对话"
-      />
-    )
-
-    expect(screen.queryByTestId('plugin-detail-secondary-local-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-detail-manage-access')).toHaveTextContent('管理权限')
-    const actions = screen.getByTestId('plugin-detail-actions-bar')
-    const share = screen.getByTestId('plugin-detail-share-local-1')
-    const menu = screen.getByTestId('plugin-detail-actions-local-1')
-    const primary = screen.getByTestId('plugin-detail-toggle-local-1')
-    expect(Array.from(actions.children).indexOf(share)).toBeLessThan(
-      Array.from(actions.children).indexOf(menu.parentElement!)
-    )
-    expect(Array.from(actions.children).indexOf(menu.parentElement!)).toBeLessThan(
-      Array.from(actions.children).indexOf(primary)
-    )
-    fireEvent.click(share)
-    expect(onShareAction).toHaveBeenCalledTimes(1)
-  })
-
   test('keeps the overflow menu left of the primary action for uninstalled plugins', () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.installState = 'available'

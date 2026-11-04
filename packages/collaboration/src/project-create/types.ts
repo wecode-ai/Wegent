@@ -117,6 +117,10 @@ export interface ProjectCreateResourceSetup {
   defaultAgentResourceIds?: string[];
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
+  requiresTemplateEnvironmentSelection?: boolean;
+  executionEnvironmentLoading?: boolean;
+  executionEnvironmentError?: string;
+  retryExecutionEnvironments?(): void;
   validate?(selection: ProjectCreateResourceSelection): Promise<void>;
   loadCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
   generateCollaborationGroupDraft?(

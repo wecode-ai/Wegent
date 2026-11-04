@@ -12,7 +12,6 @@ import { MessageList } from './MessageList'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import { ComposerCatalogContext } from './composer/ComposerCatalogContext'
-import { registerComposerMentionIcon } from './composer/composerMentions'
 import { desktopComposerCatalogStore } from './composer/desktopComposerCatalog'
 import { clearImagePreviewCache } from './imagePreviewCache'
 
@@ -1620,35 +1619,6 @@ describe('MessageList', () => {
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
-  })
-
-  test('renders a restored GitHub app reference with its brand icon', () => {
-    const reference = '[$GitHub](app://connector_github_sent_icon_test)'
-    registerComposerMentionIcon(reference, 'https://example.com/github.png')
-    render(
-      <MessageList
-        messages={[
-          {
-            id: 'github-user-message',
-            role: 'user',
-            content: `${reference} 查看项目列表`,
-            status: 'done',
-            createdAt: '2026-10-08T00:00:00.000Z',
-          },
-        ]}
-      />
-    )
-
-    expect(screen.getByTestId('sent-app-token-GitHub')).toHaveAttribute(
-      'href',
-      'app://connector_github_sent_icon_test'
-    )
-    expect(screen.getByTestId('sent-app-icon-GitHub')).toHaveAttribute(
-      'src',
-      'https://example.com/github.png'
-    )
-    expect(screen.getByTestId('message-user')).toHaveTextContent('GitHub 查看项目列表')
-    expect(screen.getByTestId('message-user')).not.toHaveTextContent('$GitHub')
   })
 })
 

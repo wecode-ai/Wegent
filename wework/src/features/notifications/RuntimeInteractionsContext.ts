@@ -1,7 +1,8 @@
 import { createContext, useContext } from 'react'
-import type { RuntimeInteraction } from './runtimeInteractions'
+import type { InteractionSource, RuntimeInteraction } from './runtimeInteractions'
 
 export interface InteractionHistory {
+  source?: InteractionSource
   id: string
   title: string
   question: string
@@ -24,6 +25,7 @@ export interface RuntimeInteractionsValue {
     answer: string,
     options?: { clientMessageId?: string; send?: () => Promise<boolean> }
   ) => Promise<boolean>
+  dismiss: (item: RuntimeInteraction) => Promise<void>
   refresh: () => Promise<void>
   open: (id?: string) => void
   notice: RuntimeInteraction | null

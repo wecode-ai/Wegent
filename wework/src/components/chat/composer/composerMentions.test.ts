@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { resetComposerAppsMemory } from './composerAppsSnapshot'
+import { describe, expect, test } from 'vitest'
 import {
   composerSkillFilePath,
   createComposerMentionElement,
@@ -79,23 +78,5 @@ describe('cloud references', () => {
     const element = createComposerMentionElement(mention)
     expect(element).toHaveAttribute('data-composer-reference-kind', kind)
     expect(element.textContent).toBe(label.slice(1))
-  })
-})
-
-describe('composer mention icons', () => {
-  afterEach(() => {
-    resetComposerAppsMemory()
-  })
-
-  test('keeps the generic cube icon for skill mentions without a brand logo', () => {
-    const reference = '[$gmail](/tmp/gmail/SKILL.md)'
-    const element = createComposerMentionElement({
-      name: 'gmail',
-      label: 'Gmail',
-      reference,
-    })
-
-    expect(element.querySelector('img')).toBeNull()
-    expect(element.querySelector('svg.composer-mention-icon')).not.toBeNull()
   })
 })

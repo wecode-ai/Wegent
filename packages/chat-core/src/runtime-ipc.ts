@@ -35,6 +35,8 @@ interface RuntimeIpcAck<T> {
   error?: {
     code?: string;
     message?: string;
+    retryable?: boolean;
+    details?: Record<string, unknown>;
   };
 }
 
@@ -210,7 +212,13 @@ async function emitRuntimeRequest<T>(
             elapsed_ms: Date.now() - startedAt,
             code: ack.error?.code,
           });
-          reject(new Error(formatRuntimeIpcError(ack)));
+          reject(
+            Object.assign(new Error(formatRuntimeIpcError(ack)), {
+              code: ack.error?.code,
+              retryable: ack.error?.retryable,
+              details: ack.error?.details,
+            }),
+          );
           return;
         }
         void decodeRuntimeIpcResult<T>(ack.result ?? null).then(

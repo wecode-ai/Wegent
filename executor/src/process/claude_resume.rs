@@ -108,7 +108,8 @@ fn file_resume_spec(
     let id = &spec.args[index + 1];
     let home = spec
         .env
-        .get("CLAUDE_CONFIG_DIR")
+        .get("WEGENT_AGENT_HOME")
+        .or_else(|| spec.env.get("CLAUDE_CONFIG_DIR"))
         .ok_or("Claude config directory is missing for session restore")?;
     let transcript = claude_session_transcript(Path::new(home), id)?;
     let mut fields = task_fields(&request.task_id, &request.subtask_id);

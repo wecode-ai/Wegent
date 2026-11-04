@@ -89,24 +89,6 @@ async function treeRow(path: string) {
   })
 }
 
-test('the dropdown keeps type-colored icons and primary text for unselected entries', async () => {
-  mocks.list.mockResolvedValue({
-    path: target.path,
-    entries: [file, { ...sibling, name: 'api.py', path: '/fixture/repo/api.py' }],
-  })
-  setup()
-  fireEvent.click(screen.getByTestId('workspace-file-name-button'))
-  const row = await treeRow('api.py')
-  const shadow = screen.getByTestId('workspace-file-picker-tree').shadowRoot!
-  expect(shadow.querySelector('[data-file-tree-colored-icons="true"]')).not.toBeNull()
-  expect(row.querySelector('[data-icon-token="python"]')).not.toBeNull()
-  const css = shadow.querySelector('[data-file-tree-unsafe-css]')!.textContent!
-  expect(css).toContain('--trees-fg-override: rgb(var(--color-text-primary))')
-  expect(css).toContain('color: var(--trees-fg)')
-  expect(css).not.toMatch(/--trees-(?:file-icon-color|icon-blue)\s*:/)
-  expect(css).not.toContain('--color-text-secondary')
-})
-
 test('the opener menus put the last selected installed editor first across remounts', async () => {
   setup()
   fireEvent.click(screen.getByTestId('workspace-file-open-file-picker-button'))

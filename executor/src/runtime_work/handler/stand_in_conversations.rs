@@ -189,12 +189,6 @@ pub(super) fn apply_runtime_model_selection(prepared: &mut Value, options: &Valu
         return;
     }
     prepared["modelSelection"] = json!({"modelName":options["modelId"],"modelType":options["modelType"].as_str().unwrap_or("public"),"options":options["modelOptions"]});
-    if options["modelType"] == "runtime" {
-        // Runtime selectors use the current desktop catalog configuration.
-        prepared["executionRequest"]["model_config"]["runtime_config"] =
-            json!({"codex":{"use_user_config":true,"configured":true}});
-        prepared["modelConfig"] = prepared["executionRequest"]["model_config"].clone();
-    }
 }
 
 #[cfg(test)]

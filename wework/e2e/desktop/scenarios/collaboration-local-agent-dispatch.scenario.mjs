@@ -526,6 +526,10 @@ export async function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         }
       )
+      // Navigation renders the task before its asynchronous callback closes the inline panel.
+      await control.command('waitFor', 'body:not(:has([data-testid="ai-chat-modal"]))', {
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
         0,

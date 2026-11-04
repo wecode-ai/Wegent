@@ -745,6 +745,8 @@ export function DocumentDetailDialog({
                           knowledgeBaseName={knowledgeBaseName}
                           knowledgeBaseNamespace={knowledgeBaseNamespace}
                           isOrganization={isOrganization}
+                          protectedPreview={protectedPreview}
+                          watermarkText={effectiveWatermarkText}
                           viewMode={viewMode}
                           hasMoreContent={hasMoreContent}
                           loadingMore={loadingMore}

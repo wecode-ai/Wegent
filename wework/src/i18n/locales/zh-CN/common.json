@@ -1173,6 +1173,8 @@
     "remote_project_git_cloning": "克隆中",
     "remote_project_git_opening": "添加中",
     "remote_project_git_failed": "克隆失败",
+    "remote_project_device_unavailable": "设备不可用",
+    "reselect_device": "重新选择设备",
     "remote_project_git_open_failed": "添加失败",
     "remote_project_device_offline": "设备离线",
     "remote_project_git_clone_failed": "Git 仓库克隆失败",
@@ -5760,6 +5762,8 @@
       "executor_unavailable": "无法连接执行设备。请确认该设备上的 Wework 正在运行，再点击「重新加载」。",
       "executor_restarted": "执行设备刚刚重新启动，当前页面的数据已过期。请点击「重新加载」后继续。",
       "executor_update_required": "当前 Wework 与执行设备的版本不兼容。请更新两端的 Wework 并重新启动。",
+      "assignment_lookup_failed": "无法读取设备 {{deviceId}} 的分身处理记录：{{error}}",
+      "remote_control_disabled": "该桌面设备不允许远程操作。请在该设备上的 Wework 中处理，或选择支持远程操作的执行设备。",
       "authentication_required": "云端登录已失效。请在设置中重新连接云端账号，再重新加载。",
       "service_unavailable": "服务暂时不可用。请稍后点击「重新加载」；当前修改尚未保存。",
       "executor_ambiguous": "存在多个匹配的执行设备，无法确定要连接哪一个。请刷新设备列表，并重新选择执行设备。",
@@ -5908,6 +5912,11 @@
     "unsupported_display_mode": "应用没有可用的显示模式。"
   },
   "interactions": {
+    "sources": {
+      "task": "任务",
+      "project": "项目",
+      "stand_in": "分身"
+    },
     "title": "待你处理",
     "tab_title_with_count": "待你处理（{{count}}）",
     "tab_pending_count": "（{{count}}）",
@@ -5915,6 +5924,7 @@
     "reply": "回复",
     "reply_placeholder": "补充你的判断…",
     "send": "发送",
+    "skip": "暂不处理",
     "dismiss": "关闭提醒",
     "handle_in_context": "打开原会话处理",
     "add_detail": "补充说明",

@@ -31,6 +31,7 @@ core_segments=(
   collaboration-templates
   collaboration-template-lifecycle
   collaboration-template-agents
+  collaboration-template-app-device-routing
   collaboration-local-agent-dispatch
   stand-in
   stand-in-identities
@@ -261,7 +262,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting,collaboration-board-backlog
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-parent-board
+  collaboration-shared-core,runtime-input-answer-persistence,collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing,collaboration-parent-board
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
@@ -899,7 +900,8 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs)
+    wework/e2e/desktop/scenarios/native-lifecycle.scenario.mjs | \
+      wework/e2e/desktop/scenarios/native-guidance.scenario.mjs)
       select_target "core:native-lifecycle"
       return
       ;;
@@ -1008,7 +1010,8 @@ classify_wework_path() {
       select_target "core:collaboration-board-backlog"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-card-child-progress.scenario.mjs)
       select_target "core:collaboration-parent-board"
       return
       ;;
@@ -1984,6 +1987,7 @@ classify_path() {
       select_target "core:collaboration-delivery-editing"
       ;;
     wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
+    wework/e2e/desktop/scenarios/collaboration-template-app-device-routing.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-template-lifecycle.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
@@ -1993,12 +1997,14 @@ classify_path() {
       select_target "core:collaboration-templates"
       select_target "core:collaboration-template-lifecycle"
       select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-template-app-device-routing"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
         select_target "core:collaboration-group-onboarding"
       fi
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \
+      packages/collaboration/src/agent-form/runnerRouting* | \
       packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
       packages/collaboration/src/ports/SharedWorkspaceApi* | \
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
@@ -2008,14 +2014,21 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
-      if [[ "$path" == packages/collaboration/src/project-agent-config/* ]]; then
+      if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
+        "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
         select_target "core:collaboration-template-agents"
+        select_target "core:collaboration-template-app-device-routing"
       fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
         select_target "core:collaboration-deliveries"
         select_target "core:collaboration-delivery-editing"
       fi
+      ;;
+    wework/src/api/agentRoutingCatalog* | \
+      wework/src/features/collaboration/WeworkProjectAgentConfigurationHost*)
+      select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-template-app-device-routing"
       ;;
     packages/collaboration/*)
       if [[ "$path" == packages/collaboration/src/conversation/useConversationScrollController* ]]; then
@@ -2075,16 +2088,41 @@ classify_path() {
       wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
-    .github/workflows/wework-e2e.yml | \
+    .github/ci/rust-toolchain | \
+      .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
+      .github/scripts/resolve-ci-image.mjs | .github/ci/prebuilt-images.json | \
+      .github/scripts/publish-ci-prebuild.sh | .github/scripts/restore-ci-downloads.sh | \
+      .github/actions/setup-rust-cache/* | \
+      .github/actions/setup-sccache/* | \
+      .github/actions/setup-node-workspace/* | \
+      .github/actions/setup-python-uv-cache/* | \
+      .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/build-wework-macos-e2e/* | \
+      .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
+      .github/actions/build-minio-e2e/* | \
+      .github/actions/setup-minio-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
+      .github/scripts/restore-actions-runtime.sh | \
+      .github/scripts/runtime-artifact.* | \
+      .github/scripts/prepare-macos-inspector-e2e.sh | \
+      .github/scripts/build-macos-e2e-runtimes.sh | \
+      .github/scripts/macos-e2e-source-digest.* | \
+      .github/scripts/macos-e2e-build*.mjs | .github/scripts/restore-macos-ci-build.mjs | \
+      .github/scripts/verified-build-oci.mjs | \
+      .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       select_all_desktop_suites
+      ;;
+    wework/scripts/ci-test-sequencer.*)
       ;;
     wework/*)
       classify_wework_path "$path"

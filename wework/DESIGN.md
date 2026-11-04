@@ -1061,6 +1061,39 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
     Content --> Composer
   ```
 
+  桌面端数学公式由共享 `AssistantMarkdown` 统一排版。参考 Codex 的
+  KaTeX 路径，支持 `\(…\)`、`\[…\]`、`$…$`、`$$…$$` 和 `math`
+  代码块。解析器先识别真正的数学节点，再将 TeX 分隔符转换为 Streamdown
+  支持的美元分隔符；保留引用、列表缩进、代码示例与链接目标。单美元公式
+  不接受两端空白或紧随数字的结束符，避免将常见金额识别为公式。
+  展示公式只在可容纳块的 Markdown 容器中展开；表格、标题、强调与链接
+  标签中的公式保留行内形式，不能插入换行破坏容器。
+  KaTeX 使用其开源发行包的专用数学字体、HTML 与 MathML 输出；禁用可信
+  HTML 命令。长行间公式在消息内横向滚动，原始消息及复制内容保持不变。
+
+  Desktop math belongs to shared `AssistantMarkdown`. Like Codex, it uses
+  KaTeX for inline and display TeX, dollar delimiters and `math` fences. Only
+  parsed math nodes have their TeX delimiters normalized before Streamdown's
+  block splitting and streaming completion. Quotes, list indentation, code,
+  link destinations and common currency text retain their Markdown meaning.
+  Display delimiters expand only in block-capable Markdown containers. Table
+  cells, headings, emphasis and link labels retain inline math without inserted
+  line breaks.
+  KaTeX's open-source math fonts, HTML and MathML are bundled locally, with
+  trusted HTML commands disabled. Display equations scroll horizontally within
+  the message; stored messages and message-copy content remain unchanged.
+
+  ```mermaid
+  flowchart LR
+    Source[Original message] --> Parse[Markdown parser with math delimiters]
+    Parse --> Normalize[Normalize parsed TeX using block and inline container boundaries]
+    Normalize --> Streamdown[Streamdown blocks and streaming completion]
+    Streamdown --> Math[Remark math nodes]
+    Math --> Sanitize[Existing HTML sanitization]
+    Sanitize --> KaTeX[KaTeX HTML and MathML]
+    Parse --> Literal[Code, links and escaped text remain literal]
+  ```
+
   `RuntimeExecutionDetails` owns the desktop execution dialog chrome, status
   badges, metadata, stop state, transcript error/retry state and footer actions.
   Its host supplies the authoritative runtime session, transcript body and real
@@ -2005,6 +2038,14 @@ implementation and WCAG conflict.
 - Native title-bar drag regions must not geometrically overlap visible
   interactive controls. Explicitly carve controls out of the drag region even
   when they declare `no-drag`.
+- 标题栏内绝对定位的拖拽区必须以标题栏为定位边界；调试面板展开时停用
+  底下的原生拖拽区，收起或关闭后恢复。
+- Anchor absolutely positioned title-bar drag regions to the title bar. Disable
+  underlying native drag regions while the debug panel is expanded, and restore
+  them when it collapses or closes.
+- 刷新期间收到的原生工作区菜单操作必须在工作区挂载后执行一次。
+- Replay native workspace-menu actions received during refresh once the workspace
+  mounts, without executing consumed actions again after a remount.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.

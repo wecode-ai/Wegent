@@ -255,6 +255,45 @@ fn materialize_cloud_payload(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn cloud_catalog_and_execution_use_the_connected_users_token() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        let router = Router::new().route(
+            "/api/models/unified",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["authorization"], "Bearer synthetic-session-token");
+                Json(json!({"data":[model("openai-responses")]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler::new("mac", "unused").with_backend_connection(
+            Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: url.clone(),
+                auth_token: "synthetic-session-token".into(),
+                runtime_auth_token: "synthetic-device-token".into(),
+                ..Default::default()
+            }))),
+        );
+        let mut payload = cloud_payload("codex");
+        handler
+            .materialize_runner_cloud_models(&mut payload)
+            .await
+            .unwrap();
+        server.abort();
+        let config = &payload["executionRequest"]["model_config"];
+        assert_eq!(config["api_key"], "synthetic-session-token");
+        assert_eq!(
+            config["base_url"],
+            format!("{url}/api/runtime-work/llm-responses-proxy")
+        );
+        assert_eq!(config["runtime_config"]["codex"]["use_user_config"], false);
+        assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
+        assert_eq!(payload["modelConfig"], *config);
+    }
+
     fn cloud_payload(runtime: &str) -> Value {
         json!({
             "runnerRouting": {"model": {

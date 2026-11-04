@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use crate::http_compat::FastApiError;
 
 #[derive(Debug)]
-pub(super) struct SearchRequest {
+pub(crate) struct SearchRequest {
     pub device_id: String,
     pub task_id: String,
     pub project_session: Option<(String, String)>,

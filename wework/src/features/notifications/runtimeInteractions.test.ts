@@ -1,9 +1,12 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   canQuickReply,
   canReplyToInteraction,
+  interactionSource,
   interactionOriginalScheme,
   readRuntimeInteractions,
 } from './runtimeInteractions'
@@ -20,6 +23,27 @@ function reader(...pages: ReturnType<typeof interactionTranscript>[]) {
 }
 
 describe('runtime human interactions', () => {
+  it.each([
+    { initiatedBy: undefined, expected: 'project' },
+    { initiatedBy: 'stand_in' as const, expected: 'stand_in' },
+  ])(
+    'classifies the transcript origin as $expected independently of sidebar metadata',
+    async ({ initiatedBy, expected }) => {
+      const [item] = await readRuntimeInteractions(
+        interactionTask,
+        reader({
+          ...interactionTranscript(),
+          origin: {
+            type: 'board_comment',
+            cloudProjectId: '12',
+            loopItemId: 'ISSUE-1',
+            initiatedBy,
+          },
+        })
+      )
+      expect(interactionSource(item)).toBe(expected)
+    }
+  )
   it('keeps source message identities from the question own turn across transcript pages', async () => {
     const older = interactionTranscript()
     older.turns = [

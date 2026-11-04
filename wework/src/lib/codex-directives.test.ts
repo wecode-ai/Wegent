@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import { splitCodexInlineVisualizations, stripCodexUiDirectives } from './codex-directives'
 

@@ -1022,8 +1022,7 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses/:response_id/cancel" # app/api/endpoints/openapi_responses.py:1849
-# `POST /api/v1/responses` is Python-owned; the gateway forwards creation
-# requests to `openapi_responses.create_response`.
+# `POST /api/v1/responses` is selected for Rust in the active entry below.
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/responses" # app/api/endpoints/openapi_responses.py:440
@@ -1108,3 +1107,8 @@ path = "/api/v1/deliveries/:delivery_id"
 [[routes]]
 methods = ["POST"]
 path = "/api/internal/callback"
+
+# Responses creation is implemented and selected in Rust.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/responses"

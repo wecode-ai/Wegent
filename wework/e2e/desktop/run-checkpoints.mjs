@@ -9,7 +9,10 @@ import {
   DESKTOP_CHECKPOINT_GROUPS,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
-import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import {
+  isResourceExclusiveCheckpoint,
+  runWithCheckpointResources,
+} from './checkpoint-scheduler.mjs'
 import {
   UPGRADE_CHECKPOINTS,
   UPGRADE_DIAGNOSTIC_CHECKPOINTS,
@@ -52,7 +55,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
-  'native-lifecycle': './scenarios/native-lifecycle.scenario.mjs',
+  'native-lifecycle': './scenarios/native-guidance.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'follow-up-task-switch': './scenarios/follow-up-task-switch.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
@@ -159,6 +162,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-templates': './scenarios/collaboration-templates.scenario.mjs',
   'collaboration-template-agents': './scenarios/collaboration-template-agents.scenario.mjs',
   'collaboration-template-lifecycle': './scenarios/collaboration-template-lifecycle.scenario.mjs',
+  'collaboration-template-app-device-routing':
+    './scenarios/collaboration-template-app-device-routing.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
@@ -166,7 +171,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
   'stand-in-telemetry': './scenarios/telemetry-policy.scenario.mjs',
-  'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
+  'stand-in-model-catalog': './scenarios/stand-in-model-execution.scenario.mjs',
   'stand-in-processing': './scenarios/stand-in-processing.scenario.mjs',
   'coordination-runtime': './scenarios/coordination-runtime.scenario.mjs',
   'coordination-arrangements': './scenarios/coordination-arrangements.scenario.mjs',
@@ -214,7 +219,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-backlog': './scenarios/collaboration-board-backlog.scenario.mjs',
-  'collaboration-parent-board': './scenarios/collaboration-parent-board.scenario.mjs',
+  'collaboration-parent-board': './scenarios/collaboration-card-child-progress.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -236,6 +241,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-templates',
   'collaboration-template-lifecycle',
   'collaboration-template-agents',
+  'collaboration-template-app-device-routing',
   'board-transcript-followup',
   'collaboration-home-preload',
   'device-artifact-declaration',
@@ -416,17 +422,6 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-archive-restore',
 ])
 const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
-// These checkpoints materialize packaged runtimes or repeatedly reload the full
-// renderer. Run them alone so Chromium's network service stays stable on the
-// four-vCPU desktop E2E runners.
-const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
-  'release-package-startup',
-  'collaboration-issue-task-discovery',
-  // Its partial-inventory guard must run through the real system-idle scheduler.
-  // Parallel Electron workloads keep CPU pressure above the production limit.
-  'plugin-uninstall-lost-response',
-])
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
 )
@@ -796,12 +791,14 @@ async function runParallelCheckpoints(checkpoints) {
       `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
     )
 
+    const linuxCore =
+      process.platform === 'linux' && process.env.WEWORK_E2E_PARALLEL_SCOPE === 'core'
     await runWithCheckpointResources({
       checkpoints,
       workerCount,
       resourceFor: checkpoint =>
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
-      exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
+      exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, linuxCore),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT

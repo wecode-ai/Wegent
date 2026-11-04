@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { DeviceInfo } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { projectEditingCapabilities } from './project-editing-capabilities'

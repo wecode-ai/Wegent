@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { describe, expect, test } from 'vitest'
 
