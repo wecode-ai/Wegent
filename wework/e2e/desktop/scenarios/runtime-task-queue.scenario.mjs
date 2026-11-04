@@ -1,3 +1,5 @@
+import { createConcurrencyExecutionVerification } from '../modules/runtime-concurrency-execution.mjs'
+import { verifyIndependentConcurrencySettings } from '../modules/runtime-concurrency-settings.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
@@ -216,6 +218,7 @@ async function assertRestoredFollowUps(control, prompts, timeoutMs) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  const ownerConcurrency = createConcurrencyExecutionVerification({ workspacePath, uiTimeoutMs })
   let active = false
   const requests = []
   const cancelledRequests = []
@@ -237,6 +240,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (await ownerConcurrency.handleBody(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
         .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))
@@ -306,6 +310,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         '1',
         'The runtime concurrency setting did not update to one'
       )
+      await verifyIndependentConcurrencySettings(control, uiTimeoutMs)
       await prepareScreenshot(control, null)
       await captureScreenshot(control, 'runtime-queue-01-limit-one.png', 'body')
       await control.command('click', '[data-testid="settings-back-button"]')
@@ -922,10 +927,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       releases.get(PROMPTS.fifth)?.()
       await waitForCompletedRuntimeTaskThread(control, fifth.taskId, uiTimeoutMs)
+      await ownerConcurrency.verify(control)
       active = false
     },
 
     async cleanup() {
+      ownerConcurrency.cleanup()
       active = false
       for (const release of releases.values()) release()
     },

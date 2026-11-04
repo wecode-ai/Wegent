@@ -35,7 +35,7 @@ flowchart LR
     USER["批准 / 取消 / 重试"]
   end
   subgraph Config["既有配置（无新表）"]
-    DEVICE["Runtime Settings<br/>D = maxConcurrentTasks<br/>设备总并发唯一配置"]
+    DEVICE["Runtime Settings<br/>Dpersonal / DstandIn / Dagent<br/>按执行主体独立配置"]
     DEVICE_VIEW["Runtime 实时容量观察<br/>limit / active / active_task_ids / queued<br/>Local: IPC 直读；Cloud: Redis TTL 心跳"]
     CAPACITY_ID["设备容量域<br/>owner_user_id + runtime_instance_id<br/>多个 device route 共享一个域"]
     ROBOT["MySQL / SQLite loop_items.metadata<br/>R = max_concurrent_executions<br/>机器人全局并发，默认 1"]
@@ -55,7 +55,7 @@ flowchart LR
   end
   subgraph Runtime["Runtime 物理并发主链"]
     START["写 start_requested_at<br/>Start 围栏"]
-    SCHED{"Runtime active tasks < D?"}
+    SCHED{"所属主体的 active tasks < Dsubject?"}
     WAIT["Runtime 已接受但排队<br/>waiting_runtime"]
     RUN["Runtime 实际运行"]
     OTHER["普通对话 / 其他 Runtime 任务"]
@@ -110,7 +110,11 @@ flowchart LR
 
 Executor 拉取任务时，先用无锁查询寻找本 Runtime 未确认的 claim，再按已找到的主键加锁并重新校验。没有未确认 claim 时直接进入正常领取流程，不对队列范围加锁，避免与 Issue 优先的领取锁顺序形成死锁。
 
-设备并发 `D` 只有一个配置值。占用不是把两套计数相加，也不是取较大值，而是按 Runtime task identity 精确合并：`O = Runtime active + 持久化 capacity rows 中 runtime_task_id 不在 active_task_ids 的数量`。这样，已被 Runtime 看到的机器人任务不会重复计数，人工对话与尚未进入 Runtime 的 claim 也不会互相漏算。Runtime Scheduler 仍是所有普通对话、机器人和自动化共享的物理硬上限；没有物理槽位时，“立即运行”只能把任务移到队首，已接收的 Execution 显示 `waiting_runtime`，不能越过 `D` 或显示 `running`。
+Runtime 按执行主体使用三组独立并发额度：个人任务 `maxConcurrentTasks`、分身任务 `maxConcurrentStandInTasks`、智能体任务 `maxConcurrentAgentTasks`。每组范围为 1–20，默认 10；读取旧版单值配置时，三组均以旧值初始化，之后分别保存。各组互不占用额度；同组按队列顺序启动，同一任务的轮次仍串行。降低上限不会中断已经运行的任务，提高上限会立即尝试启动该组排队任务。
+
+分类来自原任务持久化的 `origin`，并以 `taskKind` 保存到排队记录中；恢复和续聊沿用原主体，不随后续消息上下文变化。分身对话、分身协调、邮件/钉钉工作、分身处理的项目指派和日程都计入分身；项目协调、机器人、项目自动化及带有 Execution ID 的云端看板执行计入智能体。用户手动从事项开启的个人会话计入个人。定时和自动化只是一种触发方式，不单列并发组。
+
+`runtime.capacity.get` 的 `categories.personal / standIn / agent` 分别报告 `limit / active / active_task_ids / queued`；顶层同名字段报告三组汇总，汇总上限不是额外的调度门。项目任务的本地领取和云端拉取只检查智能体组容量。机器人已有的跨设备并发配置继续生效。
 
 设备容量是 Runtime 运行态，不写入 Device Kind/MySQL 冒充事实。Local 领取通过 IPC 直接读取 Runtime；Cloud 由 Runtime 心跳上报 `limit/active/active_task_ids/queued/runtimeInstanceId` 到已有 Redis 设备在线状态并受同一 TTL 约束。`active` 必须与唯一、非空的 `active_task_ids` 一一对应。容量观察缺失、过期、身份不完整或 Runtime 实例不匹配时停止 claim；Claim API 明确拒绝调用方自报 `deviceCapacity`，也不回退到固定常量。
 

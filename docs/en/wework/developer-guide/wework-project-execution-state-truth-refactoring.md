@@ -35,7 +35,7 @@ flowchart LR
     USER["Approve / cancel / retry"]
   end
   subgraph Config["Existing configuration — no new table"]
-    DEVICE["Runtime Settings<br/>D = maxConcurrentTasks<br/>single device-wide limit"]
+    DEVICE["Runtime Settings<br/>Dpersonal / DstandIn / Dagent<br/>independent execution-owner limits"]
     OBS["Live Runtime observation<br/>limit / active / active_task_ids / queued<br/>Local IPC; Cloud Redis TTL"]
     DOMAIN["Capacity domain<br/>owner_user_id + runtime_instance_id<br/>multiple routes share one domain"]
     ROBOT["loop_items.metadata<br/>R = max_concurrent_executions<br/>global per robot, default 1"]
@@ -55,7 +55,7 @@ flowchart LR
   end
   subgraph Runtime["Physical Runtime concurrency"]
     START["Persist start_requested_at<br/>Start fence"]
-    SCHED{"Runtime active tasks < D?"}
+    SCHED{"Owner active tasks < Dsubject?"}
     WAIT["Accepted but queued in Runtime<br/>waiting_runtime"]
     RUN["Actually running"]
     OTHER["Normal chat / other Runtime tasks"]
@@ -110,7 +110,11 @@ The direction is one-way: Execution → Message/Automation/Workflow projections.
 
 Executor pulls first probe for this Runtime's unconfirmed claim without locks, then lock and revalidate an existing claim by primary key. An empty probe proceeds directly to normal claiming without locking a queue range, avoiding deadlocks with the Issue-first claim lock order.
 
-`D` has one configuration source. Occupancy is neither the sum nor the maximum of two unrelated counters. It is merged by Runtime task identity: `O = Runtime active + durable capacity rows whose runtime_task_id is absent from active_task_ids`. A robot process visible to both layers is counted once, while manual Runtime work and claimed work not yet seen by Runtime are both retained. Runtime remains the hard physical limit for chat, robots, and automations together. “Run now” can only move a queued task to the front; it cannot start task D+1.
+Runtime uses three independent execution-owner limits: personal tasks (`maxConcurrentTasks`), stand-in tasks (`maxConcurrentStandInTasks`), and Agent tasks (`maxConcurrentAgentTasks`). Each accepts 1–20 and defaults to 10. Legacy single-limit settings seed all three categories once; subsequent updates persist them independently. Each category queues independently, and turns for the same task remain serial. Lowering a limit leaves active tasks running; increasing it immediately attempts to drain that category.
+
+Classification uses the original task’s persisted `origin` and is saved as `taskKind` in queued turns, preserving the owner across restoration and follow-ups even when later message context changes. Stand-in conversations, coordination, email/IM work, human Issue assignments handled by stand-ins, and stand-in schedules use the stand-in category. Project coordination, bots, project automation, and cloud board executions carrying an Execution ID use Agent capacity. Personal conversations opened manually from an Issue use personal capacity. Scheduled and automated work inherits its execution owner.
+
+`runtime.capacity.get` reports `limit / active / active_task_ids / queued` for `categories.personal / standIn / agent`; top-level fields are totals, not an additional scheduling gate. Both local project claiming and cloud pulling use Agent capacity exclusively. Existing per-bot limits continue to apply.
 
 Capacity is live Runtime state and is never persisted into Device Kind as fact. Local claim reads it through App IPC. Cloud Runtime reports `limit/active/active_task_ids/queued/runtimeInstanceId` into the existing Redis online record under its TTL. Every active count must have one unique non-empty task ID. Missing, expired, incomplete, or mismatched observations stop claim. Claim APIs reject caller-supplied `deviceCapacity` and have no fixed-constant fallback.
 

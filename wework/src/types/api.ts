@@ -316,6 +316,8 @@ export interface DeleteProjectWorktreeResponse {
 
 export interface RuntimeSettings {
   maxConcurrentTasks: number
+  maxConcurrentStandInTasks: number
+  maxConcurrentAgentTasks: number
 }
 
 export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
