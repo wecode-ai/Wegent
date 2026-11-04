@@ -231,7 +231,7 @@ async fn user_in_group(state: &AppState, user_id: i64, namespace: &str) -> bool 
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    match user_group_memberships(&state.mysql, &erp, user_id).await {
+    match user_group_memberships(&state.mysql, &erp, &state.entity_resolvers, user_id).await {
         Ok(resolved) => effective_roles(&resolved.memberships, &resolved.active_names)
             .into_keys()
             .any(|group| group == namespace),
@@ -253,8 +253,15 @@ async fn validate_model(
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
     };
-    if model_resolution::model_resolves(&state.mysql, &erp, state.redis.as_ref(), user, model_name)
-        .await
+    if model_resolution::model_resolves(
+        &state.mysql,
+        &erp,
+        state.redis.as_ref(),
+        &state.entity_resolvers,
+        user,
+        model_name,
+    )
+    .await
     {
         Ok(())
     } else {

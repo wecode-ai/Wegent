@@ -278,6 +278,7 @@ async fn tables_list(
         &state.mysql,
         state.erp.as_ref(),
         state.redis.as_ref(),
+        &state.entity_resolvers,
         i64::from(user.id),
     )
     .await;
@@ -310,6 +311,7 @@ async fn list_table_documents<M, R: brz_redis::Redis>(
     mysql: &M,
     erp: &dyn crate::erp_provider::ErpProvider<R>,
     redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     user_id: i64,
 ) -> MysqlResult<Vec<DocumentItem>>
 where
@@ -332,7 +334,7 @@ where
     // batch (`iter_user_groups_with_roles` with the entity-resolver
     // chain), then the effective-role expansion over the active names.
     let erp_context = ErpContext { erp, redis };
-    let resolved = user_group_memberships(mysql, &erp_context, user_id).await?;
+    let resolved = user_group_memberships(mysql, &erp_context, resolvers, user_id).await?;
     let roles = effective_roles(&resolved.memberships, &resolved.active_names);
     let mut group_names: Vec<String> = roles.into_keys().collect();
     group_names.sort();

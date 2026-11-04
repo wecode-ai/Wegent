@@ -21,6 +21,14 @@ const MAX_LIFETIME: Duration = Duration::from_secs(3600);
 /// driver default `MysqlServiceOptions::default()` applies (3s), which killed
 /// legitimate multi-second statements with `MysqlError::QueryTimedOut`.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Source `DB_POOL_TIMEOUT` (`app/core/config.py`), applied as
+/// `pool_timeout=settings.DB_POOL_TIMEOUT` in `app/db/session.py`.
+///
+/// This is the time Source waits for a free pool slot before failing. The
+/// driver default (`MysqlServiceOptions::default().acquire_timeout`, 2s) is a
+/// divergence: under a replay-served database a legitimate multi-second query
+/// occupies a slot long enough that another request's acquire gives up early.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn connect(database_url: &str) -> MysqlResult<MysqlService> {
     connect_read_write(database_url, None)
@@ -36,6 +44,7 @@ pub(crate) fn pool_options() -> MysqlServiceOptions {
         .with_max_connections(MAX_CONNECTIONS)
         .with_max_lifetime(Some(MAX_LIFETIME))
         .with_query_timeout(QUERY_TIMEOUT)
+        .with_acquire_timeout(ACQUIRE_TIMEOUT)
         .with_charset("utf8mb4")
         .with_timezone("+08:00")
 }
