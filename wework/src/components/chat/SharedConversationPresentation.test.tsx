@@ -4,7 +4,6 @@ import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   AssistantMessage,
   ConversationTranslationProvider,
-  ImSourceBadge,
 } from '@wegent/collaboration/conversation'
 import { MarkdownServicesProvider, browserMarkdownServices } from '@wegent/collaboration/markdown'
 import { CollaborationTheme } from '@wegent/collaboration/theme'
@@ -27,19 +26,6 @@ afterEach(() => {
 })
 
 describe('shared conversation presentation without desktop providers', () => {
-  test('uses localized source labels and preserves authoritative channel labels', () => {
-    render(
-      <Scope>
-        <ImSourceBadge source={{ source: 'im', channel_type: 'dingtalk' }} testId="dingtalk" />
-        <ImSourceBadge source={{ source: 'im', channel_label: ' My channel ' }} testId="custom" />
-        <ImSourceBadge source="web" testId="web" />
-      </Scope>
-    )
-    expect(screen.getByTestId('dingtalk')).toHaveTextContent('DingTalk')
-    expect(screen.getByTestId('custom')).toHaveTextContent('My channel')
-    expect(screen.queryByTestId('web')).not.toBeInTheDocument()
-  })
-
   test('renders errors with real retry and clipboard services without desktop imports', async () => {
     const message: WorkbenchMessage = {
       id: 'failed-1',

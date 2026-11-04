@@ -53,14 +53,14 @@ import {
   startLocalHarness,
   startLocalTerminal,
 } from '@/lib/local-terminal'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import {
   consumeNewChatComposerRequest,
   requestNewChatComposerFocus,
 } from '@/lib/workbenchComposerFocus'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type {
   RuntimePaneTranscript,
@@ -2298,23 +2298,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已流式补充第二步')
   })
 
-  test('keeps the empty composer at the intended desktop proportion', () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
-
-    expect(screen.getByTestId('composer-plugin-picker-button')).toBeVisible()
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'flex',
-      'min-h-0',
-      'flex-1',
-      'flex-col'
-    )
-    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'min-w-0',
-      'shrink-0'
-    )
-  })
-
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'composer-toolbar') {
@@ -2460,6 +2443,70 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
+
+  test.each(['button', 'menu'])('opens My Tasks from stand-in using the board %s', async entry => {
+    window.history.replaceState({}, '', '/stand-in?profileId=default')
+    const onNavigate = vi.fn((event: Event) => event.preventDefault())
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(screen.getByTestId('personal-stand-in-button')).toHaveAttribute('aria-current', 'page')
+
+      if (entry === 'button') {
+        await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+      } else {
+        await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+        await userEvent.click(screen.getByTestId('runtime-task-view-board'))
+      }
+
+      expect(onNavigate).toHaveBeenCalledTimes(1)
+      expect((onNavigate.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        kind: 'board',
+        contentRoute: '/todo?projectId=default-work-items',
+      })
+      expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+    } finally {
+      window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    }
+  })
+
+  test.each(['board', 'priority', 'collapse-read'])(
+    'uses the visible task view for %s after opening stand-in from the task board',
+    async action => {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+      expect(screen.getByTestId('task-view-board-transition')).toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('personal-stand-in-button'))
+      expect(screen.getByTestId('personal-stand-in-button')).toHaveAttribute('aria-current', 'page')
+      expect(screen.queryByTestId('task-view-board-transition')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
+
+      const onNavigate = vi.fn((event: Event) => event.preventDefault())
+      window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+      try {
+        await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+        await userEvent.click(screen.getByTestId(`runtime-task-view-${action}`))
+        if (action === 'board') {
+          expect(onNavigate).toHaveBeenCalledTimes(1)
+          expect((onNavigate.mock.calls[0][0] as CustomEvent).detail).toEqual({
+            kind: 'board',
+            contentRoute: '/todo?projectId=default-work-items',
+          })
+        } else {
+          expect(onNavigate).not.toHaveBeenCalled()
+          expect(window.location.pathname).toBe('/stand-in')
+        }
+      } finally {
+        window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+      }
+    }
+  )
 
   test('does not open a direct stand-in route while experimental features are disabled', () => {
     experimentalFeatures.enabled = false

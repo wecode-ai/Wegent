@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { RuntimeTaskAddress } from '@/types/api'
 import { beforeEach, describe, expect, test } from 'vitest'
 import {

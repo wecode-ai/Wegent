@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { HarnessAppInstallation, HarnessAppPreview } from '@/api/local/harnessApps'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'

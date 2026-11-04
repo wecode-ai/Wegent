@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveHumanTaskDispatch } from './humanTaskDispatch'

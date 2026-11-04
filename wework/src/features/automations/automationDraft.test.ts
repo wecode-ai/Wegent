@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'

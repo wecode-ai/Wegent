@@ -15,6 +15,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
@@ -475,7 +476,7 @@ export function StandInOverviewPage({
           (profile !== 'primary' || state.draft) &&
           createPortal(
             <div
-              className="fixed inset-0 z-modal bg-black/20 text-text-primary"
+              className={`fixed inset-x-0 bottom-0 z-modal bg-black/20 text-text-primary ${isDesktopRuntime() ? 'top-[38px]' : 'top-0'}`}
               data-testid="stand-in-profile-backdrop"
               style={{ display: active ? undefined : 'none' }}
               inert={!active}

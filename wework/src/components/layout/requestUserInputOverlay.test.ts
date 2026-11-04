@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { isImplementationPlanConfirmationResponse } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { describe, expect, test } from 'vitest'

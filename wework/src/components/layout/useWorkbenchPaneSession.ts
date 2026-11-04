@@ -49,7 +49,10 @@ import {
   findRuntimeTask,
   getRuntimeTaskRouteKey,
 } from '@/features/workbench/workbenchRuntimeHelpers'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import {
+  getRuntimeTaskChatScopeKey,
+  normalizeGuidanceError,
+} from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
@@ -1557,7 +1560,7 @@ export function useWorkbenchPaneSession({
                   status: 'failed',
                   awaitingGuidanceAcceptance: undefined,
                   notice: undefined,
-                  error: '引导发送失败',
+                  error: normalizeGuidanceError(result.error),
                 }
               : message
           )
@@ -1581,7 +1584,7 @@ export function useWorkbenchPaneSession({
                   status: 'failed',
                   awaitingGuidanceAcceptance: undefined,
                   notice: undefined,
-                  error: '引导发送失败',
+                  error: normalizeGuidanceError(error instanceof Error ? error.message : undefined),
                 }
               : message
           )

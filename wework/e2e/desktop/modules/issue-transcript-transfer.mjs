@@ -106,7 +106,7 @@ function updateFixtureReply(sqliteHome, threadId) {
   }
 }
 
-async function verifyCachedInitialRecovery({
+export async function verifyCachedInitialRecovery({
   control,
   proxy,
   scope,
@@ -115,7 +115,8 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  // Cached messages can appear before the shared initial history read settles.
+  // Cached text can render before the shared snapshot writer settles. Finish
+  // that read before remounting, or the next viewer can reuse its pending reply.
   await control.command(
     'waitFor',
     `${modal} [data-testid="work-item-task-chat-panel"][aria-busy="false"]`

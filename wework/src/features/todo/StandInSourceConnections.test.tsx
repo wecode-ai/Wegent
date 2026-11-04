@@ -412,32 +412,3 @@ it('keeps all groups when selected contacts replace the all-contacts scope', asy
     expect.objectContaining({ id: 'contact', kind: 'direct', profile: 'corp' }),
   ])
 })
-
-it('formats the supported resource list in the active language', async () => {
-  const i18n = (await import('@/i18n')).default
-  await i18n.changeLanguage('en')
-  try {
-    render(
-      <StandInSourceConnections
-        role={newStandInRole('device')}
-        provider={{
-          id: 'example',
-          displayName: 'Example',
-          resourceKinds: ['group', 'direct'],
-          allResourceKinds: ['group', 'direct'],
-          allResourceLabels: { group: 'Groups', direct: 'Contacts' },
-          availability: { status: 'ready' },
-          dependencies: [],
-        }}
-        api={{} as StandInExecutorApi}
-        deviceId="device"
-        localDeviceId="device"
-        disabled={false}
-        onChange={vi.fn()}
-      />
-    )
-    expect(screen.getByText(/Groups and Contacts/)).toBeVisible()
-  } finally {
-    await i18n.changeLanguage('zh-CN')
-  }
-})

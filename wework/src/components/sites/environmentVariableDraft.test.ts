@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { EnvironmentSnapshot } from '@/api/sites'
 import { describe, expect, test } from 'vitest'
 import { buildEnvironmentPatchOperations, createEnvironmentDraft } from './environmentVariableDraft'

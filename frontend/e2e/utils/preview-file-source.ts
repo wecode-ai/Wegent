@@ -30,7 +30,9 @@ function servePreviewFile(directory: string, request: IncomingMessage, response:
   }
   const pathname = new URL(request.url || '/', 'https://localhost').pathname
   // Only document fixtures are public; never serve the TLS key or certificate.
-  if (!/^\/(preview\.pdf|preview\.docx|unavailable\.txt)$/.test(pathname)) {
+  if (
+    !/^\/(preview\.pdf|preview\.docx|preview\.mp4|preview\.txt|unavailable\.txt)$/.test(pathname)
+  ) {
     response.writeHead(404).end()
     return
   }

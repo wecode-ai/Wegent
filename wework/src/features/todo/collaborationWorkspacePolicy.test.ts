@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectWithTasks } from '@/types/api'
 import { describe, expect, it } from 'vitest'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'

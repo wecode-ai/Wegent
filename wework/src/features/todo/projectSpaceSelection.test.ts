@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { CloudProject } from '@/api/deliveries'
 import { describe, expect, test, vi } from 'vitest'
 import {
