@@ -65,6 +65,9 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
     if op == "identity" {
         return Ok("user".into());
     }
+    if op == "server_version" && platform == "gitlab" {
+        return Ok("version".into());
+    }
     if op == "repositories" {
         return Ok(if platform == "github" {
             format!("user/repos?per_page=100&page={page}&sort=updated")
@@ -741,6 +744,11 @@ mod tests {
     }
     #[test]
     fn reads_cannot_select_arbitrary_commands_hosts_or_api_methods() {
+        assert_eq!(
+            endpoint("gitlab", &json!({"operation":"server_version"})).unwrap(),
+            "version"
+        );
+        assert!(endpoint("github", &json!({"operation":"server_version"})).is_err());
         assert!(endpoint(
             "github",
             &json!({"operation":"delete","repository":"org/repo","number":1})

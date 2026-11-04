@@ -23,6 +23,70 @@ const GITLAB_EVENTS: &[&str] = &[
     "resource_deploy_token_events",
 ];
 
+struct GitlabEventPlan {
+    version: String,
+    events: Vec<Value>,
+    unavailable: Vec<String>,
+}
+
+impl GitlabEventPlan {
+    fn parse(version: &str) -> Result<Self, AppIpcError> {
+        let invalid = || {
+            AppIpcError::new("git_version_unavailable", "Cannot determine GitLab event support; inspect the instance version before configuring its webhook")
+        };
+        if version.len() > 128 {
+            return Err(invalid());
+        }
+        let release = version.split('-').next().ok_or_else(invalid)?;
+        let parts: Vec<_> = release.split('.').map(str::parse::<u64>).collect();
+        let [Ok(major), Ok(minor), Ok(_)] = parts.as_slice() else {
+            return Err(invalid());
+        };
+        // GitLab's documented introduction versions, not optional permissions:
+        // https://docs.gitlab.com/user/project/integrations/webhook_events/
+        let gated = [
+            ("milestone_events", (18, 2)),
+            ("resource_deploy_token_events", (18, 4)),
+        ];
+        let unavailable: Vec<String> = gated
+            .iter()
+            .filter(|(_, minimum)| (*major, *minor) < *minimum)
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+        let events = GITLAB_EVENTS
+            .iter()
+            .filter(|name| !unavailable.iter().any(|item| item == **name))
+            .map(|name| json!(name))
+            .collect();
+        Ok(Self {
+            version: version.to_owned(),
+            events,
+            unavailable,
+        })
+    }
+
+    fn warnings(&self) -> Vec<String> {
+        self.unavailable.iter().map(|name| format!("GitLab {} does not support {name}; this event is unavailable on this instance version", self.version)).collect()
+    }
+
+    fn accepts(&self, requested: &[Value]) -> bool {
+        self.events.iter().all(|name| requested.contains(name))
+            && !self
+                .unavailable
+                .iter()
+                .any(|name| requested.contains(&json!(name)))
+    }
+}
+
+fn webhook_result(hook: &Value, callback: &str, plan: Option<&GitlabEventPlan>) -> Value {
+    let mut result = public_hook(hook, callback);
+    if let Some(plan) = plan {
+        result["platformVersion"] = json!(plan.version);
+        result["coverageWarnings"] = json!(plan.warnings());
+    }
+    result
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn configure_git_webhook(
         &self,
@@ -87,6 +151,15 @@ impl RuntimeWorkRpcHandler {
         let provider = source["providerId"].as_str().unwrap();
         let github = provider.ends_with("/github");
         let events = args["events"].as_array().cloned().unwrap_or_default();
+        self.validate_git_source(source).await?;
+        let event_plan = if github {
+            None
+        } else {
+            let response = super::super::git_connections::read(json!({"providerId":provider,"instance":profile[0],"profile":source["profile"],"operation":"server_version"})).await?;
+            Some(GitlabEventPlan::parse(
+                response["data"]["version"].as_str().unwrap_or(""),
+            )?)
+        };
         if !plan {
             if events.is_empty() || events.len() > 64 {
                 return Err(AppIpcError::new(
@@ -101,7 +174,9 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             if !github
-                && (!includes_gitlab_plan(&events)
+                && (!event_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.accepts(&events))
                     || !events.iter().all(|v| {
                         v.as_str().is_some_and(|s| {
                             s.len() <= 128
@@ -116,7 +191,6 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        self.validate_git_source(source).await?;
         let subscription = source["subscriptionId"].as_str().unwrap();
         let config=self.stand_in_http(reqwest::Method::POST,&format!("/v1/git-connections/subscriptions/{subscription}/configuration"),Some(&json!({"deviceId":self.device_id,"generation":source["generation"],"reveal":!plan}))).await?;
         let connection = self
@@ -129,7 +203,7 @@ impl RuntimeWorkRpcHandler {
         );
         if plan {
             return Ok(
-                json!({"instance":profile[0],"repository":source["name"],"subscriptionId":subscription,"callbackUrl":callback,"events":if github{json!(["*"])}else{json!(GITLAB_EVENTS)},"eventReference":"https://docs.gitlab.com/api/project_webhooks/","nativeApprovalRequired":true}),
+                json!({"instance":profile[0],"repository":source["name"],"subscriptionId":subscription,"callbackUrl":callback,"events":event_plan.as_ref().map(|plan| json!(plan.events)).unwrap_or_else(||json!(["*"])),"platformVersion":event_plan.as_ref().map(|plan| &plan.version),"coverageWarnings":event_plan.as_ref().map(GitlabEventPlan::warnings).unwrap_or_default(),"eventReference":"https://docs.gitlab.com/api/project_webhooks/","nativeApprovalRequired":true}),
             );
         }
         if args["callbackUrl"] != callback {
@@ -142,7 +216,7 @@ impl RuntimeWorkRpcHandler {
         let existing = find_hook(read.clone(), &callback).await?;
         if let Some(hook) = existing.as_ref() {
             if events_match(github, &events, hook) {
-                return Ok(public_hook(hook, &callback));
+                return Ok(webhook_result(hook, &callback, event_plan.as_ref()));
             }
         }
         let request = super::stand_in_tasks::required(args, "requestId")?;
@@ -190,7 +264,7 @@ impl RuntimeWorkRpcHandler {
             }
         };
         if !events_match(github, &events, &result) {
-            let mut partial = public_hook(&result, &callback);
+            let mut partial = webhook_result(&result, &callback, event_plan.as_ref());
             partial["configured"] = json!(false);
             partial["coverageComplete"] = json!(false);
             store
@@ -201,7 +275,7 @@ impl RuntimeWorkRpcHandler {
                 "The platform did not enable every requested event; inspect webhook settings",
             ));
         }
-        let result = public_hook(&result, &callback);
+        let result = webhook_result(&result, &callback, event_plan.as_ref());
         store
             .complete_git_operation(identity.user, &receipt, &result)
             .map_err(super::stand_in::settings_error)?;
@@ -246,11 +320,6 @@ fn events_match(github: bool, events: &[Value], hook: &Value) -> bool {
     }
 }
 
-fn includes_gitlab_plan(events: &[Value]) -> bool {
-    GITLAB_EVENTS
-        .iter()
-        .all(|name| events.contains(&json!(name)))
-}
 fn public_hook(hook: &Value, callback: &str) -> Value {
     let flags: Map<String, Value> = hook
         .as_object()
@@ -266,12 +335,54 @@ fn public_hook(hook: &Value, callback: &str) -> Value {
 mod tests {
     use super::*;
     #[test]
+    fn older_gitlab_plans_keep_all_available_events_and_report_version_gaps() {
+        for version in ["17.11.7-ee", "18.1.0", "18.2.0", "18.4.0-ee"] {
+            let plan = GitlabEventPlan::parse(version).unwrap();
+            assert!(plan.accepts(&plan.events));
+            let mut hook = json!({"id":1});
+            for event in &plan.events {
+                hook[event.as_str().unwrap()] = json!(true);
+            }
+            assert!(events_match(false, &plan.events, &hook));
+            let result = webhook_result(&hook, "https://cloud/hook", Some(&plan));
+            assert_eq!(result["configured"], true);
+            assert_eq!(
+                result["coverageWarnings"].as_array().unwrap().len(),
+                plan.unavailable.len()
+            );
+            assert!(plan.events.contains(&json!("resource_access_token_events")));
+            hook["resource_access_token_events"] = json!(false);
+            assert!(!events_match(false, &plan.events, &hook));
+        }
+        let old = GitlabEventPlan::parse("17.11.7-ee").unwrap();
+        assert_eq!(
+            old.unavailable,
+            ["milestone_events", "resource_deploy_token_events"]
+        );
+        let mut unavailable_requested = old.events.clone();
+        unavailable_requested.push(json!("milestone_events"));
+        assert!(!old.accepts(&unavailable_requested));
+        let milestone = GitlabEventPlan::parse("18.2.0").unwrap();
+        assert!(milestone.events.contains(&json!("milestone_events")));
+        assert!(!milestone
+            .events
+            .contains(&json!("resource_deploy_token_events")));
+        assert!(GitlabEventPlan::parse("18.4.0-ee")
+            .unwrap()
+            .unavailable
+            .is_empty());
+        for invalid in ["", "unknown", "18.4", "18.4.x"] {
+            assert!(GitlabEventPlan::parse(invalid).is_err());
+        }
+    }
+    #[test]
     fn gitlab_validates_requested_flags_and_preserves_additional_flags() {
-        assert!(!includes_gitlab_plan(&[json!("push_events")]));
+        let plan = GitlabEventPlan::parse("18.4.0-ee").unwrap();
+        assert!(!plan.accepts(&[json!("push_events")]));
         let mut complete: Vec<_> = GITLAB_EVENTS.iter().map(|name| json!(name)).collect();
-        assert!(includes_gitlab_plan(&complete));
+        assert!(plan.accepts(&complete));
         complete.push(json!("future_events"));
-        assert!(includes_gitlab_plan(&complete));
+        assert!(plan.accepts(&complete));
         let events = vec![json!("push_events")];
         assert!(events_match(
             false,

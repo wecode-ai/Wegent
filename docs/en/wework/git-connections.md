@@ -19,6 +19,8 @@ Repository additions and takeovers enter a profile draft first. Saving creates o
 
 GitHub uses all events (`*`). For GitLab, enable all project Webhook event flags supported by the selected instance version. Unsupported flags require explicit correction; a partial subscription must not be reported as complete. “All” means events the provider allows that repository to subscribe to, not unavailable system events. The provider must reach the cloud callback; private GitLab networks may need administrator configuration.
 
+Automatic GitLab configuration reads the instance version first: milestone events are omitted before 18.2, and deploy-token events before 18.4. Plans and results list these limitations. Core and access-token events remain required; an unrecognized version stops configuration. Version eligibility does not prove delivery: deploy-token notifications in 18.4 also depend on an instance feature flag, so actual delivery still needs verification.
+
 The UI shows the last received event, pending count and retention gaps. A generated callback alone does not prove provider setup succeeded; inspect provider delivery results and receiver status. Removing a connection and saving revokes the cloud receiver. Delete the provider-side Webhook separately.
 
 ## Devices and offline recovery
