@@ -379,8 +379,7 @@ function AutomationRow({
           <span className="block truncate text-xs text-text-tertiary">
             {formatScheduleSummary(automation.schedule, locale)}
             {' · '}
-            {t('todo.automation_next_run', '下次运行')}{' '}
-            {formatRelativeDate(automation.nextRunAt)}
+            {t('todo.automation_next_run', '下次运行')} {formatRelativeDate(automation.nextRunAt)}
           </span>
         </span>
       </button>
