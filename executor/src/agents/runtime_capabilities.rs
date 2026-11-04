@@ -1370,10 +1370,14 @@ fn write_skill_manifest(
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
+    // tempfile publishes through Win32 directly, unlike Rust's long-path-aware I/O.
+    let skills_dir = fs::canonicalize(skills_dir)
+        .map_err(|error| format!("failed to resolve skill manifest parent: {error}"))?;
+    let path = skill_manifest_path(&skills_dir);
     let content = serde_json::to_string_pretty(manifest)
         .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
     use std::io::Write;
-    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
+    let mut staging = tempfile::NamedTempFile::new_in(&skills_dir)
         .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
     staging
         .write_all(content.as_bytes())
