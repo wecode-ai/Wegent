@@ -7,6 +7,30 @@ import { describe, expect, it } from "vitest";
 import { resolveProjectShellLevel } from "./ProjectShell";
 
 describe("ProjectShell", () => {
+  it.each([
+    { hasCreateAction: true, available: 400, expected: 1 },
+    { hasCreateAction: false, available: 350, expected: 0 },
+  ])(
+    "does not budget absent controls or a cached create action: $hasCreateAction",
+    ({ hasCreateAction, available, expected }) => {
+      expect(
+        resolveProjectShellLevel({
+          assistantOpen: false,
+          boardView: hasCreateAction,
+          hasCreateAction,
+          widths: {
+            add: 100,
+            assistant: 0,
+            available,
+            search: 0,
+            title: 100,
+            viewSwitcher: 220,
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it("keeps the complete header at its natural width", () => {
     expect(
       resolveProjectShellLevel({

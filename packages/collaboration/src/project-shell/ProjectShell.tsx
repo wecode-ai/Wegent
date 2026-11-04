@@ -74,11 +74,13 @@ export function resolveProjectShellLevel({
     let used = candidateLevel < 2 ? widths.title + 8 : 0
     used += candidateLevel < 2 ? widths.viewSwitcher : compactViewSwitcherWidth
     if (candidateLevel >= 2) return used + overflowWidth + compactAddWidth
-    used += candidateLevel >= 1 ? compactControlWidth : widths.search
+    used += candidateLevel >= 1 && widths.search > 0 ? compactControlWidth : widths.search
     if (!assistantOpen) {
-      used += candidateLevel >= 1 ? compactControlWidth : widths.assistant
+      used += candidateLevel >= 1 && widths.assistant > 0 ? compactControlWidth : widths.assistant
     }
-    used += candidateLevel >= 1 ? compactControlWidth : widths.add
+    if (hasCreateAction) {
+      used += candidateLevel >= 1 && widths.add > 0 ? compactControlWidth : widths.add
+    }
     return used
   }
 

@@ -430,6 +430,10 @@ export function CollaborationApp({
     project &&
     ["local", "backend"].includes(project.task_provider),
   );
+  const hasHeaderCreateAction =
+    host.location.view === "board" ||
+    host.location.view === "calendar" ||
+    host.location.view === "gantt";
   const milestoneFilterControl =
     milestonesEnabled && project ? (
       <div className="min-w-0 max-w-full shrink-0">
@@ -814,7 +818,7 @@ export function CollaborationApp({
                 ) : undefined
               }
               embedded
-              hasCreateAction
+              hasCreateAction={hasHeaderCreateAction}
               sidebarCollapsed={false}
               title={
                 <span className="collaboration-project-heading">
@@ -834,9 +838,7 @@ export function CollaborationApp({
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
                   {host.renderProjectHeaderAction?.(project)}
-                  {host.location.view === "board" ||
-                  host.location.view === "calendar" ||
-                  host.location.view === "gantt" ? (
+                  {hasHeaderCreateAction ? (
                     <button
                       ref={actionRefs.add}
                       type="button"
