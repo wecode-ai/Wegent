@@ -76,9 +76,7 @@ fn concurrent_executions_share_history_and_isolate_configuration() {
     assert!(task_skills_directory_at(root.path(), "task-1", "8").is_err());
     assert_eq!(
         fs::read_to_string(home.join("settings.json")).unwrap(),
-        r#"{
-  "two": true
-}"#
+        r#"{"custom":true}"#
     );
     assert!(!home.join("runtime/active-task.json").exists());
     let archive = open_home_lock(&home, root.path()).unwrap();
@@ -137,11 +135,15 @@ fn failed_task_never_resolves_another_tasks_shared_skill_selection() {
 }
 
 #[test]
-fn next_turn_preserves_mcp_templates_and_prunes_completed_snapshots() {
+fn only_the_same_task_inherits_mcp_templates_and_prunes_its_completed_snapshots() {
     let root = tempfile::tempdir().unwrap();
     let task = request("task-1");
     let home = named_home_at(root.path(), &task).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let legacy = r#"{"mcpServers":{"unowned":{}}}"#;
+    fs::write(home.join("mcp.json"), legacy).unwrap();
     let mut first = create_at(&task, root.path(), &home).unwrap();
+    assert!(!first.snapshot.join("mcp.json").exists());
     prepare_skills(&first, None);
     fs::write(
         first.snapshot.join("mcp.json"),
@@ -150,13 +152,10 @@ fn next_turn_preserves_mcp_templates_and_prunes_completed_snapshots() {
     .unwrap();
     first.activate().unwrap();
     let previous = first.snapshot.clone();
-    drop(first);
     let unrelated = create_at(&request("task-2"), root.path(), &home).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(unrelated.snapshot.join("mcp.json")).unwrap())
-            .unwrap(),
-        serde_json::from_slice::<Value>(&fs::read(previous.join("mcp.json")).unwrap()).unwrap()
-    );
+    assert!(!unrelated.snapshot.join("mcp.json").exists());
+    assert_eq!(fs::read_to_string(home.join("mcp.json")).unwrap(), legacy);
+    drop(first);
     let mut next = create_at(&task, root.path(), &home).unwrap();
     assert_eq!(
         fs::read(next.snapshot.join("mcp.json")).unwrap(),

@@ -257,8 +257,19 @@ export function createSharedSkillRuntime({
     assert.equal(owners.length, 1)
     assert.equal(owners[0].startsWith('user-'), false)
     const home = join(workbench, 'agents', owners[0], 'default', TEAM, 'bots', String(bot.id))
-    const mcpPath = join(home, 'mcp.json')
-    let mcpFirst, mcpBefore, firstProbe, secondProbe
+    const currentMcpPath = async () => {
+      const taskId = String(address.taskId)
+      const pointerPath = join(
+        home,
+        'runtime/task-executions',
+        `${digest(JSON.stringify(taskId))}.json`
+      )
+      const pointer = JSON.parse(await readFile(pointerPath, 'utf8'))
+      assert.equal(pointer.task_id, taskId)
+      return join(home, 'runtime/executions', pointer.snapshot, 'mcp.json')
+    }
+    const currentMcp = async () => readFile(await currentMcpPath(), 'utf8')
+    let mcpFirst, firstProbe, secondProbe
     const systemPath = join(home, 'skills', '.system')
     let systemBefore
     if (isCodex) {
@@ -266,7 +277,8 @@ export function createSharedSkillRuntime({
       assert.ok(systemBefore.isDirectory())
       assert.ok((await readdir(systemPath)).includes('skill-creator'))
     } else {
-      mcpFirst = await readFile(mcpPath, 'utf8')
+      mcpFirst = await currentMcp()
+      await assert.rejects(lstat(join(home, 'mcp.json')), { code: 'ENOENT' })
       const retainedServers = Object.keys(JSON.parse(mcpFirst).mcpServers).filter(name =>
         name.endsWith('_retained-skill-mcp')
       )
@@ -276,7 +288,6 @@ export function createSharedSkillRuntime({
         !mcpFirst.includes(cloud.authToken),
         'Task credentials leaked to persisted MCP config'
       )
-      mcpBefore = await stat(mcpPath, { bigint: true })
       firstProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
       assert.match(firstProbe.token, /^\d+$/)
       assert.match(firstProbe.instanceId, /^[0-9a-f-]{36}$/)
@@ -305,7 +316,7 @@ export function createSharedSkillRuntime({
         'Omitted skill MCP was not started on continuation'
       )
       assert.notEqual(secondProbe.token, firstProbe.token, 'MCP task context was not refreshed')
-      assert.equal(await readFile(mcpPath, 'utf8'), mcpFirst)
+      assert.equal(await currentMcp(), mcpFirst)
     }
     await assertLayout(second)
     assert.ok(
@@ -323,9 +334,8 @@ export function createSharedSkillRuntime({
         await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8')
       )
       assert.notEqual(thirdProbe.token, secondProbe.token)
-      const mcpAfter = await stat(mcpPath, { bigint: true })
-      assert.equal(mcpAfter.ino, mcpBefore.ino)
-      assert.equal(mcpAfter.mtimeNs, mcpBefore.mtimeNs)
+      assert.equal(await currentMcp(), mcpFirst)
+      await assert.rejects(lstat(join(home, 'mcp.json')), { code: 'ENOENT' })
       assert.ok(
         !(await readdir(join(home, 'runtime'))).some(name => name.startsWith('claude-mcp-'))
       )
@@ -347,10 +357,10 @@ export function createSharedSkillRuntime({
           ...(isCodex
             ? { nativeSystemSkillsPreserved: true, systemSkillsPath: systemPath }
             : {
-                stableMcpPath: mcpPath,
+                snapshotMcpPath: await currentMcpPath(),
                 omittedSkillMcpRetained: true,
                 mcpContextRefreshed: true,
-                unchangedMcpFileReused: true,
+                unchangedMcpConfig: true,
               }),
         },
         null,

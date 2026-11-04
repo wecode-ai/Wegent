@@ -65,6 +65,8 @@ fn create_at(
         .map_err(|error| error.to_string())?;
     let snapshot = staging.path().to_owned();
     seed_configuration(home, &snapshot)?;
+    // Older versions wrote task MCP servers to the shared Home without provenance.
+    // Only this task's previous snapshot is safe to use for continuation.
     if let Some(previous) = latest_snapshot(home, root, &request.task_id)? {
         copy_optional_file(&previous.join("mcp.json"), &snapshot.join("mcp.json"))?;
     }
@@ -150,7 +152,6 @@ fn preparation_lease(home: &Path, root: &Path) -> Result<HomeLease, String> {
 fn seed_configuration(home: &Path, snapshot: &Path) -> Result<(), String> {
     for name in [
         "settings.json",
-        "mcp.json",
         "claude.json",
         ".claude.json",
         ".credentials.json",
@@ -235,7 +236,7 @@ impl ExecutionHome {
     pub(in crate::agents) fn activate(&mut self) -> Result<(), String> {
         let root = self.root.clone();
         let _preparation = preparation_lease(&self.home, &root)?;
-        super::super::runtime_capabilities::publish_agent_selection(&self.home, &self.snapshot)?;
+        super::super::runtime_capabilities::publish_agent_skills(&self.home, &self.snapshot)?;
         let mut record = read_marker(&self.snapshot.join("execution.json"))?;
         record["ready"] = json!(true);
         super::super::runtime_capabilities::write_json_file(

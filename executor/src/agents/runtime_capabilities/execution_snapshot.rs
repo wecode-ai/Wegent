@@ -3,36 +3,16 @@
 
 use super::*;
 
-/// Publish the agent's latest selection for browsing and later executions.
-/// Running processes keep their private configuration and immutable package links.
+/// Publish the agent's latest Skill selection for browsing.
+/// Native configuration stays in the task's private execution snapshot.
 /// The caller holds the Home preparation lease.
-pub(in crate::agents) fn publish_agent_selection(
-    home: &Path,
-    snapshot: &Path,
-) -> Result<(), String> {
+pub(in crate::agents) fn publish_agent_skills(home: &Path, snapshot: &Path) -> Result<(), String> {
     let names = read_skill_manifest(&snapshot.join("skills"))?
         .into_keys()
         .collect::<Vec<_>>();
     let stage = HomeSkillsStage::prepare(home)?;
     stage.reuse_from(snapshot, &names)?;
-    stage.activate()?;
-    for name in ["mcp.json", "settings.json"] {
-        let source = snapshot.join(name);
-        if !source.exists() {
-            continue;
-        }
-        let next: Value =
-            serde_json::from_slice(&fs::read(source).map_err(|error| error.to_string())?)
-                .map_err(|error| error.to_string())?;
-        let target = home.join(name);
-        let previous = fs::read(&target)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-        if previous.as_ref() != Some(&next) {
-            write_json_file(&target, &next)?;
-        }
-    }
-    Ok(())
+    stage.activate()
 }
 
 #[cfg(test)]

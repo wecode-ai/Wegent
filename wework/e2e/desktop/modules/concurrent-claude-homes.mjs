@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
@@ -84,8 +85,25 @@ export function createConcurrentClaudeHomes({
     await verifySkillCatalogBindings(cloud, resultDir, request)
     const upload = async (version, id) => {
       const path = join(resultDir, `${NAME}-${version}.zip`)
+      const mcps =
+        version === 'V1'
+          ? {
+              'only-first-task': {
+                type: 'stdio',
+                command: process.execPath,
+                args: [
+                  fileURLToPath(new URL('./native-mcp-environment.mjs', import.meta.url)),
+                  '--stdio-env-server',
+                  'first',
+                  join(resultDir, 'concurrent-home-mcp.json'),
+                  'probe_environment',
+                ],
+                env: { TOKEN: '${{subtask_id}}', ELECTRON_RUN_AS_NODE: '1' },
+              },
+            }
+          : {}
       await createZipFixture(path, {
-        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Concurrent Home Skill ${version}\n---\nCONCURRENT_SKILL_${version}\n`,
+        [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Concurrent Home Skill ${version}\nmcpServers: ${JSON.stringify(mcps)}\n---\nCONCURRENT_SKILL_${version}\n`,
       })
       const form = new FormData()
       form.set('file', new Blob([await readFile(path)], { type: 'application/zip' }), `${NAME}.zip`)
@@ -225,6 +243,7 @@ export function createConcurrentClaudeHomes({
     }
     assert.equal(homes.length, 1, 'Both tasks must share one Agent Home')
     const home = homes[0]
+    await assert.rejects(readFile(join(home, 'mcp.json')), { code: 'ENOENT' })
     const snapshots = await readdir(join(home, 'runtime/executions'))
     assert.equal(snapshots.length, 2)
     const packages = []
@@ -237,6 +256,15 @@ export function createConcurrentClaudeHomes({
       )
       for (const file of ['mcp.json', 'settings.json', 'execution.json'])
         assert.ok((await readFile(join(snapshot, file))).length > 0)
+      const { task_id: taskId } = JSON.parse(await readFile(join(snapshot, 'execution.json')))
+      const turn = turns.find(turn => String(turn.address.taskId) === taskId)
+      assert.ok(turn, 'Every snapshot must belong to one of the two running tasks')
+      const { mcpServers } = JSON.parse(await readFile(join(snapshot, 'mcp.json')))
+      assert.equal(
+        Object.keys(mcpServers).some(name => name.endsWith('_only-first-task')),
+        turn.index === 1,
+        'A task must not inherit another task’s Skill MCP server'
+      )
       assert.equal(
         (await readdir(join(snapshot, 'skills'))).includes('browser'),
         false,

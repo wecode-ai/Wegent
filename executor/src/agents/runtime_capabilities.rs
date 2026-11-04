@@ -47,7 +47,7 @@ mod skill_archive;
 mod skill_shells;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
-pub(super) use execution_snapshot::publish_agent_selection;
+pub(super) use execution_snapshot::publish_agent_skills;
 use home_skills::HomeSkillsStage;
 pub(crate) mod mcp_environment;
 #[cfg(test)]
