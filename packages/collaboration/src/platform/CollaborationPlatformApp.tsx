@@ -3439,22 +3439,21 @@ function CollaborationPlatformAppContent({
                         .map((userId) =>
                           api.members.add(project.id, userId, "Developer"),
                         ),
-                      ...selection.executionEnvironmentDeviceIds.map(
-                        async (deviceId) => {
-                          if (projectWorkspace.location === "cloud") {
-                            await ensureWorkspaceEnvironmentSharing(
-                              api,
-                              projectWorkspace.id,
-                              deviceId,
-                              sharedDeviceIds,
-                            );
-                          }
-                          return api.projects.addExecutionEnvironment(
-                            project.id,
-                            deviceId,
-                          );
-                        },
-                      ),
+                      ...(projectWorkspace.location === "cloud"
+                        ? selection.executionEnvironmentDeviceIds
+                        : []
+                      ).map(async (deviceId) => {
+                        await ensureWorkspaceEnvironmentSharing(
+                          api,
+                          projectWorkspace.id,
+                          deviceId,
+                          sharedDeviceIds,
+                        );
+                        return api.projects.addExecutionEnvironment(
+                          project.id,
+                          deviceId,
+                        );
+                      }),
                     ]);
                     const selectedDefaultAgent = selectedAgents.find(
                       isCurrentDeviceCollaborationAgent,

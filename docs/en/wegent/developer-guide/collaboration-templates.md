@@ -27,6 +27,8 @@ with the chosen space and authorized for the project. Missing consent, devices o
 blocks submission before project creation. Existing projects require prior device authorization;
 import does not grant space or project device access. Saving, collecting and previewing templates
 does not perform these operations.
+Local projects use their local execution environment without calling cloud space-sharing
+or project device-grant APIs.
 
 ## Storage and access
 

@@ -4060,6 +4060,66 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain("请先为当前执行环境设置默认模型");
   });
 
+  it("creates a local template project without invoking cloud environment grants", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialWorkspaces: [localWorkspace],
+      initialResources: {
+        agents: [],
+        execution_environments: [{ ...environment, is_current_device: true }],
+      },
+    });
+    api.projects.addExecutionEnvironment = vi.fn(async () => {
+      throw new Error("Local space does not support cloud grants");
+    });
+    api.agents.create = vi.fn(async (_projectId, input) => ({
+      ...agent,
+      id: `template-agent-${input.name}`,
+      team_id: undefined,
+      name: input.name,
+    }));
+    const templateStore = new CollaborationTemplateStore({
+      scope: "local-template",
+      ownerId: 7,
+      persistence: { read: async () => [], write: async () => {} },
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        templateStore={templateStore}
+        start={{
+          ...initialLocation,
+          collaborationDomain: "local",
+          rootView: "templates",
+        }}
+        projectAgentConfiguration={{
+          resolveTemplateAgentRouting: async () => ({
+            executionPolicy: { mode: "fixed", environment_id: environment.id },
+            modelPolicy: {
+              mode: "fixed",
+              model: {
+                runtime: "codex",
+                provider: "openai",
+                model_id: "default",
+              },
+            },
+          }),
+        }}
+      />,
+    );
+    await click(byTestId("template-details-product-lifecycle"));
+    await click(byTestId("template-use"));
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.workspaces!.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.agents.create).toHaveBeenCalledTimes(6);
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector(".collaboration-project-create-error"),
+    ).toBeNull();
+  });
+
   it("requires explicit environment authorization before creating a web template project", async () => {
     const { api } = createApi({ initialProjects: [] });
     const templateStore = new CollaborationTemplateStore({
