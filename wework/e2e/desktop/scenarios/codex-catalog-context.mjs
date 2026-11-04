@@ -121,7 +121,7 @@ export function createCatalogContextVerification({
       const prewarm = kind === 'prewarm'
       if (!prewarm) {
         assert.equal(body.model, modelId)
-        // Codex pins the request baseline and sends later effort changes in history.
+        // Codex resolves Ultra to Max for inference and pins the context baseline.
         const updates = body.input.filter(item => item.type === 'configuration_update')
         reasoningRequests.push({
           expectedEffort,
@@ -134,13 +134,10 @@ export function createCatalogContextVerification({
         )
         assert.equal(
           updates.at(-1)?.reasoning?.effort ?? body.reasoning?.effort,
-          expectedEffort,
-          'The selected Catalog effort was not forwarded to the real Codex request'
+          'max',
+          'The real Codex request must use the Catalog inference effort for Max and Ultra'
         )
         assert.equal(body.reasoning?.effort, 'max', 'The context effort baseline must stay pinned')
-        if (expectedEffort === 'ultra') {
-          assert.equal(updates.at(-1)?.reasoning?.effort, 'ultra')
-        }
         assert.ok(JSON.stringify(body).includes(PROMPT), 'Catalog task lost its conversation')
         requests += 1
       }
@@ -196,6 +193,7 @@ export function createCatalogContextVerification({
             value: `${PROMPT} turn ${turn}`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+          const turnLogOffset = (await readFile(executorLogPath, 'utf8')).length
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
           await control.command('waitFor', '[data-testid="message-assistant"]', {
             text: `${PROMPT} complete ${turn}`,
@@ -211,6 +209,14 @@ export function createCatalogContextVerification({
           })
           assert.equal(compactions, 0, 'Catalog context was compacted at the obsolete 256k limit')
           assert.equal(requests, turn, 'The task made an unexpected model request')
+          const turnLog = (await readFile(executorLogPath, 'utf8')).slice(turnLogOffset)
+          assert.match(
+            turnLog,
+            new RegExp(
+              `codex shared thread request finished [^\\n]*reasoning_effort=${expectedEffort} `
+            ),
+            'The selected Catalog effort must reach the real native Codex thread unchanged'
+          )
         }
       } finally {
         active = false
