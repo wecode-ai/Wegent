@@ -71,6 +71,7 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
   const weekStartsOnMonday = locale === "zh-CN";
   const [scale, setScale] = useState<GanttScale>("month");
   const [taskColumnCollapsed, setTaskColumnCollapsed] = useState(false);
+  const taskColumnWidth = taskColumnCollapsed ? "w-20" : "w-80";
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [windowStart, setWindowStart] = useState(() =>
     startOfScheduleWeek(new Date(), weekStartsOnMonday),
@@ -235,8 +236,8 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
             <div className="sticky top-0 z-20 flex h-16 border-b border-border bg-background">
               <div
                 className={`sticky left-0 z-30 flex shrink-0 items-end border-r border-border bg-background pb-2 ${
-                  taskColumnCollapsed ? "w-12 justify-center" : "w-80 px-4"
-                }`}
+                  taskColumnWidth
+                } ${taskColumnCollapsed ? "justify-center" : "px-4"}`}
               >
                 {taskColumnCollapsed ? null : (
                   <>
@@ -319,7 +320,7 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
               <div className="flex h-32">
                 <div
                   className={`sticky left-0 z-10 shrink-0 border-r border-border bg-background ${
-                    taskColumnCollapsed ? "w-20" : "w-80"
+                    taskColumnWidth
                   }`}
                 />
                 <div
@@ -379,7 +380,7 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                         data-testid={`collaboration-gantt-row-${issue.id}`}
                       >
                         <div
-                          className={`sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-background ${taskColumnCollapsed ? "w-20" : "w-80"}`}
+                          className={`sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-background ${taskColumnWidth}`}
                           data-depth={depth}
                         >
                           {hasChildren ? (

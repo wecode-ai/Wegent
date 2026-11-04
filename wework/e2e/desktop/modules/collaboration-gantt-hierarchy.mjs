@@ -69,6 +69,19 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await click('collaboration-gantt-toggle-task-column')
   await click(`collaboration-gantt-toggle-${child.id}`)
   await wait(`collaboration-gantt-row-${grandchild.id}`)
+  const [headerDate] = JSON.parse(
+    await control.command('getElementMetrics', test(`collaboration-gantt-header-day-${date}`))
+  )
+  const [rowDate] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      test(`collaboration-gantt-row-${grandchild.id}-day-${date}`)
+    )
+  )
+  assert.ok(
+    Math.abs(headerDate.left - rowDate.left) < 1,
+    'Collapsed task columns must keep date headers aligned with row drop targets'
+  )
   await click('collaboration-gantt-toggle-task-column')
   await control.command('select', test('collaboration-gantt-status-filter'), { value: 'in_review' })
   await wait(`collaboration-gantt-row-${grandchild.id}`)

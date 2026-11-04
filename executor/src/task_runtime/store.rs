@@ -5312,7 +5312,7 @@ fn cancel_active_executions(
         let mut statement = connection.prepare(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
-               AND (status IN ('pending_approval', 'queued')
+               AND (status IN ('pending_approval', 'queued', 'waiting_runtime')
                     OR (status = 'claimed' AND start_requested_at IS NULL))",
         )?;
         let rows = statement.query_map(params![item_id], |row| row.get(0))?;

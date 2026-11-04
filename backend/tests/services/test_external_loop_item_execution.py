@@ -1326,8 +1326,12 @@ def test_external_assigned_task_chat_start_creates_message(
     assert row.runtime_task_id == "codex-queue-test"
 
 
-def test_external_archive_cancels_queued_execution(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("execution_status", ["queued", "waiting_runtime"])
+def test_external_archive_cancels_unstarted_execution(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_status: str,
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -1345,6 +1349,9 @@ def test_external_archive_cancels_queued_execution(
     )
     execution = _active_execution(test_db, _item_id(project))
     assert execution is not None
+
+    execution.status = execution_status
+    test_db.commit()
 
     external_loop_item_provider.archive(test_db, _item_id(project), test_user.id)
 

@@ -43,49 +43,59 @@ fn archive_unfinished_subtree_preserves_statuses_and_restores_every_child() {
 }
 
 #[test]
-fn archive_cancels_queued_child_execution_transactionally() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-    let project = store
-        .create_project(serde_json::from_value(json!({"name":"Archive queued work"})).unwrap())
-        .unwrap();
-    let parent = store
-        .create_task(
-            &project.id,
-            serde_json::from_value(json!({"title":"Parent"})).unwrap(),
-        )
-        .unwrap();
-    let child = store
-        .create_task(
-            &project.id,
-            serde_json::from_value(json!({"title":"Child","parent_id":parent.id})).unwrap(),
-        )
-        .unwrap();
-    let agent = store
-        .create_chat_agent(
-            &project.id,
-            serde_json::from_value(
-                json!({"name":"Robot","runtime":"codex","execution_mode":"auto"}),
+fn archive_cancels_unstarted_child_executions_transactionally() {
+    for status in ["queued", "waiting_runtime"] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Archive queued work"})).unwrap())
+            .unwrap();
+        let parent = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Parent"})).unwrap(),
             )
-            .unwrap(),
-        )
-        .unwrap();
-    let execution = store
-        .enqueue_execution(
-            &project.id,
-            &child.id,
-            &agent.id,
-            json!({"message":"work"}),
-            None,
-        )
-        .unwrap();
-    store.archive_task(&project.id, &parent.id).unwrap();
-    let execution = execution_row(&store.connection().unwrap(), execution.id).unwrap();
-    assert_eq!(execution.status, "cancelled");
-    assert_eq!(
-        execution.execution_note,
-        "Issue was archived before the run finished"
-    );
+            .unwrap();
+        let child = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Child","parent_id":parent.id})).unwrap(),
+            )
+            .unwrap();
+        let agent = store
+            .create_chat_agent(
+                &project.id,
+                serde_json::from_value(
+                    json!({"name":"Robot","runtime":"codex","execution_mode":"auto"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let execution = store
+            .enqueue_execution(
+                &project.id,
+                &child.id,
+                &agent.id,
+                json!({"message":"work"}),
+                None,
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_executions SET status=?1 WHERE id=?2",
+                params![status, execution.id],
+            )
+            .unwrap();
+        store.archive_task(&project.id, &parent.id).unwrap();
+        let execution = execution_row(&store.connection().unwrap(), execution.id).unwrap();
+        assert_eq!(execution.status, "cancelled");
+        assert_eq!(
+            execution.execution_note,
+            "Issue was archived before the run finished"
+        );
+    }
 }
 
 #[test]

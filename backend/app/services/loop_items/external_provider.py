@@ -1094,6 +1094,7 @@ class ExternalLoopItemProvider:
                     {
                         "pending_approval",
                         "queued",
+                        "waiting_runtime",
                         "claimed",
                         "running",
                         "cancel_requested",
