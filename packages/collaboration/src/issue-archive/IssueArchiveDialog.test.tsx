@@ -67,7 +67,8 @@ describe("IssueArchiveDialog", () => {
 
   it("describes subtree and batch archives", async () => {
     await renderDialog({ hasChildren: true });
-    expect(container.textContent).toContain("同批已完成子任务");
+    expect(container.textContent).toContain("及其子任务将从看板中归档");
+    expect(container.textContent).toContain("正在执行的 AI 运行会被停止");
 
     await renderDialog({ count: 3 });
     expect(container.textContent).toContain("归档 3 个已完成任务");
