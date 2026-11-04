@@ -32,7 +32,7 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
 mod native_history_test_support;
-use native_history_test_support::install_native_history;
+pub(super) use native_history_test_support::install_native_history;
 
 #[path = "command_recovery_tests.rs"]
 mod command_recovery_tests;
@@ -76,13 +76,13 @@ mod transcript_status_tests;
 mod async_question_delivery_tests;
 
 /// Restores one environment variable when a test finishes.
-pub(super) struct ScalarEnv {
+pub(in crate::runtime_work) struct ScalarEnv {
     key: &'static str,
     previous: Option<String>,
 }
 
 impl ScalarEnv {
-    pub(super) fn set(key: &'static str, value: &str) -> Self {
+    pub(in crate::runtime_work) fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
         Self { key, previous }

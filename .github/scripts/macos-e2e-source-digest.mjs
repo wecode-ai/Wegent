@@ -15,7 +15,7 @@ const groups = [
   `${component}/Cargo.toml`,
   `${component}/Cargo.lock`,
   `:(glob)${component}/src/**/*.rs`,
-  ...(component === "executor" ? ["executor/vendor"] : []),
+  ...(component === "executor" ? ["executor/vendor", "shared/protocol"] : []),
 ];
 const result = createHash("sha256");
 for (const pattern of groups) {

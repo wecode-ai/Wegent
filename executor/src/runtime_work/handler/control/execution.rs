@@ -79,14 +79,25 @@ impl RuntimeWorkRpcHandler {
         link: RuntimeTaskLink,
         args: Value,
     ) -> Result<Value, AppIpcError> {
-        let gate = self.task_send_gate(&format!("control:{}", link.local_task_id));
+        self.control_continue_on_device(context, &self.device_id, link, args)
+            .await
+    }
+
+    pub(super) async fn control_continue_on_device(
+        &self,
+        context: &ControlContext,
+        device: &str,
+        link: RuntimeTaskLink,
+        args: Value,
+    ) -> Result<Value, AppIpcError> {
+        let gate = self.task_send_gate(&format!("control:{device}:{}", link.local_task_id));
         let _guard = gate.lock().await;
         let message = args["message"].as_str().unwrap();
         let key = args["request_key"].as_str().unwrap();
         let queue_if_busy = args["queue_if_busy"].as_bool().unwrap_or(true);
         let operation_id = format!(
             "op_{:x}",
-            Sha256::digest(format!("{}\0{}\0{key}", self.device_id, link.local_task_id))
+            Sha256::digest(format!("{device}\0{}\0{key}", link.local_task_id))
         );
         let fingerprint = format!(
             "{:x}",
@@ -111,7 +122,8 @@ impl RuntimeWorkRpcHandler {
         if let Some(receipt) = existing {
             return Ok(json!({"operation":receipt,"duplicate":true}));
         }
-        let mut payload = if cloud_bound(&link) {
+        let use_backend = device != self.device_id || cloud_bound(&link);
+        let mut payload = if use_backend {
             // The existing Backend compiler owns project permissions and the current Team profile.
             json!({"modelSelection":link.runtime_handle.get("modelSelection").or_else(|| link.runtime_handle.get("model_selection"))})
         } else {
@@ -120,7 +132,7 @@ impl RuntimeWorkRpcHandler {
         };
         payload["queueIfBusy"] = json!(queue_if_busy);
         let mut receipt = json!({"operation_id":operation_id,"conversation_id":args["conversation_id"],
-            "task_id":link.local_task_id,"fingerprint":fingerprint,"delivery_status":"pending","created_at":now_ms()});
+            "device_id":device,"task_id":link.local_task_id,"fingerprint":fingerprint,"delivery_status":"pending","created_at":now_ms()});
         let raced = workbench_control::journal::transact(&path, |state| {
             if let Some(existing) = state["operations"].get(&operation_id) {
                 if existing["fingerprint"] != fingerprint {
@@ -137,9 +149,10 @@ impl RuntimeWorkRpcHandler {
         if let Some(existing) = raced {
             return Ok(json!({"operation":existing,"duplicate":true}));
         }
-        let result = if cloud_bound(&link) {
+        let result = if use_backend {
             self.control_backend(context, "/runtime-work/send", json!({"address":{
-                "deviceId":self.device_id,"taskId":link.local_task_id,"workspacePath":link.workspace_path},
+                "deviceId":device,"taskId":link.local_task_id,"workspacePath":link.workspace_path,
+                "runtimeHandle":{"wegentTeam":link.runtime_handle["wegentTeam"]}},
                 "message":message,"clientUserMessageId":operation_id,"modelSelection":payload["modelSelection"],"queueIfBusy":payload["queueIfBusy"]})).await
         } else {
             self.send_message(payload).await
@@ -178,9 +191,16 @@ impl RuntimeWorkRpcHandler {
                 .cloned()
                 .ok_or_else(|| AppIpcError::new("not_found", "Operation not found"))
         })?;
-        let task = receipt["task_id"]
+        let task = if receipt["device_id"]
             .as_str()
-            .and_then(|task| self.store.get_task(task));
+            .map_or(true, |device| device == self.device_id)
+        {
+            receipt["task_id"]
+                .as_str()
+                .and_then(|task| self.store.get_task(task))
+        } else {
+            None
+        };
         if let Some(link) = task.as_ref() {
             self.authorize_control_target(context, link).await?;
         }

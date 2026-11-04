@@ -441,7 +441,7 @@ fn inject_managed_wework_mcps(
             crate::workbench_control::SERVER_NAME.to_owned(),
             json!({
                 "type": "http", "url": config.url, "headers": config.headers,
-                "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
+                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
             }),
         );
     }

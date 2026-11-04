@@ -26,6 +26,7 @@ COPY executor/src ./src
 COPY sdk/plugin-auth /workspace/src/sdk/plugin-auth
 COPY sdk/plugin-creator /workspace/src/sdk/plugin-creator
 COPY shared/assets /workspace/src/shared/assets
+COPY shared/protocol /workspace/src/shared/protocol
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-executor
 

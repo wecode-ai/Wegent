@@ -1681,7 +1681,9 @@ classify_path() {
   esac
 
   case "$path" in
-    executor/src/workbench_control/* | \
+    backend/app/services/runtime_continuation.py | \
+      executor/src/runtime_work/reader* | \
+      executor/src/workbench_control/* | \
       executor/src/runtime_work/handler/control.rs | \
       executor/src/runtime_work/handler/control/* | \
       executor/src/runtime_work/handler/creation.rs | \

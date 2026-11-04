@@ -31,15 +31,26 @@ fn operation(
         "annotations":{"readOnlyHint":read,"openWorldHint":false}})
 }
 
+fn query_properties(search: bool) -> Value {
+    let mut properties = json!({"limit":integer(1,100),"after":text(),"include_archived":boolean(),"workspace_path":text(),"project_key":text(),
+        "device_id":{"type":"string","minLength":1,"description":"Query only this owned device; resolve its ID from conversation creation options. Omit to query all sources."},
+        "scope":{"type":"string","enum":["all","current_device"],"description":"Defaults to all: current device, cloud history and other owned devices."},
+        "updated_after":{"type":"string","format":"date-time"},"updated_before":{"type":"string","format":"date-time"}});
+    if search {
+        properties["query"] = text();
+    }
+    properties
+}
+
 pub(crate) fn capabilities() -> Vec<Value> {
     let id = || json!({"conversation_id":text()});
     let mut ops = vec![
         operation("get_current_context", "Get the calling conversation, owning device and available control scope.", json!({}), &[], true),
-        operation("list_conversations", "List conversations on the owning device, with full safe metadata and pagination. Reports device coverage explicitly.", json!({"limit":integer(1,100),"after":text(),"include_archived":boolean(),"workspace_path":text(),"project_key":text()}), &[], true),
-        operation("search_conversations", "Search conversation titles, workspaces and native message history on the owning device.", json!({"query":text(),"limit":integer(1,100)}), &["query"], true),
+        operation("list_conversations", "List authorized conversations across this device, cloud history and other devices. Follow next_cursor until has_more is false and inspect coverage for unavailable sources. Time filters apply to conversation update times.", query_properties(false), &[], true),
+        operation("search_conversations", "Search titles, workspaces and complete native/cloud message histories across all devices. Paginate every page and inspect coverage before claiming a conversation is absent.", query_properties(true), &["query"], true),
         operation("get_conversation", "Read conversation metadata, original workspace, model, origin, PR bindings, queue and execution state.", id(), &["conversation_id"], true),
-        operation("read_conversation", "Read native conversation messages, tool results, attachments and file changes with cursor pagination.", json!({"conversation_id":text(),"limit":integer(1,200),"before_cursor":text(),"after_cursor":text()}), &["conversation_id"], true),
-        operation("continue_conversation", "Send a message to the original conversation and workspace. Queues when busy. Supply a stable request_key to prevent duplicate delivery, including repeated CI failures.", json!({"conversation_id":text(),"message":text(),"request_key":text(),"queue_if_busy":boolean()}), &["conversation_id","message","request_key"], false),
+        operation("read_conversation", "Read native or cloud conversation history with cursor pagination. Use either before_cursor or after_cursor, and follow every page needed for the requested time period.", json!({"conversation_id":text(),"limit":integer(1,200),"before_cursor":text(),"after_cursor":text()}), &["conversation_id"], true),
+        operation("continue_conversation", "Send a message to the original native conversation and workspace, including other owned devices permitted by existing device policy. Queues when busy. Supply a stable request_key to prevent duplicate delivery, including repeated CI failures.", json!({"conversation_id":text(),"message":text(),"request_key":text(),"queue_if_busy":boolean()}), &["conversation_id","message","request_key"], false),
         operation("get_conversation_creation_options", "Discover creation parameter schemas, this device's projects, models, skills and plugins, plus authorized remote execution environments. Use wework_space to select an Issue binding.", json!({"workspace_path":text(),"include_remote":boolean()}), &[], true),
         operation("create_conversation", "Create a conversation with Wework composer options: device, runtime, model and reasoning, permissions, project/workspace/worktree, skills/plugins, attachments, context, goal and supervisor. Omitted local settings inherit the caller. Returns the actual target conversation address.", super::creation_schema::creation_properties(), &["message"], false),
         operation("bind_change_request", "Persist an explicit PR/MR URL binding to a conversation. Use only a confirmed relationship.", json!({"conversation_id":text(),"url":text(),"remove":boolean()}), &["conversation_id","url"], false),
@@ -152,7 +163,7 @@ fn matches_schema(schema: &Value, value: &Value) -> bool {
                 && items.iter().all(|item| {
                     schema
                         .get("items")
-                        .is_none_or(|spec| matches_schema(spec, item))
+                        .map_or(true, |spec| matches_schema(spec, item))
                 })
         }),
         Some("integer") => value.as_u64().is_some_and(|n| {

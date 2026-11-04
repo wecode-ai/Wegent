@@ -237,6 +237,11 @@ impl SpaceMcpRequestContext {
     }
 }
 
+pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool, String> {
+    space_context_grant(request)
+        .map(|grant| grant.is_some_and(|grant| grant.space_id.is_some() && grant.item_id.is_some()))
+}
+
 pub(crate) fn space_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<SpaceMcpClientConfig, String> {

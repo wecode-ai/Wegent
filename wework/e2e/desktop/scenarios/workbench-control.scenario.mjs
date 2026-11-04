@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import {
   assistantMessage,
   createSse,
@@ -10,7 +12,13 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import {
+  CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
+  CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -19,6 +27,12 @@ const SOURCE = `WEWORK_CONTROL_SOURCE_E2E: this conversation owns ${PR}`
 const CONTROLLER = 'WEWORK_CONTROL_CONTROLLER_E2E'
 const CREATED = 'WEWORK_CONTROL_CREATED_E2E'
 const CLOUD_CREATED = 'WEWORK_CONTROL_CLOUD_CREATED_E2E'
+const UNIFIED_HISTORY = 'WEWORK_CONTROL_UNIFIED_HISTORY_E2E'
+const REMOTE_CREATED = 'WEWORK_CONTROL_REMOTE_CREATED_E2E'
+const REMOTE_FOLLOW_UP = 'WEWORK_CONTROL_REMOTE_FOLLOW_UP_E2E'
+const REMOTE_UI_FOLLOW_UP = 'WEWORK_CONTROL_REMOTE_UI_FOLLOW_UP_E2E'
+const SCOPED_CREATED = 'WEWORK_CONTROL_SCOPED_CREATED_E2E'
+const SCOPED_FOLLOW_UP = 'WEWORK_CONTROL_SCOPED_FOLLOW_UP_E2E'
 const CLOUD_TITLE = '发个评论帮我@control-e2e CONTROL_CLOUD_E2E'
 const FOLLOW_UP =
   'WEWORK_CONTROL_CI_FAILED_E2E: PR checks failed; handle this in the original conversation.'
@@ -62,10 +76,34 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let cloudCreatedId
   let cloudCreatedTaskId
   let cloud
+  let cloudEnvironment
+  let httpProxy
   let cloudProject
+  let scopedTask
+  let scopedConversationId
+  let scopedFollowUps = 0
+  let storedCloudId
+  const remoteIds = []
+  const desktopTasks = new Map()
+  const remoteOperationIds = new Map()
+  const remoteFollowUpRequests = new Map()
   let stage = 0
   let followUpRequests = 0
+  let remoteUiFollowUpRequests = 0
   let failure
+  const request = async (path, body) => {
+    const response = await fetch(`${cloud.backendUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cloud.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(uiTimeoutMs),
+    })
+    assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`)
+    return response.json()
+  }
   const observed = []
   const steps = [
     [
@@ -217,23 +255,162 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     ],
   ]
 
+  for (const deviceId of [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID]) {
+    steps.push(
+      [
+        'create_conversation',
+        () => ({
+          message: `${REMOTE_CREATED} ${UNIFIED_HISTORY}`,
+          title: `Control remote query ${deviceId}`,
+          options: {
+            deviceId,
+            runtime: 'codex',
+            modelSelection: {
+              modelName: CLOUD_PUBLIC_MODEL_NAME,
+              modelType: 'public',
+              options: CLOUD_PUBLIC_MODEL_OPTIONS,
+            },
+          },
+        }),
+        async value => {
+          const created = findValue(value, item => item.accepted === true && item.conversation_id)
+          assert.ok(created)
+          remoteIds.push(created.conversation_id)
+          const desktopTask = await cloud.waitForRuntimeTask({
+            deviceId: created.deviceId,
+            taskId: created.taskId,
+            workspacePath: created.workspacePath,
+          })
+          desktopTasks.set(created.conversation_id, desktopTask)
+        },
+      ],
+      [
+        'search_conversations',
+        () => ({ device_id: deviceId, query: UNIFIED_HISTORY, limit: 100 }),
+        value => {
+          const page = findValue(
+            value,
+            item => Array.isArray(item.items) && item.coverage?.scope === 'device'
+          )
+          assert.ok(page)
+          assert.equal(page.coverage.device_id, deviceId)
+          assert.equal(page.coverage.authorized_index_complete, true)
+          assert.equal(page.coverage.sources.length, 1)
+          assert.equal(page.coverage.sources[0].source_id, deviceId)
+          assert.ok(page.items.some(item => item.conversation_id === remoteIds.at(-1)))
+        },
+      ],
+      [
+        'continue_conversation',
+        () => ({
+          conversation_id: remoteIds.at(-1),
+          message: `${REMOTE_FOLLOW_UP} ${deviceId}`,
+          request_key: `remote-ci:${deviceId}:43:head:run:1`,
+        }),
+        async value => {
+          const receipt = findValue(value, item => item.operation && item.duplicate === false)
+          assert.equal(receipt?.operation.delivery_status, 'accepted')
+          assert.equal(receipt.operation.device_id, deviceId)
+          remoteOperationIds.set(deviceId, receipt.operation.operation_id)
+          const task = desktopTasks.get(remoteIds.at(-1))
+          assert.equal(receipt.operation.result.taskId, task.taskId)
+          await cloud.waitForRuntimeTask({
+            deviceId,
+            taskId: task.taskId,
+            workspacePath: task.workspacePath,
+          })
+        },
+      ],
+      [
+        'continue_conversation',
+        () => ({
+          conversation_id: remoteIds.at(-1),
+          message: `${REMOTE_FOLLOW_UP} ${deviceId}`,
+          request_key: `remote-ci:${deviceId}:43:head:run:1`,
+        }),
+        value => assert.ok(findValue(value, item => item.duplicate === true)),
+      ],
+      [
+        'get_operation',
+        () => ({ operation_id: remoteOperationIds.get(deviceId) }),
+        value => {
+          const receipt = findValue(value, item => item.operation?.device_id === deviceId)
+          assert.equal(receipt?.operation.delivery_status, 'accepted')
+          assert.equal(receipt.current_conversation, null)
+        },
+      ],
+      [
+        'read_conversation',
+        () => ({ conversation_id: remoteIds.at(-1), limit: 100 }),
+        value => {
+          assert.ok(JSON.stringify(value).includes(`${REMOTE_FOLLOW_UP} ${deviceId}`))
+          assert.ok(JSON.stringify(value).includes('WEWORK_CONTROL_REMOTE_RESUMED'))
+        },
+      ]
+    )
+  }
+  steps.push(
+    [
+      'continue_conversation',
+      () => ({
+        conversation_id: scopedConversationId,
+        message: SCOPED_FOLLOW_UP,
+        request_key: 'scoped-original-43',
+      }),
+      value => {
+        const receipt = findValue(value, item => item.operation && item.duplicate === false)
+        assert.equal(receipt?.operation.delivery_status, 'accepted')
+        assert.equal(receipt.operation.result.taskId, scopedTask.taskId)
+        assert.equal(receipt.operation.device_id, CLOUD_DEVICE_ID)
+      },
+    ],
+    [
+      'read_conversation',
+      () => ({ conversation_id: scopedConversationId, limit: 100 }),
+      value => {
+        assert.ok(JSON.stringify(value).includes(SCOPED_FOLLOW_UP))
+        assert.ok(JSON.stringify(value).includes('WEWORK_CONTROL_SCOPED_RESUMED'))
+      },
+    ],
+    [
+      'search_conversations',
+      () => ({ query: UNIFIED_HISTORY, limit: 100, include_archived: true }),
+      value => {
+        const page = findValue(
+          value,
+          item => Array.isArray(item.items) && item.coverage?.scope === 'all'
+        )
+        assert.ok(page)
+        for (const id of [storedCloudId, ...remoteIds]) {
+          assert.equal(page.items.filter(item => item.conversation_id === id).length, 1)
+        }
+        for (const [id, desktopTask] of desktopTasks) {
+          const conversation = page.items.find(item => item.conversation_id === id)
+          assert.equal(conversation.taskId, desktopTask.taskId)
+          assert.equal(conversation.title, desktopTask.title)
+          assert.equal(conversation.workspacePath, desktopTask.workspacePath)
+        }
+        assert.equal(page.coverage.authorized_index_complete, true)
+        for (const source of ['cloud_history', CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID]) {
+          assert.ok(
+            page.coverage.sources.some(
+              item => item.source_id === source && item.status === 'available'
+            )
+          )
+        }
+      },
+    ],
+    ...[() => storedCloudId, () => remoteIds[0], () => remoteIds[1]].map(id => [
+      'read_conversation',
+      () => ({ conversation_id: id(), limit: 100 }),
+      value => assert.ok(JSON.stringify(value).includes(UNIFIED_HISTORY)),
+    ])
+  )
+
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(environment) {
       cloud = environment
-      const request = async (path, body) => {
-        const response = await fetch(`${cloud.backendUrl}${path}`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${cloud.authToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(uiTimeoutMs),
-        })
-        assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`)
-        return response.json()
-      }
       await request('/api/admin/setup-complete', {})
       const workspace = await request('/api/v1/workspaces', { name: `Control ${process.pid}` })
       cloudProject = await request('/api/v1/cloud-projects', {
@@ -242,6 +419,30 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         task_provider: 'local',
         visibility: 'private',
       })
+      const teamsResponse = await fetch(`${cloud.backendUrl}/api/teams?page=1&limit=100`, {
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+      assert.ok(teamsResponse.ok)
+      const teams = await teamsResponse.json()
+      assert.ok(teams.items?.[0]?.id, 'Cloud history requires a real Agent fixture')
+      const stored = await request('/api/tasks/create', {
+        title: 'Control stored cloud conversation',
+        prompt: UNIFIED_HISTORY,
+        team_id: teams.items[0].id,
+        client_origin: 'wework',
+        task_type: 'task',
+      })
+      assert.ok(stored.id)
+      storedCloudId = `cloudconv_${stored.id}`
+      // Only REST uses this real forwarding proxy; Runtime sockets must use
+      // the distinct endpoint supplied by the server's existing metadata.
+      httpProxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      httpProxy.disconnectWebSockets(true)
+    },
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
+      environment.backendUrl = httpProxy.url
     },
     async handleHttp(request, response, url) {
       if (
@@ -260,7 +461,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           const callId = `control-step-${stage}`
           if (stage < steps.length && requestContainsToolOutput(body, callId)) {
             const value = callResult(body, callId)
-            steps[stage][2]?.(value)
+            await steps[stage][2]?.(value)
             observed.push(steps[stage][0])
             stage += 1
           }
@@ -277,6 +478,23 @@ export function createDesktopScenario({ uiTimeoutMs }) {
                   }).events,
                   responseCompleted(id),
                 ]
+        } else if (serialized.includes(SCOPED_FOLLOW_UP)) {
+          scopedFollowUps += 1
+          events = [assistantMessage('WEWORK_CONTROL_SCOPED_RESUMED'), responseCompleted(id)]
+        } else if (serialized.includes(SCOPED_CREATED)) {
+          events = [assistantMessage('WEWORK_CONTROL_SCOPED_READY'), responseCompleted(id)]
+        } else if (serialized.includes(REMOTE_UI_FOLLOW_UP)) {
+          remoteUiFollowUpRequests += 1
+          events = [assistantMessage('WEWORK_CONTROL_REMOTE_UI_RESUMED'), responseCompleted(id)]
+        } else if (serialized.includes(REMOTE_FOLLOW_UP)) {
+          const deviceId = [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].find(id =>
+            serialized.includes(`${REMOTE_FOLLOW_UP} ${id}`)
+          )
+          assert.ok(deviceId, 'Remote continuation must retain its addressed device')
+          remoteFollowUpRequests.set(deviceId, (remoteFollowUpRequests.get(deviceId) ?? 0) + 1)
+          events = [assistantMessage('WEWORK_CONTROL_REMOTE_RESUMED'), responseCompleted(id)]
+        } else if (serialized.includes(REMOTE_CREATED)) {
+          events = [assistantMessage('WEWORK_CONTROL_REMOTE_READY'), responseCompleted(id)]
         } else if (serialized.includes(CLOUD_CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CLOUD_READY'), responseCompleted(id)]
         } else if (serialized.includes(CREATED)) {
@@ -300,7 +518,35 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       active = true
+      const issue = await request(`/api/v1/cloud-projects/${cloudProject.id}/loop-items`, {
+        title: 'Scoped continuation',
+      })
+      const scoped = await request('/api/runtime-work/create', {
+        schemaVersion: 2,
+        deviceId: CLOUD_DEVICE_ID,
+        runtime: 'codex',
+        message: SCOPED_CREATED,
+        modelId: CLOUD_PUBLIC_MODEL_NAME,
+        modelType: 'public',
+        modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
+        cloudProjectId: String(cloudProject.id),
+        origin: {
+          type: 'board_task',
+          cloudProjectId: String(cloudProject.id),
+          loopItemId: String(issue.id),
+          dispatch_role: 'executor',
+        },
+      })
+      assert.equal(scoped.accepted, true)
+      scopedTask = await cloud.waitForRuntimeTask({
+        deviceId: CLOUD_DEVICE_ID,
+        taskId: scoped.taskId,
+        workspacePath: scoped.workspacePath,
+      })
+      scopedConversationId = `conv_${Buffer.from(JSON.stringify([CLOUD_DEVICE_ID, scoped.taskId])).toString('base64url')}`
+      assert.equal(scopedTask.runtimeHandle.origin.dispatch_role, 'executor')
       const send = async prompt => {
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', COMPOSER)
@@ -323,6 +569,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       if (failure) throw failure
+      assert.equal(scopedFollowUps, 1, 'Scoped target must resume its original conversation')
       assert.deepEqual(
         observed,
         steps.map(step => step[0])
@@ -332,10 +579,45 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: 'WEWORK_CONTROL_ORIGINAL_RESUMED',
       })
       assert.equal(followUpRequests, 1, 'A duplicate CI request must not start another native turn')
+      for (const deviceId of [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID]) {
+        assert.equal(
+          remoteFollowUpRequests.get(deviceId),
+          1,
+          `A duplicate CI request must not start another turn on ${deviceId}`
+        )
+      }
+      const remoteTask = desktopTasks.get(remoteIds[0])
+      const remoteRow = `[data-testid="runtime-local-task-row-${remoteTask.taskId}"]`
+      await control.command('waitFor', remoteRow)
+      await control.command('clickWhenEnabled', remoteRow)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'WEWORK_CONTROL_REMOTE_RESUMED',
+      })
+      await control.command('fill', COMPOSER, { value: REMOTE_UI_FOLLOW_UP })
+      await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: 'WEWORK_CONTROL_REMOTE_UI_RESUMED',
+      })
+      if (failure) throw failure
+      const resumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      assert.equal(resumed.deviceId, CLOUD_DEVICE_ID)
+      assert.equal(resumed.taskId, remoteTask.taskId)
+      assert.equal(resumed.workspacePath, remoteTask.workspacePath)
+      assert.equal(
+        remoteUiFollowUpRequests,
+        1,
+        'Desktop follow-up must send one original-task turn'
+      )
       await control.command('click', `[data-testid="runtime-local-task-row-${createdTaskId}"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_CREATED_READY',
       })
+    },
+
+    async cleanup() {
+      if (cloudEnvironment) cloudEnvironment.backendUrl = cloud.backendUrl
+      await httpProxy?.stop()
     },
 
     diagnostics() {
@@ -343,9 +625,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         sourceTaskId,
         createdTaskId,
         cloudCreatedTaskId,
+        storedCloudId,
+        scopedConversationId,
+        scopedFollowUps,
+        remoteIds,
         stage,
         observed,
         followUpRequests,
+        remoteUiFollowUpRequests,
+        remoteFollowUpRequests: Object.fromEntries(remoteFollowUpRequests),
         failure: failure?.message,
       }
     },

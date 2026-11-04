@@ -1,4 +1,5 @@
 //! Application operations shared by the managed control MCP and Runtime clients.
+use super::dispatch::boxed_rpc;
 use super::*;
 use crate::workbench_control::{self, ControlContext, ControlService};
 use futures_util::{stream, StreamExt};
@@ -7,7 +8,10 @@ use std::collections::BTreeMap;
 
 mod execution;
 mod new_conversation;
+mod query;
+mod remote_continuation;
 mod schedules;
+use remote_continuation::validate_continuation_target;
 #[cfg(test)]
 mod tests;
 
@@ -18,102 +22,108 @@ impl ControlService for RuntimeWorkRpcHandler {
         operation: &'a str,
         arguments: Value,
     ) -> futures_util::future::BoxFuture<'a, Result<Value, AppIpcError>> {
-        Box::pin(async move { self.control_operation(context, operation, arguments).await })
+        self.control_operation(context, operation, arguments)
     }
 }
 
 impl RuntimeWorkRpcHandler {
-    async fn control_operation(
-        &self,
-        context: &ControlContext,
-        operation: &str,
+    fn control_operation<'a>(
+        &'a self,
+        context: &'a ControlContext,
+        operation: &'a str,
         args: Value,
-    ) -> Result<Value, AppIpcError> {
-        workbench_control::validate_arguments(operation, &args)?;
-        self.validate_control_context(context)?;
-        if operation.contains("automation") {
-            return self.control_schedule(context, operation, args).await;
+    ) -> futures_util::future::BoxFuture<'a, Result<Value, AppIpcError>> {
+        if let Err(error) = workbench_control::validate_arguments(operation, &args)
+            .and_then(|_| self.validate_control_context(context))
+        {
+            return boxed_rpc(move || async move { Err(error) });
         }
+        if operation.contains("automation") {
+            return boxed_rpc(move || async move {
+                self.control_schedule(context, operation, args).await
+            });
+        }
+        // Use the Runtime dispatcher so only the selected branch occupies a worker's stack.
         match operation {
-            "get_current_context" => Ok(
-                json!({"conversation_id": workbench_control::conversation_id(&self.device_id, &context.task_id),
-                "device_id": self.device_id, "scope":"owning_device", "other_tools":["wework_space","wework_notifications"]}),
-            ),
-            "list_conversations" => self.control_list(context, args).await,
-            "search_conversations" => {
-                let mut result = self.search_tasks(json!({"query":args["query"],"limit":args.get("limit").cloned().unwrap_or(json!(20))})).await?;
-                let items = result["items"].as_array().cloned().unwrap_or_default();
-                let total = items.len();
-                let links = items
-                    .iter()
-                    .filter_map(|item| {
-                        item["taskId"]
-                            .as_str()
-                            .and_then(|task| self.store.get_task(task))
-                    })
-                    .filter(|link| !self.archived_link_is_deleted(link))
-                    .collect();
-                let (authorized, mut unavailable_reasons) =
-                    self.control_authorized_links(context, links).await;
-                let authorized: HashSet<_> = authorized
-                    .into_iter()
-                    .map(|link| link.local_task_id)
-                    .collect();
-                let mut visible = Vec::new();
-                for mut item in items {
-                    if !item["taskId"]
-                        .as_str()
-                        .is_some_and(|task| authorized.contains(task))
-                    {
-                        continue;
-                    }
-                    if let Some(address) = item["address"].as_object_mut() {
-                        address.remove("runtimeHandle");
-                    }
-                    visible.push(item);
-                }
-                let unavailable_count = total.saturating_sub(visible.len());
-                let classified: usize = unavailable_reasons.values().sum();
-                if unavailable_count > classified {
-                    unavailable_reasons.insert(
-                        "conversation_unavailable".into(),
-                        unavailable_count - classified,
-                    );
-                }
-                result["items"] = json!(visible);
-                result["coverage"] = json!({"scope":"owning_device","unavailable_count":unavailable_count,"unavailable_reasons":unavailable_reasons});
-                add_conversation_ids(&mut result, &self.device_id);
-                Ok(result)
+            "get_current_context" => boxed_rpc(move || async move {
+                Ok(
+                    json!({"conversation_id": workbench_control::conversation_id(&self.device_id, &context.task_id),
+                "device_id": self.device_id, "scope":"all", "continuation_scope":"owned_devices", "other_tools":["wework_space","wework_notifications"]}),
+                )
+            }),
+            "list_conversations" | "search_conversations" => {
+                boxed_rpc(move || async move { self.control_query(context, operation, args).await })
             }
-            "get_operation" => self.control_get_operation(context, &args).await,
-            "create_conversation" => self.control_create(context, args).await,
+            "get_conversation" | "read_conversation"
+                if args["conversation_id"].as_str().is_some_and(|id| {
+                    id.starts_with("cloudconv_")
+                        || workbench_control::conversation_address(id)
+                            .is_ok_and(|(device, _)| device != self.device_id)
+                }) =>
+            {
+                boxed_rpc(move || async move {
+                    self.control_remote_read(context, operation, args).await
+                })
+            }
+            "get_conversation" | "read_conversation" => boxed_rpc(move || async move {
+                workbench_control::read_budget::ReadBudget::default()
+                    .read(
+                        &self.device_id,
+                        operation,
+                        self.control_local_query(Some(context), operation, args),
+                    )
+                    .await
+            }),
+            "continue_conversation"
+                if args["conversation_id"].as_str().is_some_and(|id| {
+                    workbench_control::conversation_address(id)
+                        .is_ok_and(|(device, _)| device != self.device_id)
+                }) =>
+            {
+                boxed_rpc(move || async move { self.control_continue_remote(context, args).await })
+            }
+            "get_operation" => {
+                boxed_rpc(move || async move { self.control_get_operation(context, &args).await })
+            }
+            "create_conversation" => {
+                boxed_rpc(move || async move { self.control_create(context, args).await })
+            }
             "get_conversation_creation_options" => {
-                self.control_creation_options(context, args).await
+                boxed_rpc(move || async move { self.control_creation_options(context, args).await })
             }
-            "find_conversations_by_change_request" => self.control_find_pr(&args),
-            "get_runtime_settings" => self.get_runtime_settings().await,
-            "get_runtime_capacity" => self.get_runtime_capacity().await,
-            "list_models" => self.runner_catalog().await,
-            _ => {
+            "find_conversations_by_change_request" => {
+                boxed_rpc(move || async move { self.control_find_pr(&args) })
+            }
+            "get_runtime_settings" => {
+                boxed_rpc(move || async move { self.get_runtime_settings().await })
+            }
+            "get_runtime_capacity" => {
+                boxed_rpc(move || async move { self.get_runtime_capacity().await })
+            }
+            "list_models" => boxed_rpc(move || async move { self.runner_catalog().await }),
+            _ => boxed_rpc(move || async move {
                 let link = self.control_target(&args)?;
+                if operation == "continue_conversation" {
+                    validate_continuation_target(&link, &self.device_id)?;
+                    self.authorize_control_target(context, &link).await?;
+                    return self.control_continue(context, link, args).await;
+                }
                 self.authorize_control_target(context, &link).await?;
                 if restricted_execution(&link)
                     && !operation.starts_with("get_")
                     && operation != "read_conversation"
                 {
-                    return Err(AppIpcError::new(
-                        "permission_denied",
-                        "Use the execution's scoped tools and approval flow",
+                    return Err(control_target_restriction(
+                        &self.device_id,
+                        &link.local_task_id,
+                        link.runtime_handle.get("origin"),
                     ));
                 }
                 match operation {
-                    "get_conversation" => Ok(self.control_task_view(link)),
-                    "read_conversation" => self.transcript(json!({"taskId":link.local_task_id,"limit":args["limit"],"beforeCursor":args["before_cursor"],"afterCursor":args["after_cursor"]})).await,
-                    "continue_conversation" => self.control_continue(context, link, args).await,
                     "bind_change_request" => self.control_bind_pr(link, &args),
                     _ => self.control_mutation(context, operation, link, args).await,
                 }
-            }
+            }),
         }
     }
 
@@ -135,7 +145,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| {
                 AppIpcError::new("not_found", "Calling conversation no longer exists")
             })?;
-        if restricted_execution(&source) {
+        if workbench_control::restricted_request(&runtime_event_request_from_link(&source)) {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "Restricted executions cannot control personal conversations",
@@ -225,8 +235,8 @@ impl RuntimeWorkRpcHandler {
             )
             .bearer_auth(token)
             .timeout(Duration::from_secs(60));
-        if let Some(body) = body {
-            request = request.json(&body);
+        if let Some(body) = &body {
+            request = request.json(body);
         }
         let response = request
             .send()
@@ -266,61 +276,6 @@ impl RuntimeWorkRpcHandler {
             .map_err(|_| AppIpcError::new("invalid_response", "Invalid Wework backend response"))
     }
 
-    async fn control_list(
-        &self,
-        context: &ControlContext,
-        args: Value,
-    ) -> Result<Value, AppIpcError> {
-        let include_archived = args["include_archived"].as_bool().unwrap_or(false);
-        // Reconcile native histories before querying the same authoritative Runtime index.
-        let mut links = self.collect_links(false).await;
-        if include_archived {
-            links.extend(self.collect_links(true).await);
-        }
-        let project_index = CodexGlobalProjectIndex::load();
-        let mut links = self.visible_links_for_projects(links, &project_index);
-        let mut seen = HashSet::new();
-        links.retain(|link| seen.insert(link.local_task_id.clone()));
-        links.retain(|link| {
-            !self.archived_link_is_deleted(link)
-                && args["workspace_path"]
-                    .as_str()
-                    .map_or(true, |path| link.workspace_path == path)
-                && args["project_key"]
-                    .as_str()
-                    .map_or(true, |key| link.runtime_project_key.as_deref() == Some(key))
-        });
-        let (mut links, unavailable_reasons) = self.control_authorized_links(context, links).await;
-        let unavailable: usize = unavailable_reasons.values().sum();
-        links.sort_by(|a, b| {
-            b.updated_at
-                .cmp(&a.updated_at)
-                .then_with(|| a.local_task_id.cmp(&b.local_task_id))
-        });
-        let after = args["after"]
-            .as_str()
-            .map(workbench_control::conversation_address)
-            .transpose()?;
-        if let Some((device, task)) = after {
-            let position = links
-                .iter()
-                .position(|link| link.local_task_id == task && device == self.device_id)
-                .ok_or_else(|| AppIpcError::new("bad_request", "Invalid conversation cursor"))?;
-            links.drain(..=position);
-        }
-        let limit = args["limit"].as_u64().unwrap_or(20) as usize;
-        let has_more = links.len() > limit;
-        let items: Vec<Value> = links
-            .into_iter()
-            .take(limit)
-            .map(|link| self.control_task_view(link))
-            .collect();
-        Ok(
-            json!({"items":items,"has_more":has_more,"next_cursor":if has_more {items.last().map(|i| i["conversation_id"].clone())} else {None},
-            "coverage":{"device_id":self.device_id,"scope":"owning_device","unavailable_count":unavailable,"unavailable_reasons":unavailable_reasons,"authorized_index_complete":unavailable == 0,"native_discovery":"same_as_runtime_ui"}}),
-        )
-    }
-
     async fn control_authorized_links(
         &self,
         context: &ControlContext,
@@ -355,41 +310,10 @@ impl RuntimeWorkRpcHandler {
         let active = self.is_active_local_task(&link.local_task_id);
         let queued = self.queued_local_task_position(&link.local_task_id);
         apply_local_execution_state(&mut link, active, queued);
-        let mut selection = link
-            .runtime_handle
-            .get("modelSelection")
-            .or_else(|| link.runtime_handle.get("model_selection"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        redact_execution_profile_secrets(&mut selection);
         let mut task = crate::runtime_work::response::local_task_json(link.clone());
-        task.as_object_mut()
-            .expect("task projection")
-            .remove("runtimeHandle");
-        task["conversation_id"] = json!(workbench_control::conversation_id(
-            &self.device_id,
-            &link.local_task_id
-        ));
-        task["device_id"] = json!(self.device_id);
-        task["model_selection"] = selection;
-        task["origin"] = link
-            .runtime_handle
-            .get("origin")
-            .cloned()
-            .unwrap_or(Value::Null);
-        task["change_requests"] = link
-            .runtime_handle
-            .get("changeRequests")
-            .cloned()
-            .unwrap_or(json!([]));
-        task["goal"] = link
-            .runtime_handle
-            .get("goal")
-            .cloned()
-            .unwrap_or(Value::Null);
         task["project_key"] = json!(link.runtime_project_key);
         task["workspace_roots"] = json!(link.runtime_workspace_roots);
-        task
+        query::remote::native_view(&self.device_id, task).expect("valid local task projection")
     }
 
     fn control_find_pr(&self, args: &Value) -> Result<Value, AppIpcError> {
@@ -489,6 +413,40 @@ fn restricted_execution(link: &RuntimeTaskLink) -> bool {
     workbench_control::restricted_origin(link.runtime_handle.get("origin"))
 }
 
+fn control_target_restriction(device: &str, task: &str, origin: Option<&Value>) -> AppIpcError {
+    let marker = workbench_control::origin_restriction(origin).unwrap_or("unknown");
+    // Log a bounded classification, never arbitrary origin data or dispatch IDs.
+    let value_class = match origin.and_then(|value| value.get(marker)) {
+        Some(Value::String(value)) => match value.as_str() {
+            "stand_in_identity" => "stand_in_identity",
+            "connection_work" => "connection_work",
+            "dingtalk_work" => "dingtalk_work",
+            "manager" => "manager",
+            "executor" => "executor",
+            value if value.trim().is_empty() => "empty_string",
+            _ => "nonempty_string",
+        },
+        Some(_) => "non_string",
+        None => "missing",
+    };
+    log_executor_event(
+        "Wework control target restricted",
+        &[
+            ("device_id", device.to_owned()),
+            ("task_id", task.to_owned()),
+            ("origin_marker", marker.to_owned()),
+            ("marker_value_class", value_class.to_owned()),
+        ],
+    );
+    AppIpcError::new(
+        "permission_denied",
+        format!(
+            "Target conversation is restricted by origin.{marker} ({value_class}). \
+             Use its scoped continuation flow; this is not a sign-in or approval request."
+        ),
+    )
+}
+
 fn cloud_bound(link: &RuntimeTaskLink) -> bool {
     if link.runtime_handle["origin"]["projectStore"] == "local"
         || link.runtime_handle["origin"]["project_store"] == "local"
@@ -499,34 +457,12 @@ fn cloud_bound(link: &RuntimeTaskLink) -> bool {
         .get("cloudProjectId")
         .or_else(|| link.runtime_handle.get("cloud_project_id"))
         .is_some_and(|v| !v.is_null())
+        || link.runtime_handle["origin"]
+            .get("cloudProjectId")
+            .or_else(|| link.runtime_handle["origin"].get("cloud_project_id"))
+            .is_some_and(|v| !v.is_null())
         || link.runtime_handle["origin"]["projectStore"] == "cloud"
         || link.runtime_handle["origin"]["project_store"] == "cloud"
-}
-
-fn add_conversation_ids(value: &mut Value, device: &str) {
-    match value {
-        Value::Object(object) => {
-            if let Some(task) = object
-                .get("taskId")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-            {
-                object.insert(
-                    "conversation_id".into(),
-                    json!(workbench_control::conversation_id(device, &task)),
-                );
-            }
-            for value in object.values_mut() {
-                add_conversation_ids(value, device);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                add_conversation_ids(item, device);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn canonical_pr(raw: &str) -> Result<String, AppIpcError> {

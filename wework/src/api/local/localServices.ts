@@ -176,7 +176,10 @@ import {
 } from '@/desktop/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  logRuntimeTaskCreateStage,
+  runtimeOriginDiagnostic,
+} from '@/lib/runtime-create-diagnostics'
 import {
   createModelLoadingTrace,
   logModelLoading,
@@ -2523,6 +2526,14 @@ export function createRuntimeWorkApiFromIpc(
         })
       }
       const response = await request<TResponse>(method, normalizedData, deviceId)
+      if (method === 'runtime.tasks.transcript') {
+        logRuntimeTaskCreateStage('runtime-transcript-origin', {
+          transport: transportLabel,
+          deviceId,
+          taskId: stringValue(recordValue(normalizedData).taskId) ?? null,
+          ...runtimeOriginDiagnostic(recordValue(response).origin),
+        })
+      }
       if (debugTranscript) {
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
@@ -2748,6 +2759,9 @@ export function createRuntimeWorkApiFromIpc(
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
     if (!(await prepareConfiguredRuntimeModel(data))) return false
+    // Creation profiles belong to the desktop's trusted local IPC. Cloud adapters
+    // prepare their selected model through the existing catalog/send contract.
+    if (transportLabel === 'Cloud') return true
     const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
     const previous = creationProfileSyncs.get(deviceId) ?? Promise.resolve()
     const sync = previous

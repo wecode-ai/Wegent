@@ -1338,4 +1338,4 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 
 #[cfg(test)]
 #[path = "handler/tests.rs"]
-mod tests;
+pub(super) mod tests;

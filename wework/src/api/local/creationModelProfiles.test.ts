@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { createRuntimeWorkApiFromIpc } from './localServices'
+import { LOCAL_USER } from './localSession'
 import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
@@ -58,4 +59,59 @@ test('profile publication failure blocks creation preparation', async () => {
     'device unavailable'
   )
   expect(request.mock.calls.every(([method]) => method !== 'runtime.tasks.create')).toBe(true)
+})
+
+test('cloud preparation never publishes desktop creation profiles or credentials', async () => {
+  saveLocalModelConfig({
+    id: 'desktop-private-model',
+    displayName: 'Desktop private model',
+    modelId: 'desktop-model',
+    baseUrl: 'https://desktop-model.example.com/v1',
+    apiFormat: 'openai-chat-completions',
+    requestPath: '/chat/completions',
+    apiKey: 'desktop-private-secret',
+    catalogReady: true,
+  })
+  const request = vi.fn().mockImplementation(async (method: string) => {
+    if (method === 'runtime.models.sync_creation_profiles') {
+      throw new Error(`unsupported_method: ${method}`)
+    }
+    return { accepted: true }
+  })
+  const api = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+    transportLabel: 'Cloud',
+    user: { ...LOCAL_USER, id: 7 },
+    syncConfiguredModelCatalog: true,
+  })
+
+  await expect(
+    api.prepareRuntimeModel({ deviceId: 'cloud-device', modelId: 'cloud-public-model' })
+  ).resolves.toBe(true)
+  expect(request).not.toHaveBeenCalled()
+
+  await expect(
+    api.sendRuntimeMessage({
+      address: {
+        deviceId: 'cloud-device',
+        taskId: 'original-task',
+        workspacePath: '/original/worktree',
+        runtime: 'codex',
+      },
+      message: 'Continue the original conversation',
+      modelId: 'native-model',
+      modelType: 'runtime',
+      modelOptions: { runnerModelProvider: 'native-provider' },
+    })
+  ).resolves.toMatchObject({ accepted: true })
+  expect(request.mock.calls.map(([method]) => method)).toEqual(['runtime.tasks.send'])
+  expect(request.mock.calls[0]?.[1]).toMatchObject({
+    taskId: 'original-task',
+    address: {
+      deviceId: 'cloud-device',
+      taskId: 'original-task',
+      workspacePath: '/original/worktree',
+    },
+  })
+  expect(request.mock.calls[0]?.[2]).toBe('cloud-device')
+  expect(JSON.stringify(request.mock.calls)).not.toContain('desktop-private-secret')
 })

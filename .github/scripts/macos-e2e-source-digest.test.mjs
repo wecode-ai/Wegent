@@ -6,9 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 const script = resolve(".github/scripts/macos-e2e-source-digest.mjs");
-// Generated with @actions/glob 0.5.0 hashFiles using the workflow's patterns.
+// Hash each workflow input in pattern and depth-first order, then hash their digests.
 const compatibleDigests = {
-  executor: "20de4ea4a8bbab5dceb3a5be72a5a28140fabfcfff1d208a0b8b6d149033b58f",
+  executor: "a7fa0ea0835cf68432674b00aa88440102b77ccf356928eb2f691409da6b0f87",
   "backend-rs":
     "627e6d439866c93e892400d1181d3da9f7f88f8b3a4f01c51a795f24f96ab834",
 };
@@ -42,6 +42,7 @@ for (const component of Object.keys(compatibleDigests)) {
               "vendor/dep/src/lib.rs": "pub fn dep() {}\n",
               "vendor/dep/README.md": "Vendored documentation\n",
               "vendor/dep.bin": "Vendored binary input\n",
+              "../shared/protocol/runtime_task_create_request_v2.schema.json": '{"type":"object"}\n',
             }
           : {}),
       };
@@ -60,7 +61,9 @@ for (const component of Object.keys(compatibleDigests)) {
         "Cargo.toml",
         "Cargo.lock",
         "src/a/inner.rs",
-        ...(component === "executor" ? ["vendor/dep/README.md"] : []),
+        ...(component === "executor"
+          ? ["vendor/dep/README.md", "../shared/protocol/runtime_task_create_request_v2.schema.json"]
+          : []),
       ]) {
         write(path, "Changed input\n");
         assert.notEqual(digest(), original, path);

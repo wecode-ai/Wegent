@@ -13,15 +13,19 @@ use crate::{local::app_ipc::AppIpcError, protocol::ExecutionRequest};
 mod catalog;
 mod creation_schema;
 pub(crate) mod journal;
+pub(crate) mod read_budget;
 pub(crate) use catalog::{capabilities, validate_arguments};
 
 pub(crate) const SERVER_NAME: &str = "wework_control";
 pub(crate) const INSTRUCTIONS: &str = concat!(
     "Wework control routing:\n",
-    "- Use wework_control for Wework conversation discovery, native history, cross-conversation continuation, confirmed PR bindings and personal schedules. Discovery and continuation cover the owning device.\n",
-    "- Use get_conversation_creation_options before choosing creation settings. create_conversation accepts composer options and an explicit target device/model; remote creation uses existing Backend device policy. Never treat remote creation as remote history or continuation support.\n",
+    "- Use wework_control for Wework conversation discovery, native history, cross-conversation continuation, confirmed PR bindings and personal schedules. Discovery and history queries cover this device, cloud history and other owned devices by default. Native conversation continuation supports other owned devices through the desktop's existing send API and device policy.\n",
+    "- Use get_conversation_creation_options before choosing creation settings. create_conversation accepts composer options and an explicit target device/model; remote creation uses existing Backend device policy. Use the native conversation_id returned by discovery for remote continuation; cloud-history references without a Runtime address are read-only.\n",
     "- Read get_current_context and discover capabilities when needed. Continue the exact conversation_id returned by the tools. Use a stable request_key per user instruction or CI failure (repository, PR, head SHA, run ID and attempt). Check get_operation after delivery; accepted is not completed.\n",
+    "- For weekly reports, list conversations with updated_after set to the period start, include archived conversations, follow every next_cursor and every history cursor, and select messages by their timestamps. Do not use updated_before to exclude conversations with newer activity. State any missing coverage.\n",
+    "- When a user names a device, resolve its device_id from creation options and query that device directly. Use list_conversations/search_conversations to inspect existing conversations; do not create a new conversation just to discover them. query_timeout in coverage identifies a source to retry with device_id.\n",
     "- Inspect coverage.unavailable_reasons in conversation search and listings. Failed checks can mean invalid Backend requests, connectivity or permission errors, or timeouts; incomplete results do not prove a conversation is absent.\n",
+    "- Report a target conversation's origin restriction using the exact tool reason. It is not a missing login or system approval request. Do not suggest granting unrelated permissions or retry the send through another path.\n",
     "- Use wework_space for project-space operations and existing GitHub tools for CI checks. Delegated project runs cannot acquire personal control. Do not use personal API keys, direct storage reads or UI clicks to bypass a control permission error."
 );
 
@@ -44,7 +48,7 @@ impl std::fmt::Debug for ControlContext {
 impl ControlContext {
     pub fn from_request(request: &ExecutionRequest) -> Option<Self> {
         // Restricted executions retain their own managed tools and approval boundaries.
-        if restricted_origin(request.extra.get("origin")) {
+        if restricted_request(request) {
             return None;
         }
         let device_id = request.extra.get("runtimeDeviceId")?.as_str()?.to_owned();
@@ -64,15 +68,30 @@ impl ControlContext {
     }
 }
 
+pub(crate) fn restricted_request(request: &ExecutionRequest) -> bool {
+    restricted_origin(request.extra.get("origin"))
+        || crate::runtime_work::external_work_kind(request).is_some()
+        || request.extra.get("origin").is_some_and(|origin| {
+            origin["type"] == "project_coordinator" || origin.get("project_coordination").is_some()
+        })
+}
+
 pub(crate) fn restricted_origin(origin: Option<&Value>) -> bool {
-    matches!(
+    origin_restriction(origin).is_some()
+}
+
+pub(crate) fn origin_restriction(origin: Option<&Value>) -> Option<&'static str> {
+    if matches!(
         origin.and_then(|value| value["type"].as_str()),
         Some("stand_in_identity" | "connection_work" | "dingtalk_work")
-    ) || ["dispatchRole", "dispatch_role", "dispatchId", "dispatch_id"]
-        .iter()
-        .any(|key| {
+    ) {
+        return Some("type");
+    }
+    ["dispatchRole", "dispatch_role", "dispatchId", "dispatch_id"]
+        .into_iter()
+        .find(|key| {
             origin
-                .and_then(|value| value.get(key))
+                .and_then(|value| value.get(*key))
                 .is_some_and(|value| !value.is_null())
         })
 }
@@ -190,6 +209,28 @@ pub(crate) fn tools() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn origin_diagnostics_preserve_every_existing_restriction() {
+        for (origin, expected) in [
+            (Value::Null, None),
+            (json!({}), None),
+            (json!({"type":"personal","dispatchRole":null}), None),
+            (json!({"type":"stand_in_identity"}), Some("type")),
+            (json!({"type":"connection_work"}), Some("type")),
+            (json!({"type":"dingtalk_work"}), Some("type")),
+            (json!({"dispatchRole":"executor"}), Some("dispatchRole")),
+            (json!({"dispatch_role":"manager"}), Some("dispatch_role")),
+            (json!({"dispatchId":"delegated"}), Some("dispatchId")),
+            (json!({"dispatch_id":"delegated"}), Some("dispatch_id")),
+            (json!({"dispatchRole":""}), Some("dispatchRole")),
+            (json!({"dispatchId":false}), Some("dispatchId")),
+        ] {
+            assert_eq!(origin_restriction(Some(&origin)), expected);
+            assert_eq!(restricted_origin(Some(&origin)), expected.is_some());
+        }
+        assert_eq!(origin_restriction(None), None);
+    }
 
     #[tokio::test]
     async fn discovery_and_invocation_enforce_their_declared_schemas() {

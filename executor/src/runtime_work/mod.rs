@@ -28,6 +28,7 @@ mod local_execution;
 mod mcp_elicitation;
 pub(crate) mod native_transcript;
 mod notification_mapping;
+mod reader;
 mod remote_projects;
 mod response;
 mod restored_workspaces;

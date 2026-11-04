@@ -31,6 +31,10 @@ fn managed_control_is_injected_for_personal_claude_runs_and_removed_for_delegati
     inject_managed_wework_mcps(&request, &mut servers).unwrap();
     let server = &servers["wework_control"];
     assert_eq!(server["type"], "http");
+    assert_eq!(
+        server["timeout"],
+        crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000
+    );
     assert!(server["url"].as_str().unwrap().ends_with("/control/mcp"));
     assert!(server["headers"]["X-Wework-Mcp-Context"].as_str().is_some());
     assert!(!server.to_string().contains("caller"));

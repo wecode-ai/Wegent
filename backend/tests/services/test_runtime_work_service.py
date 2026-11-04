@@ -17,6 +17,28 @@ from app.models.project import Project
 from app.models.task import TaskResource
 
 
+@pytest.fixture
+def runtime_send_history(monkeypatch):
+    """Existing authorized read returns a complete native session identity."""
+    from app.schemas.runtime_work import RuntimeTranscriptResponse
+    from app.services import runtime_work_service
+
+    async def read(**kwargs):
+        address = kwargs["address"]
+        return RuntimeTranscriptResponse(
+            taskId=address.local_task_id,
+            workspacePath=(
+                "/project"
+                if address.local_task_id == "original-task"
+                else "/repo/Wegent"
+            ),
+            runtime="codex",
+            turns=[],
+        )
+
+    monkeypatch.setattr(runtime_work_service, "get_runtime_transcript", read)
+
+
 @pytest.mark.asyncio
 async def test_device_compiled_creation_keeps_native_models_on_target(
     test_db, test_user, monkeypatch
@@ -2174,6 +2196,7 @@ async def test_send_runtime_message_preserves_executor_queue_status(
     test_user,
     monkeypatch,
     queue_if_busy,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -2227,6 +2250,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import (
         DeviceWorkspaceUpsert,
@@ -2297,6 +2321,12 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "runtimeHandle": {
+                "runtime": "codex",
+                "origin": None,
+                "cloudProjectId": None,
+            },
             "message": "continue",
             "modelSelection": {
                 "modelName": "selected-gpt",
@@ -2322,6 +2352,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import (
         RuntimeMessageSource,
@@ -2511,6 +2542,7 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
     from app.schemas.runtime_work import (
@@ -5584,6 +5616,7 @@ async def test_send_runtime_message_does_not_dispatch_when_request_build_fails(
     test_db,
     test_user,
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -5754,6 +5787,7 @@ def test_runtime_address_team_binding_is_additive() -> None:
 @pytest.mark.asyncio
 async def test_send_preserves_desktop_task_binding_and_compiles_continuation(
     monkeypatch,
+    runtime_send_history,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service as service
@@ -5794,7 +5828,12 @@ async def test_send_preserves_desktop_task_binding_and_compiles_continuation(
     assert intent.new_session is False
     assert compiled.new_session is False
     assert rpc.await_args.kwargs["method"] == "runtime.tasks.send"
-    assert rpc.await_args.kwargs["payload"]["runtimeHandle"] == handle
+    assert rpc.await_args.kwargs["payload"]["runtimeHandle"] == {
+        **handle,
+        "runtime": "codex",
+        "origin": None,
+        "cloudProjectId": None,
+    }
 
 
 def test_build_runtime_send_execution_request_includes_valid_task_token(

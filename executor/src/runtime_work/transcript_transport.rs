@@ -20,6 +20,102 @@ use crate::local::app_ipc::AppIpcError;
 use crate::logging::{format_executor_log, write_executor_log_line};
 
 pub(super) const VERSION: u64 = 2;
+
+/// Reassembles the same lossless pages consumed by the desktop reader.
+#[derive(Default)]
+pub(super) struct TranscriptDecoder {
+    identity: Option<(String, usize)>,
+    bytes: Vec<u8>,
+}
+
+impl TranscriptDecoder {
+    pub(super) fn push(&mut self, response: &Value) -> Result<Option<Value>, AppIpcError> {
+        let invalid = || AppIpcError::new("invalid_response", "Invalid transcript transfer");
+        let transfer = &response["transfer"];
+        let id = transfer["snapshotId"].as_str().ok_or_else(invalid)?;
+        let total = transfer["totalBytes"]
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(invalid)?;
+        if response["transcriptProtocolVersion"] != VERSION
+            || transfer["encoding"] != "gzip+base64+json"
+            || id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || total == 0
+            || transfer["offset"].as_u64() != Some(self.bytes.len() as u64)
+        {
+            return Err(invalid());
+        }
+        let identity = self.identity.get_or_insert_with(|| (id.to_owned(), total));
+        if identity != &(id.to_owned(), total) {
+            return Err(invalid());
+        }
+        let bytes = STANDARD
+            .decode(transfer["payload"].as_str().ok_or_else(invalid)?)
+            .map_err(|_| invalid())?;
+        if bytes.is_empty()
+            || bytes.len() > CHUNK_BYTES
+            || bytes.len() > total.saturating_sub(self.bytes.len())
+        {
+            return Err(invalid());
+        }
+        self.bytes.extend_from_slice(&bytes);
+        if !transfer["nextOffset"].is_null() {
+            if transfer["nextOffset"].as_u64() != Some(self.bytes.len() as u64)
+                || self.bytes.len() >= total
+            {
+                return Err(invalid());
+            }
+            return Ok(None);
+        }
+        if self.bytes.len() != total {
+            return Err(invalid());
+        }
+        let mut unpacked = Vec::new();
+        flate2::read::GzDecoder::new(self.bytes.as_slice())
+            .read_to_end(&mut unpacked)
+            .map_err(|_| invalid())?;
+        let mut packed: Value = serde_json::from_slice(&unpacked).map_err(|_| invalid())?;
+        let strings = packed["strings"]
+            .as_array()
+            .filter(|s| s.iter().all(Value::is_string))
+            .ok_or_else(invalid)?
+            .clone();
+        let references = packed["references"].as_array().ok_or_else(invalid)?.clone();
+        let transcript = packed
+            .get_mut("transcript")
+            .filter(|v| v.is_object())
+            .ok_or_else(invalid)?;
+        for reference in references {
+            let path = reference["path"]
+                .as_array()
+                .filter(|p| !p.is_empty())
+                .ok_or_else(invalid)?;
+            let text = reference["index"]
+                .as_u64()
+                .and_then(|v| strings.get(v as usize))
+                .ok_or_else(invalid)?;
+            let mut target = &mut *transcript;
+            for key in path {
+                target = if let Some(key) = key.as_str() {
+                    target.as_object_mut().and_then(|map| map.get_mut(key))
+                } else {
+                    key.as_u64().and_then(|index| {
+                        target
+                            .as_array_mut()
+                            .and_then(|items| items.get_mut(index as usize))
+                    })
+                }
+                .ok_or_else(invalid)?;
+            }
+            if !target.is_null() {
+                return Err(invalid());
+            }
+            *target = text.clone();
+        }
+        Ok(Some(std::mem::take(transcript)))
+    }
+}
 // Base64 plus metadata stays below the 512 KiB compression threshold and the
 // 980,000 byte relay limit, regardless of how compressible the history is.
 const CHUNK_BYTES: usize = 360 * 1024;
@@ -194,6 +290,61 @@ fn pack(mut transcript: Value) -> Value {
         &mut references,
     );
     json!({"transcript": transcript, "strings": strings, "references": references})
+}
+
+#[cfg(test)]
+mod decoder_tests {
+    use super::*;
+
+    #[test]
+    fn transcript_decoder_restores_all_chunks_and_long_user_keyed_content() {
+        let root = tempfile::tempdir().unwrap();
+        let text: String = (0_i64..25_000)
+            .map(|index| format!("{:x}", Sha256::digest(index.to_le_bytes())))
+            .collect();
+        let original = json!({"success":true,"messages":[{"content":text}],"user/field~":{"text":text},"hasMoreBefore":true,"beforeCursor":"old-page"});
+        let mut response = encode(root.path(), original.clone()).unwrap();
+        assert!(response["transfer"]["nextOffset"].is_number());
+        let mut decoder = TranscriptDecoder::default();
+        let mut chunks = 0;
+        let decoded = loop {
+            chunks += 1;
+            if let Some(value) = decoder.push(&response).unwrap() {
+                break value;
+            }
+            response = read_chunk(root.path(),&json!({"snapshotId":response["transfer"]["snapshotId"],"offset":response["transfer"]["nextOffset"]})).unwrap();
+        };
+        assert!(chunks > 1);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn transcript_decoder_rejects_partial_misordered_and_corrupted_pages() {
+        let root = tempfile::tempdir().unwrap();
+        let original = encode(
+            root.path(),
+            json!({"messages":[{"content":"x".repeat(70_000)}]}),
+        )
+        .unwrap();
+        for (key, value) in [
+            ("offset", json!(1)),
+            ("totalBytes", json!(1)),
+            ("encoding", json!("unknown")),
+            ("nextOffset", json!(0)),
+        ] {
+            let mut invalid = original.clone();
+            invalid["transfer"][key] = value;
+            assert!(TranscriptDecoder::default().push(&invalid).is_err());
+        }
+        let mut corrupted = original.clone();
+        let mut bytes = STANDARD
+            .decode(corrupted["transfer"]["payload"].as_str().unwrap())
+            .unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        corrupted["transfer"]["payload"] = json!(STANDARD.encode(bytes));
+        assert!(TranscriptDecoder::default().push(&corrupted).is_err());
+    }
 }
 
 fn intern_strings(

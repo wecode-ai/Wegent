@@ -18,7 +18,7 @@ The Executor now exposes 30 application tools plus `list_capabilities`, `describ
 
 Cloud-bound conversation checks reuse `/runtime-work/transcript` with its top-level `deviceId`, `taskId` and `workspacePath` fields. Listings and searches expose `coverage.unavailable_reasons` to distinguish invalid Backend requests, denied access, connectivity failures and authorization timeouts; incomplete results do not establish that a conversation is absent. Regressions cover strict request parsing, Chinese title search and mixed allowed/denied matches. The existing `workbench-control` CI checkpoint also covers creation and discovery through the real cloud Backend.
 
-Implemented operations cover owning-device conversation listing, pagination, search, safe metadata, native history, creation, continuation, rename, archive, cancellation and guidance; goals/supervisors can be read or cleared. Explicit PR/MR bindings are persisted on the Runtime and resolve as unique, missing or ambiguous. Schedule CRUD, version checks, enable/disable, immediate runs and run history reuse the existing scheduler. Five minutes is `{"type":"interval","value":5,"unit":"minutes"}`.
+Implemented operations cover federated conversation listing, pagination, full-history search, safe metadata and history reads, plus explicit-device creation and continuation on this device and other owned online devices, plus owning-device rename, archive, cancellation and guidance; goals/supervisors can be read or cleared. Explicit PR/MR bindings are persisted on the Runtime and resolve as unique, missing or ambiguous. Schedule CRUD, version checks, enable/disable, immediate runs and run history reuse the existing scheduler. Five minutes is `{"type":"interval","value":5,"unit":"minutes"}`.
 
 ```mermaid
 flowchart LR
@@ -35,17 +35,71 @@ flowchart LR
   Scheduler --> AI
 ```
 
-This reuses the existing managed MCP host instead of adding a DSH resident service. HTTP sessions bind the instance bearer, MCP surface and context handle. Delegated runs cannot acquire personal control or be continued through personal tools. Project-space operations remain with `wework_space`; cloud-bound operations use existing backend entry points.
+This reuses the existing managed MCP host instead of adding a DSH resident service. HTTP sessions bind the instance bearer, MCP surface and context handle. Delegated runs cannot acquire personal control. A personal controller may continue an authorized target while retaining the target's original identity and execution scope. Project-space operations remain with `wework_space`; cloud-bound operations use existing backend entry points.
 
 Continuation journals a stable request key and a fingerprint of the message and normalized queue policy before delivery, then persists its acceptance receipt. Identical requests return the original receipt, changed delivery arguments conflict, and uncertain pending/needs_attention states are never blindly replayed. This distinguishes delivery acceptance from execution completion and does not claim atomic exactly-once execution across crashes.
 
 New schedules persist execution intent and a source conversation reference, not copied credentials. Runs compile the current profile, refresh cloud models through the existing authorized catalog/gateway and use native account configuration. Unrecoverable custom local model configuration after restart returns `model_configuration_required` explicitly.
 
-Discovery and continuation cover the **owning device**. Creation supports explicit remote targets permitted by the existing Backend policy; this does not provide multi-device aggregation or complete product parity. Authoritative cloud Issue PR bindings remain in project-space services. Branch guesses and historical URLs do not become confirmed bindings automatically. Settings writes, plugin installation, window navigation and attachment upload management remain proposal items. Existing `gh` tools check CI; callers construct stable repo/PR/head SHA/run/attempt keys and verify current head.
+Conversation queries default to the **current device, personal cloud history returned by existing APIs and other owned devices, including cloud and remote runtimes**. No HTTP endpoint or device RPC is added. Discovery reuses `GET /api/devices`; remote reads use the desktop's `/wework-runtime` namespace and `runtime:request`, calling existing `runtime.tasks.list/get/transcript/transcript.search` and `runtime.archived_conversations.list` methods. Existing authorization, device ownership, live routing and remote-control policies remain authoritative. Stored cloud history uses the existing `GET /api/tasks`, `GET /api/tasks/archived`, `GET /api/tasks/{id}` and `GET /api/subtasks` APIs, traversing every message page instead of treating the task detail's latest 100 messages as complete. No Backend handler, route or database read path is added.
+
+Native continuation supports this device and other owned devices under the existing Backend policy. It reads the target workspace, model and Team binding through `runtime.tasks.get`, checks current transcript authorization and persisted origin through `/runtime-work/transcript`, and reuses `/runtime-work/send`. That existing send entry resolves original identity, workspace and Runtime through the same transcript read and uses the frontend materialization compiler. Continuations share existing project/Issue visibility and execute permission services. Delegated targets retain their original role; stand-in targets retain confirmation requirements. Neither receives personal-control tools. The owning Runtime preserves delegated origin and project/Issue binding against omitted, null or forged follow-up identity. No caller profile, API or RPC is added; remote-control, offline and permission failures remain in force.
+
+```mermaid
+flowchart LR
+  UI[Frontend continuation] --> Compile[Existing execution compiler]
+  AI[Personal AI] --> Send[Existing runtime-work/send]
+  Send --> Read[Existing authorized transcript and original identity]
+  Read --> Compile
+  Compile --> Auth[Existing project and Issue visibility and execute checks]
+  Auth --> Runtime[Existing runtime.tasks.send]
+  Runtime --> Identity[Original session and target scope]
+```
+
+Receipts record the target `device_id` and keys are scoped to the target device and task. Pending or uncertain deliveries are never resent automatically. `get_operation` returns the persisted remote receipt without attaching a same-named local task; `read_conversation` reads the remote content. `cloudconv_` history references without a Runtime address remain read-only.
+
+Delegated targets without a valid project/Issue execution scope remain denied. Denials identify the triggering `origin` field and a bounded classification without exposing arbitrary values or dispatch IDs. They are not login or system-approval requests. Empty-string and non-string delegation markers remain rejected, and delegated callers remain excluded from personal control.
+
+The frontend's existing transcript read path also records bounded origin marker classifications through the existing diagnostic log. It adds no requests and logs no message content or arbitrary origin values, allowing comparison with the metadata read by AI. Missing diagnostic evidence does not establish personal origin or restored access.
+
+Creation model profile publication belongs only to trusted local IPC. The shared model preparer's cloud adapter runs the existing catalog preparation without calling `runtime.models.sync_creation_profiles`, so desktop creation profiles and credentials are not published remotely and existing remote sends require no new method. Protocol tests use a remote stub that rejects this method to verify preparation and original-task sending, while retaining local refresh, deletion and failure-gating tests.
+
+The existing Core 5 `workbench-control` E2E also opens the original remote conversation after AI creation and continuation, sends another turn through the desktop composer, and asserts the response and unchanged device, task and workspace bindings. E2E has not been run.
+
+Other mutations remain on the owning device. Creation accepts explicit remote targets permitted by existing Backend policy. Cloud Issue PR bindings remain authoritative in project-space services; branch guesses and historical URLs do not become confirmed bindings. Settings writes, plugin installation, window navigation and attachment upload management remain proposal items. Existing `gh` tools check CI; callers construct stable repo/PR/head SHA/run/attempt keys. Research sections 1–9 remain a proposal.
+
+The desktop and AI share the complete native catalog collector and traverse every provider page beyond the former 500-item sidebar limit. Catalog errors and repeated cursors produce `native_catalog_unavailable`. Existing remote catalog responses remain readable without an AI-specific RPC. A failed history search contributes missing coverage while preserving other successful results.
+
+Remote listing, search and history reads use the current `ConnectionConfig.socket_url` published by the desktop connection controller, sharing the frontend's configuration. They never derive a WebSocket address from the HTTP `backend_url`. Missing configuration returns `backend_connection_unavailable`; a backend change is checked against the source conversation, whose authorization remains authoritative. Regression fixtures expose HTTP and WebSocket on different ports and paths, with no Socket.IO route on the HTTP server.
+
+Listing and search accept `device_id` to query one owned device without waiting for unrelated devices or stored cloud history. Resolve device IDs through existing creation options; unknown and offline devices remain explicit coverage failures. Use listing, search and history reads to inspect existing conversations rather than creating a remote conversation to discover them.
+
+Timeouts share one decreasing deadline: the managed control MCP allows 180 seconds, the entire read allows 150 seconds, and individual remote ACKs allow up to 75 seconds for catalogs, 130 seconds for body search and 15 seconds per protocol 2 chunk, capped by the remaining read time. Codex start, resume and fork and Claude injection use this configuration. A slow source preserves successful results from other sources and reports `query_timeout` or `device_timeout` in coverage instead of implying absence. Diagnostics record source, operation, elapsed time and error code without credentials or message bodies.
+
+History uses the desktop's existing protocol 2 transfer, gzip validation and long-string restoration, retaining messages, tool outputs, attachments, file changes and native history cursors. Legacy Runtime responses use their existing protocol. Cloud reads retain inherited messages and attachments already authorized by task detail, then traverse existing Subtask pages without separately querying fork parents. Reads have the same device availability requirements as the desktop and do not claim unavailable data was read. Updating the controlling executor enables this change; no new Backend endpoint deployment or remote-device upgrade is required to read content already available to the frontend.
+Weekly reports list every conversation updated since the period start, include archives and follow all conversation/history cursors, then filter messages by their own timestamps. An upper conversation-update bound must not discard conversations with activity after the reporting period.
+
+```mermaid
+flowchart LR
+  Config[Existing desktop connection configuration] --> UI[Frontend]
+  Config --> MCP[wework_control]
+  UI[Frontend] --> Local[Shared local Runtime catalog and history]
+  MCP[wework_control] --> Local
+  UI --> IPC[Existing Socket.IO Runtime channel]
+  MCP -->|Use configured socket_url directly| IPC
+  IPC --> Remote[Existing cloud and remote device read methods]
+  UI --> Cloud[Existing Task and Subtask APIs]
+  MCP --> Cloud[Existing Task and Subtask APIs]
+  Local --> Page[Filters and cursors and source coverage]
+  Remote --> Page
+  Cloud --> Page
+```
+
+The existing CI checkpoint now covers real stored cloud history, cloud/remote-device creation, full-text discovery, unique results and addressed history reads; only the model is mocked. The desktop HTTP endpoint uses a real forwarding proxy that rejects WebSockets, while Socket.IO uses existing server metadata. The checkpoint verifies both configured URLs so incorrect address derivation fails the regression. Focused regressions cover equal-time pagination, deduplication, histories beyond 100 messages, invalid cursors and partial coverage. E2E and ai:verify have not been run.
 
 Focused tests cover contracts, delegated authority, HTTP isolation, durable and ambiguous PR relationships, schedule versions, native-thread continuation, duplicate suppression and actual schedule startup. The new self-contained `workbench-control` desktop checkpoint is registered in the shared runner and selected by CI Core shard 5. It uses real Runtime/MCP/native sessions and simulates only the model; GitHub itself is not exercised. E2E and ai:verify have not been run, as requested, so full desktop verification is not claimed.
 
-Local checks passed: 25 tests selected by Rust `--lib control`, 59 existing send-contract tests, 6 Python tests selected by `send_runtime_message`, and focused managed-MCP, Codex/Claude configuration, schedule, API-context and CI-classifier regressions. Formatting and diff checks passed. These are working-tree results, not remote CI or a deployed desktop release.
+Focused verification results for this adjustment are recorded in the change handoff. The new Backend endpoint and its dedicated tests were removed. Regressions cover legacy device responses, actual Socket.IO encoding, chunked long messages, complete cloud message pagination and denied access. E2E and ai:verify were not run; local results do not establish remote CI success or deployment.
 
 ## Complete conversation creation options (2026-10-27)
 

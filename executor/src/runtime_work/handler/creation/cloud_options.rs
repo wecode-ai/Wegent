@@ -19,7 +19,7 @@ pub(super) fn apply(config: &mut Value, options: &Value, runtime: &str) -> Resul
         return Ok(());
     }
     if let Some(id) = options.get("weworkCloudModelCodexCatalogModelId") {
-        if id.as_str().is_none_or(|id| id.trim().is_empty()) {
+        if id.as_str().map_or(true, |id| id.trim().is_empty()) {
             return Err(creation_error("Cloud catalog model id is required"));
         }
         config["codex_catalog_model_id"] = id.clone();
@@ -74,7 +74,7 @@ fn apply_vision_sidecar(
     if ["modelName", "namespace"].iter().any(|field| {
         sidecar[field]
             .as_str()
-            .is_none_or(|value| value.trim().is_empty())
+            .map_or(true, |value| value.trim().is_empty())
     }) || !matches!(
         sidecar["modelType"].as_str(),
         Some("public" | "user" | "group")

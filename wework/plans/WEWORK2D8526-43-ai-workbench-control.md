@@ -18,14 +18,14 @@ sidebar_position: 1
 
 云端绑定会话的读取校验复用 `/runtime-work/transcript`，按其契约传递顶层 `deviceId`、`taskId` 和 `workspacePath`。列表及搜索通过 `coverage.unavailable_reasons` 区分后端参数错误、权限拒绝、连接异常和校验超时；结果不完整时不能推断会话不存在。回归覆盖严格请求解析、中文标题搜索，以及有权和无权会话同时命中的情况；既有 `workbench-control` CI checkpoint 增加真实云端创建与搜索链路。
 
-| 已接入领域 | 实际行为                                                                                                                                            |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 会话       | 当前设备的列表、分页、搜索、安全元数据及原生历史读取；创建、续聊、重命名、归档、取消与 guidance                                                     |
-| 执行状态   | 原有排队/执行状态、目标和 supervisor 的读取与清除、Runtime 容量与模型目录                                                                           |
-| PR/MR      | 当前设备独立/本地会话的显式持久绑定；规范化 host、完整仓库与编号；查询返回 unique/missing/ambiguous                                                 |
-| 安排       | 复用 cron/interval/one_time、版本检查、启停、立即运行、删除及运行历史；五分钟为 `{"type":"interval","value":5,"unit":"minutes"}`                    |
-| 可靠性     | 续聊前持久记录 request_key、消息与排队策略指纹，接收结果再次持久化；相同请求返回原回执，参数冲突拒绝；pending/needs_attention 不自动重发            |
-| 权限       | 受管 context handle 与实例 bearer；HTTP 会话、surface 和 context 绑定；委托运行无个人控制工具，不能用个人工具续聊委托执行；云绑定操作复用原后端入口 |
+| 已接入领域 | 实际行为                                                                                                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 会话       | 本机、云端历史及其他设备的统一列表、分页、全文搜索、安全元数据和历史读取；可指定设备新建，支持本机及本人其他在线设备原会话续聊；重命名、归档、取消与 guidance 仍限本机  |
+| 执行状态   | 原有排队/执行状态、目标和 supervisor 的读取与清除、Runtime 容量与模型目录                                                                                               |
+| PR/MR      | 当前设备独立/本地会话的显式持久绑定；规范化 host、完整仓库与编号；查询返回 unique/missing/ambiguous                                                                     |
+| 安排       | 复用 cron/interval/one_time、版本检查、启停、立即运行、删除及运行历史；五分钟为 `{"type":"interval","value":5,"unit":"minutes"}`                                        |
+| 可靠性     | 续聊前持久记录 request_key、消息与排队策略指纹，接收结果再次持久化；相同请求返回原回执，参数冲突拒绝；pending/needs_attention 不自动重发                                |
+| 权限       | 受管 context handle 与实例 bearer；HTTP 会话、surface 和 context 绑定；委托运行无个人控制工具；个人 AI 可按现有权限续聊目标会话，保留目标身份；云绑定操作复用原后端入口 |
 
 ```mermaid
 flowchart LR
@@ -44,11 +44,69 @@ flowchart LR
 
 没有另建 DSH 常驻服务。项目空间操作继续由 `wework_space` 提供；业务操作仍由已有 Runtime 处理。安排保存源会话引用与执行意图，运行时编译执行请求，不把当前凭据复制进新安排。云模型通过既有授权目录与网关刷新，原生账户继续使用原生配置；重启后无法恢复的自定义本地模型配置明确返回 `model_configuration_required`。
 
-会话发现和续聊范围是**拥有此 MCP 的设备**；新建支持显式选择现有后端策略允许的远端执行设备，不代表支持多设备聚合或全产品操作。云 Issue 的权威 PR 绑定仍属于项目空间服务，本工具没有把它复制为个人关系；界面分支推测和历史 PR URL 不会自动变成确认绑定。设置写入、插件安装管理、窗口导航、附件上传管理等第 1–9 节目标仍未纳入本次工具。GitHub CI 由现有 `gh` 能力查询，调用方须用 repo/PR/head SHA/run/attempt 构造稳定请求键；本工具不负责判定 GitHub 当前 head。
+会话查询默认覆盖**当前设备、既有 API 返回的个人云端历史和本人其他设备（含云端/远程 Runtime）**。不新增 HTTP 接口或设备 RPC：设备发现复用 `GET /api/devices`，远端读取与前端共用 `/wework-runtime` 的 `runtime:request`，调用已有 `runtime.tasks.list/get/transcript/transcript.search` 和 `runtime.archived_conversations.list`；沿用原有会话授权、设备归属、实例路由和远控策略。云端保存的会话复用 `GET /api/tasks`、`GET /api/tasks/archived`、`GET /api/tasks/{id}` 与 `GET /api/subtasks`，遍历全部消息页，不把任务详情中最近 100 条当成完整历史。没有新增后端处理器、路由或数据库读取路径。
+
+原生会话续聊支持本机及本人其他设备，远端新建和续聊均遵守原后端设备策略。跨设备续聊先通过已有 `runtime.tasks.get` 获取目标工作区、模型和 Team 绑定，再复用现有 `/runtime-work/transcript` 校验当前权限及会话来源，最后通过已有 `/runtime-work/send` 发送；不复制源会话的执行配置，不新增 API 或 RPC。发送入口从同一历史读取链路确认目标原始身份、工作区和 Runtime，使用前端 materialize 相同的执行配置编译器；续聊共用既有项目可见性、Issue 可见性和 execute 权限服务。项目派发目标以原角色继续执行，替身目标保留确认机制；这些目标都不会因此获得个人控制工具。目标设备在发送时强制保留派发角色及项目/Issue 绑定，不能通过空来源或改角色变成个人执行。禁止远控、离线和授权拒绝保留原有失败。
+
+```mermaid
+flowchart LR
+  UI[前端续聊] --> Compile[已有执行配置编译器]
+  AI[个人 AI] --> Send[已有 runtime-work/send]
+  Send --> Read[已有 transcript 授权读取与原始身份]
+  Read --> Compile
+  Compile --> Auth[已有项目与 Issue 可见性和 execute 权限]
+  Auth --> Runtime[已有 runtime.tasks.send]
+  Runtime --> Identity[保留目标身份与原会话]
+```
+
+回执记录目标 `device_id`，幂等键按目标设备和会话隔离；`pending` 和 `needs_attention` 不自动重发。`get_operation` 对远端返回持久发送回执，当前内容通过 `read_conversation` 查询，不能关联到本机同名会话。仅有 `cloudconv_` 历史引用且没有 Runtime 地址的记录仍为只读。
+
+无法形成合法项目/Issue 执行范围的目标派发来源仍拒绝，并报告命中的 `origin` 字段和安全分类；日志不输出完整来源或派发 ID。来源限制不能解释为缺少登录或系统审批。空字符串或非字符串派发标记继续拒绝，项目机器人作为调用方的个人控制禁令保持不变。
+
+前端已有历史读取链路同样记录来源标签及有限分类，复用现有诊断日志，不增加请求，不记录正文或任意来源值。用于对照前端与 AI 实际读到的元数据；缺少日志不代表个人来源或权限已恢复。
+
+创建模型配置发布仅属于本机可信 IPC。共享模型准备器的云端适配器只运行原有模型目录准备，不调用 `runtime.models.sync_creation_profiles`，避免把本机创建配置与凭据下发远端，也不要求远端为已有会话发送新增方法。回归用不支持该方法的协议替身验证远端准备和原会话发送成功，并保留本机配置刷新、删除及失败阻断测试。
+
+既有 Core 5 `workbench-control` E2E 另覆盖打开 AI 创建并续聊过的远端原会话，从桌面输入框再次发送，断言回复、设备、任务和工作区保持原绑定。未运行 E2E。
+
+其他修改仍限定在拥有此 MCP 的设备。云 Issue 的权威 PR 绑定仍属于项目空间服务；界面分支推测和历史 PR URL 不会自动变成确认绑定。设置写入、插件安装管理、窗口导航、附件上传管理等第 1–9 节目标仍未纳入本次工具。GitHub CI 由现有 `gh` 能力查询，调用方须用 repo/PR/head SHA/run/attempt 构造稳定请求键。
+
+统一查询使用`scope=all`（默认），也可指定 `current_device`。列表和搜索均支持 `after` 游标、`include_archived`、RFC3339 `updated_after/updated_before`；各来源按更新时间和稳定会话 ID 合并去重，先过滤再分页。云端历史支持双向消息游标，不使用任务详情接口的最近 100 条截断。离线、禁止远控、缺少登录、设备故障和单会话读取失败都进入 `coverage`；未覆盖来源不能被解释成没有会话。离线设备未同步的原生历史需要设备重新在线后读取。
+
+前端和 AI 的原生目录读取共用完整目录收集器，遍历全部分页，不再受旧侧栏的 500 条上限限制。共享目录返回完整性状态，目录错误和异常重复游标标为 `native_catalog_unavailable`。远端既有目录响应可以直接读取，无需 AI 专用 RPC。单条历史搜索失败计入缺失覆盖，保留其他成功结果。
+
+AI 的远端列表、搜索和历史读取直接使用桌面连接管理器发布的当前 `ConnectionConfig.socket_url`，与前端使用同一份配置；不从 HTTP `backend_url` 拼接 WebSocket 地址。配置缺失明确返回 `backend_connection_unavailable`，后台切换时校验源会话所属服务，调用凭据仍来自已授权的源会话。回归使用不同端口和路径的 HTTP/WebSocket 服务；HTTP 服务不提供 Socket.IO，避免同地址夹具掩盖错误。
+
+列表和搜索可传 `device_id` 定向查询本人指定设备，不等待其他设备或云端历史；设备 ID 从已有创建选项查询，未知或离线设备明确报告缺失。已知目标设备时应直接定向查询，查看已有会话使用列表、搜索和历史读取，不为发现已有会话新建远程会话。
+
+超时采用同一递减期限：受管 `wework_control` 的 MCP 调用上限为 180 秒，整次读取为 150 秒；远端单次目录 ACK 最多 75 秒、正文搜索 130 秒、协议 2 分块 15 秒，并受剩余总期限约束。该配置同时用于 Codex 新建、恢复、分叉和 Claude 注入。慢来源超时保留其他来源的成功结果，`coverage` 报告 `query_timeout` 或 `device_timeout`；不把超时当作会话不存在。读取日志记录来源、操作、耗时和错误码，不记录凭据或消息正文。
+
+聊天记录使用前端已有的协议 2 分块传输、gzip 校验及长字符串还原，保留消息、工具输出、附件、文件变更和原生历史游标；旧 Runtime 返回的原有消息响应按现有协议读取。云端同时保留详情接口已授权返回的继承消息及其附件，再遍历现有 Subtask 分页；不另查 fork 源任务绕过权限。与前端一样，在线设备上的历史直接通过已有通道查询；不能把设备未提供的数据宣称为已完整读取。本机执行器更新后生效，无需新增或部署后端查询接口，也不把远端设备升级作为读取前端已有内容的前置条件。
+周报应使用周期起点 `updated_after`、包含归档、读取所有会话页与消息页，再按消息时间选取周期内容；不能用周期终点的 `updated_before` 排除周期结束后仍有新活动的会话。
+
+```mermaid
+flowchart LR
+  Config[桌面现有连接配置] --> UI[前端]
+  Config --> MCP[wework_control]
+  UI[前端] --> Local[共享本机 Runtime 目录与历史读取]
+  MCP[wework_control] --> Local
+  UI --> IPC[已有 Socket.IO Runtime 通道]
+  MCP -->|直接使用 socket_url| IPC
+  IPC --> Remote[云端和其他设备的已有读取方法]
+  UI --> Cloud[已有 Task 与 Subtask API]
+  MCP --> Cloud[已有 Task 与 Subtask API]
+  Local --> Page[统一筛选和游标与来源覆盖]
+  Remote --> Page
+  Cloud --> Page
+```
+
+同一 CI checkpoint 已增加真实云端保存历史、云设备与远程设备的创建、全文搜索、唯一结果和历史读取回归；只模拟模型。桌面 HTTP 地址经过不接收 WebSocket 的真实转发代理，Socket.IO 使用服务端原有配置，并核对执行器收到的两个地址，确保错误拼接不能通过回归。聚焦测试涵盖跨来源游标、相同更新时间、重复结果、超过 100 条消息、无效游标、权限和离线覆盖。尚未运行 E2E 或 ai:verify。
+
+跨设备续聊回归覆盖真实 Socket.IO 目标读取、不同 HTTP/Socket 配置、源凭据隔离、工作区/模型/Team 保留、并发去重、回执重启恢复、本机同名会话隔离、pending 不重发，以及源/目标委托、禁止远控和后端读写拒绝。既有 CI checkpoint 对云端设备及远程设备增加续聊、重复调用、回执和原会话正文验证；未运行 E2E 或 ai:verify。
 
 聚焦回归覆盖 schema、委托边界、HTTP 上下文隔离、PR 持久化/歧义、安排版本、原 native thread 续聊、重复消息及安排的实际启动。新增 `workbench-control` E2E checkpoint，自建两条会话，经真实模型工具链完成查询/读取/绑定/定位/续聊/去重/创建和删除五分钟安排，并由 CI classifier 选入 Core shard 5。该用例只模拟模型，不调用真实 GitHub。遵照本次要求，未运行 E2E 和 ai:verify；不能据此声明完整桌面链路已验证。
 
-已运行并通过：Rust `--lib control` 过滤集 25 项、原有 send contract 59 项、Python `send_runtime_message` 过滤集 6 项，以及受管 MCP、Codex/Claude 配置、安排、API context 和 CI classifier 的聚焦回归。格式与差异检查通过。这些是当前工作区的本地结果，不是远端 CI 或已发布桌面版本的结果。
+本次调整的聚焦验证结果见提交说明；既有新增后端接口及对应测试已删除。回归覆盖旧设备原有响应、真实 Socket.IO 编解码、长消息分块、完整云端消息分页和权限拒绝。未运行 E2E 或 ai:verify，也未将本地测试结果表述为远端 CI 或已发布版本。
 
 ## 新建会话选项补齐（2026-10-27）
 

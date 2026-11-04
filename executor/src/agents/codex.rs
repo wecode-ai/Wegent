@@ -5632,7 +5632,11 @@ fn append_managed_mcp_config(
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
-            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+            if server_name == crate::workbench_control::SERVER_NAME {
+                crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS
+            } else {
+                crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+            }
         ),
     ]);
     for (header_name, header_value) in config.headers {

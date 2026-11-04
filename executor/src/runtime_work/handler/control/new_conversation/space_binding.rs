@@ -51,7 +51,11 @@ impl RuntimeWorkRpcHandler {
                     .control_http(context, reqwest::Method::GET, &path, None)
                     .await?;
                 if issue["cloud_project_id"].as_str() != Some(project)
-                    && issue["cloud_project_id"].to_string() != project
+                    && issue["cloud_project_id"]
+                        .as_u64()
+                        .map(|id| id.to_string())
+                        .as_deref()
+                        != Some(project)
                 {
                     return Err(AppIpcError::new(
                         "permission_denied",

@@ -7,7 +7,7 @@ use super::*;
 // Build the selected future outside the dispatcher: debug builds otherwise reserve
 // stack temporaries for every branch even though only one route executes.
 #[inline(never)]
-fn boxed_rpc<'a, F, Fut>(
+pub(super) fn boxed_rpc<'a, F, Fut>(
     operation: F,
 ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>>
 where

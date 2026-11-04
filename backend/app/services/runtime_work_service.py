@@ -108,6 +108,10 @@ from app.services.im.session_service import (
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
+from app.services.runtime_continuation import (
+    authorize_continuation_origin,
+    resolve_continuation_address,
+)
 from app.services.runtime_transcript_reader import (
     RuntimeTranscriptTransferError,
     read_complete_transcript,
@@ -862,6 +866,10 @@ async def _dispatch_runtime_send(
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
     if request.request_user_input_response is None:
+        address = await resolve_continuation_address(
+            db=db, user_id=user_id, address=address
+        )
+        payload.update(_runtime_task_address_payload(address))
         try:
             execution_request = _build_runtime_send_execution_request(
                 db=db,
@@ -4292,6 +4300,10 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
+    if not getattr(request, "new_session", True):
+        authorize_continuation_origin(
+            db, user_id, request.origin, request.cloud_project_id
+        )
     if request.wegent_team_id is not None:
         return _build_team_runtime_execution_request(
             db=db,
@@ -5065,6 +5077,7 @@ def _build_runtime_send_execution_request(
         workspace_source="local_path",
     )
     team_id = _runtime_address_team_id(address)
+    handle = address.runtime_handle or {}
     request = RuntimeTaskMaterializeRequest(
         schemaVersion=3 if team_id is not None else 2,
         wegentTeamId=team_id,
@@ -5072,13 +5085,15 @@ def _build_runtime_send_execution_request(
         taskId=address.local_task_id,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
-        runtime="codex",
+        runtime=handle.get("runtime", "codex"),
         message=message,
         modelId=model_selection.model_name if model_selection else None,
         modelType=model_selection.model_type if model_selection else None,
         modelOptions=model_selection.options if model_selection else {},
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
+        origin=handle.get("origin"),
+        cloudProjectId=handle.get("cloudProjectId"),
     )
     execution_request = _build_runtime_execution_request(
         db=db,

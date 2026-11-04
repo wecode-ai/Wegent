@@ -274,7 +274,7 @@ pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
 }
 
 pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_handle: &Value) {
-    if cloud_project_id(request).is_some() {
+    if !immutable_execution_origin(runtime_handle) && cloud_project_id(request).is_some() {
         return;
     }
     if let Some(project_id) = runtime_handle
@@ -295,14 +295,7 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
             .extra
             .insert("standInDelegation".into(), delegation.clone());
     }
-    if runtime_handle["origin"]["initiatedBy"] == "stand_in"
-        || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
-        || runtime_handle["origin"]["type"] == "issue_dispatch"
-        || matches!(
-            runtime_handle["origin"]["type"].as_str(),
-            Some("dingtalk_work" | "connection_work" | "stand_in_coordinator")
-        )
-    {
+    if immutable_execution_origin(runtime_handle) {
         let mut origin = runtime_handle["origin"].clone();
         if request
             .extra
@@ -312,6 +305,16 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
             origin["askBeforeAct"] = json!(true);
         }
         request.extra.insert("origin".into(), origin);
+        // Origin-bound project identity cannot be replaced by a follow-up either.
+        if let Some(project) = runtime_handle["origin"]
+            .get("cloudProjectId")
+            .or_else(|| runtime_handle["origin"].get("cloud_project_id"))
+        {
+            request.extra.remove("cloud_project_id");
+            request
+                .extra
+                .insert("cloudProjectId".into(), project.clone());
+        }
         return;
     }
     if request.extra.contains_key("origin") {
@@ -324,6 +327,25 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
     {
         request.extra.insert("origin".to_owned(), origin);
     }
+}
+
+fn immutable_execution_origin(runtime_handle: &Value) -> bool {
+    runtime_handle["origin"]["initiatedBy"] == "stand_in"
+        || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
+        || runtime_handle["origin"]["type"] == "issue_dispatch"
+        || matches!(
+            runtime_handle["origin"]["type"].as_str(),
+            Some(
+                "stand_in_identity" | "dingtalk_work" | "connection_work" | "stand_in_coordinator"
+            )
+        )
+        || ["dispatchRole", "dispatch_role", "dispatchId", "dispatch_id"]
+            .iter()
+            .any(|key| {
+                runtime_handle["origin"]
+                    .get(key)
+                    .is_some_and(|value| !value.is_null())
+            })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1200,6 +1222,37 @@ mod tests {
         old["origin"]["askBeforeAct"] = json!(false);
         restore_origin(&mut request, &old);
         assert!(stand_in_requires_confirmation(&request));
+    }
+
+    #[test]
+    fn delegated_board_continuation_cannot_remove_or_rebind_its_execution_scope() {
+        for role_key in ["dispatchRole", "dispatch_role"] {
+            let origin = json!({"type":"board_task",role_key:"executor","cloudProjectId":"project-1","loopItemId":"issue-1"});
+            let persisted = json!({"origin":origin,"cloudProjectId":"project-1"});
+            for incoming in [
+                Value::Null,
+                json!({"type":"board_task"}),
+                json!({role_key:"manager","cloudProjectId":"project-2","loopItemId":"issue-2"}),
+            ] {
+                let mut request = ExecutionRequest::default();
+                crate::runtime_work::api_context::inject_current_session(
+                    &mut request,
+                    "target-device",
+                    "target-task",
+                );
+                assert!(crate::workbench_control::ControlContext::from_request(&request).is_some());
+                request.extra.insert("origin".into(), incoming);
+                request
+                    .extra
+                    .insert("cloudProjectId".into(), json!("project-2"));
+                restore_cloud_project_id(&mut request, &persisted);
+                restore_origin(&mut request, &persisted);
+                assert_eq!(request.extra["origin"], origin);
+                assert_eq!(cloud_project_id(&request), Some(json!("project-1")));
+                assert!(crate::task_runtime::mcp::has_bound_issue_context(&request).unwrap());
+                assert!(crate::workbench_control::ControlContext::from_request(&request).is_none());
+            }
+        }
     }
 
     #[test]
