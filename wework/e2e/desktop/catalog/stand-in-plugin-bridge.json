@@ -1,0 +1,12 @@
+{
+  "order": 46000,
+  "scenario": "./scenarios/connection-automation-host.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 35000,
+      "shard": 3,
+      "position": 6000
+    }
+  }
+}
