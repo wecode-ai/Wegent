@@ -525,6 +525,8 @@
         },
         "linkPreview": {
           "previewOnly": "Preview only",
+          "watermarkLoading": "Preparing preview watermark...",
+          "watermarkUnavailable": "The preview watermark could not be generated. Content is unavailable.",
           "loading": "Loading the file safely...",
           "viewOnline": "Click to view online",
           "coverUnavailable": "Cover preview is unavailable. Click to try the online preview.",

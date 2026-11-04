@@ -8,11 +8,17 @@ Enable **Experimental features** in **Settings → General**, then open **My sta
 
 A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for a preview, open the shared **Needs your input** tab for human decisions, or open the full conversation for context. Each role also has its own persistent identity conversation.
 
+Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My stand-in** to open your personal task board.
+
 ## Manual and conversational configuration
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
 You can also describe a role or configuration change in conversation. AI creates a proposal showing the affected roles, source scopes, and handling policies. Review it and explicitly confirm before applying. Continue discussing to revise it, or dismiss it. A stale proposal cannot overwrite newer settings.
+
+## Model selection
+
+Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. The primary conversation and the concrete work it creates both use the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
 
 ## DingTalk and collaboration sources
 

@@ -84,6 +84,10 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
       (error: unknown) => error
     )
   assert.equal(await Promise.race([waiting.promise.then(() => 'waiting'), verification]), 'waiting')
+  assert.deepEqual(calls.slice(0, 2), [
+    { action: 'getElementCount', selector: '[data-testid="settings-button"]' },
+    { action: 'setAppPreferences', selector: 'body' },
+  ])
   assert.equal(
     calls.some(call => call.selector === '[data-testid="stand-in-overview"]'),
     false
