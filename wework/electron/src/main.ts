@@ -99,6 +99,7 @@ import {
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { isolateInheritedDesktopEnvironment } from './runtime/desktop-environment-isolation.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -216,6 +217,12 @@ isolateDevelopmentEnvironment(process.env, {
   appData: app.getPath('appData'),
   homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
 })
+if (packagedApplication) {
+  isolateInheritedDesktopEnvironment(process.env, {
+    homeDirectory: process.env.HOME?.trim() || app.getPath('home'),
+    namespace: packageMetadata.weworkExecutorNamespace?.trim() || 'default',
+  })
+}
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
