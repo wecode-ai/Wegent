@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import { pythonArtifact } from './python-runtime-artifacts.js'
 import {
   fetchPythonRuntimeDownloads,
   fetchParentPythonRuntimeDownloads,
@@ -179,12 +180,24 @@ test('rejects a backend switch during either credential resolution or the descri
 })
 
 test('development child receives full addresses via a Python-only loopback capability', async () => {
-  const fetch = vi.fn().mockResolvedValue(Response.json({ ok: true, data: downloads }))
+  const targets: Partial<Record<NodeJS.Platform, string>> = {
+    darwin: 'apple-darwin',
+    linux: 'unknown-linux-gnu',
+    win32: 'pc-windows-msvc',
+  }
+  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-${targets[process.platform]}`
+  const hostDownloads = {
+    uvUrl: `https://mirror.example.invalid/uv-${target}.${process.platform === 'win32' ? 'zip' : 'tar.gz'}?signature=synthetic%2Bvalue`,
+    pythonUrl: `https://mirror.example.invalid/${pythonArtifact(process.platform, process.arch).filename}?signature=synthetic%2Bvalue`,
+  }
+  const fetch = vi.fn().mockResolvedValue(Response.json({ ok: true, data: hostDownloads }))
   const environment = {
     WEWORK_PARENT_PYTHON_DOWNLOADS_URL: 'http://127.0.0.1:1234/runtime/python/downloads',
     WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN: 'synthetic-python-capability',
   }
-  await expect(fetchParentPythonRuntimeDownloads(environment, fetch)).resolves.toEqual(downloads)
+  await expect(fetchParentPythonRuntimeDownloads(environment, fetch)).resolves.toEqual(
+    hostDownloads
+  )
   expect(fetch).toHaveBeenCalledExactlyOnceWith(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_URL, {
     method: 'POST',
     headers: { authorization: 'Bearer synthetic-python-capability' },
