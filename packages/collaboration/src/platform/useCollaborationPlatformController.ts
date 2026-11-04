@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -646,7 +652,9 @@ export function useCollaborationPlatformController({
             : parentContext
               ? { ...parentContext, location: "cloud" as const }
               : api.workspaces.getNavigationContext
-                ? await api.workspaces.getNavigationContext(workspaceId)
+                ? await collectNavigation(
+                    api.workspaces.getNavigationContext(workspaceId),
+                  )
                 : null;
           if (revision !== loadRevisionRef.current) return;
           if (!workspaceSummary && !workspaceNavigationContext) {
@@ -673,7 +681,9 @@ export function useCollaborationPlatformController({
           return;
         }
         const workspaceView = location.workspaceView ?? "home";
-        const workspace = await api.workspaces.get(workspaceId);
+        const workspace = await collectNavigation(
+          api.workspaces.get(workspaceId),
+        );
         if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
@@ -775,7 +785,9 @@ export function useCollaborationPlatformController({
   }, [load, refreshKey]);
 
   const activeLoadRef = useRef(load);
-  activeLoadRef.current = load;
+  useLayoutEffect(() => {
+    activeLoadRef.current = load;
+  }, [load]);
   const refreshPendingNavigation = () => {
     if (pendingNavigationRef.current) void activeLoadRef.current(true);
   };

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from 'react'
+import { act, startTransition, Suspense } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -303,6 +303,124 @@ it('does not retry a settled failed navigation source after registering a projec
   expect(localApi.workspaces!.list).toHaveBeenCalledOnce()
   expect(currentState().navigationIncomplete).toBe(true)
 })
+
+it('keeps pending refreshes on the committed route when an uncommitted route suspends', async () => {
+  const localResponses: Array<(workspaces: CollaborationWorkspace[]) => void> = []
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.workspaces!.list).mockImplementation(
+    () => new Promise(resolve => localResponses.push(resolve))
+  )
+  const cloudApi = apiFor(cloudWorkspace, [project])
+  const committedSources = [cloudApi, localApi]
+  const otherApi = apiFor({ id: 'other' } as CollaborationWorkspace, [])
+  let releaseSuspension!: () => void
+  const suspension = new Promise<void>(resolve => {
+    releaseSuspension = resolve
+  })
+  const suspended = vi.fn()
+  function Suspend({ active }: { active: boolean }) {
+    if (active) {
+      suspended()
+      throw suspension
+    }
+    return null
+  }
+  function Frame({ pending = false }: { pending?: boolean }) {
+    const sources = pending ? [otherApi] : committedSources
+    return (
+      <Suspense fallback={<div>Loading route</div>}>
+        <Harness
+          api={sources[0]}
+          navigationApis={sources}
+          location={pending ? { ...location, workspaceId: null, projectId: null } : location}
+        />
+        <Suspend active={pending} />
+      </Suspense>
+    )
+  }
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  try {
+    await act(async () => root!.render(<Frame />))
+    const committedCommands = commands
+    await act(async () => {
+      startTransition(() => root!.render(<Frame pending />))
+    })
+    expect(suspended).toHaveBeenCalled()
+
+    await act(async () => committedCommands.registerProject({ ...project, version: 2 }))
+
+    expect(otherApi.projects.list).not.toHaveBeenCalled()
+    expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  } finally {
+    await act(async () => {
+      root!.unmount()
+      root = undefined
+      releaseSuspension()
+      for (const resolve of localResponses) resolve([])
+    })
+  }
+})
+
+it.each([
+  { detail: 'workspace', mutation: 'registered' },
+  { detail: 'workspace', mutation: 'archived' },
+  { detail: 'navigation context', mutation: 'registered' },
+  { detail: 'navigation context', mutation: 'archived' },
+])(
+  'preserves projects after they are $mutation while $detail details are pending',
+  async ({ detail, mutation }) => {
+    const detailResponses: Array<() => void> = []
+    const deferDetail = <T,>(value: T) =>
+      new Promise<T>(resolve => detailResponses.push(() => resolve(value)))
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    cloudApi.workspaces!.get = vi.fn(() => deferDetail(cloudWorkspace))
+    if (detail === 'navigation context') {
+      vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
+      cloudApi.workspaces!.getNavigationContext = vi.fn(() =>
+        deferDetail({ id: 'cloud', public_id: 'cloud', name: 'Cloud', location: 'cloud' as const })
+      )
+    }
+    const createdProject = { ...project, id: 'created-project', version: 1 }
+    cloudApi.projects.archive = vi.fn(async () => {
+      vi.mocked(cloudApi.projects.list).mockResolvedValue([])
+    })
+    try {
+      await render([cloudApi], {
+        ...location,
+        projectId: detail === 'workspace' ? null : project.id,
+        workspaceView: 'settings',
+      })
+      expect(detailResponses).toHaveLength(1)
+      if (mutation === 'registered') {
+        vi.mocked(cloudApi.projects.list).mockResolvedValue([project, createdProject])
+        await act(async () => commands.registerProject(createdProject))
+      } else {
+        await act(async () => commands.archiveProject(project))
+      }
+
+      expect(detailResponses).toHaveLength(2)
+      await act(async () => detailResponses[0]())
+
+      if (mutation === 'registered') {
+        expect(currentState().projects).toContainEqual(createdProject)
+      } else {
+        expect(currentState().projects).not.toContainEqual(project)
+      }
+      await act(async () => detailResponses.at(-1)!())
+      if (mutation === 'registered') {
+        expect(currentState().projects).toContainEqual(createdProject)
+      } else {
+        expect(currentState().projects).not.toContainEqual(project)
+      }
+    } finally {
+      await act(async () => {
+        for (const resolve of detailResponses) resolve()
+      })
+    }
+  }
+)
 
 it('opens an authorized project from its detail before global catalogs arrive', async () => {
   const context = { id: 'cloud', public_id: 'public', name: 'Parent' }
