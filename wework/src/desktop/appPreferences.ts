@@ -60,6 +60,7 @@ export interface AppPreferences {
   browserExternalLinkTarget: BrowserLinkTarget
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
+  browserFullControl: boolean
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
   computerUseEnabled?: boolean
@@ -142,6 +143,7 @@ export interface AppPreferencesPatch {
   browserExternalLinkTarget?: BrowserLinkTarget
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
+  browserFullControl?: boolean
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
   computerUseEnabled?: boolean
@@ -189,6 +191,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
+  browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
   computerUseEnabled: false,
@@ -387,6 +390,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.browserDownloadDirectory === 'string' && record.browserDownloadDirectory.trim()
         ? record.browserDownloadDirectory.trim()
         : defaultAppPreferences.browserDownloadDirectory,
+    browserFullControl: record.browserFullControl === true,
     browserAskBeforeDownload:
       typeof record.browserAskBeforeDownload === 'boolean'
         ? record.browserAskBeforeDownload

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/stand-in-identities.scenario.mjs'

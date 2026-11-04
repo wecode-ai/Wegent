@@ -134,9 +134,7 @@ export function createDesktopScenario({
       }
       return true
     },
-    async verify(control) {
-      await verifyPendingInteractionsTab(control, 0, { openFromMenu: true })
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    async prepareApp() {
       const capabilities = join(executorHome, 'capabilities')
       await mkdir(capabilities, { recursive: true })
       await writeFile(
@@ -149,6 +147,10 @@ export function createDesktopScenario({
         ])
       )
       await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
+    },
+    async verify(control) {
+      await verifyPendingInteractionsTab(control, 0, { openFromMenu: true })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await createSingleRootLocalProject(control, workspacePath, 'human-interactions')
       await selectE2EModel(control)
       if (checkpoint === 'human-interactions-issue') {

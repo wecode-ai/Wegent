@@ -2,7 +2,41 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import '@/i18n'
-import { AutomationEmptyState } from './AutomationListPane'
+import { AutomationEmptyState, AutomationListPane } from './AutomationListPane'
+import i18n from '@/i18n'
+
+it.each([
+  ['zh-CN', '创建', '没有匹配的自动化'],
+  ['en', 'Create', 'No matching automations'],
+])('translates scheduled list actions and empty results in %s', async (language, create, empty) => {
+  const previousLanguage = i18n.language
+  await i18n.changeLanguage(language)
+  try {
+    render(
+      <AutomationListPane
+        automations={[]}
+        allAutomations={[]}
+        query=""
+        statusFilter="all"
+        selectedAutomationId={null}
+        locale={language}
+        loading={false}
+        error={null}
+        detailOpen
+        mobileDetailOpen={false}
+        onQueryChange={vi.fn()}
+        onFilterChange={vi.fn()}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+        onClearError={vi.fn()}
+      />
+    )
+    expect(screen.getByRole('button', { name: create })).toBeVisible()
+    expect(screen.getByText(empty)).toBeVisible()
+  } finally {
+    await i18n.changeLanguage(previousLanguage)
+  }
+})
 
 it('offers arranging work inside a calendar without suggesting unconnected mail access', async () => {
   const onCreate = vi.fn()

@@ -1736,6 +1736,8 @@
     "browser_download_peek_open": "打开",
     "browser_download_peek_view_downloads": "查看下载",
     "browser_local_file_notice": "此文件无法预览",
+    "browser_settings_full_control": "完全控制",
+    "browser_settings_full_control_description": "允许 AI 直接操作 Wework 内置浏览器，包括提交表单、修改或删除页面数据，无需逐次确认。",
     "browser_settings_title": "浏览器",
     "browser_settings_subtitle": "管理 Wework 内置浏览器、链接打开方式和下载行为",
     "browser_settings_general": "常规",

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { registerAdditionalHarnessAppModels } from './harnessAppModelRoutes'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'

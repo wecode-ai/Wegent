@@ -1,5 +1,15 @@
+// @vitest-environment node
+
 import { expect, it } from 'vitest'
-import type { RuntimePaneDebugSnapshot } from './debugPanel'
+import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
+import {
+  compareMessageStyles,
+  getWorkbenchDebugSnapshot,
+  summarizeMessages,
+  summarizeRuntimePaneMemory,
+  updateRuntimePaneDebugSnapshot,
+  type RuntimePaneDebugSnapshot,
+} from './debugPanel'
 import {
   clearRuntimePaneTransitions,
   getRuntimePaneTransitions,
@@ -34,4 +44,36 @@ it('records native item identities and lengths without copying message text', ()
   } as Parameters<typeof summarizeRuntimeDisplayItems>[0])
   expect(summary).toEqual([{ id: 'native-id', type: 'assistant_text', contentLength: 23 }])
   expect(JSON.stringify(summary)).not.toContain('private message')
+})
+
+it('retains the opaque older-page cursor for pagination progress diagnostics', () => {
+  const address = { deviceId: 'device-1', taskId: 'loaded-task' }
+  updateRuntimePaneDebugSnapshot({
+    currentRuntimeTask: address,
+    status: deriveRuntimePaneStatus({ messages: [], currentRuntimeTask: address, lifecycle: null }),
+    messageSummary: summarizeMessages([]),
+    messageStyleComparison: compareMessageStyles([]),
+    memory: summarizeRuntimePaneMemory({
+      messages: [],
+      currentRuntimeTask: address,
+      loadedRanges: [],
+    }),
+    queuedMessages: [],
+    guidanceMessages: [],
+    codeCommentContextCount: 0,
+    inputLength: 0,
+    transcript: {
+      loading: false,
+      hasMoreBefore: false,
+      loadingMoreBefore: false,
+      beforeCursor: 'opaque-older-page',
+      turnNavigationCount: 0,
+      loadedRanges: [],
+    },
+    subagentStatuses: [],
+    goal: null,
+    goalDraftActive: false,
+  })
+
+  expect(getWorkbenchDebugSnapshot().pane?.transcript.beforeCursor).toBe('opaque-older-page')
 })

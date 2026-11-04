@@ -1737,6 +1737,8 @@
     "browser_download_peek_open": "Open",
     "browser_download_peek_view_downloads": "View downloads",
     "browser_local_file_notice": "This file can't be previewed",
+    "browser_settings_full_control": "Full control",
+    "browser_settings_full_control_description": "Allow AI to operate the Wework built-in browser, including submitting forms and changing or deleting page data, without asking for confirmation.",
     "browser_settings_title": "Browser",
     "browser_settings_subtitle": "Manage the Wework built-in browser, link routing, and downloads",
     "browser_settings_general": "General",

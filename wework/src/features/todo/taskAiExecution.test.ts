@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'

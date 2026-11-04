@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { LocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
 import type { InstalledPlugin } from '@/types/api'
 import { describe, expect, test, vi } from 'vitest'

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { ModelSelectionConfig } from '@/types/api'
 import { describe, expect, it } from 'vitest'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'

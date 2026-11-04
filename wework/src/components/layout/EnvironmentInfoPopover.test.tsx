@@ -1,6 +1,6 @@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import '@/i18n'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
