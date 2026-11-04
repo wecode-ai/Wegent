@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
@@ -17,13 +19,11 @@ const content = '[data-testid="workspace-tab-content-task-1"]'
 
 beforeEach(() => {
   vi.useFakeTimers()
-  requestExecutor
-    .mockReset()
-    .mockImplementation(async (_control, method) => {
-      if (method === 'runtime.tasks.rename') return { accepted: true }
-      if (method === 'todos.get') return issue
-      throw new Error(`Unexpected RPC: ${method}`)
-    })
+  requestExecutor.mockReset().mockImplementation(async (_control, method) => {
+    if (method === 'runtime.tasks.rename') return { accepted: true }
+    if (method === 'todos.get') return issue
+    throw new Error(`Unexpected RPC: ${method}`)
+  })
 })
 
 afterEach(() => {

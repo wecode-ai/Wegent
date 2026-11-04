@@ -25,11 +25,51 @@ interface RuntimeCatalog {
 
 export type BundledRuntimeRole = 'core' | 'workbench'
 
+export interface RuntimeMaterializationProgress {
+  stage: string
+  phase: 'started' | 'completed' | 'failed'
+  elapsedMs: number
+  role?: string
+  archiveBytes?: number
+}
+
 interface MaterializeRuntimeOptions {
   versionRequirement?: string
   fetch?: typeof fetch
   reuseRoot?: string
   immutableRoot?: string
+  onProgress?: (event: RuntimeMaterializationProgress) => void
+}
+
+async function materializationStep<T>(
+  stage: string,
+  options: MaterializeRuntimeOptions,
+  run: () => Promise<T>,
+  runtime?: RuntimeDescriptor
+): Promise<T> {
+  if (!options.onProgress) return run()
+  const startedAt = performance.now()
+  const report = (phase: RuntimeMaterializationProgress['phase']) => {
+    try {
+      options.onProgress?.({
+        stage,
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        ...(runtime ? { role: runtime.role, archiveBytes: runtime.archiveBytes } : {}),
+      })
+    } catch {
+      // Diagnostic failures must never interrupt preparation or replace its original error.
+    }
+  }
+  report('started')
+  try {
+    const result = await run()
+    report('completed')
+    return result
+  } catch (error) {
+    report('failed')
+    throw error
+  }
 }
 
 export async function materializeBundledRuntimes(
@@ -38,9 +78,14 @@ export async function materializeBundledRuntimes(
   roles: readonly BundledRuntimeRole[] = ['core', 'workbench'],
   options: MaterializeRuntimeOptions = {}
 ): Promise<string> {
-  const catalog = JSON.parse(
-    await readFile(join(resolve(resourceRoot), 'runtimes.json'), 'utf8')
-  ) as RuntimeCatalog
+  const catalog = await materializationStep(
+    'catalog-read',
+    options,
+    async () =>
+      JSON.parse(
+        await readFile(join(resolve(resourceRoot), 'runtimes.json'), 'utf8')
+      ) as RuntimeCatalog
+  )
   const runtimes = [...catalog.runtimes, ...(catalog.downloadableRuntimes ?? [])].filter(runtime =>
     ['core', 'workbench'].includes(runtime.role)
   )
@@ -96,7 +141,9 @@ export async function materializeBundledRuntimes(
   for (const runtime of selectedRuntimes) {
     await materializeRuntime(resourceRoot, cacheRoot, runtime, options)
   }
-  await writeRuntimeCatalog(cacheRoot, runtimes)
+  await materializationStep('catalog-write', options, () =>
+    writeRuntimeCatalog(cacheRoot, runtimes)
+  )
   return cacheRoot
 }
 
@@ -122,13 +169,43 @@ async function materializeRuntime(
 ): Promise<void> {
   validateDescriptor(runtime)
   const target = join(cacheRoot, runtime.sourceFingerprint)
-  if (await runtimeMatches(target, runtime)) return
+  if (
+    await materializationStep(
+      'runtime-probe',
+      options,
+      () => runtimeMatches(target, runtime),
+      runtime
+    )
+  )
+    return
+  await materializationStep(
+    'runtime-publish',
+    options,
+    () => publishRuntime(resourceRoot, cacheRoot, runtime, options, target),
+    runtime
+  )
+}
+
+async function publishRuntime(
+  resourceRoot: string,
+  cacheRoot: string,
+  runtime: RuntimeDescriptor,
+  options: MaterializeRuntimeOptions,
+  target: string
+): Promise<void> {
   const fetchImpl = options.fetch ?? cloudFetch
+  const resolveArchive = () =>
+    materializationStep(
+      'archive-resolve',
+      options,
+      () => resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl),
+      runtime
+    )
   if (options.reuseRoot && resolve(options.reuseRoot) !== resolve(cacheRoot)) {
     const reusable = await reusableRuntime(options.reuseRoot, runtime)
     if (reusable) {
       // A matching cache never substitutes for integrity of the delivered archive.
-      await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
+      await resolveArchive()
       await linkImmutableDirectory(target, reusable, path => runtimeMatches(path, runtime))
       return
     }
@@ -150,15 +227,17 @@ async function materializeRuntime(
           .digest('hex')
       )
     : target
-  const checkedArchive = options.immutableRoot
-    ? await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
-    : undefined
+  const checkedArchive = options.immutableRoot ? await resolveArchive() : undefined
   await publishImmutableDirectory(
     publication,
     async content => {
-      const archive =
-        checkedArchive ?? (await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl))
-      await extractArchive(archive, content)
+      const archive = checkedArchive ?? (await resolveArchive())
+      await materializationStep(
+        'archive-extract',
+        options,
+        () => extractArchive(archive, content),
+        runtime
+      )
       if (!(await runtimeMatches(content, runtime))) {
         throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
       }

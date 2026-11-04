@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import { assertPluginDetailMembership } from '../e2e/desktop/modules/plugin-detail-cache-race.mjs'
 

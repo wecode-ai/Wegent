@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { DesktopHostError } from '@/api/dsh/desktopHost'
 import { describe, expect, test } from 'vitest'
 import {

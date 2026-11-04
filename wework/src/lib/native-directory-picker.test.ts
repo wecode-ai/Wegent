@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import { openNativeProjectDirectoryPicker } from './native-directory-picker'
 import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'

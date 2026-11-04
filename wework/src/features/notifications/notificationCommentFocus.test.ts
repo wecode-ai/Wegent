@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, it } from 'vitest'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { DeviceInfo } from '@/types/api'

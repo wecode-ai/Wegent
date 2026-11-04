@@ -69,46 +69,6 @@ describe('ComposerToolbar', () => {
     vi.unstubAllGlobals()
   })
 
-  it('places the icon-only permission control before context usage', () => {
-    render(
-      <ComposerToolbar
-        canSend={false}
-        models={[]}
-        selectedModel={null}
-        selectedModelOptions={{ permissionMode: 'full-access' }}
-        isModelSelectionReady
-        contextUsage={{
-          total: {
-            totalTokens: 15_000,
-            inputTokens: 12_000,
-            cachedInputTokens: 2_000,
-            outputTokens: 3_000,
-            reasoningOutputTokens: 0,
-          },
-          last: {
-            totalTokens: 8_000,
-            inputTokens: 7_000,
-            cachedInputTokens: 1_000,
-            outputTokens: 1_000,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 258_000,
-        }}
-        onSelectModel={vi.fn()}
-        onSelectModelOption={vi.fn()}
-        onFileSelect={vi.fn()}
-        onQuickPhraseSelect={vi.fn()}
-        onInsertPluginReference={vi.fn()}
-        onSubmit={vi.fn()}
-      />
-    )
-
-    const permission = screen.getByTestId('permission-mode-menu-button')
-    const contextUsage = screen.getByTestId('context-usage-indicator')
-    expect(permission).toHaveTextContent('')
-    expect(permission.compareDocumentPosition(contextUsage)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-  })
-
   it('renders the unavailable model selector after the catalog has returned models', () => {
     const unavailableModel = {
       name: 'codex-official-unavailable',

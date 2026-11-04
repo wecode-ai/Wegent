@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { CODEX_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import { describe, expect, test, vi } from 'vitest'

@@ -51,5 +51,6 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     "$staging_dir/backend-rs/wegent-backend-rs"
 fi
 
-tar -I 'zstd -T0 -3' -cf "$archive" -C "$artifact_dir" wework-core-e2e-build
+node .github/scripts/wework-core-e2e-transport.mjs deduplicate "$staging_dir"
+tar -cf - -C "$artifact_dir" wework-core-e2e-build | zstd -T0 -3 -f -o "$archive"
 test -s "$archive"
