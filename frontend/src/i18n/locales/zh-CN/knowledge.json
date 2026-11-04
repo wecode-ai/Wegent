@@ -995,6 +995,27 @@
       "managementUnavailable": "管理权限已变化，请重新核验。",
       "dismissError": "关闭错误提示",
       "membersFailed": "成员列表加载失败，请重试。"
+    },
+    "creation": {
+      "created": "库已创建",
+      "createdDescription": "知识库已保存。现在可以给人员或团队授权，也可稍后配置。",
+      "authorize": "授权",
+      "authorizing": "授权中…",
+      "authorized": "授权已完成",
+      "finishLater": "完成／稍后配置",
+      "refreshFailed": "库已创建，列表刷新失败，请重试刷新。",
+      "authorizationFailed": "授权失败，可只重试失败项。",
+      "unconfirmed": "授权结果尚未确认，重试前将先核验已有授权。",
+      "roleConflict": "已有授权的角色不同，请先在权限管理中核对。",
+      "notSubmitted": "尚未提交",
+      "invalidTarget": "请选择有效对象及可分配的角色。",
+      "verifyAndRetry": "核验并重试",
+      "moreSettings": "更多设置：所在空间",
+      "inheritsTeam": "创建后继承团队权限",
+      "spaceUnavailable": "当前空间不可创建，请明确选择有权创建的空间。",
+      "choosePersonal": "选择个人空间",
+      "selectTargets": "选择人员或团队，失败时只重试未成功项。",
+      "retryFailed": "重试失败项"
     }
   },
   "add_repository": "添加仓库",

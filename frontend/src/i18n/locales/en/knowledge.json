@@ -995,6 +995,27 @@
       "managementUnavailable": "Management access changed. Verify your permissions again.",
       "dismissError": "Dismiss error",
       "membersFailed": "Unable to load members. Please retry."
+    },
+    "creation": {
+      "created": "Library created",
+      "createdDescription": "You can authorize people or teams now, or finish later. The library is already saved.",
+      "authorize": "Authorize",
+      "authorizing": "Authorizing…",
+      "authorized": "Authorization complete",
+      "finishLater": "Done / finish later",
+      "refreshFailed": "The library is created, but the list could not be refreshed.",
+      "authorizationFailed": "Authorization failed. Retry only the failed targets.",
+      "unconfirmed": "The authorization result is unconfirmed. Verify existing access before retrying.",
+      "roleConflict": "Existing access has a different role. Review it in permission management.",
+      "notSubmitted": "Not submitted yet",
+      "invalidTarget": "Choose a valid target and an assignable role.",
+      "verifyAndRetry": "Verify and retry",
+      "moreSettings": "More settings: space",
+      "inheritsTeam": "Inherits team permissions after creation",
+      "spaceUnavailable": "You cannot create in this space. Choose an authorized space explicitly.",
+      "choosePersonal": "Choose personal space",
+      "selectTargets": "Select people or teams. Only failed authorizations will be retried.",
+      "retryFailed": "Retry failed targets"
     }
   },
   "add_repository": "Add Repository",

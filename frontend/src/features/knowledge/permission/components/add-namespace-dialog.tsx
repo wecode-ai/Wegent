@@ -11,6 +11,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -27,8 +28,8 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
-import { knowledgePermissionApi } from '@/apis/knowledge-permission'
-import { ApiError } from '@/apis/client'
+import client from '@/apis/client'
+import { useKnowledgeGrants } from '../hooks/useKnowledgeGrants'
 import { searchGroups } from '@/apis/groups'
 import type { MemberRole } from '@/types/knowledge'
 import type { Group } from '@/types/group'
@@ -46,7 +47,17 @@ interface AddNamespaceDialogProps {
   boundNamespaceIds?: string[]
 }
 
-export function AddNamespaceDialog({
+export function AddNamespaceDialog(props: AddNamespaceDialogProps) {
+  const { user } = useUser()
+  return (
+    <AddNamespaceSession
+      key={JSON.stringify([user?.id, client.getCacheScope(), props.kbId, props.open])}
+      {...props}
+    />
+  )
+}
+
+function AddNamespaceSession({
   open,
   onOpenChange,
   kbId,
@@ -67,7 +78,13 @@ export function AddNamespaceDialog({
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroups, setSelectedGroups] = useState<Group[]>([])
   const [role, setRole] = useState<MemberRole>('Reporter')
-  const [loading, setLoading] = useState(false)
+  const {
+    grant,
+    loading,
+    failures,
+    error: grantError,
+    uncertain,
+  } = useKnowledgeGrants({ kbId, onChanged, onAccessDenied })
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -152,53 +169,23 @@ export function AddNamespaceDialog({
       return
     }
 
-    setLoading(true)
-    try {
-      const results = await Promise.allSettled(
-        selectedGroups.map(group =>
-          knowledgePermissionApi.addNamespacePermission(kbId, group.id, role)
-        )
-      )
-
-      const failedGroups: Group[] = []
-      const succeededIds: number[] = []
-
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          failedGroups.push(selectedGroups[index])
-        } else {
-          succeededIds.push(selectedGroups[index].id)
-        }
-      })
-
-      if (succeededIds.length > 0) onChanged?.()
-      if (
-        results.some(
-          result =>
-            result.status === 'rejected' &&
-            result.reason instanceof ApiError &&
-            (result.reason.status === 403 || result.reason.status === 404)
-        )
-      )
-        onAccessDenied?.()
-
-      if (failedGroups.length > 0) {
-        // Keep only failed groups in selection for retry
-        setSelectedGroups(failedGroups)
-        setError(
-          `Failed to add ${failedGroups.length} group(s): ${failedGroups.map(g => g.display_name || g.name).join(', ')}`
-        )
-        return
-      }
-
+    const remaining = await grant(
+      selectedGroups.map(group => ({
+        id: 'namespace-' + group.id,
+        entityType: 'namespace',
+        entityId: String(group.id),
+        label: group.display_name || group.name,
+        role,
+      }))
+    )
+    if (remaining === null) return
+    setSelectedGroups(prev =>
+      prev.filter(group => remaining.some(entry => entry.entityId === String(group.id)))
+    )
+    if (remaining.length === 0) {
       resetForm()
       onSuccess?.()
       onOpenChange(false)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to add namespace permission'
-      setError(message)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -227,155 +214,172 @@ export function AddNamespaceDialog({
             {loc('document.permission.addNamespace', '添加群组权限')}
           </DialogTitle>
         </DialogHeader>
+        <DialogDescription>{t('document.creation.selectTargets')}</DialogDescription>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Group search selector */}
-          <div className="space-y-2">
-            <Label>{loc('document.permission.selectGroup', '选择群组')}</Label>
-            <div className="relative">
+          <fieldset disabled={loading || uncertain} className="min-w-0 space-y-4">
+            {/* Group search selector */}
+            <div className="space-y-2">
+              <Label>{loc('document.permission.selectGroup', '选择群组')}</Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-                <Input
-                  ref={inputRef}
-                  value={searchQuery}
-                  onChange={e => {
-                    setSearchQuery(e.target.value)
-                    setShowDropdown(true)
-                  }}
-                  onFocus={() => {
-                    if (!searching && groups.length === 0) performSearch(searchQuery)
-                    setShowDropdown(true)
-                  }}
-                  placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
-                  className="min-h-11 pl-9"
-                  data-testid="add-namespace-group-search"
-                />
-              </div>
-              {showDropdown && (
-                <div
-                  ref={dropdownRef}
-                  className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
-                  data-testid="add-namespace-group-dropdown"
-                >
-                  {searching ? (
-                    <div className="p-3 text-sm text-text-muted text-center">
-                      {t('common:actions.loading')}
-                    </div>
-                  ) : filteredGroups.length === 0 ? (
-                    <div className="p-3 text-sm text-text-muted text-center">
-                      {searchQuery.trim()
-                        ? loc('document.permission.noGroupResults', '没有匹配的组')
-                        : loc('document.permission.noGroups', '暂无可用群组')}
-                    </div>
-                  ) : (
-                    filteredGroups.map(group => {
-                      const selected = isGroupSelected(group)
-                      const isBound =
-                        (excludedNamespaceId && group.name === excludedNamespaceId) ||
-                        (boundNamespaceIds?.includes(String(group.id)) ?? false)
-                      return (
-                        <button
-                          key={group.id}
-                          type="button"
-                          onClick={() => !isBound && handleToggleGroup(group)}
-                          disabled={isBound || selected}
-                          className="w-full min-h-11 flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm text-text-primary truncate">
-                              {group.display_name || group.name}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                  <Input
+                    ref={inputRef}
+                    value={searchQuery}
+                    onChange={e => {
+                      setSearchQuery(e.target.value)
+                      setShowDropdown(true)
+                    }}
+                    onFocus={() => {
+                      if (!searching && groups.length === 0) performSearch(searchQuery)
+                      setShowDropdown(true)
+                    }}
+                    placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
+                    className="min-h-11 pl-9"
+                    data-testid="add-namespace-group-search"
+                  />
+                </div>
+                {showDropdown && (
+                  <div
+                    ref={dropdownRef}
+                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+                    data-testid="add-namespace-group-dropdown"
+                  >
+                    {searching ? (
+                      <div className="p-3 text-sm text-text-muted text-center">
+                        {t('common:actions.loading')}
+                      </div>
+                    ) : filteredGroups.length === 0 ? (
+                      <div className="p-3 text-sm text-text-muted text-center">
+                        {searchQuery.trim()
+                          ? loc('document.permission.noGroupResults', '没有匹配的组')
+                          : loc('document.permission.noGroups', '暂无可用群组')}
+                      </div>
+                    ) : (
+                      filteredGroups.map(group => {
+                        const selected = isGroupSelected(group)
+                        const isBound =
+                          (excludedNamespaceId && group.name === excludedNamespaceId) ||
+                          (boundNamespaceIds?.includes(String(group.id)) ?? false)
+                        return (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => !isBound && handleToggleGroup(group)}
+                            disabled={isBound || selected}
+                            className="w-full min-h-11 flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm text-text-primary truncate">
+                                {group.display_name || group.name}
+                              </div>
+                              {isBound ? (
+                                <div className="text-xs text-text-muted">
+                                  {loc('document.permission.alreadyBound', '已绑定')}
+                                </div>
+                              ) : group.my_role ? (
+                                <div className="text-xs text-text-muted">
+                                  {t(`document.permission.role.${group.my_role}`)}
+                                </div>
+                              ) : null}
                             </div>
-                            {isBound ? (
-                              <div className="text-xs text-text-muted">
-                                {loc('document.permission.alreadyBound', '已绑定')}
-                              </div>
-                            ) : group.my_role ? (
-                              <div className="text-xs text-text-muted">
-                                {t(`document.permission.role.${group.my_role}`)}
-                              </div>
-                            ) : null}
-                          </div>
-                          {selected && <Check className="h-4 w-4 text-green-500 flex-shrink-0" />}
-                        </button>
-                      )
-                    })
-                  )}
+                            {selected && <Check className="h-4 w-4 text-green-500 flex-shrink-0" />}
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* Selected group chips */}
+              {selectedGroups.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedGroups.map(group => (
+                    <Badge key={group.id} variant="secondary" className="pr-1">
+                      <span className="truncate max-w-[120px]">
+                        {group.display_name || group.name}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={t('document.permission.remove')}
+                        className="ml-1 min-h-11 min-w-11 flex items-center justify-center hover:bg-accent rounded-full"
+                        onClick={() => handleRemoveGroup(group.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
                 </div>
               )}
             </div>
-            {/* Selected group chips */}
-            {selectedGroups.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {selectedGroups.map(group => (
-                  <Badge key={group.id} variant="secondary" className="pr-1">
-                    <span className="truncate max-w-[120px]">
-                      {group.display_name || group.name}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={t('document.permission.remove')}
-                      className="ml-1 min-h-11 min-w-11 flex items-center justify-center hover:bg-accent rounded-full"
-                      onClick={() => handleRemoveGroup(group.id)}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
+
+            {/* Role selector */}
+            <div className="space-y-2">
+              <Label htmlFor="namespace-role">
+                {loc('document.permission.role.label', '角色')}
+              </Label>
+              <Select value={role} onValueChange={v => setRole(v as MemberRole)}>
+                <SelectTrigger id="namespace-role" className="min-h-11 min-w-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Maintainer">
+                    <div>
+                      <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
+                      <div className="text-xs text-text-muted">
+                        {t('document.permission.role.MaintainerDescription')}
+                      </div>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="Developer">
+                    <div>
+                      <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                      <div className="text-xs text-text-muted">
+                        {t('document.permission.role.DeveloperDescription')}
+                      </div>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="Reporter">
+                    <div>
+                      <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                      <div className="text-xs text-text-muted">
+                        {t('document.permission.role.ReporterDescription')}
+                      </div>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="RestrictedAnalyst">
+                    <div>
+                      <div className="font-medium">
+                        {t('document.permission.role.RestrictedAnalyst')}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {t('document.permission.role.RestrictedAnalystDescription')}
+                      </div>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Error message */}
+            {error && (
+              <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg">{error}</div>
             )}
-          </div>
-
-          {/* Role selector */}
-          <div className="space-y-2">
-            <Label htmlFor="namespace-role">{loc('document.permission.role.label', '角色')}</Label>
-            <Select value={role} onValueChange={v => setRole(v as MemberRole)}>
-              <SelectTrigger id="namespace-role" className="min-h-11 min-w-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Maintainer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.MaintainerDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Developer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.DeveloperDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Reporter">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.ReporterDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="RestrictedAnalyst">
-                  <div>
-                    <div className="font-medium">
-                      {t('document.permission.role.RestrictedAnalyst')}
-                    </div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.RestrictedAnalystDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Error message */}
-          {error && (
-            <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg">{error}</div>
+          </fieldset>
+          {grantError && (
+            <p role="alert" className="text-sm text-error">
+              {t('document.creation.' + grantError)}
+            </p>
           )}
-
+          {failures.map(({ entry, error: reason }) => (
+            <p role="alert" key={entry.entityId} className="text-sm text-error">
+              {entry.label}:{' '}
+              {['unconfirmed', 'roleConflict', 'notSubmitted'].includes(reason)
+                ? t('document.creation.' + reason)
+                : reason}
+            </p>
+          ))}
           <DialogFooter>
             <Button
               type="button"
@@ -387,11 +391,22 @@ export function AddNamespaceDialog({
             </Button>
             <Button
               type="submit"
+              data-testid="submit-namespace-permissions"
               variant="primary"
               className="min-h-11 min-w-11"
               disabled={loading || selectedGroups.length === 0}
             >
-              {loading ? <Spinner className="w-4 h-4" /> : loc('document.permission.add', '添加')}
+              {loading ? (
+                <Spinner className="w-4 h-4" />
+              ) : (
+                t(
+                  uncertain
+                    ? 'document.creation.verifyAndRetry'
+                    : failures.length
+                      ? 'document.creation.retryFailed'
+                      : 'document.permission.add'
+                )
+              )}
             </Button>
           </DialogFooter>
         </form>

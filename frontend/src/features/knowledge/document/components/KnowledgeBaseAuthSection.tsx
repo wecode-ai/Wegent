@@ -30,6 +30,7 @@ import type { Group } from '@/types/group'
 export type { AuthEntry }
 
 interface KnowledgeBaseAuthSectionProps {
+  defaultOpen?: boolean
   value: AuthEntry[]
   onChange: (entries: AuthEntry[]) => void
   /** Namespace ID to exclude from group search (the KB's owning namespace) */
@@ -37,12 +38,13 @@ interface KnowledgeBaseAuthSectionProps {
 }
 
 export function KnowledgeBaseAuthSection({
+  defaultOpen = false,
   value,
   onChange,
   excludedNamespaceId,
 }: KnowledgeBaseAuthSectionProps) {
   const { t } = useTranslation('knowledge')
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   // Per-section role state, keyed by entity type
   const [roles, setRoles] = useState<Record<string, MemberRole>>({
     user: 'Reporter' as MemberRole,
@@ -70,8 +72,8 @@ export function KnowledgeBaseAuthSection({
 
   const totalCount = value.length
 
-  const removeEntry = (id: string) => {
-    onChange(value.filter(e => e.id !== id))
+  const removeEntry = (entry: AuthEntry) => {
+    onChange(value.filter(e => e.entityType !== entry.entityType || e.entityId !== entry.entityId))
   }
 
   const getRoleForType = (type: string): MemberRole => {
@@ -90,7 +92,7 @@ export function KnowledgeBaseAuthSection({
       <CollapsibleTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full text-left"
+          className="min-h-11 min-w-11 flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full text-left"
           data-testid="auth-section-trigger"
         >
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -117,7 +119,7 @@ export function KnowledgeBaseAuthSection({
                 <div className="flex flex-wrap gap-2">
                   {entries.map(entry => (
                     <div
-                      key={entry.id}
+                      key={JSON.stringify([entry.entityType, entry.entityId])}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
                     >
                       <span className="truncate max-w-[120px]">{entry.label}</span>
@@ -125,8 +127,10 @@ export function KnowledgeBaseAuthSection({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
-                        onClick={() => removeEntry(entry.id)}
+                        className="min-h-11 min-w-11 text-text-muted hover:text-error flex-shrink-0 p-0"
+                        data-testid={`remove-auth-${entry.entityType}-${entry.entityId}`}
+                        aria-label={t('document.permission.remove')}
+                        onClick={() => removeEntry(entry)}
                       >
                         <X className="w-3 h-3" />
                       </Button>
@@ -240,6 +244,8 @@ function UserAuthSearch({
       placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
       multiple={false}
       hideSelectedUsers
+      inputTestId="knowledge-auth-user-search"
+      className="[&_input]:min-h-11 [&_button]:min-h-11 [&_button]:min-w-11"
     />
   )
 }
@@ -344,7 +350,7 @@ function NamespaceAuthSearch({
             setShowDropdown(true)
           }}
           placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
-          className="pl-9"
+          className="min-h-11 pl-9"
         />
       </div>
       {showDropdown && (

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from 'node:crypto'
-import { test, expect } from '@playwright/test'
-import { createApiClient } from '../../utils/api-client'
+import { test, expect, type Page, type BrowserContext } from '@playwright/test'
+import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
@@ -194,3 +194,165 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
     if (errors.length) throw new AggregateError(errors, 'Permission scenario cleanup failed')
   }
 })
+
+interface CreationSession {
+  api: ApiClient
+  libraries: Map<number, ApiClient>
+  groups: Set<string>
+  contexts: Set<BrowserContext>
+}
+const creationTest = test.extend<{ creation: CreationSession }>({
+  creation: async ({ request, page, baseURL }, use) => {
+    const api = createApiClient(request)
+    const login = await api.login(ADMIN_USER.username, ADMIN_USER.password, 1)
+    expect(login.status).toBe(200)
+    const state = buildStorageState(
+      baseURL!,
+      login.data!.access_token,
+      getJwtExpiryMs(login.data!.access_token)
+    )
+    await page.context().addCookies(state.cookies)
+    await page.addInitScript(({ origin, localStorage: entries }) => {
+      if (location.origin === origin)
+        entries.forEach(entry => localStorage.setItem(entry.name, entry.value))
+    }, state.origins[0])
+    const creation: CreationSession = {
+      api,
+      libraries: new Map(),
+      groups: new Set(),
+      contexts: new Set(),
+    }
+    try {
+      await use(creation)
+    } finally {
+      const errors: unknown[] = []
+      for (const context of creation.contexts) {
+        try {
+          await context.close()
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      for (const [id, owner] of creation.libraries) {
+        try {
+          expect((await owner.delete('/api/knowledge-bases/' + id)).status).toBe(204)
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      for (const name of creation.groups) {
+        try {
+          expect([204, 404]).toContain((await api.deleteGroup(name)).status)
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Creation scenario cleanup failed')
+    }
+  },
+})
+
+async function createLibraryInDialog(page: Page, creation: CreationSession, owner = creation.api) {
+  const dialog = page.getByTestId('create-kb-dialog')
+  await dialog.getByTestId('kb-name-input').fill('e2e-created-knowledge-' + randomUUID())
+  const summarySection = dialog.getByTestId('knowledge-summary-section-trigger')
+  if ((await summarySection.getAttribute('aria-expanded')) === 'false') await summarySection.click()
+  const summary = dialog.locator('#knowledge-summary-enabled')
+  if ((await summary.getAttribute('aria-checked')) === 'true') await summary.click()
+  await expect(summary).toHaveAttribute('aria-checked', 'false')
+  const pending = page.waitForResponse(
+    response =>
+      new URL(response.url()).pathname === '/api/knowledge-bases' &&
+      response.request().method() === 'POST'
+  )
+  await dialog.getByTestId('submit-create-kb').click()
+  const response = await pending
+  const body = (await response.json()) as { id: number; namespace: string }
+  if (Number.isSafeInteger(body.id) && body.id > 0) creation.libraries.set(body.id, owner)
+  expect(response.status()).toBe(201)
+  return body
+}
+
+creationTest(
+  'creates once, grants a colleague, and finds the same library in relationship navigation',
+  async ({ page, request, browser, baseURL, creation }) => {
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('create-kb-button').click()
+    const library = await createLibraryInDialog(page, creation)
+    const authorization = page.getByTestId('created-knowledge-authorization')
+    await authorization.getByTestId('knowledge-auth-user-search').fill(REGULAR_USER.username)
+    await authorization.getByText(REGULAR_USER.username, { exact: true }).click()
+    const pending = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname ===
+          `/api/share/KnowledgeBase/${library.id}/members/batch` &&
+        response.request().method() === 'POST'
+    )
+    await authorization.getByTestId('submit-created-permissions').click()
+    const granted = await pending
+    expect(granted.status()).toBe(200)
+    expect(((await granted.json()) as { failed: unknown[] }).failed).toEqual([])
+    await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
+    await page.getByTestId('finish-created-authorization').click()
+    await expect(page.getByTestId('create-kb-button')).toBeFocused()
+    await page.getByTestId('nav-personal-item').click()
+    await expect(page.getByTestId('kb-row-' + library.id)).toHaveCount(1)
+    const recipient = createApiClient(request)
+    const login = await recipient.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+    expect(login.status).toBe(200)
+    const context = await browser.newContext({
+      baseURL,
+      storageState: buildStorageState(
+        baseURL!,
+        login.data!.access_token,
+        getJwtExpiryMs(login.data!.access_token)
+      ),
+    })
+    creation.contexts.add(context)
+    const colleague = await context.newPage()
+    await colleague.goto('/knowledge?type=document&group=shared')
+    await expect(colleague.getByTestId('kb-row-' + library.id)).toHaveCount(1)
+  }
+)
+
+creationTest(
+  'defaults to an authorized team and requires an explicit personal choice for a read-only teammate',
+  async ({ page, request, browser, baseURL, creation }) => {
+    const name = 'e2e-team-create-' + randomUUID()
+    creation.groups.add(name)
+    expect((await creation.api.createGroup({ name, display_name: name })).status).toBe(201)
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('knowledge-team-filter').selectOption('group-' + name)
+    await page.getByTestId('create-kb-button').click()
+    await expect(page.getByTestId('create-space-settings')).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByTestId('group-selector')).toContainText(name)
+    expect((await createLibraryInDialog(page, creation)).namespace).toBe(name)
+    await page.getByTestId('finish-created-authorization').click()
+    const recipient = createApiClient(request)
+    const login = await recipient.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+    expect(login.status).toBe(200)
+    const identity = await recipient.get<{ id: number }>('/api/users/me')
+    expect(identity.status).toBe(200)
+    expect(
+      (await creation.api.addGroupMember(name, { user_id: identity.data!.id, role: 'Reporter' }))
+        .status
+    ).toBe(201)
+    const context = await browser.newContext({
+      baseURL,
+      storageState: buildStorageState(
+        baseURL!,
+        login.data!.access_token,
+        getJwtExpiryMs(login.data!.access_token)
+      ),
+    })
+    creation.contexts.add(context)
+    const teammate = await context.newPage()
+    await teammate.goto('/knowledge?type=document')
+    await teammate.getByTestId('knowledge-team-filter').selectOption('group-' + name)
+    await teammate.getByTestId('create-kb-button').click()
+    await expect(teammate.getByTestId('submit-create-kb')).toBeDisabled()
+    await teammate.getByTestId('create-in-personal-space').click()
+    expect((await createLibraryInDialog(teammate, creation, recipient)).namespace).toBe('default')
+    await teammate.getByTestId('finish-created-authorization').click()
+  }
+)

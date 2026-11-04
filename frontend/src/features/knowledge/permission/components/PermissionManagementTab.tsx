@@ -50,6 +50,7 @@ function buildRoleGroups(
 
 interface PermissionManagementTabProps {
   kbId: number
+  refreshKey?: number
   onChanged?: () => void
   onAccessDenied?: () => void
   /** The namespace this KB belongs to; groups in this namespace are excluded from group authorization */
@@ -74,6 +75,7 @@ export function PermissionManagementTab(props: PermissionManagementTabProps) {
 function PermissionManagementSession({
   kbId,
   kbNamespace,
+  refreshKey,
   extensionTabs,
   onChanged,
   onAccessDenied,
@@ -113,7 +115,7 @@ function PermissionManagementSession({
   // Fetch permissions on mount
   useEffect(() => {
     fetchPermissions()
-  }, [fetchPermissions])
+  }, [fetchPermissions, refreshKey])
 
   // Load optional KB extensions (e.g., org_department in internal builds)
   useEffect(() => {

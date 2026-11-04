@@ -5,20 +5,23 @@
 'use client'
 
 import { useState, FormEvent } from 'react'
-import { UserPlus, XCircle } from 'lucide-react'
+import { UserPlus } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
+import { useKnowledgeGrants } from '../hooks/useKnowledgeGrants'
+import client from '@/apis/client'
+import { useUser } from '@/features/common/UserContext'
 import { AddUserForm } from './add-user-form'
-import type { MemberRole, BatchPermissionAddResponse } from '@/types/knowledge'
+import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 
 /** Maximum number of users that can be added in a single batch */
@@ -33,7 +36,17 @@ interface AddUserDialogProps {
   onAccessDenied?: () => void
 }
 
-export function AddUserDialog({
+export function AddUserDialog(props: AddUserDialogProps) {
+  const { user } = useUser()
+  return (
+    <AddUserSession
+      key={JSON.stringify([user?.id, client.getCacheScope(), props.kbId, props.open])}
+      {...props}
+    />
+  )
+}
+
+function AddUserSession({
   open,
   onOpenChange,
   kbId,
@@ -45,16 +58,12 @@ export function AddUserDialog({
   const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [localError, setLocalError] = useState<string | null>(null)
-  const [batchResult, setBatchResult] = useState<BatchPermissionAddResponse | null>(null)
 
-  const { batchAddPermission, loading, error } = useKnowledgePermissions({
+  const { grant, loading, error, failures, uncertain } = useKnowledgeGrants({
     kbId,
     onChanged,
     onAccessDenied,
   })
-
-  // Build a user_id -> user_name map from selectedUsers for result display
-  const userNameMap = new Map(selectedUsers.map(u => [u.id, u.user_name]))
 
   const handleSelectedUsersChange = (users: SearchUser[]) => {
     if (users.length > MAX_BATCH_SIZE) {
@@ -63,14 +72,12 @@ export function AddUserDialog({
     }
     // Clear errors when user changes selection
     setLocalError(null)
-    setBatchResult(null)
     setSelectedUsers(users)
   }
 
   const handleSubmit = async (e?: FormEvent) => {
     e?.preventDefault()
     setLocalError(null)
-    setBatchResult(null)
 
     if (selectedUsers.length === 0) {
       setLocalError(t('document.permission.selectUser'))
@@ -89,17 +96,24 @@ export function AddUserDialog({
     }
 
     try {
-      const members = validUsers.map(u => ({ user_id: u.id, role }))
-      const result = await batchAddPermission(members)
-
-      if (result.failed.length === 0) {
+      const remaining = await grant(
+        validUsers.map(u => ({
+          id: 'user-' + u.id,
+          entityType: 'user',
+          entityId: String(u.id),
+          label: u.user_name,
+          role,
+        }))
+      )
+      if (remaining === null) return
+      setSelectedUsers(
+        validUsers.filter(user => remaining.some(entry => entry.entityId === String(user.id)))
+      )
+      if (remaining.length === 0) {
         // All succeeded — close dialog and reset
         onSuccess?.()
         onOpenChange(false)
         resetForm()
-      } else {
-        // Partial or full failure — show result details, keep dialog open
-        setBatchResult(result)
       }
     } catch (_err) {
       // Network/server error is displayed from hook via `error` state
@@ -110,7 +124,6 @@ export function AddUserDialog({
     setSelectedUsers([])
     setRole('Reporter')
     setLocalError(null)
-    setBatchResult(null)
   }
 
   const handleClose = () => {
@@ -122,7 +135,7 @@ export function AddUserDialog({
     handleSubmit()
   }
 
-  const displayError = localError || error
+  const displayError = localError || (error ? t('document.creation.' + error) : null)
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -136,26 +149,27 @@ export function AddUserDialog({
             {t('document.permission.addUser')}
           </DialogTitle>
         </DialogHeader>
-        <AddUserForm
-          selectedUsers={selectedUsers}
-          role={role}
-          onSelectedUsersChange={handleSelectedUsersChange}
-          onRoleChange={setRole}
-          onSubmit={handleSubmit}
-          error={displayError}
-        />
-
+        <DialogDescription>{t('document.creation.selectTargets')}</DialogDescription>
+        <fieldset disabled={loading || uncertain}>
+          <AddUserForm
+            selectedUsers={selectedUsers}
+            role={role}
+            onSelectedUsersChange={handleSelectedUsersChange}
+            onRoleChange={setRole}
+            onSubmit={handleSubmit}
+            error={displayError}
+          />
+        </fieldset>
         {/* Batch result details — shown when partial failure occurs */}
-        {batchResult && batchResult.failed.length > 0 && (
-          <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg space-y-1">
-            {batchResult.failed.map(f => (
-              <div key={f.user_id} className="flex items-center gap-1.5">
-                <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>
-                  {userNameMap.get(f.user_id) || `User ${f.user_id}`}{' '}
-                  {t('document.permission.batchAddFailed')}: {f.error}
-                </span>
-              </div>
+        {failures.length > 0 && (
+          <div role="alert" className="text-sm text-error space-y-1">
+            {failures.map(({ entry, error: reason }) => (
+              <p key={entry.entityId}>
+                {entry.label}:{' '}
+                {['unconfirmed', 'roleConflict', 'notSubmitted'].includes(reason)
+                  ? t('document.creation.' + reason)
+                  : reason}
+              </p>
             ))}
           </div>
         )}
@@ -174,9 +188,20 @@ export function AddUserDialog({
             variant="primary"
             className="min-h-11 min-w-11"
             disabled={loading || selectedUsers.length === 0}
+            data-testid="submit-user-permissions"
             onClick={handleAddClick}
           >
-            {loading ? <Spinner className="w-4 h-4" /> : t('document.permission.add')}
+            {loading ? (
+              <Spinner className="w-4 h-4" />
+            ) : (
+              t(
+                uncertain
+                  ? 'document.creation.verifyAndRetry'
+                  : failures.length
+                    ? 'document.creation.retryFailed'
+                    : 'document.permission.add'
+              )
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

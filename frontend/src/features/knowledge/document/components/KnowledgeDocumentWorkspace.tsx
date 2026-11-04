@@ -12,7 +12,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import client from '@/apis/client'
 import { Button } from '@/components/ui/button'
@@ -81,6 +81,14 @@ function KnowledgeDocumentSession({
   onKnowledgeViewStateChange,
 }: KnowledgeDocumentWorkspaceProps) {
   const { t } = useTranslation('knowledge')
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  const createTrigger = useRef<HTMLElement | null>(null)
   const [navigationOpen, setNavigationOpen] = useState(false)
   const [accessKbId, setAccessKbId] = useState<number | null>(null)
   const [permissionRevision, setPermissionRevision] = useState(0)
@@ -112,6 +120,7 @@ function KnowledgeDocumentSession({
   }, [accessKbId, accessKb, sidebar.hasLoaded, sidebar.isGroupsLoading, sidebar.loadError])
   const { refreshAll } = sidebar
   const permissionsChanged = useCallback(() => {
+    if (!alive.current) return
     setPermissionRevision(value => value + 1)
     void refreshAll()
   }, [refreshAll])
@@ -166,7 +175,6 @@ function KnowledgeDocumentSession({
   }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
-  const reloadGroupKbs = sidebar.refreshAll
   const selectedSpace = sidebar.groups.find(group => group.id === sidebar.selectedGroupId)
   const canCreateInSelectedSpace =
     selectedSpace &&
@@ -300,11 +308,59 @@ function KnowledgeDocumentSession({
     }
   }, [sidebar, updateUrlParams])
 
+  const availableGroupsForCreate = useMemo((): AvailableGroup[] => {
+    return sidebar.groups
+      .filter(g => g.id !== 'shared')
+      .map(g => ({
+        id: g.id,
+        name: g.name,
+        displayName: g.displayName,
+        type: g.type,
+        canCreate:
+          g.type === 'personal'
+            ? true
+            : canCreateKnowledgeBaseInNamespace({
+                namespace: g.name,
+                namespaceRole: namespaceRoleMap.get(g.name),
+              }),
+      }))
+  }, [sidebar.groups, namespaceRoleMap])
+
   // Dialog management
   const dialogs = useKnowledgeBaseDialogs({
     sidebar,
-    reloadGroupKbs,
+    availableGroups: availableGroupsForCreate,
   })
+
+  const { createdKb, createdAtListRevision, dismissCreatedKb } = dialogs
+  useEffect(() => {
+    if (sidebar.selectedKbId !== null) {
+      dismissCreatedKb()
+      setAccessKbId(null)
+    }
+  }, [sidebar.selectedKbId, dismissCreatedKb])
+  const createdRow = createdKb
+    ? sidebar.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === createdKb.id)
+    : undefined
+  useEffect(() => {
+    if (
+      createdKb &&
+      sidebar.listRevision > createdAtListRevision &&
+      !sidebar.isGroupsLoading &&
+      !sidebar.loadError &&
+      !createdRow
+    )
+      dismissCreatedKb()
+  }, [
+    createdKb,
+    createdAtListRevision,
+    dismissCreatedKb,
+    sidebar.listRevision,
+    sidebar.isGroupsLoading,
+    sidebar.loadError,
+    createdRow,
+  ])
+  const permissionKb = dialogs.createdKb ?? accessKb
 
   // Auto-collapse sidebar in Notebook view.
   useEffect(() => {
@@ -407,24 +463,6 @@ function KnowledgeDocumentSession({
       displayName: g.displayName,
     }))
   }, [sidebar.groups])
-
-  const availableGroupsForCreate = useMemo((): AvailableGroup[] => {
-    return sidebar.groups
-      .filter(g => g.id !== 'shared')
-      .map(g => ({
-        id: g.id,
-        name: g.name,
-        displayName: g.displayName,
-        type: g.type,
-        canCreate:
-          g.type === 'personal'
-            ? true
-            : canCreateKnowledgeBaseInNamespace({
-                namespace: g.name,
-                namespaceRole: namespaceRoleMap.get(g.name),
-              }),
-      }))
-  }, [sidebar.groups, namespaceRoleMap])
 
   const allModeKbsWithInfo = visibleKnowledgeBases.allWithGroupInfo
 
@@ -551,8 +589,18 @@ function KnowledgeDocumentSession({
         knowledgeBasesWithGroupInfo={rows}
         isLoading={sidebar.isGroupsLoading && !sidebar.hasLoaded}
         onSelectKb={handleSelectKb}
-        onCreateKb={dialogs.handleCreateKbFromAll}
-        onCreateKbInSpace={canCreateInSelectedSpace ? dialogs.handleCreateKbFromGroup : undefined}
+        onCreateKb={type => {
+          createTrigger.current = document.activeElement as HTMLElement
+          dialogs.handleCreateKbFromAll(type)
+        }}
+        onCreateKbInSpace={
+          canCreateInSelectedSpace
+            ? type => {
+                createTrigger.current = document.activeElement as HTMLElement
+                dialogs.handleCreateKbFromGroup(type)
+              }
+            : undefined
+        }
         hasAdvancedKnowledge={hasAdvancedKnowledge}
         showAdvancedKnowledge={showAdvancedKnowledge}
         onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
@@ -662,14 +710,30 @@ function KnowledgeDocumentSession({
         {sidebar.loadError && !sidebar.hasLoaded ? null : renderMainContent()}
       </div>
 
-      {accessKb && (
+      {permissionKb && (
         <KnowledgeAccessDialog
-          kbId={accessKb.id}
-          kbNamespace={accessKb.namespace}
-          canManage={canManageKbInList(accessKb)}
-          onClose={() => setAccessKbId(null)}
+          kbId={permissionKb.id}
+          kbNamespace={permissionKb.namespace}
+          canManage={
+            dialogs.createdKb
+              ? !createdRow || canManageKbInList(createdRow)
+              : canManageKbInList(accessKb!)
+          }
+          resourceCreated={Boolean(dialogs.createdKb)}
+          restoreFocus={() => {
+            if (createTrigger.current?.isConnected) createTrigger.current.focus()
+          }}
+          refreshError={dialogs.createdKb ? dialogs.createRefreshError || sidebar.loadError : null}
+          onRetryRefresh={() => void dialogs.retryCreatedList()}
+          onClose={() => {
+            setAccessKbId(null)
+            dialogs.dismissCreatedKb()
+          }}
           onChanged={permissionsChanged}
-          onAccessLost={() => sidebar.removeInaccessibleKnowledgeBase(accessKb.id)}
+          onAccessLost={() => {
+            sidebar.removeInaccessibleKnowledgeBase(permissionKb.id)
+            dialogs.dismissCreatedKb()
+          }}
         />
       )}
       <CreateKnowledgeBaseDialog
@@ -691,7 +755,7 @@ function KnowledgeDocumentSession({
         bindModel={knowledgeBindModel}
         showGroupSelector={dialogs.showGroupSelector}
         availableGroups={availableGroupsForCreate}
-        defaultGroupId="personal"
+        defaultGroupId={dialogs.defaultCreateGroupId}
       />
       <EditKnowledgeBaseDialog
         open={!!dialogs.editingKb}

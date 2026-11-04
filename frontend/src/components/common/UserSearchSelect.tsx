@@ -183,6 +183,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
                 const isSelected = selectedUsers.some(u => u.id === user.id)
                 return (
                   <button
+                    type="button"
                     key={user.id}
                     onClick={() => handleSelectUser(user)}
                     disabled={isSelected}
@@ -224,6 +225,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
               <Badge key={user.id} variant="secondary" className="pr-1">
                 {user.user_name}
                 <button
+                  type="button"
                   onClick={() => handleRemoveUser(user.id)}
                   className="ml-1 hover:bg-accent rounded-full p-0.5"
                   disabled={disabled}

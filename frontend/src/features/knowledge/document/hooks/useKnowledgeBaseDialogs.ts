@@ -9,7 +9,9 @@
  * page component focused on layout and navigation.
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import client from '@/apis/client'
+import type { AvailableGroup } from '../components/CreateKnowledgeBaseDialog'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
@@ -25,6 +27,8 @@ import type { MigrationTargetGroup } from '../components/MigrateKnowledgeBaseDia
 
 interface SidebarLike {
   groups: Array<{ id: string; name: string; displayName: string; type: string }>
+  filterGroupId?: string | null
+  listRevision?: number
   selectedGroupId: string | null
   currentUser: { id: number } | null
   selectedKbId: number | null
@@ -34,10 +38,18 @@ interface SidebarLike {
 
 interface UseKnowledgeBaseDialogsParams {
   sidebar: SidebarLike
-  reloadGroupKbs: () => void
+  availableGroups?: AvailableGroup[]
 }
 
+export type CreatedKnowledgeBase = Pick<KnowledgeBase, 'id' | 'name' | 'namespace'>
+
 export interface UseKnowledgeBaseDialogsReturn {
+  createdKb: CreatedKnowledgeBase | null
+  createdAtListRevision: number
+  createRefreshError: string | null
+  dismissCreatedKb: () => void
+  retryCreatedList: () => Promise<void>
+  defaultCreateGroupId: string
   // Create dialog
   showCreateDialog: boolean
   setShowCreateDialog: (show: boolean) => void
@@ -84,8 +96,30 @@ export interface UseKnowledgeBaseDialogsReturn {
 
 export function useKnowledgeBaseDialogs({
   sidebar,
-  reloadGroupKbs,
+  availableGroups,
 }: UseKnowledgeBaseDialogsParams): UseKnowledgeBaseDialogsReturn {
+  const cacheScope = client.getCacheScope()
+  const scope = JSON.stringify([sidebar.currentUser?.id, cacheScope])
+  const generation = useRef(0)
+  const [stateScope, setStateScope] = useState(scope)
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const latest = useRef({ sidebar, availableGroups })
+  latest.current = { sidebar, availableGroups }
+  const createdRef = useRef<CreatedKnowledgeBase | null>(null)
+  const creatingRef = useRef(false)
+  const [createdKb, setCreatedKb] = useState<CreatedKnowledgeBase | null>(null)
+  const [createdAtListRevision, setCreatedAtListRevision] = useState(0)
+  const [createRefreshError, setCreateRefreshError] = useState<string | null>(null)
+  const [defaultCreateGroupId, setDefaultCreateGroupId] = useState('personal')
+
   const router = useRouter()
   const { t } = useTranslation('knowledge')
 
@@ -118,18 +152,85 @@ export function useKnowledgeBaseDialogs({
 
   const [createError, setCreateError] = useState<string | null>(null)
 
+  if (stateScope !== scope) {
+    generation.current++
+    setStateScope(scope)
+    createdRef.current = null
+    creatingRef.current = false
+    setCreatedKb(null)
+    setShowCreateDialog(false)
+    setIsCreating(false)
+    setCreateRefreshError(null)
+    setCreateError(null)
+    setEditingKb(null)
+    setDeletingKb(null)
+    setMigratingKb(null)
+    resetCreateDialogState()
+  }
+  const epoch = generation.current
+  const dismissCreatedKb = useCallback(() => {
+    if (scopeRef.current !== scope || generation.current !== epoch) return
+    createdRef.current = null
+    setCreatedKb(null)
+    setCreateRefreshError(null)
+  }, [scope, epoch])
+
+  const retryCreatedList = useCallback(async () => {
+    const current = () =>
+      mounted.current &&
+      scopeRef.current === scope &&
+      generation.current === epoch &&
+      client.getCacheScope() === cacheScope
+    if (!current()) return
+    setCreateRefreshError(null)
+    try {
+      await latest.current.sidebar.refreshAll()
+    } catch (error) {
+      if (current()) setCreateRefreshError(error instanceof Error ? error.message : String(error))
+    }
+  }, [scope, cacheScope, epoch])
+
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
+      if (
+        creatingRef.current ||
+        client.getCacheScope() !== cacheScope ||
+        createdRef.current ||
+        scopeRef.current !== scope ||
+        generation.current !== epoch ||
+        !mounted.current
+      )
+        return
+      creatingRef.current = true
+      const current = () =>
+        mounted.current &&
+        scopeRef.current === scope &&
+        generation.current === epoch &&
+        client.getCacheScope() === cacheScope
+      const completed = (created: CreatedKnowledgeBase) => {
+        if (!current()) return
+        createdRef.current = created
+        setCreatedKb(created)
+        setCreatedAtListRevision(latest.current.sidebar.listRevision ?? 0)
+        setShowCreateDialog(false)
+        resetCreateDialogState()
+        void retryCreatedList()
+      }
+      setCreateRefreshError(null)
       setIsCreating(true)
       setCreateError(null)
       try {
         let namespace = 'default'
 
         if (data.selectedGroupId) {
-          const selectedGroup = sidebar.groups.find(g => g.id === data.selectedGroupId)
+          const selectedGroup = latest.current.sidebar.groups.find(
+            g => g.id === data.selectedGroupId
+          )
           if (!selectedGroup) {
             throw new Error(`Selected group ${data.selectedGroupId} not found`)
           }
+          if (selectedGroup.type === 'personal' && selectedGroup.id !== 'personal')
+            throw new Error(t('document.creation.spaceUnavailable'))
           if (selectedGroup.type === 'personal') {
             namespace = 'default'
           } else {
@@ -145,6 +246,13 @@ export function useKnowledgeBaseDialogs({
           namespace = createGroupName
         }
 
+        if (
+          namespace !== 'default' &&
+          !latest.current.availableGroups?.some(
+            group => group.name === namespace && group.canCreate
+          )
+        )
+          throw new Error(t('document.creation.spaceUnavailable'))
         const kbType = data.kb_type || createKbType
 
         // A code wiki is created through its own endpoint: it needs a repository,
@@ -157,12 +265,12 @@ export function useKnowledgeBaseDialogs({
           // left the retrieval config to be auto-resolved instead of taken from the
           // form. `data` already carries every field the dialog collected.
           const created = await createCodeWiki({
+            isCurrent: current,
             namespace,
             data,
           })
-          setShowCreateDialog(false)
-          resetCreateDialogState()
-          void sidebar.refreshAll()
+          completed({ id: created.id, name: created.name, namespace })
+          if (!current()) return
           if (created.scheduledUpdateError) {
             toast.warning(t('codeWiki.create.scheduleNotConfigured'))
           } else {
@@ -172,7 +280,8 @@ export function useKnowledgeBaseDialogs({
         }
 
         const { createKnowledgeBase } = await import('@/apis/knowledge')
-        await createKnowledgeBase({
+        if (!current()) return
+        const created = await createKnowledgeBase({
           name: data.name,
           description: data.description,
           namespace,
@@ -197,22 +306,30 @@ export function useKnowledgeBaseDialogs({
           multimodal_analysis_image_prompt: data.multimodal_analysis_image_prompt,
         })
 
-        setShowCreateDialog(false)
-        resetCreateDialogState()
-
-        await sidebar.refreshAll()
-        if (sidebar.selectedGroupId) {
-          reloadGroupKbs()
-        }
+        completed({ id: created.id, name: created.name, namespace: created.namespace })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to create knowledge base'
-        setCreateError(message)
+        if (current()) setCreateError(message)
         throw err
       } finally {
-        setIsCreating(false)
+        if (current()) {
+          creatingRef.current = false
+          setIsCreating(false)
+        }
       }
     },
-    [createScope, createGroupName, createKbType, sidebar, reloadGroupKbs, resetCreateDialogState, t]
+    [
+      createScope,
+      createGroupName,
+      createKbType,
+      sidebar,
+      scope,
+      cacheScope,
+      epoch,
+      resetCreateDialogState,
+      retryCreatedList,
+      t,
+    ]
   )
 
   const handleUpdate = useCallback(
@@ -274,13 +391,18 @@ export function useKnowledgeBaseDialogs({
     [migratingKb, sidebar, router]
   )
 
-  const handleCreateKbFromAll = useCallback((kbType: KnowledgeBaseType) => {
-    setCreateScope('personal')
-    setCreateGroupName(undefined)
-    setCreateKbType(kbType)
-    setShowGroupSelector(true)
-    setShowCreateDialog(true)
-  }, [])
+  const handleCreateKbFromAll = useCallback(
+    (kbType: KnowledgeBaseType) => {
+      setDefaultCreateGroupId(latest.current.sidebar.filterGroupId || 'personal')
+      dismissCreatedKb()
+      setCreateScope('personal')
+      setCreateGroupName(undefined)
+      setCreateKbType(kbType)
+      setShowGroupSelector(true)
+      setShowCreateDialog(true)
+    },
+    [dismissCreatedKb]
+  )
 
   const handleCreateKbFromGroups = useCallback((kbType: KnowledgeBaseType) => {
     setCreateScope('group')
@@ -331,6 +453,12 @@ export function useKnowledgeBaseDialogs({
   }, [sidebar.groups])
 
   return {
+    createdKb,
+    createdAtListRevision,
+    createRefreshError,
+    dismissCreatedKb,
+    retryCreatedList,
+    defaultCreateGroupId,
     showCreateDialog,
     setShowCreateDialog,
     createScope,

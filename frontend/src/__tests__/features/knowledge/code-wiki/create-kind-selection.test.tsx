@@ -128,6 +128,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
     )
+    fireEvent.click(screen.getByTestId('create-space-settings'))
     fireEvent.keyDown(screen.getByTestId('group-selector'), { key: 'ArrowDown' })
     fireEvent.click(await screen.findByRole('option', { name: 'Team' }))
 

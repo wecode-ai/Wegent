@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
@@ -96,13 +96,26 @@ jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
     </div>
   ),
 }))
-jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
-  useKnowledgePermissions: () => ({
-    myPermission: { has_access: true, role: 'Owner', is_creator: true },
-    fetchMyPermission: mockFetchMyPermission,
-  }),
+jest.mock('@/apis/knowledge-permission', () => ({
+  knowledgePermissionApi: {
+    getMyPermission: jest.fn(async () => ({
+      has_access: true,
+      role: 'Owner',
+      is_creator: true,
+      pending_request: null,
+    })),
+    getMyPermissionSources: jest.fn(async () => ({
+      has_access: true,
+      effective_role: 'Owner',
+      is_creator: true,
+      sources: [],
+    })),
+    listPermissions: jest.fn(async () => ({
+      pending: [],
+      approved: { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] },
+    })),
+  },
 }))
-const mockFetchMyPermission = jest.fn()
 jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', () => ({
   CreateKnowledgeBaseDialog: ({
     open,
@@ -198,7 +211,9 @@ beforeEach(() => {
     },
     summary: { total_count: 1, personal_count: 1, group_count: 0, organization_count: 0 },
   }
-  jest.mocked(knowledgeBaseApi.getAllGrouped).mockImplementation(async () => data)
+  jest
+    .mocked(knowledgeBaseApi.getAllGrouped)
+    .mockImplementation(async () => JSON.parse(JSON.stringify(data)))
   jest.mocked(getKnowledgeBase).mockResolvedValue(baseKb)
   jest.mocked(createKnowledgeBase).mockResolvedValue(baseKb)
   jest.mocked(codeWikiApi.create).mockResolvedValue({ id: 9, name: 'Repository' } as never)
@@ -272,6 +287,7 @@ it('retains document creation settings and the dedicated code creation endpoint'
     )
   )
   await waitFor(() => expect(screen.queryByTestId('create-kb-dialog')).not.toBeInTheDocument())
+  await userEvent.setup().click(await screen.findByTestId('finish-created-authorization'))
   await userEvent.setup().click(screen.getByTestId('create-kb-button'))
   await userEvent.setup().click(screen.getByTestId('submit-code-wiki'))
   await waitFor(() =>
@@ -294,4 +310,51 @@ it('keeps the public company link distinct from a personal library with the same
   await screen.findByTestId('mock-detail-panel')
   expect(getKnowledgeBase).toHaveBeenCalledWith(8)
   expect(getKnowledgeBase).not.toHaveBeenCalledWith(7)
+})
+
+it('retains the created authorization session while the pre-creation list is all that is available', async () => {
+  let finish!: (value: AllGroupedKnowledgeResponse) => void
+  render(<KnowledgeDocumentPageMobile />)
+  await screen.findByTestId('create-kb-button')
+  jest.mocked(createKnowledgeBase).mockResolvedValueOnce({ ...baseKb, id: 29, name: 'New library' })
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  await userEvent.setup().click(screen.getByTestId('create-kb-button'))
+  await userEvent.setup().click(screen.getByTestId('submit-normal-kb'))
+  expect(await screen.findByTestId('created-knowledge-authorization')).toBeInTheDocument()
+  expect(screen.queryByTestId('kb-row-29')).not.toBeInTheDocument()
+  await act(async () => finish(data))
+  await waitFor(() =>
+    expect(screen.queryByTestId('created-knowledge-authorization')).not.toBeInTheDocument()
+  )
+  expect(createKnowledgeBase).toHaveBeenCalledTimes(1)
+})
+
+it('retries a failed list refresh for the already-created library without creating it again', async () => {
+  render(<KnowledgeDocumentPageMobile />)
+  await screen.findByTestId('create-kb-button')
+  const created = { ...baseKb, id: 29, name: 'New library' }
+  jest.mocked(createKnowledgeBase).mockResolvedValueOnce(created)
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockRejectedValueOnce(new Error('offline'))
+  await userEvent.setup().click(screen.getByTestId('create-kb-button'))
+  await userEvent.setup().click(screen.getByTestId('submit-normal-kb'))
+  expect(await screen.findByTestId('retry-created-list')).toBeInTheDocument()
+  data.personal.created_by_me.push(row(created))
+  await userEvent.setup().click(screen.getByTestId('retry-created-list'))
+  await waitFor(() => expect(screen.queryByTestId('retry-created-list')).not.toBeInTheDocument())
+  expect(screen.getByTestId('created-knowledge-authorization')).toBeInTheDocument()
+  expect(createKnowledgeBase).toHaveBeenCalledTimes(1)
+})
+
+it('returns focus to the create action when authorization is skipped', async () => {
+  render(<KnowledgeDocumentPageMobile />)
+  const trigger = await screen.findByTestId('create-kb-button')
+  await userEvent.setup().click(trigger)
+  await userEvent.setup().click(screen.getByTestId('submit-normal-kb'))
+  await userEvent.setup().click(await screen.findByTestId('finish-created-authorization'))
+  await waitFor(() => expect(trigger).toHaveFocus())
 })

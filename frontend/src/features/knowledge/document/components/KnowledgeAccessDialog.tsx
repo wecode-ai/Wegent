@@ -18,9 +18,14 @@ import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isManager } from '@/types/base-role'
 import type { MyPermissionSourcesResponse } from '@/types/knowledge'
+import { KnowledgeGrantForm } from '../../permission/components/KnowledgeGrantForm'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 
 interface KnowledgeAccessDialogProps {
+  restoreFocus?: () => void
+  resourceCreated?: boolean
+  refreshError?: string | null
+  onRetryRefresh?: () => void
   kbId: number
   kbNamespace?: string
   canManage: boolean
@@ -40,12 +45,20 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
   const returnFocus = useRef(
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   )
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
   const callbacks = useRef(props)
   callbacks.current = props
   const [sources, setSources] = useState<MyPermissionSourcesResponse | null>(null)
   const [failed, setFailed] = useState(false)
   const [blocked, setBlocked] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const [membersRevision, setMembersRevision] = useState(0)
   useEffect(() => {
     let cancelled = false
     setFailed(false)
@@ -75,7 +88,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
   }, [props.kbId, props.canManage, attempt])
 
   const changed = () => {
-    setAttempt(value => value + 1)
+    if (alive.current) setAttempt(value => value + 1)
     callbacks.current.onChanged()
   }
   const canManage =
@@ -93,6 +106,10 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
       <DialogContent
         onCloseAutoFocus={event => {
           event.preventDefault()
+          if (props.resourceCreated && props.restoreFocus) {
+            props.restoreFocus()
+            return
+          }
           const target = returnFocus.current
           if (target?.isConnected && !target.closest('[role="dialog"]')) target.focus()
         }}
@@ -103,9 +120,34 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
         }}
       >
         <DialogHeader>
-          <DialogTitle>{t('document.navigation.permissionDetails')}</DialogTitle>
+          <DialogTitle>
+            {t(
+              props.resourceCreated
+                ? 'document.creation.created'
+                : 'document.navigation.permissionDetails'
+            )}
+          </DialogTitle>
         </DialogHeader>
-        <DialogDescription>{t('document.navigation.permissionDescription')}</DialogDescription>
+        <DialogDescription>
+          {t(
+            props.resourceCreated
+              ? 'document.creation.createdDescription'
+              : 'document.navigation.permissionDescription'
+          )}
+        </DialogDescription>
+        {props.refreshError && (
+          <div role="alert">
+            {t('document.creation.refreshFailed')}
+            <Button
+              variant="outline"
+              className="min-h-11 min-w-11"
+              data-testid="retry-created-list"
+              onClick={props.onRetryRefresh}
+            >
+              {t('document.navigation.retry')}
+            </Button>
+          </div>
+        )}
         {(failed || blocked) && (
           <div role="alert">
             {t(
@@ -149,16 +191,41 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
             </ul>
           </div>
         )}
-        {canManage && (
-          <PermissionManagementTab
+        {canManage && props.resourceCreated && (
+          <KnowledgeGrantForm
             kbId={props.kbId}
             kbNamespace={props.kbNamespace}
-            onChanged={changed}
             onAccessDenied={() => {
-              setBlocked(true)
+              if (alive.current) setBlocked(true)
+              changed()
+            }}
+            onChanged={() => {
+              if (alive.current) setMembersRevision(value => value + 1)
               changed()
             }}
           />
+        )}
+        {canManage && (
+          <PermissionManagementTab
+            kbId={props.kbId}
+            refreshKey={membersRevision}
+            kbNamespace={props.kbNamespace}
+            onChanged={changed}
+            onAccessDenied={() => {
+              if (alive.current) setBlocked(true)
+              changed()
+            }}
+          />
+        )}
+        {props.resourceCreated && (
+          <Button
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-testid="finish-created-authorization"
+            onClick={props.onClose}
+          >
+            {t('document.creation.finishLater')}
+          </Button>
         )}
       </DialogContent>
     </Dialog>

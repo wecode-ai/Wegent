@@ -784,7 +784,12 @@ export interface BatchPermissionAddRequest {
 
 export interface BatchPermissionAddResponse {
   succeeded: PermissionResponse[]
-  failed: { user_id: number; error: string }[]
+  failed: {
+    user_id: number
+    error: string
+    entity_type?: string | null
+    entity_id?: string | null
+  }[]
 }
 
 // Permission User Info types
@@ -857,6 +862,8 @@ export interface MyPermissionResponse {
 
 // Permission Response (for CRUD operations)
 export interface PermissionResponse {
+  entity_type?: string | null
+  entity_id?: string | null
   id: number
   knowledge_base_id: number
   user_id: number

@@ -123,6 +123,7 @@ export interface UseKnowledgeSidebarReturn {
 
   scopeKey: string
   loadError: string | null
+  listRevision: number
   hasLoaded: boolean
   // Refresh
   refreshAll: () => Promise<void>
@@ -204,6 +205,7 @@ export function useKnowledgeSidebar({
   const requestRef = useRef(0)
   const latestSelectedKbIdRef = useRef<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [listRevision, setListRevision] = useState(0)
   const [hasLoaded, setHasLoaded] = useState(false)
 
   // Data state - using the new all-grouped API response
@@ -245,6 +247,7 @@ export function useKnowledgeSidebar({
     setRecentAccessItems(loadRecentAccess(recentKey))
     setIsLoading(true)
     setHasLoaded(false)
+    setListRevision(0)
     setLoadError(null)
   }
 
@@ -259,6 +262,7 @@ export function useKnowledgeSidebar({
       if (!current()) return
       setAllGroupedData(response)
       setHasLoaded(true)
+      setListRevision(value => value + 1)
       const ids = new Set(collectNavigationKnowledge(response).map(kb => kb.id))
       if (latestSelectedKbIdRef.current !== null && !ids.has(latestSelectedKbIdRef.current))
         latestSelectedKbIdRef.current = null
@@ -743,6 +747,7 @@ export function useKnowledgeSidebar({
     scopeKey: scope,
     loadError,
     hasLoaded,
+    listRevision,
     // Refresh
     refreshAll,
   }
