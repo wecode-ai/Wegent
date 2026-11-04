@@ -33,7 +33,8 @@ export function createGitReadonlyVerification({
   let round = 0
   let readCompleted = false
   let live
-  const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const rpc = (control, method, params, timeoutMs = uiTimeoutMs) =>
+    requestExecutor(control, method, params, timeoutMs)
   async function waitFor(read, ready) {
     const deadline = Date.now() + modelResponseTimeoutMs
     let latest
@@ -161,9 +162,9 @@ child.on('exit', (code, signal) => {
       } else if (input.includes(MARKER)) {
         if (requestContainsToolOutput(body, 'git-live-denied-write')) {
           const result = readMcpToolOutput(body, 'git-live-denied-write')
-          assert.match(
+          assert.equal(
             result,
-            /rejected by user/,
+            'user rejected MCP tool call',
             'The native result must explicitly report user rejection'
           )
           assert.ok(
@@ -209,18 +210,29 @@ child.on('exit', (code, signal) => {
       const repository = process.env.WEWORK_GIT_READONLY_REPOSITORY?.trim()
       if (!repository) return
       assert.ok(restart, 'Live readonly verification needs the shared restart lifecycle')
-      const identity = await rpc(control, 'runtime.connections.git.read', {
-        providerId: PROVIDER,
-        instance: 'https://github.com',
-        operation: 'identity',
-      })
-      const repo = await rpc(control, 'runtime.connections.git.read', {
-        providerId: PROVIDER,
-        instance: identity.instance,
-        profile: identity.profile,
-        operation: 'repository',
-        repository,
-      })
+      // A bound provider read performs up to two real CLI requests, each bounded at 45s.
+      const identity = await rpc(
+        control,
+        'runtime.connections.git.read',
+        {
+          providerId: PROVIDER,
+          instance: 'https://github.com',
+          operation: 'identity',
+        },
+        90_000
+      )
+      const repo = await rpc(
+        control,
+        'runtime.connections.git.read',
+        {
+          providerId: PROVIDER,
+          instance: identity.instance,
+          profile: identity.profile,
+          operation: 'repository',
+          repository,
+        },
+        90_000
+      )
       assert.equal(repo.data.full_name, repository)
       live = { identity, repository }
       const original = await rpc(control, 'runtime.stand_in.personal.get', { userId })
@@ -235,24 +247,31 @@ child.on('exit', (code, signal) => {
         kind: 'repository',
         policy: { automatic: true, askBeforeAct: true, immediate: false },
       }
-      const saved = await rpc(control, 'runtime.stand_in.personal.save', {
-        userId,
-        settings: {
-          ...original,
-          processing: { mode: 'silent', intervalMinutes: 1 },
-          primary: { ...original.primary, enabled: true, prompt: '', preferences: '', model },
-          roles: [
-            {
-              ...original.roles[0],
-              name: 'GitHub 只读验证',
-              enabled: true,
-              prompt: MARKER,
-              model,
-              connections: [source],
-            },
-          ],
+      // Saving preflights the source and revalidates it before creating the cloud receiver.
+      // Its multiple real provider requests must not use the ordinary 10s UI step budget.
+      const saved = await rpc(
+        control,
+        'runtime.stand_in.personal.save',
+        {
+          userId,
+          settings: {
+            ...original,
+            processing: { mode: 'silent', intervalMinutes: 1 },
+            primary: { ...original.primary, enabled: true, prompt: '', preferences: '', model },
+            roles: [
+              {
+                ...original.roles[0],
+                name: 'GitHub 只读验证',
+                enabled: true,
+                prompt: MARKER,
+                model,
+                connections: [source],
+              },
+            ],
+          },
         },
-      })
+        300_000
+      )
       const connection = saved.roles[0].connections[0]
       live.roleId = saved.roles[0].id
       live.subscriptionId = connection.subscriptionId
@@ -385,7 +404,7 @@ child.on('exit', (code, signal) => {
         })
         await waitFor(
           () => rpc(control, 'runtime.stand_in.proposal.get', { userId, roleId: live.roleId }),
-          proposal => proposal.status === 'pending'
+          proposal => proposal?.status === 'pending'
         )
         const beforeRemoval = await request('/v1/git-connections/subscriptions')
         assert.ok(
@@ -397,6 +416,7 @@ child.on('exit', (code, signal) => {
           'clickWhenEnabled',
           `[data-testid="stand-in-overview-role-${live.roleId}"]`
         )
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
         await control.command('waitFor', '[data-testid="stand-in-proposal-accept"]')
         await captureScreenshot(
           control,
@@ -410,6 +430,10 @@ child.on('exit', (code, signal) => {
         await waitFor(
           () => request('/v1/git-connections/subscriptions'),
           result => !result.items.some(row => row.id === connection.subscriptionId && row.active)
+        )
+        await waitFor(
+          () => control.command('getElementCount', '[data-testid="stand-in-proposal"]'),
+          count => Number(count) === 0
         )
         await captureScreenshot(control, 'git-11-accepted-removal-revokes-cloud-receiver.png')
       } finally {
