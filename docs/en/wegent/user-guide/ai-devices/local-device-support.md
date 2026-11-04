@@ -66,6 +66,8 @@ irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/loc
 
 The installer selects a stable `vX.Y.Z` Wegent platform release independently of the Wework desktop release channel. Explicit version overrides remain supported. GitHub metadata failures or a missing artifact in the newest platform release stop installation with an error.
 
+The executor's built-in GitHub update checker uses the platform release channel too and matches the asset for the current operating system, including the `.exe` extension on Windows. It does not install an older release when the newest platform release lacks that asset.
+
 The installation script will:
 
 - Check and install Node.js 18+ (required for Claude Code)

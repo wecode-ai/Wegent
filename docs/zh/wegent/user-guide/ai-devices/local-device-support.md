@@ -68,6 +68,8 @@ irm https://raw.githubusercontent.com/wecode-ai/Wegent/main/executor/scripts/loc
 
 安装器默认选择稳定的 `vX.Y.Z` Wegent 平台 Release，与 Wework 桌面应用发布通道独立。显式版本参数继续使用指定版本；GitHub 元数据请求失败或最新平台 Release 缺少当前平台文件时会报错并停止。
 
+执行器内置的 GitHub 升级检查也使用平台发布通道，并按当前操作系统匹配资产（Windows 使用 `.exe` 文件）。最新平台版本缺少匹配文件时不会退回安装旧版本。
+
 安装脚本将会：
 
 - 检查并安装 Node.js 18+（Claude Code 运行所需）
