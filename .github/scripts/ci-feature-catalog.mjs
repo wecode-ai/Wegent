@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { integrationChecks } from "./ci-feature-policy.mjs";
+import { executorProjects, integrationChecks } from "./ci-feature-policy.mjs";
 
 export function readClassifier(root, script, files, all = false) {
   const directory = mkdtempSync(resolve(tmpdir(), "wegent-ci-classifier-"));
@@ -113,6 +113,20 @@ export async function loadCatalog(root) {
   )
     .trim()
     .split("\n");
+  const consumerPaths = execFileSync(
+    "bash",
+    [
+      resolve(root, ".github/scripts/lib/ci-policy-paths.sh"),
+      "--list-consumers",
+    ],
+    { encoding: "utf8" },
+  )
+    .trim()
+    .split("\n")
+    .map((entry) => {
+      const [pattern, targets] = entry.split("|");
+      return { pattern, targets: targets.split(" ").filter(Boolean) };
+    });
   if (catalog.version !== 1)
     throw new Error(`Unsupported feature catalog version: ${catalog.version}`);
   const registry = await import(
@@ -132,7 +146,7 @@ export async function loadCatalog(root) {
     "chromium",
     "api",
     "provider-native-chromium",
-    "executor-chromium",
+    ...executorProjects,
   ]);
   for (const [name, feature] of Object.entries(catalog.features)) {
     if (feature.label !== `ci:${name}`)
@@ -167,5 +181,13 @@ export async function loadCatalog(root) {
       if (!catalog.features[name])
         throw new Error(`Unknown integration feature: ${name}`);
   }
-  return { ...catalog, text, all, plugins, specOwners, policyPaths };
+  return {
+    ...catalog,
+    text,
+    all,
+    plugins,
+    specOwners,
+    policyPaths,
+    consumerPaths,
+  };
 }

@@ -1,3 +1,8 @@
+export const executorProjects = [
+  "executor-device-chromium",
+  "executor-chromium",
+];
+
 // Order specific boundaries before their shared owners. Unknown code fails closed.
 export const sourceRules = [
   [
@@ -176,7 +181,7 @@ export const integrationChecks = {
   subscriptions: { features: ["automation"], shards: [1] },
   knowledge_team_gateway: { features: ["knowledge", "agents"], shards: [1] },
   knowledge_index: { features: ["knowledge"], shards: [4] },
-  dingtalk_documents: { features: ["knowledge"], shards: [1] },
+  dingtalk_documents: { features: ["knowledge"], shards: [2] },
 };
 
 export function classifySource(path) {

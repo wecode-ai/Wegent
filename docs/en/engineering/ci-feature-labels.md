@@ -57,6 +57,7 @@ and selector changes automatically run full coverage: all module unit tests, nat
 platform and desktop E2E, plus the full PR memory suite and Windows/macOS checks. This removes first-rollout
 dependencies on newly created labels or contributors' label-write permission while requiring actual full test results.
 Module and SDK classifiers and the feature planner share `.github/scripts/lib/ci-policy-paths.sh` as their policy inventory.
+It also lists the known consumers of build, cache, and scheduling tools. Changes to those tools select only their registered modules and E2E suites.
 The initial policy also treats test registration files conservatively; narrow those requirements
 only after precise dependency evidence and contract coverage are available.
 

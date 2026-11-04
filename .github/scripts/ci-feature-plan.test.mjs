@@ -19,7 +19,11 @@ import {
   readClassifier,
 } from "./ci-feature-catalog.mjs";
 import { assertCurrentPlan, buildPlan } from "./ci-feature-plan.mjs";
-import { ciLabels, integrationChecks } from "./ci-feature-policy.mjs";
+import {
+  ciLabels,
+  executorProjects,
+  integrationChecks,
+} from "./ci-feature-policy.mjs";
 import { playwrightInvocation } from "./run-feature-playwright.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -203,14 +207,14 @@ test("catalog project assignments agree with the actual Playwright configuration
       "chromium",
       "api",
       "provider-native-chromium",
-      "executor-chromium",
+      ...executorProjects,
     ].includes(project.name),
   );
   for (const spec of catalog.specOwners.values()) {
     const matches = candidates.filter((project) => {
-      const ignored = (project.testIgnore ?? []).some((pattern) =>
-        pattern.test(spec.file),
-      );
+      const ignored = []
+        .concat(project.testIgnore ?? [])
+        .some((pattern) => pattern.test(spec.file));
       return (
         !ignored && (!project.testMatch || project.testMatch.test(spec.file))
       );
@@ -344,7 +348,7 @@ test("CI policy edits without label-write permission execute complete coverage",
     ".github/ci/features.json",
     ".github/scripts/ci-feature-plan.mjs",
     ".github/workflows/wework-e2e.yml",
-    ".github/actions/setup-node-workspace/action.yml",
+    ".github/actions/future-shared-action/action.yml",
   ]) {
     const { plan, outputs } = planFor([path], []);
     assert.deepEqual(plan.errors, [], path);
@@ -378,6 +382,52 @@ test("CI policy edits without label-write permission execute complete coverage",
     planFor([], [], { event: "schedule" }).outputs.memory_suite,
     "false",
   );
+});
+
+test("registered CI consumers exercise their suites without requiring product labels", () => {
+  for (const [path, targets, platform, desktop] of [
+    [
+      ".github/ci/wework-unit-test-durations.json",
+      ["wework"],
+      "false",
+      "false",
+    ],
+    [
+      ".github/actions/build-frontend-e2e/action.yml",
+      ["platform_e2e"],
+      "true",
+      "false",
+    ],
+    [
+      ".github/actions/setup-node-workspace/action.yml",
+      ["frontend", "platform_e2e", "wework", "wework_e2e"],
+      "true",
+      "true",
+    ],
+    [
+      ".github/actions/build-wework-core-e2e/action.yml",
+      ["wework_e2e"],
+      "false",
+      "true",
+    ],
+  ]) {
+    const { plan, outputs } = planFor([path], []);
+    assert.deepEqual(plan.errors, [], path);
+    assert.deepEqual(plan.scopedTargets, targets, path);
+    assert.equal(plan.automaticFull, false, path);
+    assert.equal(outputs.platform_suite, platform, path);
+    assert.equal(outputs.executor_suite, platform, path);
+    assert.equal(outputs.wework_e2e, desktop, path);
+    assert.equal(outputs.memory_suite, "false", path);
+  }
+  const { plan } = planFor(
+    [
+      ".github/actions/setup-node-workspace/action.yml",
+      "wework/src/components/chat/MessageList.tsx",
+    ],
+    [],
+  );
+  assert(plan.errors.includes("Missing required label: ci:chat"));
 });
 
 test("docs-only work needs no feature suite; permission contracts remain covered", () => {
@@ -457,12 +507,18 @@ test("partitioned platform plans execute each selected spec and independent comm
     assert.deepEqual(
       files,
       plan.specs
-        .filter((spec) => spec.project !== "executor-chromium")
+        .filter((spec) => !executorProjects.includes(spec.project))
         .map((spec) => spec.file)
         .sort(),
       feature,
     );
     assert(plan.platformMatrix.length <= 4);
+    for (const entry of plan.platformMatrix) {
+      assert.equal(
+        entry.dingtalkOAuth,
+        entry.checks.includes("dingtalk_documents"),
+      );
+    }
     for (const check of plan.checks) {
       assert.deepEqual(
         plan.platformMatrix
@@ -472,6 +528,29 @@ test("partitioned platform plans execute each selected spec and independent comm
       );
     }
   }
+});
+
+test("Executor labels select the matching Playwright projects", () => {
+  const args = ["--project=executor-chromium"];
+  const { plan, outputs } = planFor([], ["ci:collaboration"]);
+  assert.equal(outputs.executor_suite, "true");
+  const device = playwrightInvocation(plan, args);
+  assert.equal(device[0], "--project=executor-device-chromium");
+  assert(!device.includes(args[0]));
+  assert(
+    device.some((arg) => arg.endsWith("issue-dispatch-executor\\.spec\\.ts$")),
+  );
+
+  const runtime = playwrightInvocation(planFor([], ["ci:runtime"]).plan, args);
+  assert.deepEqual(
+    runtime.filter((arg) => arg.startsWith("--project=")),
+    executorProjects.map((project) => `--project=${project}`),
+  );
+  assert(
+    runtime.some((arg) =>
+      arg.endsWith("claude-background-lifecycle\\.spec\\.ts$"),
+    ),
+  );
 });
 
 test("provider-only shards provision auth and keep serial/no-deps execution", () => {
@@ -589,7 +668,10 @@ test("every independent platform integration command is gated by its registered 
     resolve(root, ".github/workflows/e2e-tests.yml"),
     "utf8",
   );
-  for (const id of Object.keys(integrationChecks))
+  // The matrix gates the OAuth fixture, capabilities, and tests together.
+  for (const id of Object.keys(integrationChecks).filter(
+    (id) => id !== "dingtalk_documents",
+  ))
     assert(
       workflow.includes(
         `contains(fromJSON(env.CI_FEATURE_PLAN).checks, '${id}')`,

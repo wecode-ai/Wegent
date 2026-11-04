@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { executorProjects } from "./ci-feature-policy.mjs";
 
 export function playwrightInvocation(plan, args) {
   if (plan.errors.length)
     throw new Error("Cannot run an invalid CI feature plan");
-  if (plan.full) return args;
+  if (plan.fullPlatform) return args;
   const projects = args
     .filter((arg) => arg.startsWith("--project="))
     .map((arg) => arg.slice("--project=".length));
@@ -14,10 +15,18 @@ export function playwrightInvocation(plan, args) {
     : undefined;
   let files;
   let bucket;
-  if (projects.includes("executor-chromium")) {
-    files = plan.specs
-      .filter((spec) => projects.includes(spec.project))
-      .map((spec) => spec.file);
+  if (projects.some((project) => executorProjects.includes(project))) {
+    const specs = plan.specs.filter((spec) =>
+      executorProjects.includes(spec.project),
+    );
+    files = specs.map((spec) => spec.file);
+    const selectedProjects = new Set(specs.map((spec) => spec.project));
+    args = [
+      ...args.filter((arg) => !arg.startsWith("--project=")),
+      ...executorProjects
+        .filter((project) => selectedProjects.has(project))
+        .map((project) => `--project=${project}`),
+    ];
   } else {
     // The provider index is a logical index retained from the existing workflow.
     bucket = plan.platformMatrix.find(
@@ -34,7 +43,7 @@ export function playwrightInvocation(plan, args) {
   }
   if (!files.length) {
     // Provider tests keep --no-deps. Provision their existing isolated user first.
-    if (projects.includes("chromium") && bucket.provider.length)
+    if (projects.includes("chromium") && bucket?.provider.length)
       return ["--project=setup"];
     return null;
   }

@@ -175,7 +175,7 @@
         },
         {
           "file": "collaboration/collaboration-agent-execution.spec.ts",
-          "project": "executor-chromium"
+          "project": "executor-device-chromium"
         },
         {
           "file": "collaboration/collaboration-board-preferences.spec.ts",
@@ -219,7 +219,7 @@
         },
         {
           "file": "collaboration/issue-dispatch-executor.spec.ts",
-          "project": "executor-chromium"
+          "project": "executor-device-chromium"
         },
         {
           "file": "collaboration/issue-dispatch.spec.ts",
@@ -296,7 +296,7 @@
         },
         {
           "file": "tasks/device-artifact-declaration.spec.ts",
-          "project": "executor-chromium"
+          "project": "executor-device-chromium"
         },
         {
           "file": "tasks/file-upload.spec.ts",
@@ -359,7 +359,7 @@
         },
         {
           "file": "tasks/agent-conversation-regression.spec.ts",
-          "project": "executor-chromium"
+          "project": "executor-device-chromium"
         },
         {
           "file": "tasks/claude-background-lifecycle.spec.ts",
@@ -367,7 +367,7 @@
         },
         {
           "file": "tasks/claudecode-compaction.spec.ts",
-          "project": "executor-chromium"
+          "project": "executor-device-chromium"
         },
         {
           "file": "tasks/code-page-enhanced.spec.ts",

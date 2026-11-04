@@ -26,7 +26,14 @@ mark_all() {
 }
 
 classify_path() {
-  local path="$1"
+  local path="$1" targets target
+
+  if targets=$(ci_consumer_targets "$path"); then
+    for target in $targets; do
+      changed["$target"]=true
+    done
+    return
+  fi
 
   if is_ci_policy_path "$path"; then
     mark_all
@@ -34,7 +41,8 @@ classify_path() {
   fi
 
   case "$path" in
-    .github/scripts/run-attachment-replica-e2e.sh | \
+    .github/workflows/e2e-tests.yml | \
+      .github/scripts/run-attachment-replica-e2e.sh | \
       .github/scripts/run-knowledge-provider-e2e.sh | \
       .github/scripts/test-e2e-resource-reuse.mjs | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
@@ -42,6 +50,7 @@ classify_path() {
       .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/resolve-executor-e2e-runtime.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
+      .github/scripts/verify-executor-e2e-image.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/setup-dingtalk-oauth-e2e.sh | \
       .github/scripts/start-frontend-e2e-server.sh)
@@ -51,8 +60,12 @@ classify_path() {
       changed[executor]=true
       changed[platform_e2e]=true
       ;;
-    docker/wework-e2e/* | \
+    .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/wework-core-e2e-transport.* | \
+      .github/scripts/classify-wework-desktop-e2e.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   ciLabels,
   classifySource,
+  executorProjects,
   integrationChecks,
 } from "./ci-feature-policy.mjs";
 import {
@@ -15,10 +16,22 @@ import {
   readClassifier,
 } from "./ci-feature-catalog.mjs";
 
+function matchesPath(path, pattern) {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`).test(path);
+}
+
+function consumerRule(path, catalog) {
+  return catalog.consumerPaths.find(({ pattern }) =>
+    matchesPath(path, pattern),
+  );
+}
+
 export function requiredFeatures(files, catalog) {
   const required = new Set();
   const unknown = [];
   for (const path of files) {
+    if (consumerRule(path, catalog)) continue;
     let features;
     if (path.startsWith("frontend/e2e/tests/")) {
       const owner = catalog.specOwners.get(
@@ -57,6 +70,8 @@ function buckets(specs, checks) {
     for (const shard of integrationChecks[id].shards)
       entries[shard - 1].checks.push(id);
   }
+  for (const entry of entries)
+    entry.dingtalkOAuth = entry.checks.includes("dingtalk_documents");
   return entries.filter(
     (entry) =>
       entry.specs.length || entry.provider.length || entry.checks.length,
@@ -85,22 +100,21 @@ export function buildPlan({
     "ci:memory",
   ]);
   const invalid = normalized.filter((label) => !known.has(label));
-  const automaticFull = files.some((path) =>
-    catalog.policyPaths.some((pattern) =>
-      new RegExp(
-        "^" +
-          pattern
-            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-            .replaceAll("\\*", ".*") +
-          "$",
-      ).test(path),
-    ),
+  const scopedTargets = new Set(
+    files.flatMap((path) => consumerRule(path, catalog)?.targets ?? []),
+  );
+  const automaticFull = files.some(
+    (path) =>
+      !consumerRule(path, catalog) &&
+      catalog.policyPaths.some((pattern) => matchesPath(path, pattern)),
   );
   const full =
     automaticFull ||
     event !== "pull_request" ||
     normalized.includes("ci:all") ||
     normalized.includes("ci:release");
+  const fullPlatform = full || scopedTargets.has("platform_e2e");
+  const fullDesktop = full || scopedTargets.has("wework_e2e");
   const missing =
     event !== "pull_request"
       ? []
@@ -114,17 +128,18 @@ export function buildPlan({
   );
   // Required tags preserve existing client ownership. Extra tags explicitly widen it.
   const extra = selected.filter((name) => !required.includes(`ci:${name}`));
-  const platformFeatures = selected.filter(
-    (name) => full || surfaces.platform || extra.includes(name),
-  );
-  const desktopFeatures = selected.filter(
-    (name) =>
-      full ||
-      surfaces.desktop ||
-      normalized.includes("ci:windows") ||
-      normalized.includes("ci:macos") ||
-      extra.includes(name),
-  );
+  const platformFeatures = fullPlatform
+    ? Object.keys(catalog.features)
+    : selected.filter((name) => surfaces.platform || extra.includes(name));
+  const desktopFeatures = fullDesktop
+    ? Object.keys(catalog.features)
+    : selected.filter(
+        (name) =>
+          surfaces.desktop ||
+          normalized.includes("ci:windows") ||
+          normalized.includes("ci:macos") ||
+          extra.includes(name),
+      );
   const specs = platformFeatures
     .flatMap((name) => catalog.features[name].specs)
     .sort((a, b) => a.file.localeCompare(b.file));
@@ -140,7 +155,7 @@ export function buildPlan({
   const allDesktop = desktopIds(catalog.all, catalog.plugins);
   const mandatoryDesktop =
     surfaces.desktop && previous.size < allDesktop.size ? previous : new Set();
-  if (!full && mandatoryDesktop.size) {
+  if (!fullDesktop && mandatoryDesktop.size) {
     desktop.clear();
     for (const id of mandatoryDesktop) desktop.add(id);
     for (const name of extra)
@@ -149,18 +164,21 @@ export function buildPlan({
   const matrices =
     event === "merge_group"
       ? legacyDesktop
-      : full
+      : fullDesktop
         ? catalog.all
         : filterDesktop(catalog.all, desktop, catalog.plugins);
-  const platformMatrix = full
+  const platformMatrix = fullPlatform
     ? [1, 2, 3, 4].map((index) => ({
         shardIndex: index,
         shardTotal: 4,
+        dingtalkOAuth:
+          integrationChecks.dingtalk_documents.shards.includes(index),
         providerShardIndex: [3, 2, 1, 4][index - 1],
       }))
     : buckets(specs, checks);
   const executor =
-    full || specs.some((spec) => spec.project === "executor-chromium");
+    fullPlatform ||
+    specs.some((spec) => executorProjects.includes(spec.project));
   const errors = [
     ...invalid.map((label) => `Unknown CI label: ${label}`),
     ...missing.map((label) => `Missing required label: ${label}`),
@@ -178,7 +196,7 @@ export function buildPlan({
     );
   const policyHash = createHash("sha256")
     .update(catalog.text)
-    .update(catalog.policyPaths.join("\n"))
+    .update(readFileSync(new URL("./lib/ci-policy-paths.sh", import.meta.url)))
     .update(readFileSync(new URL("./ci-feature-policy.mjs", import.meta.url)))
     .digest("hex");
   const plan = {
@@ -197,7 +215,9 @@ export function buildPlan({
     desktop: [...desktopIds(matrices, catalog.plugins)].sort(),
     mandatoryDesktop: [...mandatoryDesktop].sort(),
     full,
+    fullPlatform,
     automaticFull,
+    scopedTargets: [...scopedTargets].sort(),
     specs,
     checks,
     platformMatrix,
@@ -221,7 +241,7 @@ export function buildPlan({
     platform_suite: String(active && platformMatrix.length > 0),
     executor_suite: String(active && executor),
     platform_matrix: JSON.stringify({ include: platformMatrix }),
-    wework_e2e: String(active && (full || desktop.size > 0)),
+    wework_e2e: String(active && (fullDesktop || desktop.size > 0)),
     wework_desktop_macos_inspector_e2e: String(
       active &&
         event !== "merge_group" &&
