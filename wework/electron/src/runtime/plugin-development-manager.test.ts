@@ -75,6 +75,10 @@ describe('PluginDevelopmentManager', () => {
     expect(environment).not.toHaveProperty('WEGENT_PYTHON_PATH')
     expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_URL')
     expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_TOKEN')
+    expect(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_URL).toBe(
+      'http://127.0.0.1:9876/runtime/python/downloads'
+    )
+    expect(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN).toBe('parent-python-token')
     expect(environment).not.toHaveProperty('WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP')
     expect(environment).toMatchObject({
       WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',

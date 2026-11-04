@@ -619,6 +619,15 @@ export function pluginDevelopmentEnvironment(
   }
   return {
     ...environment,
+    ...(base.WEWORK_PYTHON_RUNTIME_URL && base.WEWORK_PYTHON_RUNTIME_TOKEN
+      ? {
+          WEWORK_PARENT_PYTHON_DOWNLOADS_URL: new URL(
+            '/runtime/python/downloads',
+            base.WEWORK_PYTHON_RUNTIME_URL
+          ).href,
+          WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN: base.WEWORK_PYTHON_RUNTIME_TOKEN,
+        }
+      : {}),
     WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
     ...(e2eEnabled
       ? {

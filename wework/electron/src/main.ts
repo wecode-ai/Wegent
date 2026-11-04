@@ -148,7 +148,11 @@ import {
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
 import { PythonRuntimeManager } from './runtime/python-runtime.js'
-import { fetchPythonRuntimeDownloads } from './runtime/python-runtime-downloads.js'
+import {
+  fetchPythonRuntimeDownloads,
+  fetchParentPythonRuntimeDownloads,
+  PythonRuntimeLoginRequiredError,
+} from './runtime/python-runtime-downloads.js'
 import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.js'
 import {
   prepareWorkbenchEnvironment,
@@ -2185,6 +2189,7 @@ async function configureDesktopRuntime(): Promise<void> {
     ensurePython: pythonRuntimeEnabled
       ? async () => (await managedPythonRuntime()).ensure()
       : undefined,
+    pythonDownloads: pythonRuntimeEnabled ? pythonRuntimeDownloads : undefined,
     pythonStatus: pythonRuntimeEnabled
       ? async () => (await managedPythonRuntime()).status()
       : undefined,
@@ -2639,7 +2644,15 @@ if (hasSingleInstanceLock) {
       dockVisible = false
     }
     preferences = new PreferencesStore(app.getPath('userData'))
-    rendererStorage = new RendererStorageStore(app.getPath('userData'))
+    rendererStorage = new RendererStorageStore(app.getPath('userData'), update => {
+      if (update.changes['wework.cloudConnection']) {
+        void pythonRuntimeManagerPromise
+          ?.then(runtime => runtime.resumeAfterLogin())
+          .catch(() => {
+            console.warn('[python-runtime] Login-triggered preparation failed')
+          })
+      }
+    })
     logStartupStep('desktop-stores-create', 'completed')
     if (!pluginDevelopmentInstance) {
       popoutShortcut = new GlobalShortcutController(globalShortcut, togglePopoutWindow, error =>
@@ -2963,21 +2976,43 @@ function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
   return electronNodeRuntimePromise
 }
 
+async function pythonRuntimeDownloads() {
+  if (process.env.WEWORK_PARENT_PYTHON_DOWNLOADS_URL) {
+    return fetchParentPythonRuntimeDownloads(process.env, cloudFetch)
+  }
+  return fetchPythonRuntimeDownloads({
+    connection: () => {
+      if (!rendererStorage) throw new PythonRuntimeLoginRequiredError()
+      return readMcpAppConnection(rendererStorage)
+    },
+    accessToken: async (api, connection) => {
+      if (
+        connection.credentialMode !== 'desktop_refresh' &&
+        typeof connection.token === 'string' &&
+        connection.token
+      )
+        return connection.token
+      try {
+        return (await requiredCloudCredentials().refreshAccessToken(api)).accessToken
+      } catch (error) {
+        if (
+          error instanceof CloudCredentialError &&
+          ['credentials_unavailable', 'cloud_auth_expired'].includes(error.code)
+        )
+          throw new PythonRuntimeLoginRequiredError()
+        throw error
+      }
+    },
+    fetch: cloudFetch,
+  })
+}
+
 function managedPythonRuntime(): Promise<PythonRuntimeManager> {
   pythonRuntimeManagerPromise ??= electronNodeRuntime().then(nodeRuntime => {
     return new PythonRuntimeManager({
       dataDirectory: app.getPath('userData'),
       environment: nodeRuntime.environment,
-      resolveDownloads: () =>
-        fetchPythonRuntimeDownloads({
-          connection: () => {
-            if (!rendererStorage) throw new Error('Desktop cloud settings are unavailable')
-            return readMcpAppConnection(rendererStorage)
-          },
-          environment: startupRuntimeEnvironment ?? process.env,
-          backendUrl: packageMetadata.weworkBackendUrl,
-          fetch: cloudFetch,
-        }),
+      resolveDownloads: pythonRuntimeDownloads,
       fetch: cloudFetch,
       resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
       log: event => console.info('[python-runtime]', event),

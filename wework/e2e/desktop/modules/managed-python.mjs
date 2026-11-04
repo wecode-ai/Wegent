@@ -172,3 +172,47 @@ export async function assertManagedPythonSettings(
     'The runtime UI advertised another instance Python'
   )
 }
+
+export async function verifyPythonDownloadAccess({ backendUrl, authToken }, timeoutMs) {
+  const endpoint = `${backendUrl}/api/wework/runtime-downloads`
+  const init = {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      platform: process.platform,
+      arch: process.arch,
+      uvVersion: '0.9.5',
+      pythonVersion: MANAGED_PYTHON_VERSION,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  }
+  const denied = await fetch(endpoint, init)
+  assert.equal(denied.status, 401, 'Runtime download descriptors must require a logged-in user')
+  const allowed = await fetch(endpoint, {
+    ...init,
+    headers: { ...init.headers, authorization: `Bearer ${authToken}` },
+  })
+  assert.equal(allowed.status, 200, 'A logged-in user could not resolve pinned runtime artifacts')
+  const descriptor = await allowed.json()
+  assert.equal(allowed.headers.get('cache-control'), 'no-store')
+  assert.equal(descriptor.uv.version, '0.9.5')
+  assert.equal(descriptor.python.version, MANAGED_PYTHON_VERSION)
+  assert.ok(
+    descriptor.uv.url.startsWith('https://github.com/astral-sh/uv/releases/download/0.9.5/uv-')
+  )
+  assert.ok(
+    descriptor.python.url.startsWith(
+      'https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.12.12%2B20251014-'
+    )
+  )
+  const config = await fetch(`${backendUrl}/api/auth/wework/config`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  }).then(response => response.json())
+  assert.equal(typeof config.web_url, 'string')
+  assert.ok(Object.hasOwn(config, 'socket_url'))
+  assert.equal(
+    Object.hasOwn(config, 'runtime_downloads'),
+    false,
+    'The public config endpoint leaked runtime download descriptors'
+  )
+}

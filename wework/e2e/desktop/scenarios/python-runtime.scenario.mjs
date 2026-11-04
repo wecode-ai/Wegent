@@ -14,6 +14,7 @@ import {
   managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
   waitForPythonRuntimeEvent,
+  verifyPythonDownloadAccess,
 } from '../modules/managed-python.mjs'
 
 export async function createDesktopScenario({
@@ -55,8 +56,9 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     requiresRemoteExecutor: false,
     requiresPackagedHarnessRuntime: true,
-    async prepareCloud({ backendUrl }) {
-      appEnvironment.WEWORK_BACKEND_URL = backendUrl
+    async prepareCloud(cloud) {
+      appEnvironment.WEWORK_BACKEND_URL = cloud.backendUrl
+      await verifyPythonDownloadAccess(cloud, uiTimeoutMs)
     },
     launchWorkingDirectory: launchDirectory,
     appEnvironment,

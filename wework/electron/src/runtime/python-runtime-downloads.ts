@@ -1,111 +1,171 @@
+import { pythonArtifact } from './python-runtime-artifacts.js'
+
 export interface PythonRuntimeDownloads {
-  uvDownloadBaseUrl: string
-  pythonInstallMirror: string
+  uvUrl: string
+  pythonUrl: string
+}
+
+export class PythonRuntimeLoginRequiredError extends Error {
+  readonly code = 'python_runtime_login_required'
+  constructor() {
+    super('Sign in to Wegent before downloading managed Python')
+  }
 }
 
 export const PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS = 200
 
 interface DownloadConfigOptions {
   connection: () => Promise<unknown>
-  environment: NodeJS.ProcessEnv
-  backendUrl?: string
+  accessToken: (apiBaseUrl: string, connection: Record<string, unknown>) => Promise<string>
   fetch: typeof fetch
+  platform?: string
+  arch?: string
 }
 
-function backendApiUrl(connection: unknown, options: DownloadConfigOptions): string {
-  const stored = connection as { apiBaseUrl?: unknown } | null
-  if (typeof stored?.apiBaseUrl === 'string' && stored.apiBaseUrl.trim()) {
-    return httpUrl(stored.apiBaseUrl, 'Backend API URL').href.replace(/\/+$/, '')
-  }
-  const configured =
-    options.environment.WEWORK_BACKEND_URL?.trim() ||
-    options.environment.WEGENT_BACKEND_URL?.trim() ||
-    options.environment.VITE_WEGENT_BACKEND_URL?.trim() ||
-    options.backendUrl
-  const url = httpUrl(configured, 'Backend URL')
-  const segments = url.pathname.split('/').filter(Boolean)
-  const api = segments.indexOf('api')
-  url.pathname = `/${(api >= 0 ? segments.slice(0, api + 1) : [...segments, 'api']).join('/')}`
-  return url.href.replace(/\/+$/, '')
-}
-
-function httpUrl(value: unknown, name: string): URL {
-  let url: URL
+function httpUrl(value: unknown, name: string, query = false): URL {
   try {
     if (typeof value !== 'string' || !value.trim()) throw new Error()
-    url = new URL(value.trim())
+    const url = new URL(value)
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      (!query && url.search)
+    )
+      throw new Error()
+    return url
   } catch {
     throw new Error(`Python download configuration: invalid ${name}`)
   }
-  if (
-    !['http:', 'https:'].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error(`Python download configuration: invalid ${name}`)
+}
+
+function apiUrl(connection: unknown): string {
+  const stored = connection as { apiBaseUrl?: unknown } | null
+  if (!stored?.apiBaseUrl) throw new PythonRuntimeLoginRequiredError()
+  return httpUrl(stored.apiBaseUrl, 'Backend API URL').href.replace(/\/+$/, '')
+}
+
+export function validatePythonRuntimeDownloads(
+  value: unknown,
+  platform = process.platform,
+  arch: string = process.arch
+): PythonRuntimeDownloads {
+  const data = value as Partial<PythonRuntimeDownloads> | null
+  const python = pythonArtifact(platform, arch)
+  const target = `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-${platform === 'darwin' ? 'apple-darwin' : platform === 'linux' ? 'unknown-linux-gnu' : 'pc-windows-msvc'}`
+  const filenames = {
+    uvUrl: `uv-${target}.${platform === 'win32' ? 'zip' : 'tar.gz'}`,
+    pythonUrl: python.filename,
   }
-  return url
+  for (const key of ['uvUrl', 'pythonUrl'] as const) {
+    const url = httpUrl(data?.[key], key, true)
+    if (
+      decodeURIComponent(url.pathname.split('/').at(-1) ?? '') !==
+      decodeURIComponent(filenames[key])
+    )
+      throw new Error(`Python download configuration: invalid ${key} artifact`)
+  }
+  // Keep opaque query signatures byte-for-byte; never join or normalize artifact URLs.
+  return { uvUrl: data!.uvUrl!, pythonUrl: data!.pythonUrl! }
 }
 
-function downloadDirectory(value: unknown, name: string): string {
-  const url = httpUrl(value, name)
-  url.pathname = `${url.pathname.replace(/\/+$/, '')}/`
-  return url.href
-}
-
-/** This independent request never changes the existing login/config request path. */
-export async function fetchPythonRuntimeDownloads(
-  options: DownloadConfigOptions
+async function metadataRequest(
+  load: (signal: AbortSignal) => Promise<PythonRuntimeDownloads>
 ): Promise<PythonRuntimeDownloads> {
   const controller = new AbortController()
   const deadline = performance.now() + PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS
-  const timeoutError = () =>
+  const error = () =>
     new Error(
       `Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`
     )
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(timeoutError())
+      reject(error())
       controller.abort()
     }, PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS)
   })
-  const load = async (): Promise<PythonRuntimeDownloads> => {
-    const api = backendApiUrl(await options.connection(), options)
-    controller.signal.throwIfAborted()
-    const response = await options.fetch(`${api}/auth/wework/config`, {
-      signal: controller.signal,
-    })
-    if (!response.ok) throw new Error(`Python download configuration: HTTP ${response.status}`)
-    const payload = (await response.json()) as {
-      runtime_downloads?: Partial<PythonRuntimeDownloads>
-    } | null
-    const downloads = {
-      uvDownloadBaseUrl: downloadDirectory(
-        payload?.runtime_downloads?.uvDownloadBaseUrl,
-        'uvDownloadBaseUrl'
-      ),
-      pythonInstallMirror: downloadDirectory(
-        payload?.runtime_downloads?.pythonInstallMirror,
-        'pythonInstallMirror'
-      ),
-    }
-    // Never use metadata from a backend that was replaced while the request was pending.
-    if (backendApiUrl(await options.connection(), options) !== api) {
-      throw new Error('Python download configuration: Backend changed during request')
-    }
-    controller.signal.throwIfAborted()
+  try {
+    const result = await Promise.race([load(controller.signal), timeout])
     if (performance.now() >= deadline) {
       controller.abort()
-      throw timeoutError()
+      throw error()
     }
-    return downloads
-  }
-  try {
-    return await Promise.race([load(), timeout])
+    return result
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Credential refresh keeps its existing budget; only the new descriptor request uses 200ms. */
+export async function fetchPythonRuntimeDownloads(
+  options: DownloadConfigOptions
+): Promise<PythonRuntimeDownloads> {
+  const connection = await options.connection()
+  const api = apiUrl(connection)
+  const token = await options.accessToken(api, connection as Record<string, unknown>)
+  if (!token.trim()) throw new PythonRuntimeLoginRequiredError()
+  if (apiUrl(await options.connection()) !== api)
+    throw new Error('Python download configuration: Backend changed during request')
+  const platform = options.platform ?? process.platform
+  const arch = options.arch ?? process.arch
+  return metadataRequest(async signal => {
+    const response = await options.fetch(`${api}/wework/runtime-downloads`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ platform, arch, uvVersion: '0.9.5', pythonVersion: '3.12.12' }),
+      signal,
+    })
+    if (response.status === 401) throw new PythonRuntimeLoginRequiredError()
+    if (!response.ok) throw new Error(`Python download configuration: HTTP ${response.status}`)
+    const payload = await response.json().catch(() => {
+      throw new Error('Python download configuration: invalid response')
+    })
+    if (payload?.uv?.version !== '0.9.5' || payload?.python?.version !== '3.12.12')
+      throw new Error('Python download configuration: invalid runtime version')
+    if (
+      payload.expiresAt != null &&
+      (!Number.isFinite(Date.parse(payload.expiresAt)) ||
+        Date.parse(payload.expiresAt) <= Date.now())
+    )
+      throw new Error('Python download configuration: expired download addresses')
+    const result = validatePythonRuntimeDownloads(
+      { uvUrl: payload?.uv?.url, pythonUrl: payload?.python?.url },
+      platform as NodeJS.Platform,
+      arch
+    )
+    if (apiUrl(await options.connection()) !== api)
+      throw new Error('Python download configuration: Backend changed during request')
+    signal.throwIfAborted()
+    return result
+  })
+}
+
+/** Development windows obtain addresses through the parent, never its login credentials. */
+export async function fetchParentPythonRuntimeDownloads(
+  environment: NodeJS.ProcessEnv,
+  request: typeof fetch
+): Promise<PythonRuntimeDownloads> {
+  const url = httpUrl(environment.WEWORK_PARENT_PYTHON_DOWNLOADS_URL, 'parent download endpoint')
+  if (
+    url.protocol !== 'http:' ||
+    url.hostname !== '127.0.0.1' ||
+    url.pathname !== '/runtime/python/downloads' ||
+    !environment.WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN
+  )
+    throw new Error('Invalid parent Python download endpoint')
+  const response = await request(url.href, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${environment.WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN}` },
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!response.ok)
+    throw new Error(`Parent Python download request failed: HTTP ${response.status}`)
+  const payload = await response.json().catch(() => {
+    throw new Error('Parent Python download response is invalid')
+  })
+  if (payload.code === 'python_runtime_login_required') throw new PythonRuntimeLoginRequiredError()
+  if (!payload.ok) throw new Error('Parent Python download addresses are unavailable')
+  return validatePythonRuntimeDownloads(payload.data)
 }

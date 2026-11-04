@@ -6,8 +6,9 @@ import { findCompatibleSystemPython } from './python-runtime-selection.js'
 import { PythonRuntimeManager } from './python-runtime.js'
 
 const resolveDownloads = async () => ({
-  uvDownloadBaseUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/',
-  pythonInstallMirror: 'https://github.com/astral-sh/python-build-standalone/releases/download/',
+  uvUrl: 'https://github.com/astral-sh/uv/releases/download/0.9.5/uv-aarch64-apple-darwin.tar.gz',
+  pythonUrl:
+    'https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.12.12%2B20251014-aarch64-apple-darwin-install_only_stripped.tar.gz',
 })
 
 const roots: string[] = []

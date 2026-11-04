@@ -10,6 +10,7 @@ import {
   managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
   waitForPythonRuntimeEvent,
+  verifyPythonDownloadAccess,
 } from '../e2e/desktop/modules/managed-python.mjs'
 
 const temporaryDirectories = []
@@ -80,9 +81,69 @@ describe('managed Python child home', () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   await Promise.all(
     temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))
   )
+})
+
+describe('authenticated Python download E2E prerequisites', () => {
+  const cloud = { backendUrl: 'http://127.0.0.1:8000', authToken: 'fixture-user-token' }
+  const descriptor = {
+    uv: {
+      version: '0.9.5',
+      url: 'https://github.com/astral-sh/uv/releases/download/0.9.5/uv-aarch64-apple-darwin.tar.gz',
+    },
+    python: {
+      version: '3.12.12',
+      url: 'https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.12.12%2B20251014-aarch64-apple-darwin-install_only_stripped.tar.gz',
+    },
+    expiresAt: null,
+  }
+
+  function requests(publicConfig = { web_url: 'http://localhost:3000', socket_url: null }) {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(
+        Response.json(descriptor, { headers: { 'cache-control': 'no-store' } })
+      )
+      .mockResolvedValueOnce(Response.json(publicConfig))
+    vi.stubGlobal('fetch', request)
+    return request
+  }
+
+  test('checks anonymous denial, authenticated artifacts and the unchanged public config', async () => {
+    const request = requests()
+    await verifyPythonDownloadAccess(cloud, 10_000)
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      `${cloud.backendUrl}/api/wework/runtime-downloads`,
+      `${cloud.backendUrl}/api/wework/runtime-downloads`,
+      `${cloud.backendUrl}/api/auth/wework/config`,
+    ])
+    expect(request.mock.calls[0][1].headers.authorization).toBeUndefined()
+    expect(request.mock.calls[1][1].headers.authorization).toBe(`Bearer ${cloud.authToken}`)
+    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({
+      uvVersion: '0.9.5',
+      pythonVersion: '3.12.12',
+    })
+    expect(request.mock.calls[2][1].headers).toBeUndefined()
+  })
+
+  test('rejects a descriptor endpoint that permits anonymous requests', async () => {
+    const request = requests().mockReset().mockResolvedValue(Response.json(descriptor))
+    await expect(verifyPythonDownloadAccess(cloud, 10_000)).rejects.toThrow(
+      'Runtime download descriptors must require a logged-in user'
+    )
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  test('rejects download descriptors leaking into the public config', async () => {
+    requests({ web_url: 'http://localhost:3000', socket_url: null, runtime_downloads: descriptor })
+    await expect(verifyPythonDownloadAccess(cloud, 10_000)).rejects.toThrow(
+      'The public config endpoint leaked runtime download descriptors'
+    )
+  })
 })
 
 async function temporaryLog(contents = '') {

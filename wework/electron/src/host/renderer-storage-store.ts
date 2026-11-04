@@ -25,7 +25,10 @@ export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
 
-  constructor(private readonly dataDirectory: string) {}
+  constructor(
+    private readonly dataDirectory: string,
+    private readonly onUpdate?: (update: RendererStorageUpdate) => void
+  ) {}
 
   close(): Promise<void> {
     this.closed = true
@@ -61,6 +64,7 @@ export class RendererStorageStore {
       if (state) return state.entries
 
       await this.writeFile({ version: 1, entries: seed })
+      this.notifyUpdate({ clear: false, changes: seed })
       return seed
     })
   }
@@ -82,11 +86,20 @@ export class RendererStorageStore {
         }
       }
       await this.writeFile({ version: 1, entries })
+      this.notifyUpdate(update)
     })
   }
 
   clear(): Promise<void> {
     return this.serial(() => this.writeFile({ version: 1, entries: {} }))
+  }
+
+  private notifyUpdate(update: RendererStorageUpdate): void {
+    try {
+      this.onUpdate?.(update)
+    } catch {
+      console.warn('[renderer-storage] Change observer failed after persistence')
+    }
   }
 
   private path(): string {

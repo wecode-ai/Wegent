@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import * as tar from 'tar'
 import { extractPythonBootstrapZip } from './python-runtime-zip.js'
-import type { PythonRuntimeDownloads } from './python-runtime-downloads.js'
+import {
+  PythonRuntimeLoginRequiredError,
+  type PythonRuntimeDownloads,
+} from './python-runtime-downloads.js'
+import { pythonArtifact } from './python-runtime-artifacts.js'
 import {
   findCompatibleSystemPython,
   type PluginPythonInterpreter,
@@ -137,6 +141,7 @@ export class PythonRuntimeManager {
   private lastStatusPublishedAt = 0
   private temporaryPythonVersion: string | undefined
   private automaticPreparationAttempted = false
+  private waitingForLogin = false
   private readonly onStatusChange?: (status: PythonRuntimeStatus) => void
 
   constructor(options: PythonRuntimeManagerOptions) {
@@ -254,7 +259,19 @@ export class PythonRuntimeManager {
 
   prewarm(): Promise<PythonRuntimeStatus> {
     if (this.automaticPreparationAttempted) return this.activeEnsure ?? this.status()
-    return this.ensure()
+    return this.ensure().catch(error => {
+      if (error instanceof PythonRuntimeLoginRequiredError) return this.status()
+      throw error
+    })
+  }
+
+  resumeAfterLogin(): Promise<PythonRuntimeStatus> {
+    if (!this.waitingForLogin) return this.status()
+    return (this.activeEnsure?.catch(() => undefined) ?? Promise.resolve()).then(() => {
+      if (!this.waitingForLogin) return this.status()
+      this.automaticPreparationAttempted = false
+      return this.prewarm()
+    })
   }
 
   private async performEnsure(): Promise<PythonRuntimeStatus> {
@@ -271,12 +288,26 @@ export class PythonRuntimeManager {
       return { ...installed }
     }
 
+    let metadataDirectory: string | undefined
     try {
+      this.waitingForLogin = false
       const downloads = await this.resolveDownloads()
-      const uvPath = await this.ensureUv(downloads.uvDownloadBaseUrl)
+      const uvPath = await this.ensureUv(downloads.uvUrl)
       this.setStatus(this.statusValue('downloading', { phase: 'install' }))
       this.log({ event: 'python-runtime-install-started', version: PYTHON_VERSION })
       await mkdir(this.runtimeBin, { recursive: true, mode: 0o700 })
+      metadataDirectory = join(this.root, 'temporary', randomUUID())
+      await mkdir(metadataDirectory, { recursive: true, mode: 0o700 })
+      const record = pythonArtifact(this.platform, this.arch)
+      const metadata = Object.fromEntries(
+        Object.entries(record).filter(([key]) => key !== 'key' && key !== 'filename')
+      )
+      const metadataPath = join(metadataDirectory, 'downloads.json')
+      await writeFile(
+        metadataPath,
+        JSON.stringify({ [record.key]: { ...metadata, url: downloads.pythonUrl } }),
+        { mode: 0o600 }
+      )
       const installResult = await this.runFile(
         uvPath,
         [
@@ -291,13 +322,16 @@ export class PythonRuntimeManager {
           PYTHON_VERSION,
         ],
         {
-          env: await this.bootstrapEnvironment(downloads.pythonInstallMirror),
+          env: await this.bootstrapEnvironment(downloads.pythonUrl, metadataPath),
           timeout: 10 * 60_000,
         }
       )
       const warning = installResult.stderr.trim()
       if (warning) {
-        this.log({ event: 'python-runtime-install-warning', warning: warning.slice(0, 2_000) })
+        this.log({
+          event: 'python-runtime-install-warning',
+          warning: redactDownloadUrls(warning).slice(0, 2_000),
+        })
       }
       this.setStatus(this.statusValue('downloading', { phase: 'verify' }))
       const ready = await this.inspectInstalledPython()
@@ -308,6 +342,14 @@ export class PythonRuntimeManager {
       this.log({ event: 'python-runtime-install-completed', version: ready.version })
       return { ...ready }
     } catch (error) {
+      if (error instanceof PythonRuntimeLoginRequiredError) {
+        this.waitingForLogin = true
+        this.automaticPreparationAttempted = false
+        const usable = installed ? await this.inspectInstalledPython() : null
+        this.setStatus(usable ?? this.statusValue('notInstalled'))
+        if (usable) return { ...usable }
+        throw error
+      }
       const message = errorMessage(error)
       const usable = installed ? await this.inspectInstalledPython() : null
       if (usable) {
@@ -322,7 +364,9 @@ export class PythonRuntimeManager {
       }
       this.setStatus(this.statusValue('error', { error: message }))
       this.log({ event: 'python-runtime-install-failed', error: message })
-      throw error
+      throw downloadFailure(error)
+    } finally {
+      if (metadataDirectory) await rm(metadataDirectory, { recursive: true, force: true })
     }
   }
 
@@ -348,7 +392,7 @@ export class PythonRuntimeManager {
     }
   }
 
-  private async ensureUv(uvDownloadBaseUrl: string): Promise<string> {
+  private async ensureUv(uvUrl: string): Promise<string> {
     const artifact = this.artifact()
     this.log({ event: 'python-runtime-uv-prepare-started', archive: artifact.archiveName })
     const executableName = this.platform === 'win32' ? 'uv.exe' : 'uv'
@@ -380,7 +424,7 @@ export class PythonRuntimeManager {
 
     let stage = 'download'
     try {
-      await this.downloadUv(artifact, archivePath, uvDownloadBaseUrl)
+      await this.downloadUv(artifact, archivePath, uvUrl)
       stage = 'extract'
       this.log({ event: 'python-runtime-uv-extract-started', archive: artifact.archiveName })
       if (artifact.archiveName.endsWith('.zip')) {
@@ -419,7 +463,10 @@ export class PythonRuntimeManager {
     }
   }
 
-  private async bootstrapEnvironment(pythonInstallMirror: string): Promise<NodeJS.ProcessEnv> {
+  private async bootstrapEnvironment(
+    pythonUrl: string,
+    metadataPath: string
+  ): Promise<NodeJS.ProcessEnv> {
     const inherited = Object.fromEntries(
       Object.entries(isolatedPythonEnvironment(this.runtimeEnvironment, this.platform)).filter(
         ([key]) => !key.toUpperCase().startsWith('UV_')
@@ -432,12 +479,12 @@ export class PythonRuntimeManager {
       UV_PYTHON_BIN_DIR: this.runtimeBin,
       UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
       UV_PYTHON_INSTALL_REGISTRY: 'false',
-      UV_PYTHON_INSTALL_MIRROR: pythonInstallMirror,
+      UV_PYTHON_DOWNLOADS_JSON_URL: metadataPath,
     }
     if (!this.resolveProxy) return environment
 
     try {
-      const proxy = await this.resolveProxy(pythonInstallMirror)
+      const proxy = await this.resolveProxy(pythonUrl)
       if (proxy) {
         environment.HTTP_PROXY = proxy
         environment.HTTPS_PROXY = proxy
@@ -452,7 +499,7 @@ export class PythonRuntimeManager {
   private async downloadUv(
     artifact: UvArtifact,
     destination: string,
-    uvDownloadBaseUrl: string
+    uvUrl: string
   ): Promise<void> {
     const controller = new AbortController()
     let timedOut = false
@@ -473,7 +520,7 @@ export class PythonRuntimeManager {
     }, this.downloadTimeoutMs)
 
     try {
-      const response = await this.fetch(new URL(artifact.archiveName, uvDownloadBaseUrl).href, {
+      const response = await this.fetch(uvUrl, {
         signal: controller.signal,
       })
       if (!response.ok || !response.body) {
@@ -599,7 +646,16 @@ async function sha256File(path: string): Promise<string> {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return redactDownloadUrls(error instanceof Error ? error.message : String(error))
+}
+
+function downloadFailure(error: unknown): Error {
+  // Expose the sanitized message only: subprocess output and nested causes can contain grants.
+  return new Error(errorMessage(error))
+}
+
+function redactDownloadUrls(message: string): string {
+  return message.replace(/(https?:\/\/[^\s?'"<>]+)\?[^\s'"<>]*/g, '$1?[redacted]')
 }
 
 function isolatedPythonEnvironment(

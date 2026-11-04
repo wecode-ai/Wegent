@@ -46,6 +46,7 @@ export interface WeworkDesktopControlBridgeOptions {
   smartApps?: () => SmartAppControlService | null
   ensurePython?: () => Promise<unknown>
   pythonStatus?: () => Promise<unknown>
+  pythonDownloads?: () => Promise<unknown>
   prewarmPython?: () => Promise<unknown>
   resolvePython?: (
     pluginRoot: string,
@@ -154,6 +155,27 @@ export class WeworkDesktopControlBridge {
     pythonToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
+    if (request.method === 'POST' && request.url === '/runtime/python/downloads') {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python download request' })
+        return
+      }
+      request.resume()
+      try {
+        if (!this.options.pythonDownloads) throw new Error('Python downloads are unavailable')
+        writeResponse(response, 200, { ok: true, data: await this.options.pythonDownloads() })
+      } catch (error) {
+        const code =
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'python_runtime_login_required'
+            ? error.code
+            : 'python_runtime_download_unavailable'
+        writeResponse(response, 200, { ok: false, code, error: code })
+      }
+      return
+    }
     if (request.method === 'POST' && request.url === '/runtime/python/resolve') {
       if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
         writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })

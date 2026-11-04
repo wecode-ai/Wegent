@@ -1087,3 +1087,8 @@ path = "/api/v1/deliveries/:delivery_id"
 [[routes]]
 methods = ["POST"]
 path = "/api/internal/callback"
+
+# Authenticated, platform-specific Wework runtime artifact descriptors.
+[[routes]]
+methods = ["POST"]
+path = "/api/wework/runtime-downloads"

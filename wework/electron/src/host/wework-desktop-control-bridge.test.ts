@@ -11,6 +11,51 @@ afterEach(async () => {
 })
 
 describe('WeworkDesktopControlBridge', () => {
+  test('shares only download descriptors with child windows through the Python capability', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-downloads-'))
+    directories.push(registryDirectory)
+    const data = {
+      uvUrl: 'https://example.invalid/uv.zip?signature=temporary',
+      pythonUrl: 'https://example.invalid/python.tar.gz?signature=temporary',
+    }
+    const pythonDownloads = vi.fn().mockResolvedValue(data)
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'downloads',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      ensurePython: vi.fn(),
+      pythonDownloads,
+    })
+    await bridge.start()
+    const env = bridge.environment()
+    const endpoint = new URL('/runtime/python/downloads', env.WEWORK_PYTHON_RUNTIME_URL)
+    try {
+      expect((await fetch(endpoint, { method: 'POST' })).status).toBe(401)
+      expect(pythonDownloads).not.toHaveBeenCalled()
+      const result = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.WEWORK_PYTHON_RUNTIME_TOKEN}` },
+      }).then(response => response.json())
+      expect(result).toEqual({ ok: true, data })
+      pythonDownloads.mockRejectedValueOnce(
+        Object.assign(new Error('private credential data'), {
+          code: 'python_runtime_login_required',
+        })
+      )
+      const failed = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.WEWORK_PYTHON_RUNTIME_TOKEN}` },
+      }).then(response => response.json())
+      expect(failed.code).toBe('python_runtime_login_required')
+      expect(JSON.stringify(failed)).not.toContain('private credential data')
+    } finally {
+      await bridge.stop()
+    }
+  })
+
   test('authorizes plugin interpreter selection and background preparation with the Python token', async () => {
     const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-selection-'))
     directories.push(registryDirectory)
