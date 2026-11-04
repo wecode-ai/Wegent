@@ -188,6 +188,13 @@ function RuntimeInteractionsState({
   )
   useEffect(() => {
     const update = (event: StorageEvent) => {
+      if (event.key?.startsWith(acceptancePrefix) && event.newValue !== null) {
+        submittedRef.current = new Set(submittedRef.current).add(
+          event.key.slice(acceptancePrefix.length)
+        )
+        setSubmitted(submittedRef.current)
+        return
+      }
       if (event.key !== historyKey) return
       const next = readInteractionHistory(historyKey)
       setHistory(next)
@@ -196,7 +203,7 @@ function RuntimeInteractionsState({
     }
     window.addEventListener('storage', update)
     return () => window.removeEventListener('storage', update)
-  }, [historyKey])
+  }, [acceptancePrefix, historyKey])
 
   const refresh = useCallback(
     async (force = true) => {
@@ -368,6 +375,7 @@ function RuntimeInteractionsState({
         item =>
           !item.answered &&
           !submitted.has(item.id) &&
+          localStorage.getItem(acceptancePrefix + item.id) === null &&
           visible.has(item.task.key) &&
           (!item.payload.expiresAtUnixMs || item.payload.expiresAtUnixMs > Date.now())
       )
@@ -382,7 +390,7 @@ function RuntimeInteractionsState({
         }
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [errors, inventory, loaded, source?.items, submitted])
+  }, [acceptancePrefix, errors, inventory, loaded, source?.items, submitted])
 
   useEffect(() => {
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
@@ -417,6 +425,7 @@ function RuntimeInteractionsState({
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
+          saveInteractionState(acceptancePrefix + item.id, true)
           await archive(item, Date.now())
           if (!mounted.current) return
           markHandled(item.id)
@@ -426,7 +435,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [archive, historyKey, markHandled]
+    [acceptancePrefix, archive, historyKey, markHandled]
   )
   const respond = useCallback(
     async (

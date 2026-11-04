@@ -1,3 +1,4 @@
+// Register provider mocks before importing modules that consume them.
 import {
   context,
   harness,
@@ -80,6 +81,22 @@ describe('unified human response', () => {
       expect(harness.send).not.toHaveBeenCalled()
     }
   )
+
+  it('keeps a dismissed question suppressed after bounded handled history evicts its row', async () => {
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    await act(async () => {
+      await context!.dismiss(context!.pending[0])
+    })
+    localStorage.setItem('wework.interactions:test:1:history', '[]')
+    rendered.unmount()
+    view()
+    await waitFor(() => expect(context!.loading).toBe(false))
+    expect(context!.history).toHaveLength(0)
+    expect(context!.pending).toHaveLength(0)
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(harness.send).not.toHaveBeenCalled()
+  })
 
   it('locks and revalidates an entity-owned send, then prevents a duplicate native submission', async () => {
     view()
