@@ -60,8 +60,14 @@ export async function verifyBrowserHistoryResume(control, resultDir, workspacePa
   assert.equal(created.accepted, true)
   const address = { deviceId: created.deviceId, taskId, workspacePath }
   const threadId = await waitForCompletedRuntimeTaskThread(control, taskId, timeoutMs)
-  const restart = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
-  assert.equal(restart.restarted, true, 'Cold history recovery requires the old MCP pool to stop')
+  // A completed task can still have UI history reads in flight. A declined
+  // idle restart has no side effects; wait for the owner to admit the restart.
+  await waitForValue(
+    () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+    result => result.restarted === true,
+    'Cold history recovery requires the old MCP pool to stop after pending reads settle',
+    timeoutMs
+  )
 
   // No new user turn runs between restart and history refresh. Native startup
   // must connect the task's MCP servers here, before any Goal can continue.
