@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
@@ -56,9 +58,16 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
   const scenario = createDesktopScenario({ workspacePath: '/fixture' })
   const verification = scenario
     .verify({
-      experimentalFeaturesEnabled: true,
       async command(action: string, selector: string) {
         calls.push({ action, selector })
+        if (action === 'getElementCount' && selector === '[data-testid="settings-button"]') return 1
+        if (action === 'snapshot' && selector === 'body')
+          return JSON.stringify({ testIds: ['general-experimental-features-toggle'] })
+        if (
+          action === 'getAttribute' &&
+          selector === '[data-testid="general-experimental-features-toggle"]'
+        )
+          return 'true'
         if (selector === '[data-testid="personal-stand-in-button"]') {
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')
           assert.equal(action, 'clickWhenEnabled')
