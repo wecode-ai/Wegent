@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -14,13 +15,13 @@ import {
 } from './python-runtime-selection.js'
 
 const execFileAsync = promisify(execFile)
+const { weworkRuntimeDownloads } = createRequire(import.meta.url)('../../package.json') as {
+  weworkRuntimeDownloads: { uvDownloadBaseUrl: string; pythonInstallMirror: string }
+}
 
 const PYTHON_VERSION = '3.12.12'
 const UV_VERSION = '0.9.5'
 const UV_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
-const UV_DOWNLOAD_BASE_URL = `https://mjs.sinaimg.cn/umd/cs-packages/uv/${UV_VERSION}`
-const PYTHON_DOWNLOAD_MIRROR_URL =
-  'https://python-standalone.org/mirror/astral-sh/python-build-standalone/'
 const PYTHON_HEALTH_CHECK = [
   'import ensurepip, ssl, sys, venv, zlib',
   'print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")',
@@ -124,6 +125,8 @@ export class PythonRuntimeManager {
   private readonly root: string
   private readonly runtimeEnvironment: NodeJS.ProcessEnv
   private readonly runtimeBin: string
+  private readonly uvDownloadBaseUrl: string
+  private readonly pythonInstallMirror: string
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
@@ -143,6 +146,14 @@ export class PythonRuntimeManager {
   constructor(options: PythonRuntimeManagerOptions) {
     this.root = join(options.dataDirectory, 'managed-runtimes', 'python')
     this.runtimeBin = join(this.root, 'bin')
+    this.uvDownloadBaseUrl = (
+      options.environment.WEWORK_UV_DOWNLOAD_BASE_URL?.trim() ||
+      weworkRuntimeDownloads.uvDownloadBaseUrl
+    ).replace(/\/*$/, '/')
+    this.pythonInstallMirror = (
+      options.environment.WEWORK_PYTHON_INSTALL_MIRROR?.trim() ||
+      weworkRuntimeDownloads.pythonInstallMirror
+    ).replace(/\/*$/, '/')
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
@@ -428,12 +439,12 @@ export class PythonRuntimeManager {
       UV_PYTHON_BIN_DIR: this.runtimeBin,
       UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
       UV_PYTHON_INSTALL_REGISTRY: 'false',
-      UV_PYTHON_INSTALL_MIRROR: PYTHON_DOWNLOAD_MIRROR_URL,
+      UV_PYTHON_INSTALL_MIRROR: this.pythonInstallMirror,
     }
     if (!this.resolveProxy) return environment
 
     try {
-      const proxy = await this.resolveProxy(PYTHON_DOWNLOAD_MIRROR_URL)
+      const proxy = await this.resolveProxy(this.pythonInstallMirror)
       if (proxy) {
         environment.HTTP_PROXY = proxy
         environment.HTTPS_PROXY = proxy
@@ -465,9 +476,12 @@ export class PythonRuntimeManager {
     }, this.downloadTimeoutMs)
 
     try {
-      const response = await this.fetch(`${UV_DOWNLOAD_BASE_URL}/${artifact.archiveName}`, {
-        signal: controller.signal,
-      })
+      const response = await this.fetch(
+        new URL(artifact.archiveName, this.uvDownloadBaseUrl).href,
+        {
+          signal: controller.signal,
+        }
+      )
       if (!response.ok || !response.body) {
         throw new Error(`Failed to download uv: HTTP ${response.status}`)
       }

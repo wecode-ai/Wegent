@@ -7,6 +7,10 @@
   "author": "Wecode",
   "type": "module",
   "main": "dist/bootstrap.js",
+  "weworkRuntimeDownloads": {
+    "uvDownloadBaseUrl": "https://github.com/astral-sh/uv/releases/download/0.9.5/",
+    "pythonInstallMirror": "https://github.com/astral-sh/python-build-standalone/releases/download/"
+  },
   "scripts": {
     "stage:process-explorer": "node scripts/stage-process-explorer.mjs",
     "build": "pnpm run stage:process-explorer && tsc -p tsconfig.json && node scripts/copy-static.mjs",

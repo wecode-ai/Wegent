@@ -90,101 +90,122 @@ describe('PythonRuntimeManager', () => {
     }
   )
 
-  test('installs Python once and validates the managed launcher', async () => {
-    const directory = await temporaryDirectory()
-    const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
-    const pythonPath = join(runtimeBin, 'python3')
-    const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
-    await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
-      recursive: true,
-    })
-    await writeFile(uvPath, 'fake uv')
-    let pythonReady = false
-    const onStatusChange = vi.fn()
-    const runFile = vi.fn(
-      async (file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
-        if (file === pythonPath && args[0] === '-I' && args[1] === '-c') {
-          if (!pythonReady) throw new Error('missing')
-          expect(args[2]).toContain('import ensurepip, ssl, sys, venv, zlib')
-          expect(options.env.PYTHONNOUSERSITE).toBe('1')
-          expect(options.env.PYTHONHOME).toBeUndefined()
-          expect(options.env.PYTHONPATH).toBeUndefined()
-          return { stdout: 'Python 3.12.12\n', stderr: '' }
+  test.each([
+    [
+      'default mirror',
+      undefined,
+      'https://github.com/astral-sh/python-build-standalone/releases/download/',
+    ],
+    [
+      'empty override',
+      '  ',
+      'https://github.com/astral-sh/python-build-standalone/releases/download/',
+    ],
+    [
+      'environment override',
+      ' https://python.example.com/releases ',
+      'https://python.example.com/releases/',
+    ],
+  ])(
+    'installs Python once and validates the managed launcher with %s',
+    async (_name, mirrorOverride, expectedMirror) => {
+      const directory = await temporaryDirectory()
+      const runtimeBin = join(directory, 'managed-runtimes', 'python', 'bin')
+      const pythonPath = join(runtimeBin, 'python3')
+      const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
+      await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
+        recursive: true,
+      })
+      await writeFile(uvPath, 'fake uv')
+      let pythonReady = false
+      const onStatusChange = vi.fn()
+      const resolveProxy = vi.fn().mockResolvedValue('http://proxy.internal:8080')
+      const runFile = vi.fn(
+        async (file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+          if (file === pythonPath && args[0] === '-I' && args[1] === '-c') {
+            if (!pythonReady) throw new Error('missing')
+            expect(args[2]).toContain('import ensurepip, ssl, sys, venv, zlib')
+            expect(options.env.PYTHONNOUSERSITE).toBe('1')
+            expect(options.env.PYTHONHOME).toBeUndefined()
+            expect(options.env.PYTHONPATH).toBeUndefined()
+            return { stdout: 'Python 3.12.12\n', stderr: '' }
+          }
+          if (file === uvPath) {
+            expect(args).toEqual([
+              '--native-tls',
+              '--no-config',
+              '--no-progress',
+              'python',
+              'install',
+              '--force',
+              '--managed-python',
+              '--default',
+              '3.12.12',
+            ])
+            expect(options.env).toMatchObject({
+              UV_MANAGED_PYTHON: 'true',
+              UV_PYTHON_BIN_DIR: runtimeBin,
+              UV_PYTHON_INSTALL_MIRROR: expectedMirror,
+              UV_PYTHON_INSTALL_DIR: join(directory, 'managed-runtimes', 'python', 'installations'),
+              UV_CACHE_DIR: join(directory, 'managed-runtimes', 'python', 'cache'),
+              HTTP_PROXY: 'http://proxy.internal:8080',
+              HTTPS_PROXY: 'http://proxy.internal:8080',
+              ALL_PROXY: 'http://proxy.internal:8080',
+            })
+            expect(options.env.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
+            expect(options.env.UV_OFFLINE).toBeUndefined()
+            expect(options.env.UV_NO_MANAGED_PYTHON).toBeUndefined()
+            expect(options.env.PYTHONHOME).toBeUndefined()
+            expect(options.env.PYTHONPATH).toBeUndefined()
+            await mkdir(runtimeBin, { recursive: true })
+            await writeFile(pythonPath, 'fake python')
+            pythonReady = true
+            return { stdout: '', stderr: '' }
+          }
+          throw new Error(`Unexpected command: ${file}`)
         }
-        if (file === uvPath) {
-          expect(args).toEqual([
-            '--native-tls',
-            '--no-config',
-            '--no-progress',
-            'python',
-            'install',
-            '--force',
-            '--managed-python',
-            '--default',
-            '3.12.12',
-          ])
-          expect(options.env).toMatchObject({
-            UV_MANAGED_PYTHON: 'true',
-            UV_PYTHON_BIN_DIR: runtimeBin,
-            UV_PYTHON_INSTALL_MIRROR:
-              'https://python-standalone.org/mirror/astral-sh/python-build-standalone/',
-            UV_PYTHON_INSTALL_DIR: join(directory, 'managed-runtimes', 'python', 'installations'),
-            UV_CACHE_DIR: join(directory, 'managed-runtimes', 'python', 'cache'),
-            HTTP_PROXY: 'http://proxy.internal:8080',
-            HTTPS_PROXY: 'http://proxy.internal:8080',
-            ALL_PROXY: 'http://proxy.internal:8080',
-          })
-          expect(options.env.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
-          expect(options.env.UV_OFFLINE).toBeUndefined()
-          expect(options.env.UV_NO_MANAGED_PYTHON).toBeUndefined()
-          expect(options.env.PYTHONHOME).toBeUndefined()
-          expect(options.env.PYTHONPATH).toBeUndefined()
-          await mkdir(runtimeBin, { recursive: true })
-          await writeFile(pythonPath, 'fake python')
-          pythonReady = true
-          return { stdout: '', stderr: '' }
-        }
-        throw new Error(`Unexpected command: ${file}`)
-      }
-    )
-    const manager = new PythonRuntimeManager({
-      dataDirectory: directory,
-      environment: {
+      )
+      const manager = new PythonRuntimeManager({
+        dataDirectory: directory,
+        environment: {
+          PYTHONHOME: '/external/python',
+          PYTHONPATH: '/external/packages',
+          UV_OFFLINE: '1',
+          UV_NO_MANAGED_PYTHON: 'true',
+          UV_PYTHON_INSTALL_DIR: '/user-python',
+          UV_PYTHON_INSTALL_MIRROR: 'https://user-mirror.invalid/',
+          UV_PYTHON_INSTALL_MIRROR_URL: 'https://incorrect-mirror.invalid/',
+          WEWORK_PYTHON_INSTALL_MIRROR: mirrorOverride,
+        },
+        platform: 'darwin',
+        arch: 'arm64',
+        runFile,
+        onStatusChange,
+        resolveProxy,
+        fileSha256: vi
+          .fn()
+          .mockResolvedValue('d54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81'),
+      })
+
+      const [first, second] = await Promise.all([manager.ensure(), manager.ensure()])
+
+      expect(first).toMatchObject({ state: 'installed', version: '3.12.12', path: pythonPath })
+      expect(second).toEqual(first)
+      expect(onStatusChange.mock.calls.map(([status]) => [status.state, status.phase])).toEqual([
+        ['downloading', 'install'],
+        ['downloading', 'verify'],
+        ['installed', null],
+      ])
+      expect(manager.environment()).toMatchObject({
         PYTHONHOME: '/external/python',
         PYTHONPATH: '/external/packages',
-        UV_OFFLINE: '1',
-        UV_NO_MANAGED_PYTHON: 'true',
-        UV_PYTHON_INSTALL_DIR: '/user-python',
-        UV_PYTHON_INSTALL_MIRROR: 'https://user-mirror.invalid/',
-        UV_PYTHON_INSTALL_MIRROR_URL: 'https://incorrect-mirror.invalid/',
-      },
-      platform: 'darwin',
-      arch: 'arm64',
-      runFile,
-      onStatusChange,
-      resolveProxy: vi.fn().mockResolvedValue('http://proxy.internal:8080'),
-      fileSha256: vi
-        .fn()
-        .mockResolvedValue('d54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81'),
-    })
-
-    const [first, second] = await Promise.all([manager.ensure(), manager.ensure()])
-
-    expect(first).toMatchObject({ state: 'installed', version: '3.12.12', path: pythonPath })
-    expect(second).toEqual(first)
-    expect(onStatusChange.mock.calls.map(([status]) => [status.state, status.phase])).toEqual([
-      ['downloading', 'install'],
-      ['downloading', 'verify'],
-      ['installed', null],
-    ])
-    expect(manager.environment()).toMatchObject({
-      PYTHONHOME: '/external/python',
-      PYTHONPATH: '/external/packages',
-    })
-    expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
-    await expect(manager.ensure()).resolves.toEqual(first)
-    expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
-  })
+      })
+      expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
+      expect(resolveProxy).toHaveBeenCalledWith(expectedMirror)
+      await expect(manager.ensure()).resolves.toEqual(first)
+      expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
+    }
+  )
 
   test('upgrades an older managed Python patch release', async () => {
     const directory = await temporaryDirectory()
@@ -376,27 +397,38 @@ describe('PythonRuntimeManager', () => {
     )
   })
 
-  test('removes a corrupted cached uv executable before redownloading', async () => {
-    const directory = await temporaryDirectory()
-    const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
-    await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
-      recursive: true,
-    })
-    await writeFile(uvPath, 'corrupted uv')
-    const fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3])))
-    const manager = new PythonRuntimeManager({
-      dataDirectory: directory,
-      environment: {},
-      platform: 'darwin',
-      arch: 'arm64',
-      fetch,
-      runFile: vi.fn().mockRejectedValue(new Error('missing')),
-    })
+  test.each([
+    ['default source', undefined, 'https://github.com/astral-sh/uv/releases/download/0.9.5/'],
+    ['empty override', '  ', 'https://github.com/astral-sh/uv/releases/download/0.9.5/'],
+    ['environment override', ' https://uv.example.com/0.9.5 ', 'https://uv.example.com/0.9.5/'],
+    ['trailing slash', 'https://uv.example.com/0.9.5/', 'https://uv.example.com/0.9.5/'],
+  ])(
+    'removes a corrupted cached uv executable before redownloading from %s',
+    async (_name, sourceOverride, expectedBaseUrl) => {
+      const directory = await temporaryDirectory()
+      const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
+      await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
+        recursive: true,
+      })
+      await writeFile(uvPath, 'corrupted uv')
+      const fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3])))
+      const manager = new PythonRuntimeManager({
+        dataDirectory: directory,
+        environment: { WEWORK_UV_DOWNLOAD_BASE_URL: sourceOverride },
+        platform: 'darwin',
+        arch: 'arm64',
+        fetch,
+        runFile: vi.fn().mockRejectedValue(new Error('missing')),
+      })
 
-    await expect(manager.ensure()).rejects.toThrow('uv archive size mismatch')
-    await expect(access(uvPath)).rejects.toThrow()
-    expect(fetch).toHaveBeenCalledOnce()
-  })
+      await expect(manager.ensure()).rejects.toThrow('uv archive size mismatch')
+      await expect(access(uvPath)).rejects.toThrow()
+      expect(fetch).toHaveBeenCalledOnce()
+      expect(fetch).toHaveBeenCalledWith(`${expectedBaseUrl}uv-aarch64-apple-darwin.tar.gz`, {
+        signal: expect.any(AbortSignal),
+      })
+    }
+  )
 
   test('retains a verified download failure for diagnostics and retry', async () => {
     const directory = await temporaryDirectory()
