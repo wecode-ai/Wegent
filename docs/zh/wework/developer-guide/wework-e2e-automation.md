@@ -178,6 +178,12 @@ glob。`paths` 增加覆盖，保留已有路径规则选中的检查点。跨�
 它复用真实隔离的数据源和 `stand-in-plugin-bridge` 中的同一验证函数，CI 仍由该宿主
 执行，不新增分片或重复执行。
 
+`stand-in-source-project-permissions` 独立创建真实项目和普通成员，验证降为只读成员后，
+项目 403 不会撤销本地账号证据。透明代理仅中断身份接口的传输，其余 Backend、
+Electron、Executor、来源和存储保持真实；随后检查本地规则读取、停用和私有删除，
+同时确认项目共享配置未被越权删除。该用例复用原有账号切换入口并恢复原账号，
+同一函数由 `stand-in-cloud` 在 CI 中执行，不增加分片或重复执行。
+
 Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
 分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
 Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。

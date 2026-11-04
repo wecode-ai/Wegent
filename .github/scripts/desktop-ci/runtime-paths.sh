@@ -12,8 +12,12 @@ classify_path() {
   fi
 
   case "$path" in
-    executor/src/task_runtime/connection_identity.rs|executor/src/runtime_work/handler/connection_identity.rs|executor/src/runtime_work/handler/stand_in_ingress_tests.rs|executor/src/task_runtime/connection_rules.rs|executor/src/runtime_work/handler/connection_rules.rs|executor/tests/connection_automation_contract.rs|packages/collaboration/src/automation/ConnectionRule*|packages/collaboration/src/automation/connectionRules.ts|wework/src/features/todo/ConnectionRulesPanel*|wework/e2e/desktop/scenarios/connection-automation*.mjs|wework/e2e/desktop/fixtures/connection-automation-provider.mjs)
+    executor/src/task_runtime/connection_identity.rs|executor/src/runtime_work/handler/connection_identity.rs|executor/src/runtime_work/handler/stand_in_ingress_tests.rs|executor/src/task_runtime/connection_rules.rs|executor/src/runtime_work/handler/connection_rules*|executor/tests/connection_automation_contract.rs|packages/collaboration/src/automation/ConnectionRule*|packages/collaboration/src/automation/connectionRules.ts|wework/src/features/todo/ConnectionRulesPanel*|wework/e2e/desktop/scenarios/connection-automation*.mjs|wework/e2e/desktop/fixtures/connection-automation-provider.mjs)
       select_target "core:stand-in-plugin-bridge"
+      select_target "core:stand-in-cloud"
+      return
+      ;;
+    wework/e2e/desktop/modules/connection-rule-project-permissions.mjs|wework/e2e/desktop/scenarios/stand-in-source-project-permissions.scenario.mjs)
       select_target "core:stand-in-cloud"
       return
       ;;

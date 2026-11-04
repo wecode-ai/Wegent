@@ -39,9 +39,12 @@ Changing or disabling a rule cancels older runs that
 have not been delivered. Work already delivered remains in the project run history. New source rules do not replay messages from before they were enabled.
 
 Local source rules may continue during a cloud transport outage using the same previously
-verified device and account connection. Account switching or an explicit authorization
-denial invalidates that evidence. Cloud delivery and execution still require current
-online authorization. “Delivered” means the server accepted the publication; “Issue
+verified device and account connection. Account switching or invalid account authentication
+invalidates that evidence. A denied project operation does not affect other local rules.
+Cloud delivery and execution still require current online authorization. You can remove
+your device's private source rule after losing project administration; an authorized
+project member must clean up shared automation and connection settings. “Delivered”
+means the server accepted the publication; “Issue
 created” links to its result. “Recheck source” clears a recovered connection error
 without resetting its collection checkpoint.
 

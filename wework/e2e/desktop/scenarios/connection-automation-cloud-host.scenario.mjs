@@ -4,12 +4,14 @@ import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createDesktopScenario as createCloud } from './stand-in-cloud.scenario.mjs'
 import { createDesktopScenario as createSources } from './connection-automations.scenario.mjs'
+import { verifyConnectionRuleProjectPermissions } from '../modules/connection-rule-project-permissions.mjs'
 
 // Extend the existing cloud lifecycle; all project, gateway and processor operations remain real.
 export function createDesktopScenario(options) {
   const cloud = createCloud(options)
   const sources = createSources(options)
   let environment
+  let restart
   const request = async (path, method = 'GET') => {
     const response = await fetch(`${environment.backendUrl}/api${path}`, {
       method,
@@ -31,6 +33,9 @@ export function createDesktopScenario(options) {
   }
   return {
     requiresCloudEnvironment: true,
+    setRestartDesktopApp(value) {
+      restart = value
+    },
     prepareApp: sources.prepareApp,
     async prepareCloud(value) {
       environment = value
@@ -128,6 +133,13 @@ export function createDesktopScenario(options) {
             version: latest.version,
           })
       }
+      await verifyConnectionRuleProjectPermissions(
+        control,
+        environment,
+        projectId,
+        restart,
+        options
+      )
     },
     diagnostics: cloud.diagnostics,
   }

@@ -193,6 +193,15 @@ and save footer, paused state, and persisted policy. It uses the real isolated
 source and the same verification function invoked by `stand-in-plugin-bridge`.
 That existing CI host retains coverage without another shard or duplicate run.
 
+`stand-in-source-project-permissions` creates a real project and ordinary member,
+then verifies that demotion to Viewer and a project 403 preserve local account
+evidence. A transparent proxy interrupts only identity-endpoint transport; Backend,
+Electron, Executor, source and storage remain real. The case reads and pauses a
+local rule, removes a private subscription and confirms shared project settings
+were not deleted without authorization. It reuses account switching and restores
+the original account. `stand-in-cloud` invokes the same function in CI without
+another shard or duplicate execution.
+
 Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
 depends on the shard's checkpoint count. Each checkpoint owns its database,

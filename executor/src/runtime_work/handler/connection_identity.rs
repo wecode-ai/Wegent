@@ -191,15 +191,30 @@ impl RuntimeWorkRpcHandler {
         let response = Self::stand_in_request_on(&connection, method, path, body).await?;
         self.check_connection_actor(user, actor)?;
         if !response.status().is_success() {
-            if matches!(response.status().as_u16(), 401 | 403) {
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                || (path == "/users/me" && response.status() == reqwest::StatusCode::FORBIDDEN)
+            {
                 LocalTaskStore::open(self.task_store_path.as_ref())
                     .map_err(settings_error)?
                     .forget_connection_user(&self.device_id)
                     .map_err(settings_error)?;
                 return Err(AppIpcError::new(
                     "permission_denied",
-                    "Project authorization was denied",
+                    "Account authorization was denied",
                 ));
+            }
+            if path.starts_with("/v1/cloud-projects/") {
+                let project_error = match response.status().as_u16() {
+                    403 => Some((
+                        "cloud_project_forbidden",
+                        "Project authorization was denied",
+                    )),
+                    404 => Some(("cloud_project_unavailable", "Project is unavailable")),
+                    _ => None,
+                };
+                if let Some((code, message)) = project_error {
+                    return Err(AppIpcError::new(code, message));
+                }
             }
             return Err(AppIpcError::new(
                 "cloud_request_failed",
@@ -301,17 +316,20 @@ mod tests {
         handler
             .update_local_account_identity(handler.backend_connection_snapshot().unwrap().as_ref())
             .unwrap();
-        let actor = handler.verify_local_connection_actor(7).await.unwrap();
-        status.store(401, Ordering::SeqCst);
-        assert!(handler
-            .refresh_connection_actor(
-                handler.backend_connection_snapshot().unwrap().unwrap(),
-                actor.clone()
-            )
-            .await
-            .is_err());
-        status.store(503, Ordering::SeqCst);
-        assert!(handler.verify_local_connection_actor(7).await.is_err());
+        for denied in [401, 403] {
+            status.store(200, Ordering::SeqCst);
+            let actor = handler.verify_local_connection_actor(7).await.unwrap();
+            status.store(denied, Ordering::SeqCst);
+            assert!(handler
+                .refresh_connection_actor(
+                    handler.backend_connection_snapshot().unwrap().unwrap(),
+                    actor
+                )
+                .await
+                .is_err());
+            status.store(503, Ordering::SeqCst);
+            assert!(handler.verify_local_connection_actor(7).await.is_err());
+        }
         server.abort();
         let _ = server.await;
         assert!(handler.verify_local_connection_actor(7).await.is_err());

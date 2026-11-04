@@ -147,11 +147,15 @@ async fn receipt_observation_waits_for_scheduled_retries_and_reports_terminal_fa
 }
 
 #[tokio::test]
-async fn cloud_lookup_failure_preserves_local_rules_but_authorization_denial_retires_evidence() {
+async fn project_denials_preserve_local_rules_but_account_denials_retire_evidence() {
     use axum::http::StatusCode;
     use std::sync::atomic::AtomicU16;
     let status = Arc::new(AtomicU16::new(503));
     let calls = Arc::new(AtomicUsize::new(0));
+    let delete_calls = Arc::new(AtomicUsize::new(0));
+    let denied_deletes = delete_calls.clone();
+    let writes = Arc::new(AtomicUsize::new(0));
+    let denied_writes = writes.clone();
     let response_status = status.clone();
     let request_count = calls.clone();
     let router = Router::new()
@@ -161,8 +165,17 @@ async fn cloud_lookup_failure_preserves_local_rules_but_authorization_denial_ret
             request_count.fetch_add(1, Ordering::SeqCst);
             async move { (StatusCode::from_u16(code).unwrap(), Json(json!([
                 {"id":"shared-one","name":"Updated shared one","enabled":true,"targetKind":"human","targetId":"7","prompt":"Current instruction","version":9},
-                {"id":"shared-two","name":"Updated shared two","enabled":true,"targetKind":"human","targetId":"7","prompt":"Current instruction","version":9}
+                {"id":"shared-two","name":"Updated shared two","enabled":true,"targetKind":"human","targetId":"7","prompt":"Current instruction","version":9},
+                {"id":"shared-delete","name":"Delete denied","enabled":true,"targetKind":"human","targetId":"7","prompt":"Instruction","version":1}
             ]))) }
+        }))
+        .route("/api/v1/cloud-projects/cloud/automations/shared-delete", axum::routing::delete(move || {
+            denied_deletes.fetch_add(1, Ordering::SeqCst);
+            async { StatusCode::FORBIDDEN }
+        }))
+        .route("/api/v1/cloud-projects/cloud/incoming-hooks", get(|| async { StatusCode::FORBIDDEN }).post(move || {
+            denied_writes.fetch_add(1, Ordering::SeqCst);
+            async { StatusCode::FORBIDDEN }
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let connection = ConnectionConfig {
@@ -234,25 +247,153 @@ async fn cloud_lookup_failure_preserves_local_rules_but_authorization_denial_ret
         .iter()
         .filter(|r| r["project"]["store"] == "cloud")
         .all(|r| r["instruction"] == "Current instruction" && r["cloudSyncError"].is_null()));
-    for code in [401, 403] {
+    let fingerprint =
+        crate::runtime_work::handler::connection_identity::connection_fingerprint(&connection);
+    let identity = store.connection_identity("mac").unwrap();
+    for (code, error) in [
+        (403, "cloud_project_forbidden"),
+        (404, "cloud_project_unavailable"),
+    ] {
         status.store(code, Ordering::SeqCst);
-        let error = handler
+        let denied = handler
             .connection_rules_rpc("runtime.connection_rules.list", json!({"userId":7}))
             .await
-            .unwrap_err();
-        assert_eq!(error.code, "permission_denied");
+            .unwrap();
+        assert!(denied["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rule| rule["project"]["store"] == "cloud")
+            .all(|rule| rule["cloudSyncError"] == error));
+        assert_eq!(store.connection_identity("mac").unwrap(), identity);
         assert_eq!(
-            store
-                .verified_connection_user(
-                    "mac",
-                    &crate::runtime_work::handler::connection_identity::connection_fingerprint(
-                        &connection
-                    )
-                )
-                .unwrap(),
-            None
+            store.verified_connection_user("mac", &fingerprint).unwrap(),
+            Some(7)
         );
     }
+    let local = handler
+        .connection_rules_rpc(
+            "runtime.connection_rules.list",
+            json!({"userId":7,"project":{"id":project.id,"store":"local"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(local["items"].as_array().unwrap().len(), 1);
+    let before_save = store
+        .connection_rules(7)
+        .unwrap()
+        .into_iter()
+        .find(|rule| rule["id"] == "cloud-two")
+        .unwrap();
+    let mut paused = before_save.clone();
+    paused["enabled"] = json!(false);
+    assert_eq!(
+        handler
+            .connection_rules_rpc(
+                "runtime.connection_rules.save",
+                json!({"userId":7,"rule":paused})
+            )
+            .await
+            .unwrap_err()
+            .code,
+        "cloud_project_forbidden"
+    );
+    assert_eq!(
+        store
+            .connection_rules(7)
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule["id"] == "cloud-two")
+            .unwrap(),
+        before_save
+    );
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        store.verified_connection_user("mac", &fingerprint).unwrap(),
+        Some(7)
+    );
+    let owned = store
+        .connection_rules(7)
+        .unwrap()
+        .into_iter()
+        .find(|rule| rule["id"] == "cloud-one")
+        .unwrap();
+    status.store(403, Ordering::SeqCst);
+    assert_eq!(handler.connection_rules_rpc("runtime.connection_rules.remove", json!({"userId":7,"id":owned["id"],"version":owned["version"].as_i64().unwrap() - 1})).await.unwrap_err().code, "version_conflict");
+    assert_eq!(
+        handler
+            .connection_rules_rpc(
+                "runtime.connection_rules.remove",
+                json!({"userId":7,"id":owned["id"],"version":owned["version"]})
+            )
+            .await
+            .unwrap()["removed"],
+        true
+    );
+    assert!(!store
+        .connection_rules(7)
+        .unwrap()
+        .iter()
+        .any(|rule| rule["id"] == "cloud-one"));
+    assert_eq!(
+        store.verified_connection_user("mac", &fingerprint).unwrap(),
+        Some(7)
+    );
+
+    status.store(200, Ordering::SeqCst);
+    let mut denied_delete = owned;
+    denied_delete["id"] = json!("cloud-delete");
+    denied_delete["version"] = json!(0);
+    denied_delete["cloudRuleId"] = json!("shared-delete");
+    let denied_delete = store.save_connection_rule(7, "mac", denied_delete).unwrap();
+    assert_eq!(
+        handler
+            .connection_rules_rpc(
+                "runtime.connection_rules.remove",
+                json!({"userId":7,"id":"cloud-delete","version":denied_delete["version"]})
+            )
+            .await
+            .unwrap()["removed"],
+        true
+    );
+    assert_eq!(delete_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.verified_connection_user("mac", &fingerprint).unwrap(),
+        Some(7)
+    );
+
+    status.store(404, Ordering::SeqCst);
+    let mut missing_project = denied_delete;
+    missing_project["id"] = json!("missing-project");
+    missing_project["version"] = json!(0);
+    let missing_project = store
+        .save_connection_rule(7, "mac", missing_project)
+        .unwrap();
+    assert_eq!(
+        handler
+            .connection_rules_rpc(
+                "runtime.connection_rules.remove",
+                json!({"userId":7,"id":missing_project["id"],"version":missing_project["version"]})
+            )
+            .await
+            .unwrap()["removed"],
+        true
+    );
+    assert_eq!(
+        store.verified_connection_user("mac", &fingerprint).unwrap(),
+        Some(7)
+    );
+
+    status.store(401, Ordering::SeqCst);
+    let error = handler
+        .connection_rules_rpc("runtime.connection_rules.list", json!({"userId":7}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "permission_denied");
+    assert_eq!(
+        store.verified_connection_user("mac", &fingerprint).unwrap(),
+        None
+    );
     server.abort();
     let _ = server.await;
     assert!(handler.verify_local_connection_actor(7).await.is_err());

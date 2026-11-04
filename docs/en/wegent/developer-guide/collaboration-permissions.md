@@ -168,8 +168,10 @@ Local private projects retain owner authority offline. Shared cloud operations u
 Source rules retain verified account evidence in device-private storage: a user ID and
 an irreversible fingerprint of the current connection configuration. During transport
 or server outages, local rule management and collection require the same device,
-connection configuration and user. Switching accounts or receiving an explicit 401/403
-invalidates the evidence. Collection responses and publication recheck account changes.
+connection configuration and user. Switching accounts, any 401, or a 403 from the
+account identity endpoint `/users/me` invalidates the evidence. A project endpoint's
+403 rejects that project operation without retiring the verified local account.
+Collection responses and publication recheck account changes.
 This evidence grants no cloud project authority: cloud creation, delivery and execution
 retain current credentials and the original server authorization, waiting through a
 transport outage. `connection_identity::tests` and `connection_automation_contract`
@@ -181,8 +183,12 @@ snapshot. Storage failures preserve the previous state and permit retries; they 
 not be ignored to continue switching. Persistence runs on a blocking thread to keep
 the async Runtime responsive. Unfiltered rule lists isolate ordinary cloud failures
 per project, returning only the current user's cached configuration with a sync error
-until recovery. Explicit 401/403 responses still invalidate identity evidence; cached
-configuration grants no project authority.
+until recovery. A 401 or an identity-endpoint 403 still invalidates identity evidence;
+cached configuration grants no project authority. Project 403/404 responses mark that
+project's sync error while preserving other local rules. Owners may remove their own
+private source subscription and cancel undelivered runs; denied project administration
+does not permit further cleanup of shared automation or hooks. `connection_rules::tests`
+covers project denials, private cleanup, version conflicts and account invalidation.
 
 ## Incident and recovery evidence
 

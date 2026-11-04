@@ -10,6 +10,7 @@ import type {
   RuntimeContextUsage,
 } from "./runtime";
 import { applyRequestUserInputResponseToBlock } from "./runtime-user-input";
+import { transcriptOrderDiagnostic } from "./transcript-order-diagnostics";
 import type {
   RuntimeConversationTurn,
   RuntimePaneMessageAction,
@@ -203,37 +204,13 @@ export function createRuntimeConversationSession(
     for (const turn of turns) {
       const previous = previousTurns.get(turn.id);
       if (!previous) continue;
-      const existing = new Set(previous.items.map((item) => item.id));
-      const incoming = new Set(turn.items.map((item) => item.id));
-      const before = previous.items.filter((item) => incoming.has(item.id));
-      const after = turn.items.filter((item) => existing.has(item.id));
-      if (
-        before.map((item) => item.id).join() ===
-        after.map((item) => item.id).join()
-      )
-        continue;
-      const metadata = (items: RuntimeConversationTurn["items"]) =>
-        items.slice(-40).map((item) => ({
-          id: item.id,
-          type: item.type,
-          position: item.position,
-          createdAt:
-            item.type === "block"
-              ? item.block.createdAt
-              : item.type === "assistant_text"
-                ? item.createdAt
-                : undefined,
-        }));
-      // Record ordering evidence without message text, tool inputs or outputs.
-      console.debug(
-        "[Wework] Transcript order changed",
-        JSON.stringify({
-          turnId: turn.id,
-          before: metadata(before),
-          after: metadata(after),
-          page: metadata(pageTurns.get(turn.id)?.items ?? []),
-        }),
+      const evidence = transcriptOrderDiagnostic(
+        previous,
+        turn,
+        pageTurns.get(turn.id)?.items ?? [],
       );
+      if (evidence)
+        console.debug("[Wework] Transcript order changed", evidence);
     }
     if (changedThread) {
       beforeCursor = null;

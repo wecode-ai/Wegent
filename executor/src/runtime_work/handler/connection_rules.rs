@@ -104,6 +104,8 @@ impl RuntimeWorkRpcHandler {
                                         "cloud_unavailable"
                                             | "cloud_request_failed"
                                             | "cloud_response_invalid"
+                                            | "cloud_project_forbidden"
+                                            | "cloud_project_unavailable"
                                     ) =>
                                 {
                                     Err(error.code)
@@ -230,29 +232,13 @@ impl RuntimeWorkRpcHandler {
                     return Err(AppIpcError::new("version_conflict", "The rule changed"));
                 }
                 if rule["project"]["store"] == "cloud" {
-                    let base = format!("/v1/cloud-projects/{}", segment(&rule["project"]["id"])?);
-                    for (collection, key) in [
-                        ("automations", "cloudRuleId"),
-                        ("incoming-hooks", "cloudHookId"),
-                    ] {
-                        let path = format!("{base}/{collection}");
-                        let rows = self
-                            .connection_rule_http(user, &actor, reqwest::Method::GET, &path, None)
-                            .await?;
-                        if rows
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .any(|row| row["id"] == rule[key])
-                        {
-                            self.connection_rule_http(
-                                user,
-                                &actor,
-                                reqwest::Method::DELETE,
-                                &format!("{path}/{}", segment(&rule[key])?),
-                                None,
-                            )
-                            .await?;
+                    if let Err(error) = self.remove_cloud_connection_rule(user, &actor, &rule).await
+                    {
+                        if !matches!(
+                            error.code.as_str(),
+                            "cloud_project_forbidden" | "cloud_project_unavailable"
+                        ) {
+                            return Err(error);
                         }
                     }
                 }
@@ -320,6 +306,40 @@ impl RuntimeWorkRpcHandler {
             }
             _ => Err(bad("Unknown connection rule operation")),
         }
+    }
+
+    async fn remove_cloud_connection_rule(
+        &self,
+        user: i64,
+        actor: &ConnectionActor,
+        rule: &Value,
+    ) -> Result<(), AppIpcError> {
+        let base = format!("/v1/cloud-projects/{}", segment(&rule["project"]["id"])?);
+        for (collection, key) in [
+            ("automations", "cloudRuleId"),
+            ("incoming-hooks", "cloudHookId"),
+        ] {
+            let path = format!("{base}/{collection}");
+            let rows = self
+                .connection_rule_http(user, actor, reqwest::Method::GET, &path, None)
+                .await?;
+            if rows
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|row| row["id"] == rule[key])
+            {
+                self.connection_rule_http(
+                    user,
+                    actor,
+                    reqwest::Method::DELETE,
+                    &format!("{path}/{}", segment(&rule[key])?),
+                    None,
+                )
+                .await?;
+            }
+        }
+        Ok(())
     }
 
     async fn validate_connection_rule_source(

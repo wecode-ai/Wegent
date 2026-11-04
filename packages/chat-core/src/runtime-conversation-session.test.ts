@@ -81,63 +81,77 @@ function setup() {
 }
 
 describe("shared runtime execution session", () => {
-  it("records reordered native identities without retaining private content", async () => {
-    const { session, client } = setup();
-    const history = page();
-    const source = history.turns![0];
-    source.items = [
-      {
-        id: "earlier",
-        position: 1,
-        type: "assistant_text",
-        content: "private earlier",
-        createdAt: "2026-09-17T00:00:01Z",
-      },
-      {
-        id: "later",
-        position: 2,
-        type: "assistant_text",
-        content: "private later",
-        createdAt: "2026-09-17T00:00:02Z",
-      },
-    ];
-    vi.mocked(client.getTranscript).mockResolvedValue(history);
-    const log = vi.spyOn(console, "debug").mockImplementation(() => {});
-    try {
-      session.start();
-      await session.reload();
-      vi.mocked(client.getTranscript).mockResolvedValue({
-        ...history,
-        turns: [
-          {
-            ...source,
-            items: source.items.map((item) => ({
-              ...item,
-              position: 3 - item.position!,
-            })),
-          },
-        ],
-      });
-      await session.reload();
-      const entry = log.mock.calls.find(
-        (call) => call[0] === "[Wework] Transcript order changed",
-      );
-      expect(entry).toBeDefined();
-      const evidence = JSON.parse(String(entry![1]));
-      expect(evidence.before.map((item: { id: string }) => item.id)).toEqual([
-        "earlier",
-        "later",
-      ]);
-      expect(evidence.after.map((item: { id: string }) => item.id)).toEqual([
-        "later",
-        "earlier",
-      ]);
-      expect(JSON.stringify(evidence)).not.toContain("private");
-    } finally {
-      session.stop();
-      log.mockRestore();
-    }
-  });
+  it.each([2, 42, 100])(
+    "records reordered native identities in a %i-item turn without retaining private content",
+    async (count) => {
+      const { session, client } = setup();
+      const history = page();
+      const source = history.turns![0];
+      source.items = [
+        {
+          id: `earlier-${"x".repeat(count > 42 ? 300 : 0)}`,
+          position: 1,
+          type: "assistant_text",
+          content: "private earlier",
+          createdAt: "2026-09-17T00:00:01Z",
+        },
+        {
+          id: `later-${"y".repeat(count > 42 ? 300 : 0)}`,
+          position: 2,
+          type: "assistant_text",
+          content: "private later",
+          createdAt: "2026-09-17T00:00:02Z",
+        },
+        ...Array.from({ length: count - 2 }, (_, index) => ({
+          id: `context-${index}`,
+          position: index + 3,
+          type: "assistant_text" as const,
+          content: "private context",
+          createdAt: "2026-09-17T00:00:03Z",
+        })),
+      ];
+      vi.mocked(client.getTranscript).mockResolvedValue(history);
+      const log = vi.spyOn(console, "debug").mockImplementation(() => {});
+      try {
+        session.start();
+        await session.reload();
+        vi.mocked(client.getTranscript).mockResolvedValue({
+          ...history,
+          turns: [
+            {
+              ...source,
+              items: source.items.map((item) => ({
+                ...item,
+                position:
+                  item.position! <= 2 ? 3 - item.position! : item.position,
+              })),
+            },
+          ],
+        });
+        await session.reload();
+        const entry = log.mock.calls.find(
+          (call) => call[0] === "[Wework] Transcript order changed",
+        );
+        expect(entry).toBeDefined();
+        const evidence = JSON.parse(String(entry![1]));
+        expect(String(entry![1]).length).toBeLessThanOrEqual(2000);
+        expect(
+          evidence.before
+            .slice(0, 2)
+            .map((item: { id: string }) => item.id.split("-")[0]),
+        ).toEqual(["earlier", "later"]);
+        expect(
+          evidence.after
+            .slice(0, 2)
+            .map((item: { id: string }) => item.id.split("-")[0]),
+        ).toEqual(["later", "earlier"]);
+        expect(JSON.stringify(evidence)).not.toContain("private");
+      } finally {
+        session.stop();
+        log.mockRestore();
+      }
+    },
+  );
 
   it("replaces positions when the native thread changes instead of joining branches", async () => {
     const { session, client } = setup();
