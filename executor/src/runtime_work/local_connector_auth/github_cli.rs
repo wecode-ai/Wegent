@@ -24,7 +24,7 @@ pub(super) async fn logout() -> Result<Value, AppIpcError> {
     )
     .await;
     Ok(
-        if result["status"] == "ok" && authentication_context_changed(&environment) {
+        if result["status"] == "ok" && authentication_context_changed(&environment, managed) {
             error("gh_auth_managed")
         } else {
             result
@@ -51,9 +51,9 @@ fn authentication_environment() -> (HashMap<String, String>, bool) {
     (environment, managed.contains_key("GH_CONFIG_DIR"))
 }
 
-fn authentication_context_changed(environment: &HashMap<String, String>) -> bool {
-    let (current, managed) = authentication_environment();
-    managed || current.get("GH_CONFIG_DIR") != environment.get("GH_CONFIG_DIR")
+fn authentication_context_changed(environment: &HashMap<String, String>, managed: bool) -> bool {
+    let (current, current_managed) = authentication_environment();
+    current_managed != managed || current.get("GH_CONFIG_DIR") != environment.get("GH_CONFIG_DIR")
 }
 
 fn error(code: &str) -> Value {
@@ -71,6 +71,9 @@ async fn health_with_environment(environment: &HashMap<String, String>) -> Value
 pub(super) async fn start() -> Result<Value, AppIpcError> {
     let (environment, managed) = authentication_environment();
     let current = health_with_environment(&environment).await;
+    if authentication_context_changed(&environment, managed) {
+        return Ok(error("gh_auth_managed"));
+    }
     if current["status"] != "need_login" {
         return Ok(current);
     }
@@ -188,12 +191,12 @@ async fn login_with_command(
     match child.wait().await {
         Ok(status) if status.success() => {
             state.lock().await["status"] = json!("verifying");
-            if authentication_context_changed(environment) {
+            if authentication_context_changed(environment, false) {
                 return error("gh_auth_managed");
             }
             match health_with_environment(environment).await {
                 result if result["status"] == "ok" => {
-                    if authentication_context_changed(environment) {
+                    if authentication_context_changed(environment, false) {
                         error("gh_auth_managed")
                     } else {
                         result

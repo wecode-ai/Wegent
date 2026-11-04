@@ -26,7 +26,14 @@ fn publish_sync(root: &Path) -> PathBuf {
 async fn verify_case(case: &str, root: &Path) {
     let native = root.join("native");
     let managed = root.join("home/.wegent/workbench/git-auth/current/gh");
-    let result = if case == "logout" {
+    let result = if case == "initial_health" {
+        fs::write(native.join("ready"), "synthetic-native-account").unwrap();
+        let operation = tokio::spawn(start());
+        wait_for_file(&root.join("entered")).await;
+        publish_sync(root);
+        fs::write(root.join("release"), "").unwrap();
+        operation.await.unwrap().unwrap()
+    } else if case == "logout" {
         fs::write(native.join("active"), "review-user").unwrap();
         let operation = tokio::spawn(logout());
         wait_for_file(&root.join("entered")).await;
@@ -77,6 +84,8 @@ async fn verify_case(case: &str, root: &Path) {
     if case == "logout" {
         assert!(native.join("logout-written").exists());
         assert!(!native.join("active").exists());
+    } else if case == "initial_health" {
+        assert!(!native.join("login-written").exists());
     } else {
         assert!(native.join("login-written").exists());
     }
@@ -94,6 +103,7 @@ async fn authentication_operations_keep_their_initial_profile_during_sync() {
     }
     for case in [
         "stable_login",
+        "initial_health",
         "login_start",
         "login_verification",
         "logout",
@@ -112,7 +122,9 @@ barrier() {
   while [ ! -f "$root/release" ]; do sleep 0.01; done
 }
 case "$1 $2" in
-  'api user') test -f "$GH_CONFIG_DIR/ready" || exit 4 ;;
+  'api user')
+    if [ "$WEGENT_GITHUB_CONTEXT_TEST_CASE" = initial_health ]; then barrier; fi
+    test -f "$GH_CONFIG_DIR/ready" || exit 4 ;;
   'config get')
     if [ ! -f "$GH_CONFIG_DIR/active" ]; then
       printf 'could not find key "user"\n' >&2; exit 1
