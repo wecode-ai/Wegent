@@ -81,7 +81,7 @@ The existing `pnpm --filter wework e2e:desktop --segment collaboration-parent-bo
 1. A planner sees three indented generations, collapses subtrees, preserves nested collapse state, and operates arrows with the task column collapsed.
 2. A member filtering by a grandchild's status retains ancestor context without a fabricated parent bar.
 3. A planner drags an undated task above the scrolling list, sees the overlay, drops on a date, and observes a persisted start/end range and Gantt bar.
-4. An editor opens an unfinished parent's archive action from a tag board, cancels without mutation, then confirms and verifies the entire subtree leaves active storage.
+4. An editor opens an unfinished parent's archive action from a tag board. Cancel receives initial focus, Tab and Shift+Tab stay inside the dialog, and cancelling returns focus to the more menu without mutation. Confirming then removes the entire subtree from active storage.
 5. A member restores the parent through the archive drawer, verifies original statuses and relationships, and sees the grandchild return to the Gantt chart.
 
 These cases reuse the existing CI checkpoint, build, and services. Fixtures remain inside the isolated Executor home and are cleaned up with the runner. Focused tests cover permission denial, cloud statuses, and external-provider protocol behavior separately.

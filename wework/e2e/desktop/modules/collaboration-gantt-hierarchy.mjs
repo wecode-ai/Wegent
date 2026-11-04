@@ -136,8 +136,16 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
     timeoutMs,
   })
   await wait('collaboration-issue-archive-dialog')
+  const cancelArchive = test('collaboration-issue-archive-cancel')
+  const confirmArchive = test('collaboration-issue-archive-confirm')
+  await control.command('waitFor', `${cancelArchive}:focus`, { timeoutMs })
+  await control.command('nativePress', cancelArchive, { key: 'Shift+Tab' })
+  await control.command('waitFor', `${confirmArchive}:focus`, { timeoutMs })
+  await control.command('nativePress', confirmArchive, { key: 'Tab' })
+  await control.command('waitFor', `${cancelArchive}:focus`, { timeoutMs })
   await click('collaboration-issue-archive-cancel')
   await wait('collaboration-issue-archive-dialog', false)
+  await control.command('waitFor', `${test('cloud-todo-more-properties')}:focus`, { timeoutMs })
   assert.ok(
     (await rpc('todos.list', { project_id: project.id })).some(item => item.id === parent.id),
     'Cancelling archive must leave the task tree active'

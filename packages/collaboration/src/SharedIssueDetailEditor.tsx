@@ -891,6 +891,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
   const propertyTagsRef = useRef<TagEditorHandle>(null);
+  const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
   const pendingContentFocusRef = useRef<"title" | "description" | null>(null);
 
   const beginContentEditing = useCallback(
@@ -2785,6 +2786,7 @@ export function TodoEditor(props: TodoEditorProps) {
           {props.headerActions}
           {workspacePanel && item ? (
             <IssuePropertiesPopover
+              triggerRef={propertiesTriggerRef}
               label={t("todo.more_properties", "更多信息")}
               onClose={() => propertyTagsRef.current?.commitDraft()}
             >
@@ -2794,7 +2796,10 @@ export function TodoEditor(props: TodoEditorProps) {
                   <button
                     className="task-detail-more-menu-danger"
                     data-testid="cloud-todo-detail-delete"
-                    onClick={props.onDelete}
+                    onClick={() => {
+                      propertiesTriggerRef.current?.focus();
+                      props.onDelete?.();
+                    }}
                     type="button"
                   >
                     {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
