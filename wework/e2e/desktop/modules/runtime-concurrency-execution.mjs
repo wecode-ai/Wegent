@@ -22,8 +22,10 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
     async handleBody(body, response) {
       const text = JSON.stringify(body.input ?? [])
       const prompt = ['personal', 'standIn', 'agent']
-        .flatMap(kind => [1, 2].map(index => promptFor(kind, index)))
-        .find(value => text.includes(value))
+        .flatMap(kind => [1, 2, 'followup'].map(index => promptFor(kind, index)))
+        .map(value => ({ value, position: text.lastIndexOf(value) }))
+        .filter(candidate => candidate.position >= 0)
+        .sort((left, right) => right.position - left.position)[0]?.value
       if (!prompt) return false
       const id = `owner-concurrency-${requested.size}`
       const held = new Promise(resolve => releases.set(prompt, resolve))
@@ -81,7 +83,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
               runtime: 'codex',
               workspacePath,
               message: prompt,
-              origin,
+              ...(index === 2 ? { origin } : {}),
               executionRequest: {
                 task_id: taskId,
                 subtask_id: `${taskId}-initial`,
@@ -143,6 +145,48 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
           'Concurrency fixture did not settle',
           uiTimeoutMs
         )
+        for (const kind of ['standIn', 'agent']) {
+          const taskId = `owner-concurrency-${kind}-1`
+          const prompt = promptFor(kind, 'followup')
+          const response = await rpc(control, 'runtime.tasks.send', {
+            taskId,
+            message: prompt,
+            executionRequest: {
+              task_id: taskId,
+              subtask_id: `${taskId}-followup`,
+              user_id: 9001,
+              prompt,
+              new_session: false,
+              bot: [{ shell_type: 'Codex', name: 'Concurrency verification' }],
+              model_config: {
+                model_id: model.local_model_id,
+                model_provider: model.provider,
+                runtime_config: { codex: { use_user_config: true, configured: true } },
+              },
+            },
+          })
+          assert.equal(response.accepted, true)
+          await waitRequested(prompt)
+          const state = await capacity()
+          assert.equal(
+            state.categories[kind].active,
+            1,
+            'A follow-up lost its original execution owner'
+          )
+          assert.equal(
+            state.categories.personal.active,
+            0,
+            'A background follow-up consumed personal capacity'
+          )
+          release(kind, 'followup')
+          await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
+          await waitForValue(
+            capacity,
+            current => current.active === 0 && current.queued === 0,
+            'The follow-up did not release its owner capacity',
+            uiTimeoutMs
+          )
+        }
       } finally {
         for (const resolve of releases.values()) resolve()
         for (const taskId of taskIds) await rpc(control, 'runtime.tasks.cancel', { taskId })

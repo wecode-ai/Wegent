@@ -199,3 +199,91 @@ fn follow_up_owner_is_bound_to_original_task_and_persisted_with_the_queued_turn(
         serde_json::from_value(serde_json::to_value(follow_up).unwrap()).unwrap();
     assert_eq!(restored.task_kind(), RuntimeTaskKind::Agent);
 }
+
+#[tokio::test]
+async fn creation_persists_the_resolved_origin_for_follow_up_ownership() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home =
+        super::super::tests::ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let handler = RuntimeWorkRpcHandler::new("origin-concurrency", "/bin/false");
+    for (id, nested_origin, top_origin, expected) in [
+        (
+            "agent",
+            json!({"type":"project_automation"}),
+            None,
+            RuntimeTaskKind::Agent,
+        ),
+        (
+            "stand-in",
+            json!({"type":"stand_in_identity","userId":9001}),
+            None,
+            RuntimeTaskKind::StandIn,
+        ),
+        (
+            "top-level",
+            json!({"type":"stand_in_identity","userId":9001}),
+            Some(json!({"type":"project_automation"})),
+            RuntimeTaskKind::Agent,
+        ),
+    ] {
+        let resolved_origin = top_origin.as_ref().unwrap_or(&nested_origin).clone();
+        let mut payload = json!({
+            "taskId":id, "workspacePath":root.path(), "message":"queued origin fixture", "queueIfBusy":true,
+            "executionRequest": {"task_id":id,"subtask_id":format!("{id}-initial"),"prompt":"queued origin fixture","origin":nested_origin}
+        });
+        if let Some(origin) = top_origin {
+            payload["origin"] = origin;
+        }
+        assert_eq!(
+            handler.create_task(payload).await.unwrap()["accepted"],
+            true
+        );
+        let link = handler.local_task_link(id).unwrap();
+        assert_eq!(link.runtime_handle["origin"], resolved_origin);
+        let mut follow_up = turn(id, Value::Null);
+        follow_up.request.extra.clear();
+        follow_up.bind_task_kind(&handler.store);
+        assert_eq!(follow_up.task_kind(), expected);
+        assert_eq!(follow_up.request.extra["origin"], resolved_origin);
+    }
+}
+
+#[test]
+fn existing_tasks_with_only_a_stored_execution_origin_keep_their_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let store = RuntimeWorkStore::new(root.path().join("tasks.json"));
+    for (id, origin, expected) in [
+        (
+            "old-agent",
+            json!({"type":"project_automation"}),
+            RuntimeTaskKind::Agent,
+        ),
+        (
+            "old-stand-in",
+            json!({"type":"connection_work","initiatedBy":"stand_in","userId":9001}),
+            RuntimeTaskKind::StandIn,
+        ),
+    ] {
+        store.upsert_task(RuntimeTaskLink {
+            local_task_id: id.into(),
+            runtime_handle: json!({"executionRequest":{"origin":origin}}),
+            ..Default::default()
+        });
+        let mut follow_up = turn(id, Value::Null);
+        follow_up.request.extra.clear();
+        follow_up.bind_task_kind(&store);
+        assert_eq!(follow_up.task_kind(), expected);
+        assert_eq!(follow_up.request.extra["origin"], origin);
+        assert_eq!(
+            store.get_task_summary(id).unwrap().runtime_handle["origin"],
+            origin
+        );
+        store.update_task(id, |task| {
+            task.runtime_handle["executionRequest"]["origin"] = json!({"type":"board_task"})
+        });
+        let mut next = turn(id, json!({"type":"board_task"}));
+        next.bind_task_kind(&store);
+        assert_eq!(next.task_kind(), expected);
+    }
+}

@@ -111,8 +111,8 @@ class DeviceRuntimeSettingsResponse(BaseModel):
 
     device_id: str
     max_concurrent_tasks: int
-    max_concurrent_stand_in_tasks: int
-    max_concurrent_agent_tasks: int
+    max_concurrent_stand_in_tasks: Optional[int] = None
+    max_concurrent_agent_tasks: Optional[int] = None
     active_tasks: int = 0
     queued_tasks: int = 0
 
@@ -444,13 +444,14 @@ def _runtime_settings_response(
     device_id: str, result: dict[str, Any]
 ) -> DeviceRuntimeSettingsResponse:
     limits = {
-        "max_concurrent_tasks": result.get("maxConcurrentTasks"),
+        "max_concurrent_tasks": result.get("maxConcurrentTasks", result.get("limit")),
         "max_concurrent_stand_in_tasks": result.get("maxConcurrentStandInTasks"),
         "max_concurrent_agent_tasks": result.get("maxConcurrentAgentTasks"),
     }
     if any(
         not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 20
-        for value in limits.values()
+        for key, value in limits.items()
+        if key == "max_concurrent_tasks" or value is not None
     ):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -469,6 +470,7 @@ def _runtime_settings_response(
 @router.get(
     "/{device_id}/runtime-settings",
     response_model=DeviceRuntimeSettingsResponse,
+    response_model_exclude_none=True,
 )
 async def get_device_runtime_settings(
     device_id: str,
@@ -494,6 +496,7 @@ async def get_device_runtime_settings(
 @router.put(
     "/{device_id}/runtime-settings",
     response_model=DeviceRuntimeSettingsResponse,
+    response_model_exclude_none=True,
 )
 async def update_device_runtime_settings(
     device_id: str,

@@ -765,7 +765,10 @@ impl RuntimeWorkRpcHandler {
         }
         if let (Some(runtime_handle), Some(origin)) = (
             link.runtime_handle.as_object_mut(),
-            payload.get("origin").filter(|value| value.is_object()),
+            request
+                .extra
+                .get("origin")
+                .filter(|value| value.is_object()),
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }

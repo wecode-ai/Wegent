@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::util::runtime_origin;
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -26,10 +27,22 @@ impl SpawnTurnRequest {
         let origin = store
             .get_task_summary(&self.local_task_id)
             .and_then(|link| {
-                link.runtime_handle
+                let origin = runtime_origin(&link.runtime_handle).cloned();
+                if !link
+                    .runtime_handle
                     .get("origin")
-                    .filter(|origin| origin.is_object())
-                    .cloned()
+                    .is_some_and(Value::is_object)
+                {
+                    if let Some(origin) = origin.as_ref() {
+                        store.update_task(&self.local_task_id, |task| {
+                            if let Some(handle) = task.runtime_handle.as_object_mut() {
+                                handle.insert("origin".into(), origin.clone());
+                            }
+                        });
+                    }
+                }
+                restore_origin(&mut self.request, &link.runtime_handle);
+                origin
             });
         self.task_kind = Some(
             origin

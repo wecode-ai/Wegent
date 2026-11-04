@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 
 // Extends the CI-covered runtime-task-queue checkpoint with real UI/Runtime persistence.
-export async function verifyIndependentConcurrencySettings(control, timeoutMs) {
+export async function verifyIndependentConcurrencySettings(control, timeoutMs, captureScreenshot) {
   const personal = '[data-testid="general-max-concurrent-tasks-select"]'
   const standIn = '[data-testid="general-max-concurrent-stand-in-tasks-select"]'
   const agent = '[data-testid="general-max-concurrent-agent-tasks-select"]'
@@ -36,6 +36,8 @@ export async function verifyIndependentConcurrencySettings(control, timeoutMs) {
     assert.equal(capacity.categories.personal.limit, 1)
     assert.equal(capacity.categories.standIn.limit, 3)
     assert.equal(capacity.categories.agent.limit, 4)
+    await control.command('scrollIntoView', '[data-testid="general-settings-runtime-section"]')
+    await captureScreenshot(control, 'runtime-concurrency-settings-three-owners.png', 'body')
   } finally {
     await setLimit(standIn, original.maxConcurrentStandInTasks)
     await setLimit(agent, original.maxConcurrentAgentTasks)

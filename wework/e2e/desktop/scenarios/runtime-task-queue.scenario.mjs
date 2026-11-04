@@ -310,7 +310,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         '1',
         'The runtime concurrency setting did not update to one'
       )
-      await verifyIndependentConcurrencySettings(control, uiTimeoutMs)
+      await verifyIndependentConcurrencySettings(control, uiTimeoutMs, captureScreenshot)
       await prepareScreenshot(control, null)
       await captureScreenshot(control, 'runtime-queue-01-limit-one.png', 'body')
       await control.command('click', '[data-testid="settings-back-button"]')

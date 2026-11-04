@@ -3233,3 +3233,40 @@ def test_device_runtime_settings_rejects_empty_or_invalid_updates(payload):
 
     with pytest.raises(ValidationError):
         DeviceRuntimeSettingsUpdate(**payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "legacy_capacity",
+    [
+        {"limit": 4, "active": 2, "queued": 1},
+        {"maxConcurrentTasks": 4, "active": 2, "queued": 1},
+    ],
+)
+async def test_device_runtime_settings_preserves_legacy_get_and_successful_save(
+    monkeypatch, legacy_capacity
+):
+    from app.api.endpoints import devices
+
+    rpc_mock = AsyncMock(
+        side_effect=[legacy_capacity, {"maxConcurrentTasks": 4}, legacy_capacity]
+    )
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
+    read = await devices.get_device_runtime_settings(
+        device_id="old-device", current_user=SimpleNamespace(id=7)
+    )
+    saved = await devices.update_device_runtime_settings(
+        device_id="old-device",
+        request=devices.DeviceRuntimeSettingsUpdate(max_concurrent_tasks=4),
+        current_user=SimpleNamespace(id=7),
+    )
+    expected = {
+        "device_id": "old-device",
+        "max_concurrent_tasks": 4,
+        "active_tasks": 2,
+        "queued_tasks": 1,
+    }
+    assert read.model_dump(exclude_none=True) == expected
+    assert saved.model_dump(exclude_none=True) == expected
+    assert saved.max_concurrent_stand_in_tasks is None
+    assert saved.max_concurrent_agent_tasks is None
