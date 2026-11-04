@@ -47,11 +47,12 @@ export function handleArchiveInteractionModel(body, response) {
 export async function verifyInteractionArchiving(control, timeoutMs, taskId) {
   // The preceding regression leaves the original task open and the inbox on history.
   for (const item of CASES) {
+    await control.command('waitFor', COMPOSER, { visible: true })
+    await control.command('fill', COMPOSER, { value: PREFIX + item.mode })
     await control.command(
       'waitFor',
       `${ORIGINAL} [data-testid="send-message-button"]:not(:disabled)`
     )
-    await control.command('fill', COMPOSER, { value: PREFIX + item.mode })
     await control.command('press', COMPOSER, { key: 'Enter' })
     await control.command('waitFor', `${ORIGINAL} [data-testid="request-user-input-card"]`, {
       text: item.question,
