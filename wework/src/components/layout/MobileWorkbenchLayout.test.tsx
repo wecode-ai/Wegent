@@ -504,7 +504,65 @@ describe('MobileWorkbenchLayout', () => {
           implement: { answers: ['是的，执行此计划'] },
         },
       },
-      { appendUserMessage: true, forceDefaultCollaborationMode: true }
+      {
+        requestUserInputResponses: [expect.objectContaining({ requestId: 42 })],
+        appendUserMessage: true,
+        forceDefaultCollaborationMode: true,
+      }
+    )
+  })
+
+  test('submits every request identity from the mobile combined form', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+    const messages = ['first', 'second'].map(itemId => {
+      const message = createPendingRequestUserInputMessage()
+      message.id = itemId
+      message.blocks![0] = {
+        ...message.blocks![0],
+        id: itemId,
+        type: 'tool',
+        toolName: 'request_user_input',
+        renderPayload: {
+          kind: 'request_user_input',
+          delivery: 'async',
+          itemId,
+          questions: [{ id: 'question_1', question: `${itemId}?`, options: [{ label: itemId }] }],
+        },
+      }
+      return message
+    })
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-group',
+          },
+        }}
+        messages={messages}
+        projectChat={baseProjectChat}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+    expect(screen.getByText('first?')).toBeVisible()
+    expect(screen.getByText('second?')).toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: 'first' }),
+      expect.objectContaining({
+        requestUserInputResponses: [
+          expect.objectContaining({
+            itemId: 'first',
+            answers: { question_1: { answers: ['first'] } },
+          }),
+          expect.objectContaining({
+            itemId: 'second',
+            answers: { question_1: { answers: ['second'] } },
+          }),
+        ],
+      })
     )
   })
 

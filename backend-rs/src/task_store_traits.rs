@@ -191,6 +191,16 @@ pub trait TaskStore:
         user_id: i32,
     ) -> MysqlResult<Vec<MysqlRow>>;
 
+    /// `subtask_store.list_by_task_for_user_ordered`: the labeled full
+    /// subtask projection for one task and user, ordered `message_id ASC`.
+    /// The queued/background response render issues this source statement
+    /// instead of the id-page read behind [`Self::list_subtasks_for_user`].
+    async fn list_subtasks_for_user_ordered_labeled(
+        &self,
+        task_id: i64,
+        user_id: i32,
+    ) -> MysqlResult<Vec<MysqlRow>>;
+
     /// `task_store.get_task_by_states` with `states = [STATE_ACTIVE]` and an
     /// explicit owner.
     async fn get_active_task_owned(
@@ -549,6 +559,36 @@ pub trait TaskStore:
     /// `MysqlService`.
     async fn message_edit_tables(&self, task_id: i64) -> MysqlResult<MessageEditTables>;
 
+    /// `_is_streaming_subtask_active`: the cached streaming subtask row,
+    /// selected through this deployment's table routing.
+    async fn streaming_subtask_by_id(
+        &self,
+        subtask_id: i64,
+    ) -> MysqlResult<Option<crate::task_store_tables::StreamingSubtask>>;
+
+    /// `_get_active_streaming_from_db`
+    /// (`SubtaskStore.get_latest_running_assistant_by_task`): the task's
+    /// latest running assistant subtask, through this deployment's routing.
+    async fn latest_running_assistant_subtask(
+        &self,
+        task_id: i64,
+    ) -> MysqlResult<Option<crate::task_store_tables::StreamingSubtask>>;
+
     /// This deployment's physical `tasks` / `subtasks` table templates.
     fn table_templates(&self) -> TableTemplates;
+
+    /// The physical `subtasks` tables a query without a shard key must read.
+    ///
+    /// The default store owns one table. A deployment that shards `subtasks`
+    /// returns every shard, mirroring the source's sharded session, which fans
+    /// a filter without a task id out across all of them.
+    fn subtask_tables(&self) -> Vec<String> {
+        single_subtask_table(self.table_templates())
+    }
+}
+
+/// The default store owns one physical `subtasks` table.
+#[must_use]
+pub fn single_subtask_table(templates: TableTemplates) -> Vec<String> {
+    vec![templates.subtasks.to_string()]
 }

@@ -84,6 +84,18 @@ pub async fn build() -> Result<AppState> {
     // adapter channel once per process. Migrated interactive RPC handlers share
     // that process-owned subscription instead of opening one per request.
     let socketio_rpc = Some(crate::socketio_rpc::SocketIoRpc::start(&redis_config));
+    // `session_manager.subscribe_callback_channel` for the create flow's
+    // HTTP+Callback streaming branch. The SDK opens one dedicated Pub/Sub
+    // connection per `subscribe`, so the provider only retains the service
+    // handle. Without Redis the branch renders the source's subscribe failure
+    // (`RuntimeError("Failed to subscribe to callback stream channel")`).
+    let callback_subscriptions = redis.clone().map(
+        |redis| -> Arc<dyn crate::responses::create::callback_source::CallbackSubscriptions> {
+            Arc::new(
+                crate::responses::create::callback_source::RedisCallbackSubscriptions::new(redis),
+            )
+        },
+    );
     // `GET /api/git/repositories`: the retained provider HTTP client and the
     // process-owned background full-fetch worker are built here so the worker
     // is initialization-owned.
@@ -117,6 +129,7 @@ pub async fn build() -> Result<AppState> {
         jwt_algorithm,
         mysql,
         redis,
+        callback_subscriptions,
         celery,
         socketio_rpc,
         oidc_config: config,
