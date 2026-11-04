@@ -20,7 +20,9 @@ use uuid::Uuid;
 use super::store::runtime_work_dir;
 
 mod stand_in_review;
-pub(crate) use stand_in_review::{weekly_review, WEEKLY_REVIEW_TEMPLATE};
+pub(crate) use stand_in_review::{
+    weekly_review, WEEKLY_REVIEW_INSTRUCTIONS, WEEKLY_REVIEW_TEMPLATE,
+};
 
 const AUTOMATION_STORE_VERSION: u64 = 2;
 const DEFAULT_TIMEZONE: &str = "UTC";

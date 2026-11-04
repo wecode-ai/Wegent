@@ -43,6 +43,219 @@ fn filter_review_page(page: &mut Value, start: i64, end: i64, previous: bool) {
     page["contentMayBeTruncated"] = json!(page["fullContent"] != true);
 }
 
+impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_stand_in_review_history(
+        &self,
+        identity: &StandInMcpIdentity,
+        args: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let denied = || {
+            AppIpcError::new(
+                "permission_denied",
+                "Review history requires a current primary identity or a bound review run",
+            )
+        };
+        if identity.device != self.device_id
+            || identity.work.is_some()
+            || identity.project.is_some()
+            || identity.coordinator_batch.is_some()
+            || !matches!(identity.role.as_deref(), None | Some("@primary"))
+        {
+            return Err(denied());
+        }
+        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
+        if !review_owned(&actor, identity.user)
+            || actor.runtime_handle["origin"]["userId"] != identity.user
+        {
+            return Err(denied());
+        }
+        let end = if identity.review {
+            self.review_run_end(&actor, identity.user)?
+        } else {
+            if actor.runtime_handle["origin"]["type"] != "stand_in_identity" {
+                return Err(denied());
+            }
+            match args["windowEnd"].as_str() {
+                Some(value) => chrono::DateTime::parse_from_rfc3339(value)
+                    .map(|at| at.with_timezone(&chrono::Utc))
+                    .map_err(|_| AppIpcError::new("bad_request", "Invalid windowEnd"))?,
+                None => chrono::Utc::now(),
+            }
+        };
+        let start = end - chrono::Duration::days(7);
+        let previous = args["previousReviews"] == true;
+        if let Some(id) = args["taskId"].as_str() {
+            let link = self
+                .local_task_link(id)
+                .filter(|link| review_owned(link, identity.user))
+                .ok_or_else(denied)?;
+            if previous && link.runtime_handle["origin"]["weeklyReview"] != true {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "previousReviews only reads review reports",
+                ));
+            }
+            if id == identity.task_id {
+                return Err(denied());
+            }
+            let mut page = self.transcript(json!({"taskId":id,"limit":50,"includeFullContent":false,"beforeCursor":args["beforeCursor"]})).await?;
+            filter_review_page(
+                &mut page,
+                start.timestamp_millis(),
+                end.timestamp_millis(),
+                previous,
+            );
+            page["windowStart"] = json!(start);
+            page["windowEnd"] = json!(end);
+            return Ok(page);
+        }
+        let mut links: Vec<_> = self
+            .local_task_links(true)
+            .into_iter()
+            .filter(|link| {
+                review_owned(link, identity.user)
+                    && link.local_task_id != identity.task_id
+                    && !self.archived_link_is_deleted(link)
+                    && if previous {
+                        link.runtime_handle["origin"]["weeklyReview"] == true
+                    } else {
+                        link.runtime_handle["origin"]["weeklyReview"] != true
+                            && (link.updated_at == 0 || link.updated_at >= start.timestamp_millis())
+                    }
+            })
+            .collect();
+        links.sort_by(|a, b| a.local_task_id.cmp(&b.local_task_id));
+        let cursor = args["taskCursor"].as_str().unwrap_or("");
+        let mut remaining = links
+            .into_iter()
+            .filter(|link| link.local_task_id.as_str() > cursor);
+        let items: Vec<_> = remaining.by_ref().take(50).map(|link| json!({"taskId":link.local_task_id,"title":link.title,"updatedAt":link.updated_at})).collect();
+        let next = remaining
+            .next()
+            .and_then(|_| items.last().map(|item| item["taskId"].clone()));
+        Ok(json!({"items":items,"nextTaskCursor":next,"windowStart":start,"windowEnd":end}))
+    }
+
+    fn review_run_end(
+        &self,
+        actor: &RuntimeTaskLink,
+        user: i64,
+    ) -> Result<chrono::DateTime<chrono::Utc>, AppIpcError> {
+        use crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
+        let denied = || {
+            AppIpcError::new(
+                "permission_denied",
+                "The review run binding is no longer valid",
+            )
+        };
+        let schedule = &actor.runtime_handle["executionRequest"]["standInSchedule"];
+        let automation = schedule["id"]
+            .as_str()
+            .and_then(|id| self.automation_store.get(id))
+            .ok_or_else(denied)?;
+        if actor.runtime_handle["origin"]["type"] != "stand_in_schedule"
+            || actor.runtime_handle["origin"]["weeklyReview"] != true
+            || actor.runtime_handle["origin"]["automationId"] != automation.id
+            || automation.task_request["standInOwner"]["userId"] != user
+            || automation.task_request["standInOwner"]["roleId"] != "@primary"
+            || automation.task_request["standInCalendar"]["template"] != WEEKLY_REVIEW_TEMPLATE
+            || json!(automation.version) != schedule["version"]
+        {
+            return Err(denied());
+        }
+        let run = self
+            .automation_store
+            .list_runs(Some(&automation.id))
+            .into_iter()
+            .find(|run| {
+                json!(run.id) == schedule["runId"]
+                    && matches!(
+                        run.status,
+                        AutomationRunStatus::Pending | AutomationRunStatus::Running
+                    )
+                    && run.coordination.as_ref().is_some_and(|binding| {
+                        binding.user_id == user
+                            && binding.role_id == "@primary"
+                            && binding.automation_version == automation.version
+                            && binding.task_id == actor.local_task_id
+                    })
+            })
+            .ok_or_else(denied)?;
+        Ok(run.scheduled_for)
+    }
+
+    pub(super) async fn stand_in_onboarding_rpc(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = payload["userId"]
+            .as_i64()
+            .filter(|id| *id >= 0)
+            .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
+        let template = weekly_review(
+            user,
+            &self.device_id,
+            if method == "runtime.stand_in.onboarding.complete" && payload["weeklyReview"] == true {
+                payload["time"].as_str().unwrap_or("09:00")
+            } else {
+                "09:00"
+            },
+            payload["language"].as_str().unwrap_or("zh-CN"),
+        )
+        .map_err(|error| AppIpcError::new("bad_request", error))?;
+        let state = if method == "runtime.stand_in.onboarding.complete" {
+            let selected = payload["weeklyReview"]
+                .as_bool()
+                .ok_or_else(|| AppIpcError::new("bad_request", "weeklyReview is required"))?;
+            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+            let _guard = gate.lock().await;
+            if selected
+                && self
+                    .automation_store
+                    .stand_in_onboarding(user)
+                    .map_err(|error| AppIpcError::new("automation_store_error", error))?
+                    ["completed"]
+                    != true
+            {
+                let store = LocalTaskStore::open(self.task_store_path.as_ref())
+                    .map_err(super::stand_in::settings_error)?;
+                let mut settings = store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(super::stand_in::settings_error)?;
+                // Materialize the same implicit default shown by the profile UI, without re-enabling saved identities.
+                if !settings["primary"].is_object() {
+                    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+                    store
+                        .save_personal_stand_in(user, &self.device_id, settings)
+                        .map_err(super::stand_in::settings_error)?;
+                }
+            }
+            let result = self
+                .automation_store
+                .complete_stand_in_onboarding(user, selected.then(|| template.clone()))
+                .map_err(|error| AppIpcError::new("automation_store_error", error))?;
+            self.emit_automations_changed(&template.id, "updated");
+            result
+        } else {
+            self.automation_store
+                .stand_in_onboarding(user)
+                .map_err(|error| AppIpcError::new("automation_store_error", error))?
+        };
+        let settings = if method == "runtime.stand_in.onboarding.complete" {
+            Some(
+                LocalTaskStore::open(self.task_store_path.as_ref())
+                    .map_err(super::stand_in::settings_error)?
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(super::stand_in::settings_error)?,
+            )
+        } else {
+            None
+        };
+        Ok(json!({"state":state,"reviewTemplate":template,"settings":settings}))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,218 +519,5 @@ mod tests {
             .await
             .unwrap();
         assert!(opted_out["settings"]["primary"].is_null());
-    }
-}
-
-impl RuntimeWorkRpcHandler {
-    pub(super) async fn read_stand_in_review_history(
-        &self,
-        identity: &StandInMcpIdentity,
-        args: &Value,
-    ) -> Result<Value, AppIpcError> {
-        let denied = || {
-            AppIpcError::new(
-                "permission_denied",
-                "Review history requires a current primary identity or a bound review run",
-            )
-        };
-        if identity.device != self.device_id
-            || identity.work.is_some()
-            || identity.project.is_some()
-            || identity.coordinator_batch.is_some()
-            || !matches!(identity.role.as_deref(), None | Some("@primary"))
-        {
-            return Err(denied());
-        }
-        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
-        if !review_owned(&actor, identity.user)
-            || actor.runtime_handle["origin"]["userId"] != identity.user
-        {
-            return Err(denied());
-        }
-        let end = if identity.review {
-            self.review_run_end(&actor, identity.user)?
-        } else {
-            if actor.runtime_handle["origin"]["type"] != "stand_in_identity" {
-                return Err(denied());
-            }
-            match args["windowEnd"].as_str() {
-                Some(value) => chrono::DateTime::parse_from_rfc3339(value)
-                    .map(|at| at.with_timezone(&chrono::Utc))
-                    .map_err(|_| AppIpcError::new("bad_request", "Invalid windowEnd"))?,
-                None => chrono::Utc::now(),
-            }
-        };
-        let start = end - chrono::Duration::days(7);
-        let previous = args["previousReviews"] == true;
-        if let Some(id) = args["taskId"].as_str() {
-            let link = self
-                .local_task_link(id)
-                .filter(|link| review_owned(link, identity.user))
-                .ok_or_else(denied)?;
-            if previous && link.runtime_handle["origin"]["weeklyReview"] != true {
-                return Err(AppIpcError::new(
-                    "bad_request",
-                    "previousReviews only reads review reports",
-                ));
-            }
-            if id == identity.task_id {
-                return Err(denied());
-            }
-            let mut page = self.transcript(json!({"taskId":id,"limit":50,"includeFullContent":false,"beforeCursor":args["beforeCursor"]})).await?;
-            filter_review_page(
-                &mut page,
-                start.timestamp_millis(),
-                end.timestamp_millis(),
-                previous,
-            );
-            page["windowStart"] = json!(start);
-            page["windowEnd"] = json!(end);
-            return Ok(page);
-        }
-        let mut links: Vec<_> = self
-            .local_task_links(true)
-            .into_iter()
-            .filter(|link| {
-                review_owned(link, identity.user)
-                    && link.local_task_id != identity.task_id
-                    && !self.archived_link_is_deleted(link)
-                    && if previous {
-                        link.runtime_handle["origin"]["weeklyReview"] == true
-                    } else {
-                        link.runtime_handle["origin"]["weeklyReview"] != true
-                            && (link.updated_at == 0 || link.updated_at >= start.timestamp_millis())
-                    }
-            })
-            .collect();
-        links.sort_by(|a, b| a.local_task_id.cmp(&b.local_task_id));
-        let cursor = args["taskCursor"].as_str().unwrap_or("");
-        let mut remaining = links
-            .into_iter()
-            .filter(|link| link.local_task_id.as_str() > cursor);
-        let items: Vec<_> = remaining.by_ref().take(50).map(|link| json!({"taskId":link.local_task_id,"title":link.title,"updatedAt":link.updated_at})).collect();
-        let next = remaining
-            .next()
-            .and_then(|_| items.last().map(|item| item["taskId"].clone()));
-        Ok(json!({"items":items,"nextTaskCursor":next,"windowStart":start,"windowEnd":end}))
-    }
-
-    fn review_run_end(
-        &self,
-        actor: &RuntimeTaskLink,
-        user: i64,
-    ) -> Result<chrono::DateTime<chrono::Utc>, AppIpcError> {
-        use crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
-        let denied = || {
-            AppIpcError::new(
-                "permission_denied",
-                "The review run binding is no longer valid",
-            )
-        };
-        let schedule = &actor.runtime_handle["executionRequest"]["standInSchedule"];
-        let automation = schedule["id"]
-            .as_str()
-            .and_then(|id| self.automation_store.get(id))
-            .ok_or_else(denied)?;
-        if actor.runtime_handle["origin"]["type"] != "stand_in_schedule"
-            || actor.runtime_handle["origin"]["weeklyReview"] != true
-            || actor.runtime_handle["origin"]["automationId"] != automation.id
-            || automation.task_request["standInOwner"]["userId"] != user
-            || automation.task_request["standInOwner"]["roleId"] != "@primary"
-            || automation.task_request["standInCalendar"]["template"] != WEEKLY_REVIEW_TEMPLATE
-            || json!(automation.version) != schedule["version"]
-        {
-            return Err(denied());
-        }
-        let run = self
-            .automation_store
-            .list_runs(Some(&automation.id))
-            .into_iter()
-            .find(|run| {
-                json!(run.id) == schedule["runId"]
-                    && matches!(
-                        run.status,
-                        AutomationRunStatus::Pending | AutomationRunStatus::Running
-                    )
-                    && run.coordination.as_ref().is_some_and(|binding| {
-                        binding.user_id == user
-                            && binding.role_id == "@primary"
-                            && binding.automation_version == automation.version
-                            && binding.task_id == actor.local_task_id
-                    })
-            })
-            .ok_or_else(denied)?;
-        Ok(run.scheduled_for)
-    }
-
-    pub(super) async fn stand_in_onboarding_rpc(
-        &self,
-        method: &str,
-        payload: Value,
-    ) -> Result<Value, AppIpcError> {
-        let user = payload["userId"]
-            .as_i64()
-            .filter(|id| *id >= 0)
-            .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
-        let template = weekly_review(
-            user,
-            &self.device_id,
-            if method == "runtime.stand_in.onboarding.complete" && payload["weeklyReview"] == true {
-                payload["time"].as_str().unwrap_or("09:00")
-            } else {
-                "09:00"
-            },
-            payload["language"].as_str().unwrap_or("zh-CN"),
-        )
-        .map_err(|error| AppIpcError::new("bad_request", error))?;
-        let state = if method == "runtime.stand_in.onboarding.complete" {
-            let selected = payload["weeklyReview"]
-                .as_bool()
-                .ok_or_else(|| AppIpcError::new("bad_request", "weeklyReview is required"))?;
-            let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
-            let _guard = gate.lock().await;
-            if selected
-                && self
-                    .automation_store
-                    .stand_in_onboarding(user)
-                    .map_err(|error| AppIpcError::new("automation_store_error", error))?
-                    ["completed"]
-                    != true
-            {
-                let store = LocalTaskStore::open(self.task_store_path.as_ref())
-                    .map_err(super::stand_in::settings_error)?;
-                let mut settings = store
-                    .personal_stand_in(user, &self.device_id)
-                    .map_err(super::stand_in::settings_error)?;
-                // Materialize the same implicit default shown by the profile UI, without re-enabling saved identities.
-                if !settings["primary"].is_object() {
-                    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
-                    store
-                        .save_personal_stand_in(user, &self.device_id, settings)
-                        .map_err(super::stand_in::settings_error)?;
-                }
-            }
-            let result = self
-                .automation_store
-                .complete_stand_in_onboarding(user, selected.then(|| template.clone()))
-                .map_err(|error| AppIpcError::new("automation_store_error", error))?;
-            self.emit_automations_changed(&template.id, "updated");
-            result
-        } else {
-            self.automation_store
-                .stand_in_onboarding(user)
-                .map_err(|error| AppIpcError::new("automation_store_error", error))?
-        };
-        let settings = if method == "runtime.stand_in.onboarding.complete" {
-            Some(
-                LocalTaskStore::open(self.task_store_path.as_ref())
-                    .map_err(super::stand_in::settings_error)?
-                    .personal_stand_in(user, &self.device_id)
-                    .map_err(super::stand_in::settings_error)?,
-            )
-        } else {
-            None
-        };
-        Ok(json!({"state":state,"reviewTemplate":template,"settings":settings}))
     }
 }
