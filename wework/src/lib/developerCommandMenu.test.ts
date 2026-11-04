@@ -72,7 +72,51 @@ describe('developerCommandMenu', () => {
 
     expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBeNull()
   })
+
+  test('keeps debug actions usable across refresh, collapse, reopen and close', () => {
+    dispatchDeveloperShortcut()
+    screenCommand('open-debug-panel').click()
+
+    const expandedPanelSelector = '#wework-debug-panel [role="dialog"]'
+    expect(document.querySelector(expandedPanelSelector)).not.toBeNull()
+
+    getWorkbenchDebugSnapshotMock.mockClear()
+    screenDebugAction('refresh').click()
+    expect(getWorkbenchDebugSnapshotMock).toHaveBeenCalledOnce()
+
+    screenDebugAction('clear-logs').click()
+    expect(clearWorkbenchDebugLogsMock).toHaveBeenCalledOnce()
+
+    screenDebugAction('collapse').click()
+    expect(document.querySelector(expandedPanelSelector)).toBeNull()
+
+    screenDebugAction('collapsed').click()
+    expect(document.querySelector(expandedPanelSelector)).not.toBeNull()
+
+    screenDebugAction('close').click()
+    expect(document.getElementById('wework-debug-panel')).toBeNull()
+  })
+
+  test('restores the collapsed panel after Escape or a backdrop click', () => {
+    dispatchDeveloperShortcut()
+    screenCommand('open-debug-panel').click()
+
+    const panel = document.getElementById('wework-debug-panel')!
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(document.querySelector('#wework-debug-panel [role="dialog"]')).toBeNull()
+
+    screenDebugAction('collapsed').click()
+    panel.click()
+    expect(document.querySelector('#wework-debug-panel [role="dialog"]')).toBeNull()
+    expect(screenDebugAction('collapsed')).not.toBeNull()
+  })
 })
+
+function screenDebugAction(action: string): HTMLButtonElement {
+  const element = document.querySelector<HTMLButtonElement>(`[data-testid="debug-panel-${action}"]`)
+  if (!element) throw new Error(`Debug panel action was not found: ${action}`)
+  return element
+}
 
 function dispatchDeveloperShortcut() {
   window.dispatchEvent(

@@ -1,5 +1,5 @@
 import { Check, Folder, LayoutDashboard, Search, X } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
@@ -43,6 +43,10 @@ export function ProjectSpacePickerMenu({
   const [activeKey, setActiveKey] = useState(project ? projectKey(project) : '')
   const outsideRefs = useMemo(() => [menuRef], [])
   const layout = useAnchoredPortalMenu(true, triggerRef, menuRef, { align: 'start' })
+  const close = useCallback(() => {
+    triggerRef.current?.focus()
+    onClose()
+  }, [onClose, triggerRef])
   useOutsideClick(containerRef, true, onClose, outsideRefs)
 
   const localLabel = t('workbench.project_picker_local', '本地项目')
@@ -75,11 +79,9 @@ export function ProjectSpacePickerMenu({
   )
 
   useEffect(() => {
-    const trigger = triggerRef.current
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
     return () => {
       window.cancelAnimationFrame(frame)
-      trigger?.focus()
     }
   }, [triggerRef])
 
@@ -90,7 +92,7 @@ export function ProjectSpacePickerMenu({
   }, [activeIndex, visible])
 
   const choose = (option: CloudProject) => {
-    onClose()
+    close()
     onSelect(option)
   }
 
@@ -116,7 +118,7 @@ export function ProjectSpacePickerMenu({
         if (event.key !== 'Escape' || event.nativeEvent.isComposing) return
         event.preventDefault()
         event.stopPropagation()
-        onClose()
+        close()
       }}
       className="fixed z-system-popover flex w-[40rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl bg-background text-text-primary shadow-xl ring-1 ring-foreground/10"
     >
@@ -300,7 +302,7 @@ export function ProjectSpacePickerMenu({
             type="button"
             data-testid="clear-project-space-context-button"
             onClick={() => {
-              onClose()
+              close()
               onRemoveProject()
             }}
             className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11"

@@ -83,6 +83,42 @@ describe("createCloudRuntimeIpcClient", () => {
     });
   });
 
+  it.each([
+    "unsupported_method",
+    "remote_control_disabled",
+    "executor_offline",
+  ])("preserves structured relay failure metadata for %s", async (code) => {
+    socket.emit.mockImplementation((_event, _request, acknowledge) => {
+      acknowledge({
+        ok: false,
+        error: {
+          code,
+          message: "Executor request failed",
+          retryable: false,
+          details: { deviceId: "failed-device" },
+        },
+      });
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+    await expect(
+      client.request(
+        "runtime.stand_in.assignment_tasks",
+        { userId: 7, assignments: [] },
+        "failed-device",
+      ),
+    ).rejects.toMatchObject({
+      message: `${code}: Executor request failed`,
+      code,
+      retryable: false,
+      details: { deviceId: "failed-device" },
+    });
+    client.dispose();
+  });
+
   it("assembles transcript chunks through the owning cloud device", async () => {
     const content = Array.from({ length: 18_000 }, (_, index) =>
       createHash("sha256").update(String(index)).digest("hex"),

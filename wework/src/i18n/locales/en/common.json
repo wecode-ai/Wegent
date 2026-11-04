@@ -5765,6 +5765,8 @@
       "executor_unavailable": "The execution device cannot be reached. Check that Wework is running on that device, then choose Reload.",
       "executor_restarted": "The execution device restarted and this page is out of date. Choose Reload to continue.",
       "executor_update_required": "Wework and the execution device use incompatible versions. Update Wework on both devices and restart.",
+      "assignment_lookup_failed": "Could not read Stand-in history on device {{deviceId}}: {{error}}",
+      "remote_control_disabled": "This desktop device does not allow remote operations. Open Wework on that device, or choose an execution device that supports remote operations.",
       "authentication_required": "Your cloud sign-in has expired. Reconnect your cloud account in Settings, then reload.",
       "service_unavailable": "The service is temporarily unavailable. Choose Reload later. Your changes have not been saved.",
       "executor_ambiguous": "Multiple execution devices match this selection. Refresh the device list and select the execution device again.",
@@ -5863,6 +5865,11 @@
     "unsupported_display_mode": "The app has no supported display mode."
   },
   "interactions": {
+    "sources": {
+      "task": "Tasks",
+      "project": "Projects",
+      "stand_in": "Stand-in"
+    },
     "title": "Needs your input",
     "tab_title_with_count": "Needs your input ({{count}})",
     "tab_pending_count": " ({{count}})",
@@ -5870,6 +5877,7 @@
     "reply": "Reply",
     "reply_placeholder": "Write a reply…",
     "send": "Send",
+    "skip": "Dismiss item",
     "dismiss": "Dismiss reminder",
     "handle_in_context": "Open to handle",
     "add_detail": "Add a note",
