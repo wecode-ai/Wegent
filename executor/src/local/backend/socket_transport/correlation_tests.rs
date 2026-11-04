@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
-async fn accept_connection(listener: TcpListener) -> WebSocketStream<TcpStream> {
+pub(super) async fn accept_connection(listener: TcpListener) -> WebSocketStream<TcpStream> {
     let (stream, _) = listener.accept().await.unwrap();
     let mut socket = accept_async(stream).await.unwrap();
     socket.send(Message::Text(

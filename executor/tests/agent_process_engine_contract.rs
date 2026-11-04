@@ -27,6 +27,8 @@ use wegent_executor::{
 
 #[path = "agent_process_engine_contract/claude_capabilities.rs"]
 mod claude_capabilities;
+#[path = "agent_process_engine_contract/file_changes.rs"]
+mod file_changes;
 
 fn env_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();

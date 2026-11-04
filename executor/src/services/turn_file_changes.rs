@@ -7,7 +7,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -17,7 +17,12 @@ use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+mod git_capture;
+mod task_baseline;
+use git_capture::git_output_vec;
+
 const ARTIFACT_VERSION: u64 = 1;
+const MAX_INLINE_DIFF_BYTES: usize = 512 * 1024;
 static TEMP_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +53,9 @@ pub struct TurnFileChangeTracker {
     device_id: Option<String>,
     before: Option<GitTreeSnapshot>,
     active: bool,
+    capture_error: Option<&'static str>,
+    track_task: bool,
+    task_baseline: Option<Result<GitTreeSnapshot, ()>>,
 }
 
 impl TurnFileChangeTracker {
@@ -66,22 +74,44 @@ impl TurnFileChangeTracker {
             device_id: device_id.map(ToOwned::to_owned),
             before: None,
             active: false,
+            capture_error: None,
+            track_task: false,
+            task_baseline: None,
         }
     }
 
+    /// Standard web tasks also expose a net diff from their first prepared tree.
+    pub fn with_task_baseline(mut self) -> Self {
+        self.track_task = true;
+        self
+    }
+
     pub fn start(&mut self) -> bool {
+        self.capture_error = None;
         if !is_git_workspace(&self.workspace) {
             return false;
         }
         let Some(snapshot) = capture_tree(&self.workspace) else {
+            self.log_capture_failure("initial_snapshot");
+            self.capture_error = Some("initial_snapshot");
             return false;
         };
+        if self.track_task {
+            let baseline = task_baseline::load_or_create(&self.workspace, self.task_id, &snapshot);
+            if baseline.is_err() {
+                self.log_capture_failure("task_baseline");
+            }
+            self.task_baseline = Some(baseline);
+        }
         self.before = Some(snapshot);
         self.active = true;
         true
     }
 
     pub fn finalize(&mut self) -> Value {
+        if self.capture_error.take().is_some() {
+            return self.failed_capture_summary();
+        }
         if !self.active {
             return json!({});
         }
@@ -90,27 +120,14 @@ impl TurnFileChangeTracker {
             return json!({});
         };
         let Some(after) = capture_tree(&self.workspace) else {
-            return json!({});
+            self.log_capture_failure("final_snapshot");
+            return self.failed_capture_summary();
         };
-        let patch = git_output(
-            &self.workspace,
-            [
-                "diff",
-                "--binary",
-                "--find-renames",
-                &before.tree_id,
-                &after.tree_id,
-            ],
-            None,
-            None,
-        )
-        .unwrap_or_default();
-        if patch.is_empty() {
-            return json!({});
-        }
-
-        let files = create_file_summary(&self.workspace, &before, &after);
-        completion_fields_from_patch_and_files(
+        let Ok((patch, files)) = snapshot_diff(&self.workspace, &before, &after) else {
+            self.log_capture_failure("diff");
+            return self.failed_capture_summary();
+        };
+        let mut fields = completion_fields_from_patch_and_files(
             &self.workspace,
             self.task_id,
             self.subtask_id,
@@ -118,8 +135,64 @@ impl TurnFileChangeTracker {
             self.device_id.as_deref(),
             &patch,
             files,
-        )
+        );
+        if self.track_task {
+            let task_summary = match self.task_baseline.take() {
+                Some(Ok(baseline)) if baseline == before => {
+                    let mut summary = fields["file_changes"].clone();
+                    // Cumulative snapshots are display-only, never turn-revert artifacts.
+                    summary["artifact_id"] = Value::Null;
+                    summary
+                }
+                Some(Ok(baseline)) => snapshot_diff(&self.workspace, &baseline, &after)
+                    .map(|(patch, files)| {
+                        file_change_summary(
+                            &self.workspace,
+                            self.device_id.as_deref(),
+                            &patch,
+                            files,
+                            None,
+                        )
+                    })
+                    .unwrap_or_else(|_| {
+                        self.log_capture_failure("task_diff");
+                        failed_file_change_summary()
+                    }),
+                _ => failed_file_change_summary(),
+            };
+            fields["task_file_changes"] = task_summary;
+        }
+        fields
     }
+
+    fn log_capture_failure(&self, phase: &'static str) {
+        crate::logging::log_executor_event(
+            "file change capture failed",
+            &[
+                ("task_id", self.task_id.to_string()),
+                ("subtask_id", self.subtask_id.to_string()),
+                ("phase", phase.to_owned()),
+            ],
+        );
+    }
+
+    fn failed_capture_summary(&self) -> Value {
+        let mut fields = json!({"file_changes": failed_file_change_summary()});
+        if self.track_task {
+            fields["task_file_changes"] = failed_file_change_summary();
+        }
+        fields
+    }
+}
+
+pub(crate) fn failed_file_change_summary() -> Value {
+    json!({
+        "version": ARTIFACT_VERSION,
+        "status": "error",
+        "file_count": 0,
+        "files": [],
+        "diff": "",
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -357,19 +430,32 @@ fn completion_fields_from_patch_and_files(
     patch: &[u8],
     files: Vec<Value>,
 ) -> Value {
-    if files.is_empty() {
-        return json!({});
+    let artifact_id = (!patch.is_empty()).then(|| {
+        persist_named_artifact(
+            workspace,
+            &task_id.to_string(),
+            &subtask_id.to_string(),
+            executor_home,
+            patch,
+        )
+        .unwrap_or_else(|| format!("turn-file-changes/{task_id}/{subtask_id}"))
+    });
+    json!({"file_changes": file_change_summary(workspace, device_id, patch, files, artifact_id)})
+}
+
+fn file_change_summary(
+    workspace: &Path,
+    device_id: Option<&str>,
+    patch: &[u8],
+    files: Vec<Value>,
+    artifact_id: Option<String>,
+) -> Value {
+    let patch_text = String::from_utf8_lossy(patch);
+    let mut inline_end = patch_text.len().min(MAX_INLINE_DIFF_BYTES);
+    while !patch_text.is_char_boundary(inline_end) {
+        inline_end -= 1;
     }
-    let artifact_id = persist_named_artifact(
-        workspace,
-        &task_id.to_string(),
-        &subtask_id.to_string(),
-        executor_home,
-        patch,
-    )
-    .unwrap_or_else(|| format!("turn-file-changes/{task_id}/{subtask_id}"));
     json!({
-        "file_changes": {
             "version": ARTIFACT_VERSION,
             "status": "active",
             "artifact_id": artifact_id,
@@ -379,9 +465,35 @@ fn completion_fields_from_patch_and_files(
             "additions": files.iter().map(|item| item["additions"].as_i64().unwrap_or(0)).sum::<i64>(),
             "deletions": files.iter().map(|item| item["deletions"].as_i64().unwrap_or(0)).sum::<i64>(),
             "files": files,
+            "diff": &patch_text[..inline_end],
+            "diff_truncated": inline_end < patch_text.len(),
             "reverted_at": null,
-        }
     })
+}
+
+fn snapshot_diff(
+    workspace: &Path,
+    before: &GitTreeSnapshot,
+    after: &GitTreeSnapshot,
+) -> Result<(Vec<u8>, Vec<Value>), ()> {
+    let patch = git_output(
+        workspace,
+        [
+            "diff",
+            "--binary",
+            "--find-renames",
+            &before.tree_id,
+            &after.tree_id,
+        ],
+        None,
+        None,
+    )
+    .map_err(|_| ())?;
+    let files = create_file_summary(workspace, before, after);
+    if !patch.is_empty() && files.is_empty() {
+        return Err(());
+    }
+    Ok((patch, files))
 }
 
 pub fn persist_named_artifact(
@@ -464,8 +576,11 @@ fn file_summary_value(changed: ChangedPath, additions: i64, deletions: i64, bina
 }
 
 fn capture_tree(workspace: &Path) -> Option<GitTreeSnapshot> {
-    let temp_dir = unique_temp_dir("wegent-turn-index");
-    let index_path = temp_dir.join("index");
+    let temp_dir = tempfile::Builder::new()
+        .prefix("wegent-turn-index-")
+        .tempdir()
+        .ok()?;
+    let index_path = temp_dir.path().join("index");
     let mut env = BTreeMap::new();
     env.insert(
         "GIT_INDEX_FILE".to_owned(),
@@ -479,7 +594,6 @@ fn capture_tree(workspace: &Path) -> Option<GitTreeSnapshot> {
         String::from_utf8_lossy(&git_output(workspace, ["write-tree"], Some(&env), None).ok()?)
             .trim()
             .to_owned();
-    let _ = fs::remove_dir_all(temp_dir);
     Some(GitTreeSnapshot { tree_id })
 }
 
@@ -549,6 +663,7 @@ fn line_stats(
     let mut args = vec![
         "diff".to_owned(),
         "--numstat".to_owned(),
+        "-z".to_owned(),
         "--find-renames".to_owned(),
         before.tree_id.clone(),
         after.tree_id.clone(),
@@ -585,32 +700,31 @@ fn numstat_by_path(workspace: &Path, patch: &[u8]) -> BTreeMap<String, (i64, i64
 }
 
 fn parse_numstat(output: &[u8]) -> BTreeMap<String, (i64, i64, bool)> {
-    if !output.contains(&0) {
-        return output
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .filter_map(parse_numstat_record)
-            .collect();
-    }
-
     let mut stats = BTreeMap::new();
-    for token in output.split(|byte| *byte == 0) {
-        if token.is_empty() {
+    let mut records = output.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        let Some((mut path, stat)) = parse_numstat_record(record) else {
             continue;
+        };
+        if path.is_empty() {
+            // With -z, renamed paths follow the counts as old\0new\0.
+            records.next();
+            let Some(new_path) = records.next() else {
+                break;
+            };
+            path = decode_path(new_path);
         }
-        if let Some((path, stat)) = parse_numstat_record(token) {
-            stats.insert(path, stat);
-        }
+        stats.insert(path, stat);
     }
     stats
 }
 
 fn parse_numstat_record(token: &[u8]) -> Option<(String, (i64, i64, bool))> {
-    let parts = token.split(|byte| *byte == b'\t').collect::<Vec<_>>();
+    let parts = token.splitn(3, |byte| *byte == b'\t').collect::<Vec<_>>();
     if parts.len() < 3 {
         return None;
     }
-    let path = decode_path(parts[parts.len() - 1]);
+    let path = decode_path(parts[2]);
     let binary = parts[0] == b"-" || parts[1] == b"-";
     let additions = if binary {
         0
@@ -801,42 +915,6 @@ fn git_output<const N: usize>(
         env,
         input,
     )
-}
-
-fn git_output_vec(
-    workspace: &Path,
-    args: Vec<String>,
-    env: Option<&BTreeMap<String, String>>,
-    input: Option<&[u8]>,
-) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
-    clear_local_git_env(&mut command);
-    command.arg("-C").arg(workspace).args(args);
-    if let Some(env) = env {
-        command.envs(env);
-    }
-    if input.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    if let Some(input) = input {
-        child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "failed to open git stdin".to_owned())?
-            .write_all(input)
-            .map_err(|error| error.to_string())?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
 }
 
 fn clear_local_git_env(command: &mut Command) {
