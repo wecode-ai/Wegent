@@ -68,6 +68,8 @@ The installer selects a stable `vX.Y.Z` Wegent platform release independently of
 
 The executor's built-in GitHub update checker uses the platform release channel too and matches the asset for the current operating system, including the `.exe` extension on Windows. It does not install an older release when the newest platform release lacks that asset.
 
+Server-side device version hints use the platform channel as well. Remote-process startup commands and the root installation script use the installer entry point above.
+
 The installation script will:
 
 - Check and install Node.js 18+ (required for Claude Code)
