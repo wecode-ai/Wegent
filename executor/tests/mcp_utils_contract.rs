@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{
+    env,
+    sync::{Mutex, OnceLock},
+};
+
 use serde_json::{json, Value};
 use wegent_executor::{
     mcp_utils::{
@@ -17,6 +22,40 @@ fn request(value: Value) -> ExecutionRequest {
 
 fn source(request: &ExecutionRequest) -> Value {
     request.variable_context()
+}
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct EnvGuard {
+    key: &'static str,
+    old_value: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old_value = env::var(key).ok();
+        env::set_var(key, value);
+        Self { key, old_value }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let old_value = env::var(key).ok();
+        env::remove_var(key);
+        Self { key, old_value }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.old_value {
+            env::set_var(self.key, value);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
 }
 
 #[test]
@@ -339,6 +378,59 @@ fn mcp_variables_replace_backend_url_and_task_token_alias() {
     assert_eq!(
         result["wegent-knowledge"]["headers"]["Authorization"],
         "Bearer test-token-"
+    );
+}
+
+#[test]
+fn mcp_variables_replace_empty_backend_url_from_task_api_domain() {
+    let _lock = env_lock().lock().unwrap();
+    let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _local_backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000/");
+    let servers = json!({
+        "wegent-knowledge": {
+            "type": "streamable-http",
+            "url": "${{backend_url}}/mcp/knowledge/sse",
+            "headers": {"Authorization": "Bearer ${{task_token}}"},
+            "timeout": 300
+        }
+    });
+    let task = request(json!({
+        "backend_url": "",
+        "auth_token": "test-token"
+    }));
+
+    let result = replace_mcp_server_variables(&servers, Some(&task));
+
+    assert_eq!(
+        result["wegent-knowledge"]["url"],
+        "http://backend:8000/mcp/knowledge/sse"
+    );
+    assert_eq!(
+        result["wegent-knowledge"]["headers"]["Authorization"],
+        "Bearer test-token"
+    );
+}
+
+#[test]
+fn mcp_variables_prefer_local_backend_url_in_local_mode() {
+    let _lock = env_lock().lock().unwrap();
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _local_backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000/");
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000");
+    let servers = json!({
+        "wegent-knowledge": {
+            "type": "streamable-http",
+            "url": "${{backend_url}}/mcp/knowledge/sse"
+        }
+    });
+    let task = request(json!({"backend_url": ""}));
+
+    let result = replace_mcp_server_variables(&servers, Some(&task));
+
+    assert_eq!(
+        result["wegent-knowledge"]["url"],
+        "http://localhost:8000/mcp/knowledge/sse"
     );
 }
 
