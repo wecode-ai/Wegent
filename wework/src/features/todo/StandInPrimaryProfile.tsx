@@ -196,7 +196,7 @@ export function StandInPrimaryProfile({
         </>
       )}
       {connections && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'flex shrink-0 flex-col'}>
           <StandInConnectionSettings
             ref={connectionRef}
             onNavigate={navigation.requestLeave}

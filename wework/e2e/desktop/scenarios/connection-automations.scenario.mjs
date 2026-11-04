@@ -132,6 +132,19 @@ export function createDesktopScenario({
       )
       return true
     },
+    async verifyPersonal(control) {
+      await control.command('ensureLocalModelCatalogReady', 'body', {
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const resource = (
+        await rpc(control, 'runtime.connections.resources', {
+          providerId: PROVIDER,
+          kind: 'record',
+          query: '',
+        })
+      ).items[0]
+      await verifyPersonalRule(control, rpc, resource, captureScreenshot, waitFor)
+    },
     async verify(control) {
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: modelResponseTimeoutMs,
@@ -448,6 +461,9 @@ export function createDesktopScenario({
 
 async function verifyPersonalRule(control, rpc, resource, capture, waitFor) {
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+  const originalWindowSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 1280, height: 720 }),
+  })
   const prefix = `stand-in-connection-${PROVIDER}-policy-${resource.id}`
   try {
     await rpc(control, 'runtime.stand_in.personal.save', {
@@ -485,6 +501,25 @@ async function verifyPersonalRule(control, rpc, resource, capture, waitFor) {
     })
     await control.command('scrollIntoView', `[data-testid="${prefix}-rule-instruction"]`)
     await control.command('finishAnimations', 'body')
+    await waitFor(
+      async () =>
+        Promise.all([
+          control.command('getElementMetrics', `[data-testid="${prefix}-rule-instruction"]`),
+          control.command('getElementMetrics', '[data-testid="stand-in-primary-profile"] > header'),
+          control.command('getElementMetrics', '[data-testid="stand-in-primary-profile"] > footer'),
+        ]).then(values => values.map(value => JSON.parse(value)[0])),
+      ([field, header, footer]) =>
+        field &&
+        header &&
+        footer &&
+        field.width > 0 &&
+        field.top >= header.bottom - 1 &&
+        field.bottom <= footer.top + 1
+    )
+    assert.equal(
+      await control.command('getValue', `[data-testid="${prefix}-rule-instruction"]`),
+      'Prepare a private reminder for me.'
+    )
     await capture(control, 'connection-rules-07-personal-editor.png')
     await control.command('scrollIntoView', `[data-testid="${prefix}-enabled"]`)
     await control.command('click', `[data-testid="${prefix}-enabled"]`)
@@ -523,5 +558,6 @@ async function verifyPersonalRule(control, rpc, resource, capture, waitFor) {
       userId: USER,
       settings: { ...original, version: current.version },
     })
+    await control.command('setMainWindowSize', 'body', { value: originalWindowSize })
   }
 }

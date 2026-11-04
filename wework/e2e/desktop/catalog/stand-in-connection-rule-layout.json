@@ -1,0 +1,6 @@
+{
+  "order": 46510,
+  "ciHost": "stand-in-plugin-bridge",
+  "scenario": "./scenarios/stand-in-connection-rule-layout.scenario.mjs",
+  "scenarioOnly": true
+}

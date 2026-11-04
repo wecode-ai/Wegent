@@ -172,6 +172,12 @@ glob。`paths` 增加覆盖，保留已有路径规则选中的检查点。跨�
 
 `collaboration-runtime-reconciliation` 是可独立运行的 Core checkpoint，自动建立隔离的云项目、Issue、智能体和真实 Executor。它通过透明 WebSocket 代理暂存真实完成事件，分别验证快照先到、最终事件先到，以及两个终态事务在真实 MySQL 行锁后交错提交。每种顺序都检查数据库中的完整最终文本、Issue 界面和刷新后的结果。续轮在模型响应暂停期间重放旧完成事件，覆盖重复、乱序、无序号和空内容；每次都等待后端真实确认，再检查新轮、工作流和执行容量未被旧事件改变。代理只调度传输，模型服务之外的组件均保持真实；清理时释放模型、事务锁和代理连接。
 
+`stand-in-connection-rule-layout` 可独立验证 1280×720 窗口中的个人连接规则编辑。运行
+`pnpm --filter wework run e2e:desktop --segment stand-in-connection-rule-layout`，
+检查私人指令实际值、字段与固定头部/保存底栏的几何边界、停用状态及保存后的策略。
+它复用真实隔离的数据源和 `stand-in-plugin-bridge` 中的同一验证函数，CI 仍由该宿主
+执行，不新增分片或重复执行。
+
 Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
 分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
 Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。

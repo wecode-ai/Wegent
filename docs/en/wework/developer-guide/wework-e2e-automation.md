@@ -185,6 +185,14 @@ rules retain their priority in `.github/scripts/desktop-ci/`. Classifier contrac
 live in `.github/scripts/ci-classification-tests/`, whose `.sh` files are discovered
 by the existing test entry point.
 
+`stand-in-connection-rule-layout` independently verifies personal connection rules
+in a 1280×720 window. Run
+`pnpm --filter wework run e2e:desktop --segment stand-in-connection-rule-layout`
+to check the private instruction value, field bounds between the sticky header
+and save footer, paused state, and persisted policy. It uses the real isolated
+source and the same verification function invoked by `stand-in-plugin-bridge`.
+That existing CI host retains coverage without another shard or duplicate run.
+
 Linux Core and Cloud jobs
 run at most four isolated checkpoints concurrently; actual concurrency also
 depends on the shard's checkpoint count. Each checkpoint owns its database,
