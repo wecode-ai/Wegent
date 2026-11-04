@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import {

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
 import { refreshPluginInventory } from '../e2e/desktop/modules/plugin-inventory-state.mjs'

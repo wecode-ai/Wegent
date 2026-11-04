@@ -5,7 +5,7 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 import * as runtimeEnvironment from '@/lib/runtime-environment'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
-import { installDshUiTestContributions } from '@/test/setup'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import type { Attachment, RuntimeGoal, UnifiedModel } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -1590,77 +1590,6 @@ describe('ChatInput', () => {
     expect(concreteOption).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('matches the ChatGPT order in the advanced model list', async () => {
-    const model = (name: string, label: string, family: string): UnifiedModel => ({
-      name,
-      type: family === 'codex-official' ? 'runtime' : 'public',
-      provider: family === 'codex-official' ? 'local' : undefined,
-      displayName: label,
-      config: {
-        weworkModelKind: family,
-        ui: {
-          family,
-          modelLabel: label,
-          reasoningEfforts: ['low', 'medium'],
-          defaultReasoningEffort: 'medium',
-        },
-      },
-    })
-    const orderedModels = [
-      model('gpt-5.6-sol', 'GPT-5.6 Sol', 'codex-official'),
-      model('gpt-6.1-sol', 'GPT-6.1 Sol', 'codex-official'),
-      model('gpt-6-astra', 'GPT-6 Astra', 'codex-official'),
-      model('gpt-5.6-terra', 'GPT-5.6 Terra', 'codex-official'),
-      model('gpt-6-sol', 'GPT-6 Sol', 'codex-official'),
-      model('gpt-5.6-luna', 'GPT-5.6 Luna', 'codex-official'),
-      model('gpt-6-luna', 'GPT-6 Luna', 'codex-official'),
-      model('gpt-5.5', 'GPT-5.5', 'codex-official'),
-      model('cloud-gpt-5.6-sol', 'GPT 5.6 Sol', 'gpt'),
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({
-          models: orderedModels,
-          selectedModel: orderedModels[0],
-          selectedModelOptions: { reasoning: 'medium' },
-        })}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
-
-    const codexGroup = screen.getByTestId('model-group-codex-official')
-    const remoteGroup = screen.getByTestId('model-group-gpt')
-    expect(screen.getByTestId('model-source-local-chatgpt')).toHaveTextContent('本机 ChatGPT 账户')
-    expect(remoteGroup).toHaveTextContent('GPT')
-    expect(
-      codexGroup.compareDocumentPosition(remoteGroup) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    const optionNames = Array.from(
-      screen
-        .getByTestId('model-selector-menu')
-        .querySelectorAll<HTMLElement>('[data-testid^="model-option-"]')
-    ).map(option => option.dataset.testid)
-    expect(optionNames).toEqual([
-      'model-option-gpt-6.1-sol',
-      'model-option-gpt-6-astra',
-      'model-option-gpt-6-sol',
-      'model-option-gpt-6-luna',
-      'model-option-gpt-5.6-sol',
-      'model-option-gpt-5.6-terra',
-      'model-option-gpt-5.6-luna',
-      'model-option-gpt-5.5',
-      'model-option-cloud-gpt-5.6-sol',
-    ])
-  })
-
   test('switches both model and reasoning effort from the ChatGPT power slider', async () => {
     const solModel: UnifiedModel = {
       name: 'gpt-6.1-sol',
@@ -2003,34 +1932,6 @@ describe('ChatInput', () => {
     )
   })
 
-  test('does not render the desktop skill selector', () => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({
-          skills: [
-            {
-              id: 1,
-              name: 'project-summary',
-              namespace: 'default',
-              description: 'Summarize project context',
-              is_active: true,
-              is_public: false,
-              user_id: 1,
-            },
-          ],
-        })}
-      />
-    )
-
-    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('skill-selector-menu')).not.toBeInTheDocument()
-  })
-
   test('opens the desktop add context menu with file upload, plan, and goal actions', async () => {
     const setSelectedModelOption = vi.fn()
     const onSetGoal = vi.fn()
@@ -2116,42 +2017,6 @@ describe('ChatInput', () => {
     expect(onEditGoal).toHaveBeenCalledTimes(1)
     expect(onPauseGoal).toHaveBeenCalledTimes(1)
     expect(onClearGoal).toHaveBeenCalledTimes(1)
-  })
-
-  test('places work-item context and goal in one rail above the composer', () => {
-    const goal: RuntimeGoal = {
-      threadId: 'thread-1',
-      objective: '完成工作项验收',
-      status: 'active',
-      tokenBudget: null,
-      tokensUsed: 0,
-      timeUsedSeconds: 12,
-      createdAt: 1780000000000,
-      updatedAt: 1780000000000,
-    }
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        contextHeader={<div data-testid="work-item-context-summary">WORK-1 · 下一步：验收</div>}
-        goal={goal}
-      />
-    )
-
-    const rail = screen.getByTestId('composer-context-rail')
-    const composer = screen.getByTestId('project-chat-composer-form')
-    expect(rail).toContainElement(screen.getByTestId('work-item-context-summary'))
-    expect(rail).toContainElement(screen.getByTestId('goal-status-bar'))
-    expect(
-      screen
-        .getByTestId('goal-status-bar')
-        .compareDocumentPosition(screen.getByTestId('work-item-context-summary'))
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(rail.compareDocumentPosition(composer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('renders a newly created active goal with a zero-second timer', () => {

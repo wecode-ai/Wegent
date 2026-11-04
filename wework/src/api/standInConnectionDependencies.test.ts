@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import dingtalkManifest from '../../dsh/connection-dingtalk/package.json'
 import { expect, it, vi } from 'vitest'
 import type { ConnectionProviderDescriptor } from './standIn'
