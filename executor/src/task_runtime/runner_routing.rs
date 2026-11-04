@@ -286,8 +286,13 @@ pub(crate) fn resolve_pending(
                 })
             })
             .ok_or_else(|| invalid("RUNNER_MODEL_UNAVAILABLE"))?;
-        let model_config =
+        let mut model_config =
             json!({"model_id":selected["local_model_id"],"model_provider":selected["provider"]});
+        if model["runtime"] == "codex" {
+            // Resolve device-owned provider authentication and protocol through the native adapter.
+            model_config["runtime_config"] =
+                json!({"codex":{"use_user_config":true,"configured":true}});
+        }
         payload["modelId"] = selected["local_model_id"].clone();
         payload["modelType"] = json!("runtime");
         payload["modelOptions"] = json!({"runnerModelProvider":selected["provider"]});

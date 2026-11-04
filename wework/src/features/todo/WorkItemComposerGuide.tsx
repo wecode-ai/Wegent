@@ -157,7 +157,10 @@ function WorkItemComposerGuideContent({
             <button
               type="button"
               data-testid="work-item-open-details"
-              onClick={onOpen}
+              onClick={() => {
+                closeMenu()
+                onOpen()
+              }}
               title={t('workbench.view_work_item_details', '查看 Issue 详情')}
               aria-label={t('workbench.view_work_item_details', '查看 Issue 详情')}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
@@ -169,7 +172,10 @@ function WorkItemComposerGuideContent({
             <button
               type="button"
               data-testid="work-item-open-board-menu"
-              onClick={onOpenBoard}
+              onClick={() => {
+                closeMenu()
+                onOpenBoard()
+              }}
               title={t('workbench.open_in_work_item_board', '在工作空间中打开')}
               aria-label={t('workbench.open_in_work_item_board', '在工作空间中打开')}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
