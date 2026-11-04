@@ -5,6 +5,59 @@ use crate::{
 };
 
 #[test]
+fn conversation_transport_dispatches_the_current_turn_context() {
+    struct CurrentTurn;
+    impl crate::workbench_control::ControlService for CurrentTurn {
+        fn call<'a>(
+            &'a self,
+            context: &'a ControlContext,
+            _: &'a str,
+            _: Value,
+        ) -> futures_util::future::BoxFuture<'a, Result<Value, crate::local::app_ipc::AppIpcError>>
+        {
+            Box::pin(async move { Ok(json!({"turn":context.request.subtask_id})) })
+        }
+    }
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
+            crate::workbench_control::register("transport-device", std::sync::Arc::new(CurrentTurn));
+            let mut request = ExecutionRequest {
+                subtask_id: "first-turn".into(),
+                extra: serde_json::Map::from_iter([
+                    ("runtimeDeviceId".into(), json!("transport-device")),
+                    ("runtimeLocalTaskId".into(), json!("transport-task")),
+                ]),
+                ..Default::default()
+            };
+            let first = super::super::mcp::control_mcp_client_config(&request).unwrap().unwrap();
+            let client = reqwest::Client::new();
+            let init = client.post(&first.url).bearer_auth(&endpoint.token)
+                .header(CONTEXT_HANDLE_HEADER, &first.headers["X-Wework-Mcp-Context"])
+                .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}))
+                .send().await.unwrap();
+            assert_eq!(init.status(), StatusCode::OK);
+            let session = init.headers()[MCP_SESSION_ID_HEADER].to_str().unwrap().to_owned();
+            request.subtask_id = "second-turn".into();
+            let next = super::super::mcp::control_mcp_client_config(&request).unwrap().unwrap();
+            assert_eq!(next, first);
+            let called = client.post(&next.url).bearer_auth(&endpoint.token)
+                .header(CONTEXT_HANDLE_HEADER, &next.headers["X-Wework-Mcp-Context"])
+                .header(MCP_SESSION_ID_HEADER, session)
+                .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_current_context","arguments":{}}}))
+                .send().await.unwrap();
+            assert_eq!(called.status(), StatusCode::OK);
+            assert_eq!(called.json::<Value>().await.unwrap()["result"]["structuredContent"]["turn"], "second-turn");
+            request.extra.insert("origin".into(), json!({"type":"stand_in_identity","userId":7}));
+            assert!(super::super::mcp::control_mcp_client_config(&request).unwrap().is_none());
+        });
+}
+
+#[test]
 fn control_http_binds_every_request_and_delete_to_its_context_and_surface() {
     let _guard = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread()

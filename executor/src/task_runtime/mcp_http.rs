@@ -42,6 +42,11 @@ const CONTEXT_HANDLE_HEADER: &str = "x-wework-mcp-context";
 const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
 const CONTEXT_HANDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
+mod contexts;
+#[cfg(test)]
+use contexts::register_context;
+use contexts::{register_context_with_lifetime, ContextLifetime};
+
 #[derive(Debug, Clone)]
 pub(crate) struct SpaceMcpEndpoint {
     pub(crate) url: String,
@@ -57,6 +62,7 @@ pub(crate) struct RegisteredSpaceMcpContext {
 struct RegisteredContext {
     context: SpaceMcpRequestContext,
     expires_at: Instant,
+    lifetime: ContextLifetime,
 }
 
 #[derive(Clone)]
@@ -259,6 +265,22 @@ fn active_endpoint() -> Option<SpaceMcpEndpoint> {
 pub(crate) fn register_space_mcp_context(
     context: SpaceMcpRequestContext,
 ) -> Result<RegisteredSpaceMcpContext, String> {
+    register_mcp_context(context, ContextLifetime::Execution)
+}
+
+pub(crate) fn register_control_mcp_context(
+    context: crate::workbench_control::ControlContext,
+) -> Result<RegisteredSpaceMcpContext, String> {
+    register_mcp_context(
+        SpaceMcpRequestContext::control(context),
+        ContextLifetime::Conversation,
+    )
+}
+
+fn register_mcp_context(
+    context: SpaceMcpRequestContext,
+    lifetime: ContextLifetime,
+) -> Result<RegisteredSpaceMcpContext, String> {
     let running = running_endpoint()
         .lock()
         .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())?;
@@ -277,39 +299,12 @@ pub(crate) fn register_space_mcp_context(
         .contexts
         .lock()
         .map_err(|_| "project-space MCP context registry is poisoned".to_owned())?;
-    let context_handle = register_context(&mut contexts, context, Instant::now());
+    let context_handle =
+        register_context_with_lifetime(&mut contexts, context, Instant::now(), lifetime);
     Ok(RegisteredSpaceMcpContext {
         endpoint: running.endpoint.clone(),
         context_handle,
     })
-}
-
-fn register_context(
-    contexts: &mut HashMap<String, RegisteredContext>,
-    context: SpaceMcpRequestContext,
-    now: Instant,
-) -> String {
-    // Unbound authority is immutable: share its transport without sharing grants.
-    let reused = contexts
-        .iter_mut()
-        .find(|(_, registered)| registered.context.shares_unbound_authority(&context))
-        .map(|(handle, registered)| {
-            registered.expires_at = now + CONTEXT_HANDLE_TTL;
-            handle.clone()
-        });
-    contexts.retain(|_, registered| registered.expires_at > now);
-    if let Some(handle) = reused {
-        return handle;
-    }
-    let context_handle = Uuid::new_v4().to_string();
-    contexts.insert(
-        context_handle.clone(),
-        RegisteredContext {
-            context,
-            expires_at: now + CONTEXT_HANDLE_TTL,
-        },
-    );
-    context_handle
 }
 
 pub(crate) fn register_cloud_collaboration_dispatcher(
@@ -449,10 +444,12 @@ async fn handle_mcp_for_surface(
     if context.surface() != expected_surface {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if expected_surface == WeworkMcpSurface::Control
-        && registered_context(&state, &headers, expected_surface).is_none()
-    {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if expected_surface == WeworkMcpSurface::Control {
+        let Some(current) = registered_context(&state, &headers, expected_surface) else {
+            return StatusCode::UNAUTHORIZED.into_response();
+        };
+        // A persistent conversation transport must use this turn's execution context.
+        context = current;
     }
     context.set_cloud_collaboration_dispatcher(
         state
@@ -674,6 +671,7 @@ mod tests {
                 RegisteredContext {
                     context: SpaceMcpRequestContext::new(None, None, None),
                     expires_at: now,
+                    lifetime: ContextLifetime::Execution,
                 },
             ),
             (
@@ -681,6 +679,7 @@ mod tests {
                 RegisteredContext {
                     context: SpaceMcpRequestContext::notifications(None, None),
                     expires_at: now + Duration::from_secs(1),
+                    lifetime: ContextLifetime::Execution,
                 },
             ),
         ]);

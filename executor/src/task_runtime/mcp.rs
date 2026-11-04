@@ -159,6 +159,18 @@ impl SpaceMcpRequestContext {
             && self.auth_token == other.auth_token
     }
 
+    pub(super) fn shares_control_conversation(&self, other: &Self) -> bool {
+        let (Some(current), Some(next)) = (&self.control, &other.control) else {
+            return false;
+        };
+        current.device_id == next.device_id
+            && current.task_id == next.task_id
+            && current.request.backend_url == next.request.backend_url
+            && current.request.auth_token == next.request.auth_token
+            && current.request.runtime_auth_token == next.request.runtime_auth_token
+            && current.request.extra.get("origin") == next.request.extra.get("origin")
+    }
+
     pub(crate) fn new(
         grant: Option<SpaceContextGrant>,
         backend_url: Option<String>,
@@ -329,8 +341,7 @@ pub(crate) fn control_mcp_client_config(
     if !crate::workbench_control::available(&context) {
         return Ok(None);
     }
-    let registered =
-        super::mcp_http::register_space_mcp_context(SpaceMcpRequestContext::control(context))?;
+    let registered = super::mcp_http::register_control_mcp_context(context)?;
     let base_url = registered.endpoint.url.trim_end_matches("/mcp");
     Ok(Some(SpaceMcpClientConfig {
         url: format!("{base_url}/control/mcp"),
