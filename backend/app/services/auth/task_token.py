@@ -43,6 +43,7 @@ class TaskTokenData(BaseModel):
     dispatch_id: Optional[str] = None
     dispatch_role: Optional[str] = None
     manager_agent_id: Optional[str] = None
+    knowledge_client_surface: Optional[str] = None
     exp: Optional[int] = None  # Expiration timestamp
 
 
@@ -58,6 +59,7 @@ class TaskTokenInfo:
     dispatch_role: Optional[str] = None
     manager_agent_id: Optional[str] = None
     expire_at: Optional[int] = None
+    knowledge_client_surface: Optional[str] = None
 
 
 def create_task_token(
@@ -69,6 +71,7 @@ def create_task_token(
     dispatch_role: Optional[str] = None,
     manager_agent_id: Optional[str] = None,
     expires_delta_minutes: int = 1440,  # 24 hours
+    knowledge_client_surface: Optional[str] = None,
 ) -> str:
     """Create a task token for executor and MCP Server authentication.
 
@@ -98,6 +101,8 @@ def create_task_token(
         "exp": expire,
         "type": "task_token",
     }
+    if knowledge_client_surface:
+        payload["knowledge_client_surface"] = knowledge_client_surface
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return token
 
@@ -126,6 +131,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             subtask_id=payload["subtask_id"],
             user_id=payload["user_id"],
             user_name=payload["user_name"],
+            knowledge_client_surface=payload.get("knowledge_client_surface"),
             dispatch_id=payload.get("dispatch_id"),
             dispatch_role=payload.get("dispatch_role"),
             manager_agent_id=payload.get("manager_agent_id"),

@@ -306,7 +306,10 @@ where
     .await
 }
 
-async fn shutdown_signal() {
+/// Waits for the process interrupt/terminate signal used by the hybrid
+/// runtime. Lifecycle owners that need one shared shutdown deadline can use
+/// this without duplicating the platform-specific signal policy.
+pub async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};

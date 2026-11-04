@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from knowledge_engine.retrieval.hierarchical import (
     collect_parent_node_ids,
     merge_parent_records,
 )
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
+from shared.event_reporting.operations import operation_fact
 from shared.knowledge_contracts import (
     RetrievalScope,
     RuntimeRetrievalConfig,
@@ -25,9 +26,16 @@ logger = logging.getLogger(__name__)
 class QueryExecutor:
     """Backend-agnostic RAG query executor."""
 
-    def __init__(self, *, storage_backend, embed_model) -> None:
+    def __init__(
+        self,
+        *,
+        storage_backend,
+        embed_model,
+        attribution_factory: Callable[[], dict[str, Any]] | None = None,
+    ) -> None:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
+        self._attribution_factory = attribution_factory or (lambda: {})
 
     async def execute(
         self,
@@ -46,6 +54,36 @@ class QueryExecutor:
             query_plan=query_plan,
             search_hints=search_hints,
         )
+        return await self._execute_target(
+            knowledge_id=knowledge_id,
+            query=query,
+            retrieval_setting=retrieval_setting,
+            scope=scope,
+            metadata_condition=metadata_condition,
+            user_id=user_id,
+        )
+
+    @operation_fact(
+        "knowledge.retrieval.target.finished",
+        operation="retrieve",
+        data_factory=lambda args, kwargs: {
+            **args[0]._attribution_factory(),
+            "stage": "target_result",
+            "retrieval_mode": kwargs["retrieval_setting"]["retrieval_mode"],
+            "top_k": kwargs["retrieval_setting"]["top_k"],
+            "score_threshold": kwargs["retrieval_setting"]["score_threshold"],
+        },
+    )
+    async def _execute_target(
+        self,
+        *,
+        knowledge_id: str,
+        query: str,
+        retrieval_setting: dict[str, Any],
+        scope: RetrievalScope | dict[str, Any] | None,
+        metadata_condition: dict[str, Any] | None,
+        user_id: int | None,
+    ) -> dict[str, Any]:
         resolved_queries = resolve_search_queries(query, retrieval_setting)
         resolved_scope = self._normalize_scope(scope)
         self._ensure_retrieval_scope_supported(resolved_scope)

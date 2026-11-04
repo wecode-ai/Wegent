@@ -871,6 +871,7 @@ class TestKnowledgeOrchestrator:
             offset=2,
             limit=4,
             knowledge_base_ids=[77],
+            entrypoint=None,
             searchable_only=False,
         )
 
@@ -1088,6 +1089,7 @@ class TestKnowledgeOrchestrator:
             document_id=9,
             offset=0,
             limit=100000,
+            entrypoint="knowledge_api",
         )
         mock_get_summary_service.assert_called_once_with(mock_db)
         summary_service.get_document_summary.assert_awaited_once_with(9)
@@ -1245,6 +1247,7 @@ class TestKnowledgeOrchestrator:
             document_id=9,
             offset=2,
             limit=2,
+            entrypoint="knowledge_api",
         )
 
     def test_create_document_with_text_content(self, orchestrator, mock_db, mock_user):

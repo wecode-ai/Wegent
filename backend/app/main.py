@@ -181,14 +181,31 @@ async def lifespan(app: FastAPI):
     from app.services.execution.chat_shell_client import chat_shell_clients
 
     await cache_manager.start()
+    from shared.event_reporting import (
+        init_event_reporter,
+        shutdown_event_reporter,
+    )
+
+    init_event_reporter(
+        "backend",
+        config=settings.event_reporter_config("backend"),
+    )
     try:
         async with chat_shell_clients.lifespan(), _application_lifespan(app):
             yield
     finally:
         try:
-            close_plugin_write_resources()
+            await asyncio.to_thread(shutdown_event_reporter)
+            from shared.telemetry.config import get_otel_config
+            from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
+
+            if get_otel_config().enabled and is_telemetry_enabled():
+                shutdown_telemetry()
         finally:
-            await cache_manager.aclose()
+            try:
+                close_plugin_write_resources()
+            finally:
+                await cache_manager.aclose()
 
 
 @asynccontextmanager
@@ -620,13 +637,7 @@ async def _application_lifespan(app: FastAPI):
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
 
-        # Step 8: Shutdown OpenTelemetry
-        from shared.telemetry.config import get_otel_config
-        from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
-
-        if get_otel_config().enabled and is_telemetry_enabled():
-            shutdown_telemetry()
-            logger.info("✓ OpenTelemetry shutdown completed")
+        # The outer lifespan drains the reporter before closing telemetry.
 
         logger.info("=" * 60)
         logger.info(

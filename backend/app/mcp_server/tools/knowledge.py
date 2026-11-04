@@ -143,6 +143,8 @@ async def search_knowledge_base(
             folder_ids=folder_ids,
             include_subfolders=include_subfolders,
             route_mode="rag_retrieval",
+            entrypoint="mcp",
+            client_surface=token_info.knowledge_client_surface or "mcp",
         )
 
         # Convert retrieve_knowledge format to MCP expected format
@@ -537,6 +539,7 @@ def create_document(
             attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
+            trigger="mcp",
         )
 
         return result.model_dump()
@@ -657,6 +660,7 @@ def read_document_content(
             document_id=document_id,
             offset=offset,
             limit=limit,
+            entrypoint="mcp",
         )
 
         return result.model_dump()

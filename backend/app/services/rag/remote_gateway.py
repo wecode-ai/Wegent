@@ -15,6 +15,11 @@ from app.db.session import SessionLocal
 from app.models.subtask_context import ContextType
 from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
+from app.services.rag.reporting import (
+    current_usage_context,
+    report_index_execution,
+    report_query_execution,
+)
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DropKnowledgeIndexRuntimeSpec,
@@ -144,7 +149,13 @@ class RemoteRagGateway:
             raise ValueError("RemoteRagGateway only supports attachment sources")
 
         payload = _build_remote_index_request(spec, db=db)
-        return await self._post_model("/internal/rag/index", payload, timeout=600.0)
+        return await report_index_execution(
+            execution_mode="remote",
+            spec=spec,
+            execute=lambda: self._post_model(
+                "/internal/rag/index", payload, timeout=600.0
+            ),
+        )
 
     async def query(
         self,
@@ -153,9 +164,17 @@ class RemoteRagGateway:
         db: Session | None = None,
     ) -> dict[str, Any]:
         del db
+        usage = current_usage_context()
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
             user_id=spec.user_id,
+            invocation_id=usage.invocation_id if usage else None,
+            actor_user_id=getattr(usage, "actor_user_id", None),
+            actor_type=getattr(usage, "actor_type", None),
+            entrypoint=usage.entrypoint if usage else None,
+            client_surface=usage.client_surface if usage else None,
+            task_id=usage.task_id if usage else None,
+            subtask_id=usage.subtask_id if usage else None,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
@@ -166,12 +185,20 @@ class RemoteRagGateway:
             scope=spec.scope,
             metadata_condition=spec.metadata_condition,
         )
-        response_payload = await self._post_model("/internal/rag/query", payload)
-        response = RemoteQueryResponse.model_validate(response_payload)
-        return {
-            "mode": "rag_retrieval",
-            **response.model_dump(),
-        }
+
+        async def execute() -> dict[str, Any]:
+            response_payload = await self._post_model("/internal/rag/query", payload)
+            response = RemoteQueryResponse.model_validate(response_payload)
+            return {
+                "mode": "rag_retrieval",
+                **response.model_dump(),
+            }
+
+        return await report_query_execution(
+            execution_mode="remote",
+            spec=spec,
+            execute=execute,
+        )
 
     async def delete_document_index(
         self,

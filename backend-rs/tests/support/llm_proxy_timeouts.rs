@@ -85,7 +85,9 @@ impl HttpApp {
         credentials: Option<Arc<dyn LlmProxyCredentials>>,
         origin_budget: Duration,
     ) -> Self {
-        let mut state = build_app_state().await.unwrap();
+        let mut state = build_app_state(wegent_backend_rs::ReporterHandle::disabled())
+            .await
+            .unwrap();
         state.mysql = mysql;
         if let Some(credentials) = credentials {
             state.llm_proxy_credentials = credentials;

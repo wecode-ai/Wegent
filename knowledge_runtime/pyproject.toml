@@ -20,7 +20,7 @@ dependencies = [
     # The runtime is the only service that executes retrieval: it indexes and
     # queries through the kernel, so it declares the retrieval extra.
     "wegent-knowledge-engine[retrieval]",
-    "wegent-shared",
+    "wegent-shared[event-reporting]",
 ]
 
 [tool.uv.sources]

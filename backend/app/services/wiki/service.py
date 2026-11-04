@@ -279,7 +279,9 @@ def unbind_kb_wiki_document(
     from app.services.knowledge.knowledge_service import KnowledgeService
 
     try:
-        result = KnowledgeService.delete_document(db, document_id, user_id)
+        result = KnowledgeService.delete_document(
+            db, document_id, user_id, trigger="external_refresh"
+        )
     except ValueError as exc:
         raise WikiApiError("bad_request", str(exc)) from exc
     if not result.success:

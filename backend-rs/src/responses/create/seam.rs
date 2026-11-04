@@ -149,6 +149,7 @@ pub async fn dispatch_create(
             enable_deep_thinking: input.enable_chat_bot,
             reasoning: input.reasoning,
             task_json: input.task_json,
+            knowledge_client_surface: Some("external_api"),
             request_id: input.request_id,
             message_id: input.message_id,
             is_group_chat: input.is_group_chat,

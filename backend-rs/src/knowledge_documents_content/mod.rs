@@ -324,7 +324,7 @@ async fn document_content(
     };
     let (offset, limit) = parse_paging(offset_raw, limit_raw)?;
 
-    Ok(read_document_content(state, user.id, document_id, offset, limit).await?)
+    Ok(read_document_content(state, user.id, document_id, offset, limit, "openapi").await?)
 }
 
 /// `KnowledgeOrchestrator.read_document_content` after authentication:
@@ -335,6 +335,7 @@ pub(crate) async fn read_document_content(
     document_id: i64,
     offset: i64,
     limit: i64,
+    entrypoint: &'static str,
 ) -> Result<DocumentContentReadResponse, ApiFailure> {
     let mysql = &state.mysql;
     let redis = state.redis.as_ref();
@@ -418,15 +419,7 @@ pub(crate) async fn read_document_content(
         limit,
     );
 
-    // An external document with no stored text is not previewable (total
-    // length, not page length, decides).
-    if document.knowledge_documents_source_type == "external" && total_length == 0 {
-        return Err(ApiFailure::from_value_error(
-            "Document content is not ready for preview",
-        ));
-    }
-
-    Ok(DocumentContentReadResponse {
+    let response = DocumentContentReadResponse {
         document_id: result.knowledge_documents_id,
         name: result.knowledge_documents_name,
         content,
@@ -437,12 +430,91 @@ pub(crate) async fn read_document_content(
         kb_id: result.knowledge_documents_kind_id,
         index_status: document.knowledge_documents_index_status,
         source_media_type: reader::source_media_type(attachment),
-    })
+    };
+    if document.knowledge_documents_source_type == "external" && total_length == 0 {
+        return Err(ApiFailure::from_value_error(
+            "Document content is not ready for preview",
+        ));
+    }
+    report_document_read(&state.event_reporter, &response, user_id, entrypoint);
+    Ok(response)
+}
+
+fn report_document_read(
+    reporter: &crate::event_reporting::ReporterHandle,
+    response: &DocumentContentReadResponse,
+    user_id: i64,
+    entrypoint: &'static str,
+) {
+    use crate::event_reporting::EventKind;
+
+    reporter.emit(EventKind::KnowledgeDocumentReadFinished, || {
+        document_read_fact(
+            response.kb_id,
+            response.document_id,
+            response.offset,
+            response.returned_length,
+            response.total_length,
+            response.has_more,
+            user_id,
+            entrypoint,
+        )
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn document_read_fact(
+    kb_id: i64,
+    document_id: i64,
+    offset: i64,
+    returned_length: i64,
+    total_length: i64,
+    has_more: bool,
+    user_id: i64,
+    entrypoint: &'static str,
+) -> Result<crate::event_reporting::FactDraft, crate::event_reporting::FactBuildError> {
+    use crate::event_reporting::{FactDraft, Field, Scalar};
+
+    FactDraft::success()
+        .with_kb_id(kb_id)
+        .with_document_id(document_id)
+        .with_field(Field::Stage, Scalar::text("content_delivery")?)?
+        .with_field(Field::Entrypoint, Scalar::text(entrypoint)?)?
+        .with_field(Field::UserId, Scalar::from(user_id))?
+        .with_field(Field::EffectiveReaderId, Scalar::from(user_id))?
+        .with_field(Field::SubtaskId, Scalar::Null)?
+        .with_field(Field::Offset, Scalar::from(offset))?
+        .with_field(Field::ReturnedLength, Scalar::from(returned_length))?
+        .with_field(Field::TotalLength, Scalar::from(total_length))?
+        .with_field(Field::HasMore, Scalar::from(has_more))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_read_fact_matches_python_content_delivery_contract() {
+        use crate::event_reporting::{EntityId, Field, Scalar};
+
+        let fact = document_read_fact(11, 12, 3, 5, 20, true, 42, "knowledge_api").unwrap();
+        assert_eq!(fact.kb_id, Some(EntityId::from(11_i64)));
+        assert_eq!(fact.document_id, Some(EntityId::from(12_i64)));
+        assert_eq!(
+            fact.data,
+            vec![
+                (Field::Stage, Scalar::text("content_delivery").unwrap()),
+                (Field::Entrypoint, Scalar::text("knowledge_api").unwrap()),
+                (Field::UserId, Scalar::from(42_i64)),
+                (Field::EffectiveReaderId, Scalar::from(42_i64)),
+                (Field::SubtaskId, Scalar::Null),
+                (Field::Offset, Scalar::from(3_i64)),
+                (Field::ReturnedLength, Scalar::from(5_i64)),
+                (Field::TotalLength, Scalar::from(20_i64)),
+                (Field::HasMore, Scalar::from(true)),
+            ]
+        );
+    }
 
     #[test]
     fn value_error_mapping_matches_source() {

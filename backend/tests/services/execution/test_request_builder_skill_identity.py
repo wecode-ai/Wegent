@@ -24,8 +24,12 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     task = SimpleNamespace(
         id=1,
         user_id=7,
-        json={"spec": {"title": "Persisted task title"}},
+        json={
+            "metadata": {"labels": {"source": "chat_shell", "taskType": "knowledge"}},
+            "spec": {"title": "Persisted task title"},
+        },
         project_id=None,
+        client_origin="frontend",
     )
     user = SimpleNamespace(id=7, user_name="alice")
     team = SimpleNamespace(id=5, user_id=8, name="team-a", namespace="default", json={})
@@ -53,7 +57,6 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     )
     mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
     mocker.patch.object(builder, "_is_group_chat", return_value=False)
-    mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")
     mocker.patch.object(
         builder, "_generate_skill_identity_token", return_value="skill-jwt"
     )
@@ -66,6 +69,17 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         message="hello",
     )
 
+    from app.services.auth import verify_task_token
+    from shared.models.openai_converter import OpenAIRequestConverter
+
+    assert (
+        verify_task_token(result.auth_token).knowledge_client_surface == "knowledge_web"
+    )
+    transport = OpenAIRequestConverter.from_execution_request(result)
+    assert (
+        OpenAIRequestConverter.to_execution_request(transport).knowledge_client_surface
+        == "knowledge_web"
+    )
     assert result.skill_identity_token == "skill-jwt"
     assert result.task_title == "Persisted task title"
     assert result.team_id == team.id

@@ -131,6 +131,7 @@ def _enqueue_reindex(
         # enqueue their document summaries after a successful index; it still gates
         # on the deployment and knowledge-base summary settings.
         trigger_summary=True,
+        trigger="code_wiki_publish",
         replace_active=True,
         # Without this the state machine returns "already_indexed" for any document
         # whose last index succeeded -- which is every page that has ever been

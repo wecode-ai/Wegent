@@ -133,7 +133,11 @@ class SummaryService:
         kb_json["spec"] = spec
         kb.json = kb_json
         flag_modified(kb, "json")
+        event_kb_id = kb.__dict__.get("id")
         self.db.commit()
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, kb_id=event_kb_id)
 
     def _persist_document_summary(
         self,
@@ -153,6 +157,12 @@ class SummaryService:
         )
         if updated_rows == 0:
             self.db.rollback()
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "document_deleted"},
+                document_id=document_id,
+            )
             logger.info(
                 "[SummaryService] Skipping summary persistence for deleted document: "
                 "document_id=%s",
@@ -161,6 +171,9 @@ class SummaryService:
             return False
 
         self.db.commit()
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, document_id=document_id)
         return True
 
     # ==================== Model Configuration ====================
@@ -342,6 +355,12 @@ class SummaryService:
 
         if not document:
             logger.warning(f"[SummaryService] Document not found: {document_id}")
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "document_not_found"},
+                document_id=document_id,
+            )
             return None
 
         # 2. Check if document is active
@@ -349,6 +368,12 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] Document not active yet: "
                 f"document_id={document_id}, name={document.name}"
+            )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "document_not_active"},
+                document_id=document_id,
             )
             return None
 
@@ -366,6 +391,12 @@ class SummaryService:
             logger.warning(
                 f"[SummaryService] Knowledge base not found for document: {document_id}"
             )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "knowledge_base_not_found"},
+                document_id=document_id,
+            )
             return None
 
         # 4. Get model configuration from knowledge base
@@ -373,6 +404,12 @@ class SummaryService:
         if not model_config:
             logger.warning(
                 f"[SummaryService] No model configured for summary generation in KB: {kb.id}"
+            )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "summary_model_not_configured"},
+                document_id=document_id,
             )
             return None
 
@@ -739,6 +776,11 @@ class SummaryService:
             clear_if_empty=clear_if_empty,
         )
         if not claim:
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "claim_not_acquired"}, kb_id=kb_id
+            )
             return None
 
         truncated_aggregation = self._truncate_prompt_if_needed(

@@ -7,6 +7,7 @@
 import ast
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -371,6 +372,54 @@ class TestTryDirectInjection:
         assert result["total"] == 2
         assert result["total_estimated_tokens"] == (
             direct_injection.estimate_direct_injection_tokens(records)
+        )
+
+    @pytest.mark.asyncio
+    async def test_reports_selected_documents_with_current_usage_identity(self):
+        records = [_injection_record(), _injection_record("second chunk")]
+        usage = SimpleNamespace(
+            invocation_id="invocation-1",
+            actor_user_id=42,
+            actor_type="user",
+            entrypoint="chat",
+            client_surface="chat_shell",
+            task_id=81,
+            subtask_id=82,
+        )
+
+        with (
+            patch.object(
+                direct_injection,
+                "get_original_documents_from_knowledge_base",
+                AsyncMock(return_value=records),
+            ),
+            patch(
+                "app.services.rag.reporting.current_usage_context",
+                return_value=usage,
+            ),
+            patch(
+                "shared.event_reporting.catalogs.knowledge.usage."
+                "report_document_usage"
+            ) as report_usage,
+        ):
+            await direct_injection.try_direct_injection(
+                knowledge_base_ids=[123],
+                scope=None,
+                db=MagicMock(),
+                route_mode="direct_injection",
+                available_injection_tokens=10000,
+                max_direct_chunks=500,
+            )
+
+        report_usage.assert_called_once_with(
+            records,
+            invocation_id="invocation-1",
+            actor_user_id=42,
+            actor_type="user",
+            entrypoint="chat",
+            client_surface="chat_shell",
+            task_id=81,
+            subtask_id=82,
         )
 
     @pytest.mark.asyncio

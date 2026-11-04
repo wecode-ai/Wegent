@@ -1818,6 +1818,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiokafka", extras = ["lz4"], marker = "extra == 'event-reporting'", specifier = ">=0.12.0,<1" },
     { name = "asyncmy", specifier = ">=0.2.9" },
     { name = "cryptography", specifier = ">=42.0.4" },
     { name = "dacite", specifier = ">=1.8.0" },
@@ -1837,6 +1838,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31.0" },
     { name = "sqlalchemy", specifier = ">=2.0.25" },
 ]
+provides-extras = ["event-reporting"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -20,9 +20,11 @@ def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.mark.parametrize("surface", ["knowledge_web", None])
 def test_public_rag_retrieve_uses_gateway_runtime_spec(
     test_client,
     test_token: str,
+    surface,
 ):
     payload = {
         "query": "release checklist",
@@ -55,6 +57,8 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
             ],
         },
     }
+    if surface is not None:
+        payload["client_surface"] = surface
     runtime_spec = QueryRuntimeSpec(
         user_id=7,
         knowledge_base_ids=[7],
@@ -79,6 +83,9 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
         "total_estimated_tokens": 0,
     }
 
+    async def report_and_execute(**kwargs):
+        return await kwargs["execute"]()
+
     with (
         patch(
             "app.api.endpoints.rag.runtime_resolver.build_public_query_runtime_spec",
@@ -88,6 +95,11 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
             "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
+        patch(
+            "app.api.endpoints.rag.report_retrieval_request",
+            new_callable=AsyncMock,
+            side_effect=report_and_execute,
+        ) as mock_report,
     ):
         response = test_client.post(
             "/api/rag/retrieve",
@@ -126,6 +138,47 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
     )
     mock_get_gateway.assert_called_once()
     gateway.query.assert_awaited_once_with(runtime_spec, db=ANY)
+    assert mock_report.await_args.kwargs["entrypoint"] == "openapi"
+    assert mock_report.await_args.kwargs["client_surface"] == (
+        surface or "external_api"
+    )
+
+
+@pytest.mark.parametrize("surface", ["knowledge_web", None])
+def test_public_rag_config_failure_records_query_surface(
+    test_client, test_token, surface
+):
+    payload = {
+        "query": "test",
+        "knowledge_id": "7",
+        "retriever_ref": {"name": "retriever-a", "namespace": "default"},
+        "embedding_model_ref": {"model_name": "embed-a", "model_namespace": "default"},
+    }
+    if surface is not None:
+        payload["client_surface"] = surface
+    events = []
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_query_runtime_spec",
+            side_effect=ValueError("missing retrieval configuration"),
+        ),
+        patch(
+            "app.services.rag.reporting.observe",
+            side_effect=lambda name, factory: events.append((name, factory())),
+        ),
+        patch("app.services.rag.reporting.report_kb_usage") as usage,
+    ):
+        response = test_client.post(
+            "/api/rag/retrieve", headers=_auth_header(test_token), json=payload
+        )
+    assert response.status_code == 400
+    assert len(events) == 1
+    name, event = events[0]
+    assert name == "knowledge.retrieval.request.finished"
+    assert event["status"] == "failure"
+    assert event["data"]["entrypoint"] == "openapi"
+    assert event["data"]["client_surface"] == (surface or "external_api")
+    usage.assert_not_called()
 
 
 def test_public_rag_chunks_returns_paginated_index_chunks(

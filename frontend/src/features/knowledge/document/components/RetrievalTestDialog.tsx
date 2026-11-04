@@ -203,6 +203,7 @@ export function RetrievalTestDialog({
       // Build request using test config (overrides database config)
       const request = {
         query: query.trim(),
+        client_surface: 'knowledge_web',
         ...(searchHints ? { search_hints: searchHints } : {}),
         knowledge_id: String(knowledgeBase.id),
         retriever_ref: {

@@ -428,7 +428,16 @@ def test_scan_pages_enabled_copies_and_isolates_dispatch_failure(
         "app.core.distributed_lock.distributed_lock.acquire_context",
         lambda *args, **kwargs: nullcontext(True),
     )
+    emit = MagicMock()
+    monkeypatch.setattr(tasks, "emit_external_event", emit)
     assert tasks.scan_dingtalk_copies() == 2
+    start, end = emit.call_args_list
+    assert start.args == ("knowledge.external.sync.started",)
+    assert end.args == ("knowledge.external.sync.finished",)
+    assert [start.kwargs["status"], end.kwargs["status"]] == ["started", "partial"]
+    assert end.kwargs["error_code"] == "refresh_dispatch_failed"
+    assert start.kwargs["data"]["operation_id"] == end.kwargs["data"]["operation_id"]
+    assert end.kwargs["data"]["provider"] == "dingtalk"
     assert calls == ids
 
     calls.clear()

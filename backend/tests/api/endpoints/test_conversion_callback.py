@@ -30,6 +30,7 @@ from app.schemas.conversion_callback import (
     ConversionCompletedRequest,
     ConversionStatusRequest,
 )
+from app.services.knowledge.index_state_machine import IndexExecutionDecision
 
 
 def _make_request(
@@ -404,3 +405,98 @@ def test_precheck_reads_persisted_state_not_a_cached_document(
     mock_ctx.delete_context.assert_not_called()
     mock_task.delay.assert_not_called()
     mock_succeeded.assert_not_called()
+
+
+@pytest.mark.unit
+def test_conversion_started_callback_event_carries_kb_id_without_error_code() -> None:
+    """The started callback fact carries kb_id; success must not set error_code."""
+    doc = SimpleNamespace(id=1, kind_id=10)
+    db = _build_db_chain(_query_first(doc))
+    request = ConversionStatusRequest(
+        action="conversion_started", document_id=1, generation=5
+    )
+    decision = IndexExecutionDecision(should_execute=True, reason="conversion_started")
+
+    with (
+        patch(
+            "app.api.endpoints.internal.conversion_callback.mark_document_conversion_started",
+            return_value=decision,
+        ) as mark_started,
+        patch("app.api.endpoints.internal.conversion_callback.observe") as mock_observe,
+    ):
+        response = conversion_status_callback(request=request, db=db)
+
+    assert response.ok is True
+    mark_started.assert_called_once()
+    event_type, fields_factory = mock_observe.call_args.args
+    assert event_type == "knowledge.conversion.callback.finished"
+    fields = fields_factory()
+    assert fields["kb_id"] == 10
+    assert fields["status"] == "success"
+    # the state machine reports action-like reasons even for success; they
+    # must not leak into error_code
+    assert fields["error_code"] is None
+
+
+@pytest.mark.unit
+def test_completed_callback_events_keep_kb_id_after_commit_expiry() -> None:
+    """kb_id must be captured before state-machine commits expire the ORM instance."""
+    doc = SimpleNamespace(
+        id=1,
+        attachment_id=20,
+        kind_id=10,
+        converted_attachment_id=None,
+        user_id=42,
+    )
+    original_attachment = SimpleNamespace(id=20, user_id=42)
+    converted_context = SimpleNamespace(id=30)
+    db = _build_db_chain(
+        _query_first(doc),
+        _query_first(original_attachment),
+        _query_first(_stored_attempt(generation=5)),
+    )
+    request = _make_request()
+
+    def succeed_and_expire(*args, **kwargs):
+        # A real commit pops expired attributes from the instance __dict__.
+        del doc.kind_id
+        return True
+
+    with (
+        patch(
+            "app.api.endpoints.internal.conversion_callback.context_service"
+        ) as mock_ctx,
+        patch(
+            "app.api.endpoints.internal.conversion_callback.mark_document_conversion_succeeded",
+            side_effect=succeed_and_expire,
+        ),
+        patch(
+            "app.api.endpoints.internal.conversion_callback.index_document_task"
+        ) as mock_task,
+        patch("app.api.endpoints.internal.conversion_callback.observe") as mock_observe,
+        patch(
+            "shared.event_reporting.catalogs.knowledge.emit_conversion_event"
+        ) as mock_emit,
+    ):
+        mock_ctx.upload_attachment.return_value = (converted_context, None)
+        mock_task.delay.return_value = SimpleNamespace(id="celery-task-1")
+
+        response = conversion_completed_callback(request=request, db=db)
+
+    assert response.ok is True
+    callback_events = [
+        call
+        for call in mock_emit.call_args_list
+        if call.args[0] == "knowledge.conversion.callback.finished"
+    ]
+    assert callback_events, "expected a conversion.callback.finished event"
+    assert callback_events[0].kwargs["kb_id"] == 10
+    assert callback_events[0].kwargs["status"] == "success"
+    assert callback_events[0].kwargs["data"]["accepted"] is True
+    dispatch_facts = [
+        call
+        for call in mock_observe.call_args_list
+        if call.args[0] == "knowledge.index.dispatch.finished"
+    ]
+    assert dispatch_facts, "expected an index.dispatch.finished fact"
+    assert dispatch_facts[0].args[1]()["kb_id"] == 10
