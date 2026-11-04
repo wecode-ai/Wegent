@@ -15,7 +15,7 @@ from app.services.group_permission import check_group_permission
 
 def get_runtime_skill_shells(skill: Kind) -> list[str] | None:
     """Project the package's Shell support onto the execution request."""
-    spec = (skill.json or {}).get("spec", {})
+    spec = (getattr(skill, "json", None) or {}).get("spec", {})
     shells = spec.get("bindShells")
     # Codex already handles the built-in form MCP, whose shipped metadata predates
     # Codex support. Keep the stored package and same-name user packages intact.
@@ -23,9 +23,10 @@ def get_runtime_skill_shells(skill: Kind) -> list[str] | None:
         shells
         and "ClaudeCode" in shells
         and "Codex" not in shells
-        and (skill.user_id, skill.namespace, skill.name)
-        == (0, "default", "interactive")
         and "wegent-interactive-form-question" in (spec.get("mcpServers") or {})
+        and skill.user_id == 0
+        and getattr(skill, "namespace", None) == "default"
+        and getattr(skill, "name", None) == "interactive"
     ):
         return [*shells, "Codex"]
     return shells
