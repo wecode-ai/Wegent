@@ -119,8 +119,8 @@ test artifacts and are never committed.
 
 `frontend/e2e/tests/collaboration/template-use.spec.ts` uses isolated accounts to verify
 marketplace application to existing projects, new-project creation, stage and automation
-persistence, and zero project creation without a default device. Positive cases use a human
-coordinator and unassigned stages without a real model. Shared-component and Web-routing
+persistence, and zero project creation without a default device. Positive cases use the built-in
+product lifecycle template with explicitly selected human coordinators and executors, verifying all six stage bindings without a real model. Shared-component and Web-routing
 tests separately cover Agent creation, default-model resolution, explicit device authorization,
 revoked management access and request recovery.
 

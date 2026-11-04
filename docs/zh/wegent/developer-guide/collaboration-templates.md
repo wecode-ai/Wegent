@@ -96,7 +96,7 @@ YAML 导入采用白名单，拒绝未知字段、重复键、别名、错误引
 `frontend/e2e/tests/collaboration/templates.spec.ts` 覆盖能力商店与 YAML 导入。
 `frontend/e2e/tests/collaboration/template-use.spec.ts` 使用隔离账号验证从能力商店应用到已有项目、
 从模板新建项目、阶段及自动处理规则持久化，以及缺少默认设备时零项目创建。
-正向用例使用人工负责人和未分配阶段，不依赖真实模型；共享组件与 Web 路由测试另覆盖
+正向用例直接使用内置产品全流程模板，用户明确选择人工负责人及执行成员，校验六阶段绑定，不依赖真实模型；共享组件与 Web 路由测试另覆盖
 智能体创建、默认模型解析、显式设备授权、失效权限与失败重试。
 `collaboration-template-lifecycle` checkpoint 以本需求验证模板导入、自动分派、六阶段委派、
 阶段标签看板和人工验收，执行真实桌面、Executor、MCP、存储和 shell，只有模型服务使用固定响应。

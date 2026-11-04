@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from '../../fixtures/executor-test'
+import { REGULAR_USER } from '../../config/test-users'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const definitions = JSON.parse(
@@ -18,26 +19,29 @@ for (const destination of ['existing', 'new'] as const) {
     const suffix = `${Date.now()}-${testInfo.workerIndex}`
     const name = `Template destination ${suffix}`
     const document = structuredClone(definitions[0])
-    document.metadata = { namespace: 'default', name: `destination-${suffix}` }
-    document.spec.displayName = name
     const configuration = document.spec.resources.collaboration
-    delete configuration.agents
-    configuration.project.name = name
     const group = configuration.groups[0]
-    group.name = `Review ${suffix}`
-    group.roles = [{ key: 'owner', name: 'Reviewer', responsibility: '', defaultKind: 'human' }]
-    group.leaderRole = 'owner'
-    group.stages = group.stages.map((stage: Record<string, unknown>) => ({
-      ...stage,
-      ownerRole: null,
-    }))
-    configuration.groups = [group]
     await page.goto('/resource-library?type=template')
     const token = (await page.context().cookies()).find(
       cookie => cookie.name === 'auth_token'
     )?.value
     expect(token).toBeTruthy()
     const headers = { Authorization: `Bearer ${token}` }
+    const me = await request.get(API_BASE_URL + '/api/users/me', { headers })
+    expect(me.ok()).toBeTruthy()
+    const owner = await me.json()
+    const users = await request.get(
+      API_BASE_URL +
+        '/api/users/search?q=' +
+        encodeURIComponent(REGULAR_USER.username) +
+        '&limit=20',
+      { headers }
+    )
+    expect(users.ok()).toBeTruthy()
+    const executor = (await users.json()).users.find(
+      (user: { user_name: string }) => user.user_name === REGULAR_USER.username
+    )
+    expect(executor).toBeDefined()
     const workspaceResponse = await request.post(`${API_BASE_URL}/api/v1/workspaces`, {
       headers,
       data: { name: `Template space ${suffix}` },
@@ -46,6 +50,22 @@ for (const destination of ['existing', 'new'] as const) {
     const workspace = await workspaceResponse.json()
     let projectId: string | null = null
     try {
+      const membership = await request.post(
+        API_BASE_URL + '/api/v1/workspaces/' + workspace.id + '/members',
+        {
+          headers,
+          data: { user_id: executor.id, role: 'Developer' },
+        }
+      )
+      expect(membership.ok()).toBeTruthy()
+      const bindMembers = async () => {
+        await page.getByTestId('template-customize-' + group.key).click()
+        for (const role of group.roles) {
+          await page
+            .getByTestId('template-role-' + group.key + '-' + role.key)
+            .selectOption('human:' + (role.key === group.leaderRole ? owner.id : executor.id))
+        }
+      }
       if (destination === 'existing') {
         const response = await request.post(
           `${API_BASE_URL}/api/v1/workspaces/${workspace.id}/projects`,
@@ -57,21 +77,11 @@ for (const destination of ['existing', 'new'] as const) {
         expect(response.ok()).toBeTruthy()
         projectId = (await response.json()).id
       }
-      await page.getByTestId('template-import-open').click()
-      await page.getByTestId('template-import-file').setInputFiles({
-        name: 'destination.yaml',
-        mimeType: 'application/yaml',
-        buffer: Buffer.from(JSON.stringify(document)),
-      })
-      await page.getByTestId('template-import-save').click()
-      await expect(page.getByTestId('collaboration-template-dialog')).toHaveCount(0)
-      const card = page
-        .locator('.collaboration-template-card')
-        .filter({ has: page.getByRole('heading', { name, exact: true }) })
-      await card.getByRole('button').click()
+      await page.getByTestId('template-details-product-lifecycle').click()
       await page.getByTestId('template-use').click()
       if (destination === 'existing') {
         await page.getByTestId(`template-project-${projectId}`).click()
+        await bindMembers()
         await page.getByTestId('template-bindings-apply').click()
       } else {
         await page.getByTestId('template-create-project').click()
@@ -79,7 +89,9 @@ for (const destination of ['existing', 'new'] as const) {
         const nameInput = page.getByTestId('collaboration-project-name-input')
         await expect(picker.or(nameInput)).toBeVisible()
         if (await picker.isVisible()) await picker.click()
-        await expect(nameInput).toHaveValue(name)
+        await expect(nameInput).toHaveValue(configuration.project.name)
+        await nameInput.fill(name)
+        await bindMembers()
         const created = page.waitForResponse(
           response =>
             response.request().method() === 'POST' &&
@@ -104,7 +116,15 @@ for (const destination of ['existing', 'new'] as const) {
       expect(applied.stages.map((stage: { name: string }) => stage.name)).toEqual(
         group.stages.map((stage: { name: string }) => stage.name)
       )
-      expect(applied.leader.kind).toBe('human')
+      expect(applied.leader).toEqual(
+        expect.objectContaining({ kind: 'human', id: String(owner.id) })
+      )
+      expect(
+        applied.stages.every(
+          (stage: { assignee: { kind: string; id: string } }) =>
+            stage.assignee.kind === 'human' && stage.assignee.id === String(executor.id)
+        )
+      ).toBe(true)
       const rules = await request.get(
         `${API_BASE_URL}/api/v1/cloud-projects/${projectId}/automations`,
         { headers }
