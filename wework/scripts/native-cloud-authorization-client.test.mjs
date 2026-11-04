@@ -1,8 +1,11 @@
+// @vitest-environment node
+
 import { afterEach, expect, test, vi } from 'vitest'
 import { nativeCloudAuthorizationFixture } from '../e2e/desktop/modules/native-cloud-authorization-client.mjs'
 
 const transport = vi.hoisted(() => ({ calls: [], failure: null, output: null }))
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async importOriginal => ({
+  ...(await importOriginal()),
   execFile(binary, args, options, callback) {
     return {
       stdin: {
