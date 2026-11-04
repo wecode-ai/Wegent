@@ -191,10 +191,10 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
         todo: { title: MARKER, description: MARKER, status: 'inbox', priority: 'none', tags: [] },
       })
       issueId = created.id
-      assert.equal(created.assignee_agent_id, null)
+      assert.equal(Object.hasOwn(created, 'assignee_agent_id'), false)
 
       await openRules()
-      await click('automatic-processing-create')
+      await control.command('clickWhenEnabled', scoped('automatic-processing-create'))
       await control.command(
         'click',
         `${CONTENT} label:has(> [data-testid="automatic-processing-trigger-status_changed"])`
@@ -220,7 +220,7 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       assert.equal(saved.eventConfig.executionTarget, 'existing_issue')
       await reopenProject('The local status rule did not reopen after reload')
       await openRules()
-      await click(`automatic-processing-edit-${ruleId}`)
+      await control.command('clickWhenEnabled', scoped(`automatic-processing-edit-${ruleId}`))
       assert.equal(
         await control.command('getValue', scoped('automatic-processing-status')),
         'acceptance'

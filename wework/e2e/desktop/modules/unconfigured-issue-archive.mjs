@@ -50,7 +50,23 @@ async function verifyArchive(control, request, issue, options) {
     const assigned = await executions()
     assert.equal(assigned.length, 1, 'The original assignment must own one waiting Run')
     assert.equal(assigned[0].status, 'waiting_runtime')
-    await control.command('clickWhenEnabled', scoped(`collaboration-issue-${issue.id}`))
+    await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${issue.id}`))
+    await control.command('waitFor', scoped('collaboration-issue-detail'), {
+      visible: true,
+      timeoutMs,
+    })
+    await control.command('waitFor', scoped('cloud-todo-detail-title'), {
+      value: issue.title,
+      timeoutMs,
+    })
+    await control.command('waitFor', scoped('cloud-todo-detail-status'), {
+      value: 'in_progress',
+      timeoutMs,
+    })
+    await control.command('waitFor', scoped(`cloud-task-activity-${issue.id}`), {
+      visible: true,
+      timeoutMs,
+    })
     await control.command('clickWhenEnabled', scoped(`cloud-task-activity-run-now-${issue.id}`))
     const pending = await waitForValue(
       async () => {
