@@ -67,6 +67,7 @@ pub struct CodexLocalConfig {
     config_path: String,
     remote_apps_enabled: bool,
     enabled_plugin_keys: Vec<String>,
+    disabled_plugin_keys: Vec<String>,
 }
 
 fn default_remote_apps_enabled() -> bool {
@@ -196,7 +197,13 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
                 config_path.display()
             )
         })?,
-        enabled_plugin_keys: read_enabled_plugin_keys(&content).map_err(|error| {
+        enabled_plugin_keys: read_plugin_keys(&content, true).map_err(|error| {
+            format!(
+                "Failed to parse Codex config {}: {error}",
+                config_path.display()
+            )
+        })?,
+        disabled_plugin_keys: read_plugin_keys(&content, false).map_err(|error| {
             format!(
                 "Failed to parse Codex config {}: {error}",
                 config_path.display()
@@ -205,7 +212,7 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
     })
 }
 
-fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
+fn read_plugin_keys(content: &str, enabled: bool) -> Result<Vec<String>, String> {
     let config = content
         .parse::<DocumentMut>()
         .map_err(|error| error.to_string())?;
@@ -216,7 +223,7 @@ fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
             plugins
                 .iter()
                 .filter(|(_, plugin)| {
-                    plugin.get("enabled").and_then(|enabled| enabled.as_bool()) == Some(true)
+                    plugin.get("enabled").and_then(|value| value.as_bool()) == Some(enabled)
                 })
                 .map(|(key, _)| key.to_owned())
                 .collect::<Vec<_>>()
@@ -556,6 +563,10 @@ mod tests {
         let current = read_codex_local_config_from_path(&codex_home).unwrap();
         assert!(current.remote_apps_enabled);
         assert_eq!(current.enabled_plugin_keys, vec!["enabled@wework-personal"]);
+        assert_eq!(
+            current.disabled_plugin_keys,
+            vec!["disabled@wework-personal"]
+        );
 
         write_remote_apps_enabled(&codex_home, false).unwrap();
 
